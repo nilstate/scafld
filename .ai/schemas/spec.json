@@ -4,7 +4,7 @@
   "title": "Trellis Task Specification",
   "description": "Machine-readable conversational task specification for AI agents",
   "type": "object",
-  "required": ["spec_version", "task_id", "status", "task", "phases"],
+  "required": ["spec_version", "task_id", "status", "task", "phases", "planning_log", "created", "updated"],
   "additionalProperties": false,
 
   "properties": {
@@ -36,13 +36,13 @@
 
     "status": {
       "type": "string",
-      "enum": ["draft", "under_review", "approved", "in_progress", "completed", "failed", "cancelled"],
+      "enum": ["draft", "blocked", "under_review", "approved", "in_progress", "completed", "failed", "cancelled"],
       "description": "Current lifecycle state of this task"
     },
 
     "task": {
       "type": "object",
-      "required": ["title", "summary", "context", "objectives", "touchpoints", "acceptance"],
+      "required": ["title", "summary", "size", "risk_level", "context", "objectives", "touchpoints", "acceptance"],
       "properties": {
         "title": {
           "type": "string",
@@ -293,6 +293,10 @@
                   "type": "string",
                   "enum": ["create", "update", "delete", "move"]
                 },
+                "move_to": {
+                  "type": "string",
+                  "description": "Destination path when action is 'move'"
+                },
                 "lines": {
                   "oneOf": [
                     {"type": "array", "items": {"type": "integer"}},
@@ -309,7 +313,7 @@
             "minItems": 1,
             "items": {
               "type": "object",
-              "required": ["id", "type"],
+              "required": ["id", "type", "description"],
               "properties": {
                 "id": {"type": "string"},
                 "type": {
@@ -322,10 +326,14 @@
                     "security",
                     "documentation",
                     "custom"
-                  ]
+                  ],
+                  "description": "Criterion type. For automated types (compile, test, boundary, integration, security), a 'command' field is expected. For manual types (documentation, custom), 'command' is optional."
                 },
                 "description": {"type": "string"},
-                "command": {"type": "string"},
+                "command": {
+                  "type": "string",
+                  "description": "Shell command to run for automated validation. Expected for compile, test, boundary, integration, and security types."
+                },
                 "expected": {"type": "string"},
                 "validation": {
                   "type": "string",

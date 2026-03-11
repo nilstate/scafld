@@ -1,0 +1,256 @@
+spec_version: "1.1"
+task_id: "add-error-codes"
+created: "2026-02-18T09:15:00Z"
+updated: "2026-02-18T14:42:00Z"
+status: "completed"
+
+task:
+  title: "Add typed error codes to document processing module"
+  summary: >
+    The document processor uses unstructured string errors, making it difficult for
+    callers to programmatically handle failures. Introduce a typed error code enum
+    and structured error class so consumers can match on specific failure modes.
+  size: "small"
+  risk_level: "medium"
+  context:
+    packages:
+      - "src/services/documents"
+      - "src/errors"
+    files_impacted:
+      - path: "src/errors/codes.ts"
+        lines: "all"
+        reason: "New file defining DocumentErrorCode enum and error map"
+      - path: "src/errors/document-error.ts"
+        lines: "all"
+        reason: "New DocumentProcessingError class using typed codes"
+      - path: "src/services/documents/processor.ts"
+        lines: "45-120"
+        reason: "Replace string throws with DocumentProcessingError instances"
+      - path: "src/services/documents/processor.test.ts"
+        lines: "all"
+        reason: "Update assertions to check error codes instead of message strings"
+    invariants:
+      - "domain_boundaries"
+      - "no_breaking_public_api"
+    related_docs:
+      - "docs/error-handling.md"
+  objectives:
+    - "Define a DocumentErrorCode enum covering all known failure modes"
+    - "Create a structured error class that carries code, message, and context"
+    - "Migrate processor.ts from string throws to typed errors"
+  scope:
+    in_scope:
+      - "Document processor error paths"
+      - "Unit tests for error scenarios"
+    out_of_scope:
+      - "Other service modules (auth, billing)"
+      - "HTTP error response mapping (handled by controller layer)"
+      - "Error monitoring/alerting integration"
+  dependencies:
+    - "No external dependencies required"
+  assumptions:
+    - "Existing error helper utilities in src/errors/ are compatible with subclassing"
+    - "No downstream consumers rely on exact error message strings for control flow"
+  touchpoints:
+    - area: "src/errors"
+      description: "New error code enum and DocumentProcessingError class"
+    - area: "src/services/documents/processor.ts"
+      description: "Replace raw throws with typed error instances"
+    - area: "src/services/documents/processor.test.ts"
+      description: "Update test assertions to verify error codes"
+  risks:
+    - description: "Downstream callers may catch generic Error and miss new type"
+      impact: "low"
+      mitigation: "DocumentProcessingError extends Error, so existing catch blocks still work"
+    - description: "Incomplete coverage of error paths in processor.ts"
+      impact: "medium"
+      mitigation: "Grep for all throw statements before and after migration to ensure full coverage"
+  acceptance:
+    validation_profile: "standard"
+    definition_of_done:
+      - id: "dod1"
+        description: "DocumentErrorCode enum covers all processor failure modes"
+        status: "done"
+        checked_at: "2026-02-18T13:20:00Z"
+      - id: "dod2"
+        description: "All throw statements in processor.ts use DocumentProcessingError"
+        status: "done"
+        checked_at: "2026-02-18T14:05:00Z"
+      - id: "dod3"
+        description: "Tests assert on error codes, not message strings"
+        status: "done"
+        checked_at: "2026-02-18T14:30:00Z"
+      - id: "dod4"
+        description: "No regressions in existing test suite"
+        status: "done"
+        checked_at: "2026-02-18T14:35:00Z"
+    validation:
+      - id: "v1"
+        type: "compile"
+        description: "Project compiles with no type errors"
+        command: "npm run build"
+        expected: "Exit code 0, no type errors"
+      - id: "v2"
+        type: "test"
+        description: "All unit tests pass including updated error assertions"
+        command: "npm test -- --filter documents"
+        expected: "All tests pass"
+      - id: "v3"
+        type: "boundary"
+        description: "No throw of raw Error or string in processor.ts"
+        command: "grep -n 'throw new Error\\|throw \"' src/services/documents/processor.ts"
+        expected: "No matches found"
+  constraints:
+    non_goals:
+      - "Refactoring the processor's happy path logic"
+      - "Adding error codes to other modules"
+  notes: >
+    Chose a flat enum over a class hierarchy to keep things simple. The error code
+    enum can be extended later when other modules adopt the same pattern.
+
+planning_log:
+  - timestamp: "2026-02-18T09:15:00Z"
+    actor: "agent"
+    summary: "Identified processor.ts as primary target. Found 8 throw statements using raw strings."
+  - timestamp: "2026-02-18T09:40:00Z"
+    actor: "agent"
+    summary: "Confirmed src/errors/ has base helpers. Proposed enum + error class approach."
+  - timestamp: "2026-02-18T10:05:00Z"
+    actor: "user"
+    summary: "User confirmed no schema changes needed. No downstream string matching on error messages."
+  - timestamp: "2026-02-18T10:30:00Z"
+    actor: "agent"
+    summary: "Locked three-phase plan: define codes, create error class, migrate processor. Spec ready for execution."
+
+phases:
+  - id: "phase1"
+    name: "Define error codes and error class"
+    objective: "Create the DocumentErrorCode enum and DocumentProcessingError class"
+    changes:
+      - file: "src/errors/codes.ts"
+        action: "create"
+        lines: "all"
+        content_spec: |
+          Export a DocumentErrorCode string enum with values:
+          INVALID_FORMAT, PARSE_FAILED, SIZE_EXCEEDED, ENCODING_UNSUPPORTED,
+          PERMISSION_DENIED, STORAGE_UNAVAILABLE, TEMPLATE_MISSING, TIMEOUT
+      - file: "src/errors/document-error.ts"
+        action: "create"
+        lines: "all"
+        content_spec: |
+          Export DocumentProcessingError extending Error.
+          Constructor accepts (code: DocumentErrorCode, message: string, context?: Record<string, unknown>).
+          Exposes readonly code, context properties. Sets name to 'DocumentProcessingError'.
+    acceptance_criteria:
+      - id: "ac1_1"
+        type: "compile"
+        description: "New files compile without errors"
+        command: "npx tsc --noEmit src/errors/codes.ts src/errors/document-error.ts"
+        expected: "Exit code 0"
+        result:
+          status: "pass"
+          timestamp: "2026-02-18T11:45:00Z"
+      - id: "ac1_2"
+        type: "test"
+        description: "Error class instantiation works correctly"
+        command: "npm test -- --filter document-error"
+        expected: "Error instances carry correct code and extend Error"
+        result:
+          status: "pass"
+          timestamp: "2026-02-18T11:50:00Z"
+    status: "completed"
+
+  - id: "phase2"
+    name: "Migrate processor error paths"
+    objective: "Replace all raw throws in processor.ts with DocumentProcessingError"
+    dependencies:
+      - "phase1"
+    changes:
+      - file: "src/services/documents/processor.ts"
+        action: "update"
+        lines: "45-120"
+        content_spec: |
+          Import DocumentProcessingError and DocumentErrorCode.
+          Replace each `throw new Error("...")` with the appropriate
+          `throw new DocumentProcessingError(DocumentErrorCode.X, message, { context })`.
+          Map each existing error string to the matching enum value.
+    acceptance_criteria:
+      - id: "ac2_1"
+        type: "boundary"
+        description: "No raw Error throws remain in processor.ts"
+        command: "grep -c 'throw new Error' src/services/documents/processor.ts"
+        expected: "0"
+        result:
+          status: "pass"
+          timestamp: "2026-02-18T13:15:00Z"
+      - id: "ac2_2"
+        type: "compile"
+        description: "Processor compiles with new error imports"
+        command: "npx tsc --noEmit src/services/documents/processor.ts"
+        expected: "Exit code 0"
+        result:
+          status: "pass"
+          timestamp: "2026-02-18T13:18:00Z"
+    status: "completed"
+
+  - id: "phase3"
+    name: "Update tests to assert on error codes"
+    objective: "Migrate test assertions from message matching to code matching"
+    dependencies:
+      - "phase2"
+    changes:
+      - file: "src/services/documents/processor.test.ts"
+        action: "update"
+        lines: "all"
+        content_spec: |
+          Import DocumentErrorCode. For each error-path test:
+          - Replace `.toThrow("message")` with a catch block that asserts
+            `error.code === DocumentErrorCode.X`.
+          - Add one new test per error code to confirm the correct code is thrown.
+    acceptance_criteria:
+      - id: "ac3_1"
+        type: "test"
+        description: "All processor tests pass with code-based assertions"
+        command: "npm test -- --filter documents"
+        expected: "All tests pass, 0 failures"
+        result:
+          status: "pass"
+          timestamp: "2026-02-18T14:28:00Z"
+      - id: "ac3_2"
+        type: "test"
+        description: "Full test suite passes with no regressions"
+        command: "npm test"
+        expected: "Exit code 0"
+        result:
+          status: "pass"
+          timestamp: "2026-02-18T14:35:00Z"
+    status: "completed"
+
+rollback:
+  strategy: "per_phase"
+  commands:
+    phase1: "git checkout HEAD -- src/errors/codes.ts src/errors/document-error.ts"
+    phase2: "git checkout HEAD -- src/services/documents/processor.ts"
+    phase3: "git checkout HEAD -- src/services/documents/processor.test.ts"
+
+self_eval:
+  completeness: 3
+  architecture_fidelity: 2
+  spec_alignment: 2
+  validation_depth: 1
+  total: 8
+  notes: >
+    All error paths migrated and tested. Validation depth scored 1/2 because
+    integration-level tests with actual callers were out of scope - only unit
+    tests were updated. Could add integration checks if this pattern expands.
+  second_pass_performed: true
+
+metadata:
+  estimated_effort_hours: 2.5
+  actual_effort_hours: 3.0
+  ai_model: "claude-opus-4-6"
+  react_cycles: 4
+  tags:
+    - "error-handling"
+    - "typescript"
+    - "refactor"

@@ -1,5 +1,5 @@
 # Trellis Configuration
-# Version: 1.0
+# Version: 1.1
 # Purpose: Machine-readable control file for AI coding agents
 
 version: "1.0"
@@ -86,6 +86,12 @@ validation:
       command: "echo 'Replace with your test command, e.g.: npm test -- {spec_pattern}'"
       required: true
 
+    - id: boundary_check
+      type: command
+      command: "echo 'Replace with your boundary/integration check, e.g.: cross-module dependency scan'"
+      description: "Verify no cross-module side effects (used by strict profile)"
+      required: true
+
     - id: acceptance_item_check
       type: spec_validation
       description: "Verify all phase acceptance_criteria pass"
@@ -126,14 +132,18 @@ validation:
   # otherwise derive a profile from `task.risk_level`:
   #   low → light, medium → standard, high → strict.
   profiles:
+    # Light: compile + acceptance only, quick feedback loop
     light:
       per_phase: ["compile_check", "acceptance_item_check"]
       pre_commit: ["perf_eval"]
+    # Standard: adds targeted tests per phase, full validation at commit
     standard:
       per_phase: ["compile_check", "targeted_tests", "acceptance_item_check"]
       pre_commit: ["full_test_suite", "linter_suite", "typecheck", "security_scan", "perf_eval"]
+    # Strict: broader test coverage per phase (boundary check ensures no
+    # cross-module side effects), plus all pre_commit checks from standard
     strict:
-      per_phase: ["compile_check", "targeted_tests", "acceptance_item_check"]
+      per_phase: ["compile_check", "targeted_tests", "boundary_check", "acceptance_item_check"]
       pre_commit: ["full_test_suite", "linter_suite", "typecheck", "security_scan", "perf_eval"]
 
 # =============================================================================

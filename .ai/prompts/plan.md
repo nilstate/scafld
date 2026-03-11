@@ -25,14 +25,18 @@ Iterate until the task artifact feels complete:
 
 Constraints:
 - Max 20 cycles; document assumptions if still uncertain.
-- Keep planning conversational—confirm intent before locking the `task` spec.
+- Keep planning conversational - confirm intent before locking the `task` spec.
 - Every update to the spec should be reflected in `planning_log`.
+
+**Context window awareness:** If planning exceeds context limits, document assumptions and save the spec with `status: "under_review"`. Resuming planning later is better than losing work.
 
 ---
 
 ## Required Output Structure
 
 Produce a YAML spec conforming to `.ai/schemas/spec.json` (v1.1).
+
+Validation profiles, rubric weights, invariants, and safety rules are defined in `.ai/config.yaml` - reference them, don't duplicate them here.
 
 ### Minimal Skeleton
 
@@ -130,7 +134,7 @@ self_eval, deviations, metadata remain as in earlier versions (fill null/default
 - **Touchpoints:** Enumerate major systems, adapters, modules, or docs affected. This is the anchor for later validation.
 - **Risks/assumptions:** Capture blockers early; if an assumption is shaky, call it out and set `status: "under_review"`.
 - **Acceptance:** Treat `definition_of_done` as the non-negotiable checklist (one object per item with `id`, `description`, and default `status: pending`). `validation` entries describe how each DoD item will be verified. Optionally set `acceptance.validation_profile` to choose a validation profile; otherwise, EXEC should derive a profile from `risk_level`.
-- **Constraints:** Move any approval needs here. EXEC agents must pause if `task.constraints.approvals_required` intersects `safety.require_approval_for`.
+- **Constraints:** Move any approval needs here. EXEC agents must pause if `task.constraints.approvals_required` intersects `safety.require_approval_for` in `.ai/config.yaml`.
 
 ---
 
@@ -138,7 +142,7 @@ self_eval, deviations, metadata remain as in earlier versions (fill null/default
 
 - Each phase should map cleanly to a touchpoint or cohesive concern.
 - `changes[].content_spec` should read like a design note (functions, behaviors, docs sections).
-- Every phase needs ≥1 acceptance criterion. Use deterministic commands when possible; fall back to `documentation`/`custom` with clear reviewer instructions.
+- Every phase needs at least one acceptance criterion. Use deterministic commands when possible; fall back to `documentation`/`custom` with clear reviewer instructions.
 - Keep rollbacks scoped per phase unless the plan demands atomicity.
 
 ---
@@ -146,7 +150,8 @@ self_eval, deviations, metadata remain as in earlier versions (fill null/default
 ## Planning Log
 
 Record significant conversational turns:
-- `summary` ≈ what you agreed on (clarified scope, locked acceptance items, discovered dependency).
+
+- `summary` should capture what you agreed on (clarified scope, locked acceptance items, discovered dependency).
 - If you made an assumption, log it and echo inside `task.assumptions`.
 - Timestamps should be ISO-8601 (UTC). Use the order of discovery.
 
@@ -169,26 +174,12 @@ Record significant conversational turns:
 
 ---
 
-## Example: Conversational Plan Snapshot
-
-**User ask:** "Add typed error codes to the document module"
-
-1. THOUGHT → ACTION: Found `processDocument` in `src/services/documents/processor.ts`.
-2. OBSERVATION: No shared error constants; errors module already has helpers.
-3. THOUGHT: Confirmed desire for structured errors, not metrics. Added touchpoints (errors, processor, tests) and captured DoD.
-4. OBSERVATION: User confirmed no schema changes. Logged assumption and locked acceptance checklist.
-5. OUTPUT: Spec with `task` capturing objectives, risks, acceptance; three execution phases ready for approval.
-
-Resulting spec: `.ai/specs/drafts/add-error-codes.yaml`
-
----
-
 ## Blocked Planning Template
 
 If planning stops on missing info:
 
 ```
-⚠ Planning blocked
+Warning: Planning blocked
   Reason: {cannot determine X without Y}
   Assumptions made:
     - {assumption 1}
@@ -200,7 +191,7 @@ Spec saved to: .ai/specs/drafts/{task-id}.yaml (status: under_review)
 
 ## Remember
 
-- Co-create the plan with the user—confirm direction before finalizing.
+- Co-create the plan with the user - confirm direction before finalizing.
 - Capture **one** high-quality plan; no more option matrices.
 - Keep architecture invariants front-of-mind.
 - Optimize for execution clarity: another agent should be able to pick this up and ship without guessing.
