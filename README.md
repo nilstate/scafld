@@ -1,10 +1,12 @@
 # Trellis
 
+An opinionated orchestration layer for AI coding agents.
+
 Most AI coding tools let agents jump straight into your codebase and start writing. No plan. No review. No audit trail. Just vibes and a prayer.
 
 The result is predictable: code that looks right, passes the tests, and slowly rots from the inside. Duplicated blocks. Architectural drift. Changes nobody asked for buried in changes somebody did. The agent ships fast and you spend the next week figuring out what it actually did.
 
-Trellis fixes this by enforcing a simple constraint: **think before you type**.
+Trellis enforces a simple constraint: **think before you type**.
 
 Every non-trivial task becomes a YAML specification before a single line of code changes. The spec defines what will change, in what order, with what acceptance criteria, and how to roll it back if it breaks. A human reviews and approves the spec. Only then does the agent execute - phase by phase, validated at every checkpoint, auditable after the fact.
 
@@ -78,7 +80,45 @@ your-project/
 3. **CLAUDE.md** - Project overview, essential commands, agent-specific tips
 4. **`.ai/config.local.yaml`** - Your build/test/lint commands (merges on top of config.yaml)
 
-### CLI
+## Project Structure
+
+Trellis is opinionated about how your project should be organised, because the structure is what gives the AI agent visibility over your entire codebase.
+
+### Single Repo
+
+For a single codebase, just run `trellis init` at the root. The agent sees everything.
+
+### Multi-Repo Workspace
+
+For projects with multiple codebases - an API, a frontend, an SDK, an MCP server - the workspace pattern gives the agent visibility across all of them from a single root.
+
+Create a root repo that acts as the orchestration layer. Add your codebases as git submodules underneath. Run `trellis init` at the root. Now the agent can see your specs, your conventions, your architectural invariants, AND all your code - in one context.
+
+```bash
+mkdir my-project && cd my-project
+git init
+git submodule add git@github.com:org/api.git api
+git submodule add git@github.com:org/app.git app
+git submodule add git@github.com:org/sdk.git sdk
+trellis init
+```
+
+```text
+my-project/                # Root workspace repo
+  .ai/                     # Trellis config and specs
+  AGENTS.md                # Cross-project invariants
+  CLAUDE.md                # Agent overview of the whole system
+  CONVENTIONS.md           # Shared coding standards
+  api/                     # Submodule: your API
+  app/                     # Submodule: your frontend
+  sdk/                     # Submodule: your SDK
+```
+
+The root repo is lightweight - it holds the orchestration layer (Trellis files, agent docs) and pointers to the real code. Each submodule is still its own repo with its own history. But the agent sees the whole picture from the root, which means it can plan changes that span multiple codebases and understand how they connect.
+
+This is how we work. It's not the only way, but if you're running AI agents across multiple repos without a unified root, you're asking the agent to plan with half the context.
+
+## CLI
 
 ```bash
 trellis new <task-id> [-t title] [-s size] [-r risk]     # Scaffold a new spec
@@ -96,7 +136,7 @@ trellis cancel <task-id>                                 # Archive as cancelled
 trellis report                                           # Aggregate stats
 ```
 
-### Start Using It
+## Usage
 
 Tell your AI agent: *"Let's plan [feature]. Create a task spec."*
 
