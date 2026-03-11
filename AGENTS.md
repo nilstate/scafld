@@ -2,6 +2,8 @@
 
 Canonical reference for AI coding agents working with this codebase. Agent-agnostic.
 
+> **Template file.** When setting up Trellis in your project, customize the invariants, forbidden actions, and domain rules below to match your architecture. The generic defaults are a solid starting point.
+
 **Key files:**
 
 - `.ai/config.yaml` - Validation rules, rubric weights, safety controls, profiles
@@ -169,16 +171,17 @@ Only commit when explicitly asked by the user.
 | `.ai/logs/` | Execution logs (ReAct traces) |
 | `CONVENTIONS.md` | Coding standards |
 
-### Commands
+### Spec Lifecycle
 
 ```bash
-# View/approve specs
-cat .ai/specs/drafts/{task-id}.yaml
-mv .ai/specs/drafts/{task-id}.yaml .ai/specs/approved/
-
-# Monitor execution
-tail -f .ai/logs/{task-id}.log
-
-# Validate spec
-ajv validate -s .ai/schemas/spec.json -d .ai/specs/{task-id}.yaml
+# CLI (manages status, validation, file moves)
+trellis new <task-id>             # scaffold a spec in drafts/
+trellis list                      # show all specs
+trellis status <task-id>          # show details + phase progress
+trellis validate <task-id>        # check against schema
+trellis approve <task-id>         # drafts/ -> approved/
+trellis start <task-id>           # approved/ -> active/
+trellis complete <task-id>        # active/ -> archive/
+trellis fail <task-id>            # active/ -> archive/ (failed)
+trellis cancel <task-id>          # active/ -> archive/ (cancelled)
 ```

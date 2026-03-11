@@ -38,10 +38,10 @@ AI generates spec in `drafts/` with `status: "draft"`. If blocked, set `status: 
 
 ### 2. Review & Approval
 
-Developer reviews, then moves file to `approved/` and sets `status: "approved"`.
+Developer reviews, then approves:
 
 ```bash
-mv .ai/specs/drafts/my-task.yaml .ai/specs/approved/my-task.yaml
+trellis approve my-task
 ```
 
 ### 3. Execution
@@ -50,11 +50,10 @@ AI moves spec to `active/`, sets `status: "in_progress"`, and executes phases.
 
 ### 4. Completion
 
-Move spec to `archive/YYYY-MM/` and set final status (`completed`, `failed`, or `cancelled`).
+Mark complete (moves to `archive/YYYY-MM/`):
 
 ```bash
-mkdir -p .ai/specs/archive/$(date +%Y-%m)
-mv .ai/specs/active/my-task.yaml .ai/specs/archive/$(date +%Y-%m)/
+trellis complete my-task
 ```
 
 ---
@@ -74,10 +73,11 @@ Each spec validated by `.ai/schemas/spec.json` includes:
 ## Finding Work
 
 ```bash
-ls .ai/specs/active/               # Current active tasks
-ls .ai/specs/approved/              # Awaiting execution
-ls .ai/specs/drafts/                # Planning in progress
-ls .ai/specs/archive/$(date +%Y-%m)/ # Recent completions
+trellis list                  # All specs
+trellis list active           # Currently executing
+trellis list approved         # Awaiting execution
+trellis list drafts           # Planning in progress
+trellis list archive          # Completed work
 ```
 
 ---

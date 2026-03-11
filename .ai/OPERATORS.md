@@ -58,24 +58,16 @@ Use this for high-impact work (auth, persistence, complex refactors).
 ## 4. Quick Commands Reference
 
 ```bash
-# View spec status
-cat .ai/specs/drafts/my-task.yaml | grep status
-
-# Approve a spec (manual)
-# 1. Edit the file and set status: "approved"
-# 2. Move: mv .ai/specs/drafts/my-task.yaml .ai/specs/approved/
-
-# Start execution (manual)
-# 1. Edit the file and set status: "in_progress"
-# 2. Move: mv .ai/specs/approved/my-task.yaml .ai/specs/active/
-
-# Mark completed
-# 1. Edit the file and set status: "completed"
-# 2. Move: mv .ai/specs/active/my-task.yaml .ai/specs/archive/$(date +%Y-%m)/
-
-# Mark failed/cancelled
-# 1. Set status: "failed" or "cancelled"
-# 2. Move to archive
+trellis new my-task -t "My feature" -s small -r low   # scaffold spec
+trellis list                      # show all specs
+trellis list active               # filter by status
+trellis status my-task            # show details + phase progress
+trellis validate my-task          # check against schema
+trellis approve my-task           # drafts/ -> approved/
+trellis start my-task             # approved/ -> active/
+trellis complete my-task          # active/ -> archive/YYYY-MM/
+trellis fail my-task              # active/ -> archive/ (failed)
+trellis cancel my-task            # active/ -> archive/ (cancelled)
 ```
 
 ---

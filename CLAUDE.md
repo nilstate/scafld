@@ -1,5 +1,7 @@
 # Claude Code Integration Notes
 
+> **Template file.** Add your project overview, essential commands (build, test, dev server), and any Claude-specific tips here.
+
 Claude-specific tips for working with Trellis.
 
 **MUST READ:** `AGENTS.md` - the canonical agent guide covering invariants, modes, validation, and conventions. Read it before doing any work.

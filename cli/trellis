@@ -1,0 +1,768 @@
+#!/usr/bin/env python3
+"""Trellis CLI - spec-driven development framework for AI coding agents."""
+
+import argparse
+import datetime
+import json
+import os
+import re
+import shutil
+import sys
+from pathlib import Path
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+VERSION = "1.0.0"
+AI_DIR = ".ai"
+SPECS_DIR = f"{AI_DIR}/specs"
+DRAFTS_DIR = f"{SPECS_DIR}/drafts"
+APPROVED_DIR = f"{SPECS_DIR}/approved"
+ACTIVE_DIR = f"{SPECS_DIR}/active"
+ARCHIVE_DIR = f"{SPECS_DIR}/archive"
+LOGS_DIR = f"{AI_DIR}/logs"
+SCHEMA_PATH = f"{AI_DIR}/schemas/spec.json"
+
+STATUS_FOLDERS = {
+    "draft": DRAFTS_DIR,
+    "under_review": DRAFTS_DIR,
+    "approved": APPROVED_DIR,
+    "in_progress": ACTIVE_DIR,
+    "completed": ARCHIVE_DIR,
+    "failed": ARCHIVE_DIR,
+    "cancelled": ARCHIVE_DIR,
+}
+
+VALID_TRANSITIONS = {
+    "draft": ["under_review", "approved"],
+    "under_review": ["draft", "approved"],
+    "approved": ["in_progress"],
+    "in_progress": ["completed", "failed", "cancelled"],
+    "failed": ["cancelled"],
+}
+
+# ANSI colors
+C_RESET = "\033[0m"
+C_BOLD = "\033[1m"
+C_DIM = "\033[2m"
+C_RED = "\033[31m"
+C_GREEN = "\033[32m"
+C_YELLOW = "\033[33m"
+C_BLUE = "\033[34m"
+C_MAGENTA = "\033[35m"
+C_CYAN = "\033[36m"
+
+STATUS_COLORS = {
+    "draft": C_DIM,
+    "under_review": C_YELLOW,
+    "approved": C_BLUE,
+    "in_progress": C_CYAN,
+    "completed": C_GREEN,
+    "failed": C_RED,
+    "cancelled": C_DIM,
+}
+
+
+def supports_color():
+    """Check if terminal supports color."""
+    if os.environ.get("NO_COLOR"):
+        return False
+    if not hasattr(sys.stdout, "isatty") or not sys.stdout.isatty():
+        return False
+    return True
+
+
+USE_COLOR = supports_color()
+
+
+def c(code, text):
+    """Colorize text if terminal supports it."""
+    if not USE_COLOR:
+        return text
+    return f"{code}{text}{C_RESET}"
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def now_iso():
+    return datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def find_root():
+    """Walk up from cwd to find the project root (contains .ai/ dir)."""
+    d = Path.cwd()
+    while d != d.parent:
+        if (d / AI_DIR).is_dir():
+            return d
+        # Also check for .trellis submodule
+        if (d / ".trellis").is_dir():
+            return d
+        d = d.parent
+    return None
+
+
+def find_trellis_dir(root):
+    """Find the trellis source directory (submodule or self)."""
+    trellis = root / ".trellis"
+    if trellis.is_dir() and (trellis / "cli" / "trellis").exists():
+        return trellis
+    # Maybe we're running from the trellis repo itself
+    cli_path = root / "cli" / "trellis"
+    if cli_path.exists():
+        return root
+    return None
+
+
+def yaml_read_field(text, field):
+    """Read a top-level YAML scalar field (simple regex, no library needed)."""
+    m = re.search(rf'^{field}:\s*"?([^"\n]+)"?', text, re.MULTILINE)
+    if m:
+        return m.group(1).strip().strip('"').strip("'")
+    return None
+
+
+def yaml_set_field(text, field, value):
+    """Set a top-level YAML scalar field."""
+    quoted = f'"{value}"'
+    new_text, n = re.subn(
+        rf'^{field}:\s*.*$',
+        f'{field}: {quoted}',
+        text, count=1, flags=re.MULTILINE,
+    )
+    if n == 0:
+        # Field not found - add after spec_version or at top
+        new_text = f'{field}: {quoted}\n' + text
+    return new_text
+
+
+def yaml_read_nested(text, parent, field):
+    """Read a field nested one level under a parent block."""
+    in_parent = False
+    for line in text.splitlines():
+        if re.match(rf'^{parent}:', line):
+            in_parent = True
+            continue
+        if in_parent:
+            if line and not line[0].isspace():
+                break
+            m = re.match(rf'^\s+{field}:\s*"?([^"\n]+)"?', line)
+            if m:
+                return m.group(1).strip().strip('"').strip("'")
+    return None
+
+
+def count_phases(text):
+    """Count phases and their statuses."""
+    total = 0
+    completed = 0
+    failed = 0
+    in_progress = 0
+    for m in re.finditer(r'^\s+-\s+id:\s*"?phase\d+"?', text, re.MULTILINE):
+        total += 1
+    for m in re.finditer(r'^\s+status:\s*"?completed"?', text, re.MULTILINE):
+        completed += 1
+    for m in re.finditer(r'^\s+status:\s*"?failed"?', text, re.MULTILINE):
+        failed += 1
+    for m in re.finditer(r'^\s+status:\s*"?in_progress"?', text, re.MULTILINE):
+        in_progress += 1
+    # Subtract the top-level status from phase counts
+    top_status = yaml_read_field(text, "status")
+    if top_status == "completed":
+        completed = max(0, completed - 1)
+    elif top_status == "failed":
+        failed = max(0, failed - 1)
+    elif top_status == "in_progress":
+        in_progress = max(0, in_progress - 1)
+    return total, completed, failed, in_progress
+
+
+def find_spec(root, task_id):
+    """Find a spec file across all directories. Returns Path or None."""
+    for folder in [DRAFTS_DIR, APPROVED_DIR, ACTIVE_DIR]:
+        p = root / folder / f"{task_id}.yaml"
+        if p.exists():
+            return p
+    # Search archive
+    archive = root / ARCHIVE_DIR
+    if archive.is_dir():
+        for month_dir in sorted(archive.iterdir(), reverse=True):
+            if month_dir.is_dir():
+                p = month_dir / f"{task_id}.yaml"
+                if p.exists():
+                    return p
+    return None
+
+
+def find_all_specs(root):
+    """Find all spec files. Returns list of (Path, folder_type)."""
+    specs = []
+    for label, folder in [("drafts", DRAFTS_DIR), ("approved", APPROVED_DIR), ("active", ACTIVE_DIR)]:
+        d = root / folder
+        if d.is_dir():
+            for f in sorted(d.glob("*.yaml")):
+                specs.append((f, label))
+    archive = root / ARCHIVE_DIR
+    if archive.is_dir():
+        for month_dir in sorted(archive.iterdir(), reverse=True):
+            if month_dir.is_dir():
+                for f in sorted(month_dir.glob("*.yaml")):
+                    specs.append((f, f"archive/{month_dir.name}"))
+    return specs
+
+
+def move_spec(root, spec_path, new_status):
+    """Move spec to the correct folder and update status + timestamp."""
+    text = spec_path.read_text()
+    current_status = yaml_read_field(text, "status")
+
+    # Validate transition
+    allowed = VALID_TRANSITIONS.get(current_status, [])
+    if new_status not in allowed:
+        print(f"{c(C_RED, 'error')}: cannot transition from '{current_status}' to '{new_status}'")
+        print(f"  allowed transitions: {', '.join(allowed) if allowed else 'none'}")
+        sys.exit(1)
+
+    # Update fields
+    text = yaml_set_field(text, "status", new_status)
+    text = yaml_set_field(text, "updated", now_iso())
+
+    # Determine destination
+    if new_status in ("completed", "failed", "cancelled"):
+        month = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m")
+        dest_dir = root / ARCHIVE_DIR / month
+    else:
+        dest_dir = root / STATUS_FOLDERS[new_status]
+
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest = dest_dir / spec_path.name
+
+    spec_path.write_text(text)
+    shutil.move(str(spec_path), str(dest))
+
+    rel_from = spec_path.relative_to(root)
+    rel_to = dest.relative_to(root)
+    print(f"{c(C_GREEN, '  moved')}: {rel_from} -> {rel_to}")
+    print(f" {c(C_DIM, 'status')}: {c(STATUS_COLORS.get(new_status, ''), new_status)}")
+    return dest
+
+
+def require_root():
+    root = find_root()
+    if not root:
+        print(f"{c(C_RED, 'error')}: not in a Trellis project (no .ai/ directory found)")
+        print(f"  run '{c(C_BOLD, 'trellis init')}' to set up a workspace")
+        sys.exit(1)
+    return root
+
+
+def require_spec(root, task_id):
+    spec = find_spec(root, task_id)
+    if not spec:
+        print(f"{c(C_RED, 'error')}: spec not found: {task_id}")
+        print(f"  searched: {DRAFTS_DIR}/, {APPROVED_DIR}/, {ACTIVE_DIR}/, {ARCHIVE_DIR}/")
+        sys.exit(1)
+    return spec
+
+
+# ---------------------------------------------------------------------------
+# Commands
+# ---------------------------------------------------------------------------
+
+def cmd_init(args):
+    """Bootstrap Trellis workspace in the current directory."""
+    project_root = Path.cwd()
+
+    # Find trellis source
+    script_dir = Path(__file__).resolve().parent.parent
+    trellis_dir = script_dir
+    trellis_rel = os.path.relpath(trellis_dir, project_root)
+
+    print(f"{c(C_BOLD, 'Trellis init')}")
+    print(f"  trellis: {trellis_rel}/")
+    print(f"  project: {project_root}")
+    print()
+
+    # Copy template files
+    print(f"{c(C_BOLD, 'Templates:')}")
+    for fname in ["AGENTS.md", "CONVENTIONS.md", "CLAUDE.md"]:
+        dest = project_root / fname
+        src = trellis_dir / fname
+        if dest.exists():
+            print(f"  {c(C_DIM, 'skip')}: {fname} (exists)")
+        elif src.exists():
+            shutil.copy2(str(src), str(dest))
+            print(f"  {c(C_GREEN, 'created')}: {fname}")
+        else:
+            print(f"  {c(C_YELLOW, 'missing')}: {fname} (not in trellis source)")
+    print()
+
+    # Create directories
+    print(f"{c(C_BOLD, 'Directories:')}")
+    for d in [DRAFTS_DIR, APPROVED_DIR, ACTIVE_DIR, ARCHIVE_DIR, LOGS_DIR]:
+        p = project_root / d
+        p.mkdir(parents=True, exist_ok=True)
+        print(f"  {c(C_GREEN, 'ok')}: {d}/")
+    print()
+
+    # Symlink shared files
+    print(f"{c(C_BOLD, 'Symlinks')} (from {trellis_rel}/):")
+    symlinks = [
+        (f"{AI_DIR}/config.yaml", f"{AI_DIR}/config.yaml"),
+        (f"{AI_DIR}/schemas", f"{AI_DIR}/schemas"),
+        (f"{AI_DIR}/prompts", f"{AI_DIR}/prompts"),
+        (f"{SPECS_DIR}/README.md", f"{SPECS_DIR}/README.md"),
+        (f"{AI_DIR}/OPERATORS.md", f"{AI_DIR}/OPERATORS.md"),
+        (f"{AI_DIR}/README.md", f"{AI_DIR}/README.md"),
+    ]
+    for trellis_path, link_path in symlinks:
+        link = project_root / link_path
+        target_abs = trellis_dir / trellis_path
+        if not target_abs.exists() and not target_abs.is_dir():
+            continue
+        if link.is_symlink():
+            print(f"  {c(C_DIM, 'skip')}: {link_path} (symlink exists)")
+        elif link.exists():
+            print(f"  {c(C_DIM, 'skip')}: {link_path} (file exists)")
+        else:
+            link.parent.mkdir(parents=True, exist_ok=True)
+            rel_target = os.path.relpath(target_abs, link.parent)
+            link.symlink_to(rel_target)
+            print(f"  {c(C_GREEN, 'linked')}: {link_path} -> {rel_target}")
+    print()
+
+    # Install CLI symlink
+    print(f"{c(C_BOLD, 'CLI:')}")
+    cli_src = (trellis_dir / "cli" / "trellis").resolve()
+    local_bin = Path.home() / ".local" / "bin"
+    cli_link = local_bin / "trellis"
+
+    if cli_link.is_symlink() or cli_link.exists():
+        existing_target = None
+        if cli_link.is_symlink():
+            existing_target = cli_link.resolve()
+        if existing_target == cli_src:
+            print(f"  {c(C_DIM, 'skip')}: ~/.local/bin/trellis (already linked)")
+        else:
+            print(f"  {c(C_YELLOW, 'skip')}: ~/.local/bin/trellis (exists, pointing elsewhere)")
+            print(f"         to update: ln -sf {cli_src} {cli_link}")
+    else:
+        local_bin.mkdir(parents=True, exist_ok=True)
+        cli_link.symlink_to(cli_src)
+        print(f"  {c(C_GREEN, 'linked')}: ~/.local/bin/trellis -> {cli_src}")
+        # Check if ~/.local/bin is in PATH
+        path_dirs = os.environ.get("PATH", "").split(":")
+        if str(local_bin) not in path_dirs:
+            print(f"  {c(C_YELLOW, 'note')}: add ~/.local/bin to your PATH:")
+            print(f'         export PATH="$HOME/.local/bin:$PATH"')
+    print()
+
+    print(f"""{c(C_BOLD, 'Done!')} Next steps:
+
+  1. Edit {c(C_CYAN, 'AGENTS.md')} - add your project's invariants
+  2. Edit {c(C_CYAN, 'CONVENTIONS.md')} - add your tech stack and patterns
+  3. Edit {c(C_CYAN, 'CLAUDE.md')} - add project overview and commands
+  4. Edit {c(C_CYAN, '.ai/config.yaml')} - replace placeholder validation commands
+
+  Then: {c(C_BOLD, 'trellis new my-feature')} or tell your agent {c(C_BOLD, '"Let\'s plan [feature]."')}
+""")
+
+
+def cmd_new(args):
+    """Create a new spec from template."""
+    root = require_root()
+    task_id = args.task_id
+
+    # Validate task_id
+    if not re.match(r'^[a-z0-9][a-z0-9-]*[a-z0-9]$', task_id) and not re.match(r'^[a-z0-9]$', task_id):
+        print(f"{c(C_RED, 'error')}: task-id must be kebab-case (a-z, 0-9, hyphens)")
+        sys.exit(1)
+
+    # Check for conflicts
+    existing = find_spec(root, task_id)
+    if existing:
+        rel = existing.relative_to(root)
+        print(f"{c(C_RED, 'error')}: spec already exists: {rel}")
+        sys.exit(1)
+
+    dest_dir = root / DRAFTS_DIR
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest = dest_dir / f"{task_id}.yaml"
+
+    ts = now_iso()
+    size = args.size or "small"
+    risk = args.risk or "low"
+
+    template = f'''spec_version: "1.1"
+task_id: "{task_id}"
+created: "{ts}"
+updated: "{ts}"
+status: "draft"
+
+task:
+  title: "{args.title or task_id.replace("-", " ").title()}"
+  summary: >
+    TODO: Describe the problem or goal.
+  size: "{size}"
+  risk_level: "{risk}"
+  context:
+    packages:
+      - "TODO"
+    invariants:
+      - "domain_boundaries"
+  objectives:
+    - "TODO: Primary objective"
+  touchpoints:
+    - area: "TODO"
+      description: "TODO"
+  acceptance:
+    definition_of_done:
+      - id: "dod1"
+        description: "TODO"
+        status: "pending"
+    validation:
+      - id: "v1"
+        type: "test"
+        description: "TODO"
+        command: "TODO"
+        expected: "All tests pass"
+
+planning_log:
+  - timestamp: "{ts}"
+    actor: "user"
+    summary: "Spec created via trellis new"
+
+phases:
+  - id: "phase1"
+    name: "TODO: Phase name"
+    objective: "TODO: What this phase accomplishes"
+    changes:
+      - file: "TODO"
+        action: "update"
+        content_spec: |
+          TODO: Describe the changes.
+    acceptance_criteria:
+      - id: "ac1_1"
+        type: "test"
+        description: "TODO"
+        command: "TODO"
+        expected: "TODO"
+    status: "pending"
+
+rollback:
+  strategy: "per_phase"
+  commands:
+    phase1: "git checkout HEAD -- TODO"
+'''
+
+    dest.write_text(template)
+    rel = dest.relative_to(root)
+    print(f"{c(C_GREEN, 'created')}: {rel}")
+    print(f"  title: {args.title or task_id.replace('-', ' ').title()}")
+    print(f"   size: {size}  risk: {risk}")
+    print()
+    print(f"  Edit the spec, then: {c(C_BOLD, f'trellis approve {task_id}')}")
+
+
+def cmd_status(args):
+    """Show status of a spec."""
+    root = require_root()
+    spec = require_spec(root, args.task_id)
+    text = spec.read_text()
+    rel = spec.relative_to(root)
+
+    status = yaml_read_field(text, "status") or "unknown"
+    title = yaml_read_nested(text, "task", "title") or ""
+    size = yaml_read_nested(text, "task", "size") or ""
+    risk = yaml_read_nested(text, "task", "risk_level") or ""
+    updated = yaml_read_field(text, "updated") or ""
+    total, completed, failed, in_prog = count_phases(text)
+
+    color = STATUS_COLORS.get(status, "")
+    print(f"{c(C_BOLD, title)}")
+    print(f"     id: {args.task_id}")
+    print(f"   file: {c(C_DIM, str(rel))}")
+    print(f" status: {c(color, status)}")
+    if size or risk:
+        print(f"   size: {size}  risk: {risk}")
+    if total > 0:
+        phase_parts = []
+        if completed:
+            phase_parts.append(c(C_GREEN, f"{completed} done"))
+        if in_prog:
+            phase_parts.append(c(C_CYAN, f"{in_prog} active"))
+        if failed:
+            phase_parts.append(c(C_RED, f"{failed} failed"))
+        pending = total - completed - failed - in_prog
+        if pending > 0:
+            phase_parts.append(c(C_DIM, f"{pending} pending"))
+        print(f" phases: {' / '.join(phase_parts)}  ({total} total)")
+    if updated:
+        print(f"updated: {c(C_DIM, updated)}")
+
+
+def cmd_list(args):
+    """List all specs."""
+    root = require_root()
+    specs = find_all_specs(root)
+
+    if not specs:
+        print(f"{c(C_DIM, 'No specs found.')}")
+        print(f"  Create one: {c(C_BOLD, 'trellis new my-feature')}")
+        return
+
+    # Filter
+    if args.filter:
+        f = args.filter.lower()
+        if f in ("draft", "drafts"):
+            specs = [(s, l) for s, l in specs if l == "drafts"]
+        elif f in ("approved",):
+            specs = [(s, l) for s, l in specs if l == "approved"]
+        elif f in ("active", "in_progress"):
+            specs = [(s, l) for s, l in specs if l == "active"]
+        elif f in ("archive", "archived", "completed", "done"):
+            specs = [(s, l) for s, l in specs if l.startswith("archive")]
+        else:
+            # Search in task_id
+            specs = [(s, l) for s, l in specs if f in s.stem.lower()]
+
+    if not specs:
+        print(f"{c(C_DIM, 'No matching specs.')}")
+        return
+
+    # Group by location
+    groups = {}
+    for spec_path, label in specs:
+        groups.setdefault(label, []).append(spec_path)
+
+    for label in groups:
+        print(f"{c(C_BOLD, label)}/")
+        for spec_path in groups[label]:
+            text = spec_path.read_text()
+            status = yaml_read_field(text, "status") or "unknown"
+            title = yaml_read_nested(text, "task", "title") or spec_path.stem
+            color = STATUS_COLORS.get(status, "")
+            total, completed, _, _ = count_phases(text)
+            phase_str = ""
+            if total > 0:
+                phase_str = f" [{completed}/{total}]"
+            # Truncate title
+            max_title = 50
+            if len(title) > max_title:
+                title = title[:max_title - 1] + "…"
+            print(f"  {c(color, f'{status:14s}')} {spec_path.stem:30s} {c(C_DIM, title)}{phase_str}")
+        print()
+
+
+def cmd_approve(args):
+    """Move spec from drafts to approved."""
+    root = require_root()
+    spec = require_spec(root, args.task_id)
+    move_spec(root, spec, "approved")
+
+
+def cmd_start(args):
+    """Move spec from approved to active."""
+    root = require_root()
+    spec = require_spec(root, args.task_id)
+    move_spec(root, spec, "in_progress")
+
+
+def cmd_complete(args):
+    """Move spec from active to archive (completed)."""
+    root = require_root()
+    spec = require_spec(root, args.task_id)
+    move_spec(root, spec, "completed")
+
+
+def cmd_fail(args):
+    """Move spec from active to archive (failed)."""
+    root = require_root()
+    spec = require_spec(root, args.task_id)
+    move_spec(root, spec, "failed")
+
+
+def cmd_cancel(args):
+    """Move spec to archive (cancelled)."""
+    root = require_root()
+    spec = require_spec(root, args.task_id)
+    move_spec(root, spec, "cancelled")
+
+
+def cmd_validate(args):
+    """Validate a spec against the JSON schema."""
+    root = require_root()
+    spec = require_spec(root, args.task_id)
+
+    # Find schema - check symlinked and direct paths
+    schema_path = root / SCHEMA_PATH
+    if not schema_path.exists():
+        # Try trellis submodule
+        trellis = find_trellis_dir(root)
+        if trellis:
+            schema_path = trellis / SCHEMA_PATH
+    if not schema_path.exists():
+        print(f"{c(C_RED, 'error')}: schema not found at {SCHEMA_PATH}")
+        sys.exit(1)
+
+    schema_text = schema_path.read_text()
+    try:
+        schema = json.loads(schema_text)
+    except json.JSONDecodeError as e:
+        print(f"{c(C_RED, 'error')}: invalid schema JSON: {e}")
+        sys.exit(1)
+
+    # Basic YAML-to-dict parsing using only stdlib
+    # We'll do structural validation of required fields
+    text = spec.read_text()
+    rel = spec.relative_to(root)
+    errors = []
+
+    required_top = schema.get("required", [])
+    for field in required_top:
+        if not yaml_read_field(text, field):
+            # Check if it's a block field (like task:, phases:)
+            if not re.search(rf'^{field}:', text, re.MULTILINE):
+                errors.append(f"missing required field: {field}")
+
+    # Check task_id format
+    task_id = yaml_read_field(text, "task_id")
+    if task_id and not re.match(r'^[a-z0-9-]+$', task_id):
+        errors.append(f"task_id must be kebab-case: got '{task_id}'")
+
+    # Check status enum
+    status = yaml_read_field(text, "status")
+    valid_statuses = ["draft", "blocked", "under_review", "approved", "in_progress",
+                      "completed", "failed", "cancelled"]
+    if status and status not in valid_statuses:
+        errors.append(f"invalid status: '{status}' (expected one of: {', '.join(valid_statuses)})")
+
+    # Check spec_version
+    sv = yaml_read_field(text, "spec_version")
+    if sv and not re.match(r'^\d+\.\d+$', sv):
+        errors.append(f"spec_version must be semver: got '{sv}'")
+
+    # Check phases exist
+    if not re.search(r'^phases:', text, re.MULTILINE):
+        errors.append("missing required field: phases")
+    else:
+        # Check each phase has required fields
+        phase_ids = re.findall(r'^\s+-\s+id:\s*"?(phase\d+)"?', text, re.MULTILINE)
+        if not phase_ids:
+            errors.append("phases array is empty (at least 1 phase required)")
+
+    # Check planning_log exists
+    if not re.search(r'^planning_log:', text, re.MULTILINE):
+        errors.append("missing required field: planning_log")
+
+    # Check task block required fields
+    if re.search(r'^task:', text, re.MULTILINE):
+        task_required = ["title", "summary", "size", "risk_level"]
+        for field in task_required:
+            if not yaml_read_nested(text, "task", field):
+                errors.append(f"missing required task field: task.{field}")
+    else:
+        errors.append("missing required field: task")
+
+    if errors:
+        print(f"{c(C_RED, 'FAIL')}: {rel}")
+        for e in errors:
+            print(f"  - {e}")
+        sys.exit(1)
+    else:
+        print(f"{c(C_GREEN, 'PASS')}: {rel}")
+        print(f"  spec_version: {sv}")
+        print(f"  task_id: {task_id}")
+        print(f"  status: {status}")
+        total, completed, failed, in_prog = count_phases(text)
+        print(f"  phases: {total}")
+
+
+def cmd_version(args):
+    print(f"trellis {VERSION}")
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+def main():
+    parser = argparse.ArgumentParser(
+        prog="trellis",
+        description="Spec-driven development framework for AI coding agents",
+    )
+    parser.add_argument("--version", action="store_true", help="Show version")
+    sub = parser.add_subparsers(dest="command")
+
+    # init
+    p_init = sub.add_parser("init", help="Bootstrap Trellis workspace")
+
+    # new
+    p_new = sub.add_parser("new", help="Create a new spec from template")
+    p_new.add_argument("task_id", help="Task ID (kebab-case)")
+    p_new.add_argument("-t", "--title", help="Task title")
+    p_new.add_argument("-s", "--size", choices=["micro", "small", "medium", "large"])
+    p_new.add_argument("-r", "--risk", choices=["low", "medium", "high"])
+
+    # status
+    p_status = sub.add_parser("status", help="Show spec status")
+    p_status.add_argument("task_id", help="Task ID")
+
+    # list
+    p_list = sub.add_parser("list", help="List all specs")
+    p_list.add_argument("filter", nargs="?", help="Filter by status or search term")
+
+    # approve
+    p_approve = sub.add_parser("approve", help="Approve a draft spec")
+    p_approve.add_argument("task_id", help="Task ID")
+
+    # start
+    p_start = sub.add_parser("start", help="Start execution of approved spec")
+    p_start.add_argument("task_id", help="Task ID")
+
+    # complete
+    p_complete = sub.add_parser("complete", help="Mark spec as completed")
+    p_complete.add_argument("task_id", help="Task ID")
+
+    # fail
+    p_fail = sub.add_parser("fail", help="Mark spec as failed")
+    p_fail.add_argument("task_id", help="Task ID")
+
+    # cancel
+    p_cancel = sub.add_parser("cancel", help="Cancel a spec")
+    p_cancel.add_argument("task_id", help="Task ID")
+
+    # validate
+    p_validate = sub.add_parser("validate", help="Validate spec against schema")
+    p_validate.add_argument("task_id", help="Task ID")
+
+    args = parser.parse_args()
+
+    if args.version:
+        cmd_version(args)
+        return
+
+    commands = {
+        "init": cmd_init,
+        "new": cmd_new,
+        "status": cmd_status,
+        "list": cmd_list,
+        "approve": cmd_approve,
+        "start": cmd_start,
+        "complete": cmd_complete,
+        "fail": cmd_fail,
+        "cancel": cmd_cancel,
+        "validate": cmd_validate,
+    }
+
+    if args.command in commands:
+        commands[args.command](args)
+    else:
+        parser.print_help()
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

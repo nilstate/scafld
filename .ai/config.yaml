@@ -10,8 +10,8 @@ version: "1.0"
 # INVARIANTS (immutable during session)
 # =============================================================================
 invariants:
-  # Canonical invariant names used in specs (see .ai/schemas/spec.json: context.invariants)
-  # Customize these for your project's architectural rules
+  # CUSTOMIZE: Replace these with your project's architectural invariants.
+  # These names are referenced in specs (context.invariants) and enforced during execution.
   canonical:
     - domain_boundaries      # Respect layer separation
     - error_envelope         # Consistent error format
@@ -69,7 +69,7 @@ modes:
 # =============================================================================
 # VALIDATION PIPELINES
 # =============================================================================
-# Customize these commands for your project's tech stack
+# CUSTOMIZE: Replace placeholder commands below with your actual build/test/lint commands.
 validation:
   # Run after each phase (fast, targeted)
   # Placeholders:
@@ -197,7 +197,7 @@ react:
 # TECH STACK CONTEXT (customize for your project)
 # =============================================================================
 tech_stack:
-  # Example configuration - replace with your actual stack
+  # CUSTOMIZE: Replace with your actual tech stack
   backend:
     language: "Your language (e.g., Python 3.11, Ruby 3.2, Go 1.21)"
     framework: "Your framework (e.g., Django, Rails, FastAPI)"
@@ -214,7 +214,7 @@ tech_stack:
 # REPO LAYOUT (customize for your project)
 # =============================================================================
 repo_layout:
-  # Example paths - replace with your actual structure
+  # CUSTOMIZE: Replace with your actual directory layout
   backend: "backend/"
   frontend: "frontend/"
   specs: ".ai/specs/"

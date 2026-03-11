@@ -1,5 +1,7 @@
 # Coding Conventions & Standards
 
+> **Template file.** Customize this for your project's tech stack, architecture, and patterns. The structure and generic rules below are a solid starting point.
+
 **Purpose:** Single source of truth for code style and development patterns.
 
 **Scope:** Applies to all code in this repository.
