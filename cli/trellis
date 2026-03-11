@@ -15,7 +15,7 @@ from pathlib import Path
 # Constants
 # ---------------------------------------------------------------------------
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 AI_DIR = ".ai"
 SPECS_DIR = f"{AI_DIR}/specs"
 DRAFTS_DIR = f"{SPECS_DIR}/drafts"
@@ -184,22 +184,7 @@ def find_root():
     while d != d.parent:
         if (d / AI_DIR).is_dir():
             return d
-        # Also check for .trellis submodule
-        if (d / ".trellis").is_dir():
-            return d
         d = d.parent
-    return None
-
-
-def find_trellis_dir(root):
-    """Find the trellis source directory (submodule or self)."""
-    trellis = root / ".trellis"
-    if trellis.is_dir() and (trellis / "cli" / "trellis").exists():
-        return trellis
-    # Maybe we're running from the trellis repo itself
-    cli_path = root / "cli" / "trellis"
-    if cli_path.exists():
-        return root
     return None
 
 
@@ -401,17 +386,14 @@ def cmd_init(args):
     """Bootstrap Trellis workspace in the current directory."""
     project_root = Path.cwd()
 
-    # Find trellis source
-    script_dir = Path(__file__).resolve().parent.parent
-    trellis_dir = script_dir
-    trellis_rel = os.path.relpath(trellis_dir, project_root)
+    # Find trellis source (where this script lives)
+    trellis_dir = Path(__file__).resolve().parent.parent
 
     print(f"{c(C_BOLD, 'Trellis init')}")
-    print(f"  trellis: {trellis_rel}/")
     print(f"  project: {project_root}")
     print()
 
-    # Copy template files
+    # Copy template files (yours to customize)
     print(f"{c(C_BOLD, 'Templates:')}")
     for fname in ["AGENTS.md", "CONVENTIONS.md", "CLAUDE.md"]:
         dest = project_root / fname
@@ -427,65 +409,53 @@ def cmd_init(args):
 
     # Create directories
     print(f"{c(C_BOLD, 'Directories:')}")
-    for d in [DRAFTS_DIR, APPROVED_DIR, ACTIVE_DIR, ARCHIVE_DIR, LOGS_DIR]:
+    for d in [DRAFTS_DIR, APPROVED_DIR, ACTIVE_DIR, ARCHIVE_DIR, LOGS_DIR,
+              f"{AI_DIR}/schemas", f"{AI_DIR}/prompts"]:
         p = project_root / d
         p.mkdir(parents=True, exist_ok=True)
         print(f"  {c(C_GREEN, 'ok')}: {d}/")
     print()
 
-    # Symlink shared files
-    print(f"{c(C_BOLD, 'Symlinks')} (from {trellis_rel}/):")
-    symlinks = [
+    # Copy framework files (config, schemas, prompts, docs)
+    print(f"{c(C_BOLD, 'Framework files:')}")
+    copy_files = [
         (f"{AI_DIR}/config.yaml", f"{AI_DIR}/config.yaml"),
-        (f"{AI_DIR}/schemas", f"{AI_DIR}/schemas"),
-        (f"{AI_DIR}/prompts", f"{AI_DIR}/prompts"),
-        (f"{SPECS_DIR}/README.md", f"{SPECS_DIR}/README.md"),
-        (f"{AI_DIR}/OPERATORS.md", f"{AI_DIR}/OPERATORS.md"),
+        (f"{AI_DIR}/schemas/spec.json", f"{AI_DIR}/schemas/spec.json"),
+        (f"{AI_DIR}/prompts/plan.md", f"{AI_DIR}/prompts/plan.md"),
+        (f"{AI_DIR}/prompts/exec.md", f"{AI_DIR}/prompts/exec.md"),
         (f"{AI_DIR}/README.md", f"{AI_DIR}/README.md"),
+        (f"{AI_DIR}/OPERATORS.md", f"{AI_DIR}/OPERATORS.md"),
+        (f"{SPECS_DIR}/README.md", f"{SPECS_DIR}/README.md"),
     ]
-    for trellis_path, link_path in symlinks:
-        link = project_root / link_path
-        target_abs = trellis_dir / trellis_path
-        if not target_abs.exists() and not target_abs.is_dir():
+    for src_rel, dest_rel in copy_files:
+        src = trellis_dir / src_rel
+        dest = project_root / dest_rel
+        if not src.exists():
             continue
-        if link.is_symlink():
-            print(f"  {c(C_DIM, 'skip')}: {link_path} (symlink exists)")
-        elif link.exists():
-            print(f"  {c(C_DIM, 'skip')}: {link_path} (file exists)")
+        if dest.exists():
+            print(f"  {c(C_DIM, 'skip')}: {dest_rel} (exists)")
         else:
-            link.parent.mkdir(parents=True, exist_ok=True)
-            rel_target = os.path.relpath(target_abs, link.parent)
-            link.symlink_to(rel_target)
-            print(f"  {c(C_GREEN, 'linked')}: {link_path} -> {rel_target}")
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(str(src), str(dest))
+            print(f"  {c(C_GREEN, 'created')}: {dest_rel}")
     print()
 
-    # Update .gitignore
-    print(f"{c(C_BOLD, 'Gitignore:')}")
-    gitignore = project_root / ".gitignore"
-    trellis_entries = [
-        "# Trellis",
-        ".ai/logs/",
-    ]
-    if gitignore.exists():
-        existing = gitignore.read_text()
-        if "# Trellis" in existing:
-            print(f"  {c(C_DIM, 'skip')}: .gitignore (Trellis entries exist)")
-        else:
-            with open(gitignore, "a") as f:
-                f.write("\n" + "\n".join(trellis_entries) + "\n")
-            print(f"  {c(C_GREEN, 'updated')}: .gitignore (added Trellis entries)")
-    else:
-        gitignore.write_text("\n".join(trellis_entries) + "\n")
-        print(f"  {c(C_GREEN, 'created')}: .gitignore")
+    # Copy example spec
+    examples_src = trellis_dir / SPECS_DIR / "examples"
+    examples_dest = project_root / SPECS_DIR / "examples"
+    if examples_src.is_dir() and not examples_dest.exists():
+        shutil.copytree(str(examples_src), str(examples_dest))
+        print(f"  {c(C_GREEN, 'created')}: {SPECS_DIR}/examples/")
     print()
 
     # Create starter config.local.yaml
+    print(f"{c(C_BOLD, 'Config:')}")
     local_config = project_root / CONFIG_LOCAL_PATH
     if local_config.exists():
         print(f"  {c(C_DIM, 'skip')}: {CONFIG_LOCAL_PATH} (exists)")
     else:
         local_config.write_text('''# Project-specific config overlay
-# Values here merge on top of .ai/config.yaml (from Trellis submodule).
+# Values here merge on top of .ai/config.yaml.
 # Only include sections you want to override - everything else inherits.
 
 # CUSTOMIZE: Replace with your actual build/test/lint commands
@@ -514,30 +484,24 @@ repo_layout:
         print(f"  {c(C_GREEN, 'created')}: {CONFIG_LOCAL_PATH}")
     print()
 
-    # Install CLI symlink
-    print(f"{c(C_BOLD, 'CLI:')}")
-    cli_src = (trellis_dir / "cli" / "trellis").resolve()
-    local_bin = Path.home() / ".local" / "bin"
-    cli_link = local_bin / "trellis"
-
-    if cli_link.is_symlink() or cli_link.exists():
-        existing_target = None
-        if cli_link.is_symlink():
-            existing_target = cli_link.resolve()
-        if existing_target == cli_src:
-            print(f"  {c(C_DIM, 'skip')}: ~/.local/bin/trellis (already linked)")
+    # Update .gitignore
+    print(f"{c(C_BOLD, 'Gitignore:')}")
+    gitignore = project_root / ".gitignore"
+    trellis_entries = [
+        "# Trellis",
+        ".ai/logs/",
+    ]
+    if gitignore.exists():
+        existing = gitignore.read_text()
+        if "# Trellis" in existing:
+            print(f"  {c(C_DIM, 'skip')}: .gitignore (Trellis entries exist)")
         else:
-            print(f"  {c(C_YELLOW, 'skip')}: ~/.local/bin/trellis (exists, pointing elsewhere)")
-            print(f"         to update: ln -sf {cli_src} {cli_link}")
+            with open(gitignore, "a") as f:
+                f.write("\n" + "\n".join(trellis_entries) + "\n")
+            print(f"  {c(C_GREEN, 'updated')}: .gitignore (added Trellis entries)")
     else:
-        local_bin.mkdir(parents=True, exist_ok=True)
-        cli_link.symlink_to(cli_src)
-        print(f"  {c(C_GREEN, 'linked')}: ~/.local/bin/trellis -> {cli_src}")
-        # Check if ~/.local/bin is in PATH
-        path_dirs = os.environ.get("PATH", "").split(":")
-        if str(local_bin) not in path_dirs:
-            print(f"  {c(C_YELLOW, 'note')}: add ~/.local/bin to your PATH:")
-            print(f'         export PATH="$HOME/.local/bin:$PATH"')
+        gitignore.write_text("\n".join(trellis_entries) + "\n")
+        print(f"  {c(C_GREEN, 'created')}: .gitignore")
     print()
 
     print(f"""{c(C_BOLD, 'Done!')} Next steps:
@@ -806,13 +770,8 @@ def cmd_validate(args):
     root = require_root()
     spec = require_spec(root, args.task_id)
 
-    # Find schema - check symlinked and direct paths
+    # Find schema
     schema_path = root / SCHEMA_PATH
-    if not schema_path.exists():
-        # Try trellis submodule
-        trellis = find_trellis_dir(root)
-        if trellis:
-            schema_path = trellis / SCHEMA_PATH
     if not schema_path.exists():
         print(f"{c(C_RED, 'error')}: schema not found at {SCHEMA_PATH}")
         sys.exit(1)

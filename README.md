@@ -1,8 +1,14 @@
 # Trellis
 
-A spec-driven development framework for AI coding agents. Every task becomes a machine-readable YAML specification before any code changes happen - structured, auditable, and validated at every step.
+Most AI coding tools let agents jump straight into your codebase and start writing. No plan. No review. No audit trail. Just vibes and a prayer.
 
-## How It Works
+The result is predictable: code that looks right, passes the tests, and slowly rots from the inside. Duplicated blocks. Architectural drift. Changes nobody asked for buried in changes somebody did. The agent ships fast and you spend the next week figuring out what it actually did.
+
+Trellis fixes this by enforcing a simple constraint: **think before you type**.
+
+Every non-trivial task becomes a YAML specification before a single line of code changes. The spec defines what will change, in what order, with what acceptance criteria, and how to roll it back if it breaks. A human reviews and approves the spec. Only then does the agent execute - phase by phase, validated at every checkpoint, auditable after the fact.
+
+This isn't a wrapper around a prompt. It's a development methodology - the same separation of planning from execution that every serious engineering discipline has always required, applied to the one context where people have decided to skip it entirely.
 
 ```text
 User Request
@@ -22,146 +28,98 @@ User Request
  Archive            Completed spec + audit trail
 ```
 
-**Plan** - AI generates a YAML task spec with objectives, phases, acceptance criteria, and rollback commands.
+## Why This Exists
 
-**Review** - Developer reviews the spec and approves it.
+We built Trellis because every AI coding workflow we used was broken in the same way. The agent would receive a task, immediately start modifying files, and produce something that was technically functional but architecturally thoughtless. Ask it to add a feature and it might refactor three other things along the way. Ask it to fix a bug and it might introduce a dependency you didn't want. There was no contract between what was requested and what was delivered, and no way to verify the difference after the fact.
 
-**Execute** - AI executes the approved spec autonomously, running validation after each phase.
+The spec is the contract. It forces the planning to happen explicitly, in a format that a human can review and a machine can validate. It creates an audit trail that answers "what changed, why, and did it match what was agreed." It makes AI-assisted development reproducible instead of hopeful.
 
-**Archive** - Completed specs are archived with full execution results and self-evaluation.
+## Install
+
+```bash
+git clone https://github.com/sourcey/trellis.git ~/.trellis && ~/.trellis/install.sh
+```
+
+This clones Trellis to `~/.trellis` and symlinks the `trellis` command to `~/.local/bin/`.
+
+To update: `cd ~/.trellis && git pull`
 
 ## Setup
 
-### Add Trellis as a submodule
-
 ```bash
 cd your-project
-git submodule add https://github.com/sourcey/trellis.git .trellis
+trellis init
 ```
 
-### Bootstrap your workspace
-
-```bash
-.trellis/cli/trellis init
-```
-
-This sets up the workspace and installs `trellis` to `~/.local/bin/` so you can use it from anywhere:
+This scaffolds the full structure into your project:
 
 ```text
 your-project/
-  .trellis/                 # Trellis submodule (don't edit directly)
   .ai/
-    config.yaml            -> .trellis/.ai/config.yaml (symlink)
-    config.local.yaml      # YOUR overrides (created by init)
-    prompts/               -> .trellis/.ai/prompts/ (symlink)
-    schemas/               -> .trellis/.ai/schemas/ (symlink)
+    config.yaml            # Validation rules, rubric, safety controls
+    config.local.yaml      # Your overrides (build/test/lint commands)
+    prompts/               # Plan + exec mode instructions
+    schemas/               # Spec validation schema
     specs/
       drafts/              # Planning in progress
       approved/            # Ready for execution
       active/              # Currently executing
       archive/             # Completed work
-    logs/                  # Execution logs (optional)
-  AGENTS.md                # Customize: your project's invariants and policies
-  CLAUDE.md                # Customize: project overview, essential commands
-  CONVENTIONS.md           # Customize: tech stack, patterns, coding standards
+    logs/                  # Execution logs (gitignored)
+  AGENTS.md                # Your project's invariants and policies
+  CLAUDE.md                # Project overview, essential commands
+  CONVENTIONS.md           # Tech stack, patterns, coding standards
 ```
 
-### Customize for your project
+### Make It Yours
 
-The init command copies template files to your project root. These are yours to customize:
-
-1. **AGENTS.md** - Add your project's architectural invariants, domain rules, and forbidden actions
-2. **CONVENTIONS.md** - Add your tech stack, naming conventions, testing patterns, and commands
-3. **CLAUDE.md** - Add project overview, essential commands, and agent-specific tips
-4. **`.ai/config.local.yaml`** - Set your build/test/lint commands (merges on top of base config)
+1. **AGENTS.md** - Your architectural invariants, domain rules, forbidden actions
+2. **CONVENTIONS.md** - Your tech stack, naming conventions, testing patterns
+3. **CLAUDE.md** - Project overview, essential commands, agent-specific tips
+4. **`.ai/config.local.yaml`** - Your build/test/lint commands (merges on top of config.yaml)
 
 ### CLI
 
 ```bash
-trellis new <task-id> [-t title] [-s size] [-r risk]   # Scaffold a new spec
+trellis new <task-id> [-t title] [-s size] [-r risk]     # Scaffold a new spec
 trellis list [filter]                                    # List all specs
 trellis status <task-id>                                 # Show spec details
 trellis validate <task-id>                               # Validate against schema
-trellis approve <task-id>                                # drafts/ -> approved/
-trellis start <task-id>                                  # approved/ -> active/
-trellis exec <task-id> [-p phase]                        # Run acceptance criteria, record results
-trellis audit <task-id> [-b base-ref]                    # Check spec vs actual git diff
-trellis diff <task-id>                                   # Show git history for a spec
-trellis complete <task-id>                               # active/ -> archive/
-trellis fail <task-id>                                   # active/ -> archive/ (failed)
-trellis cancel <task-id>                                 # active/ -> archive/ (cancelled)
-trellis report                                           # Aggregate stats across all specs
+trellis approve <task-id>                                # Move to approved
+trellis start <task-id>                                  # Move to active
+trellis exec <task-id> [-p phase]                        # Run acceptance criteria
+trellis audit <task-id> [-b base-ref]                    # Spec vs actual git diff
+trellis diff <task-id>                                   # Git history for a spec
+trellis complete <task-id>                               # Archive as completed
+trellis fail <task-id>                                   # Archive as failed
+trellis cancel <task-id>                                 # Archive as cancelled
+trellis report                                           # Aggregate stats
 ```
 
-**Tip:** Add `.trellis/cli` to your PATH, or alias `trellis` to `.trellis/cli/trellis`.
-
-### Start using it
+### Start Using It
 
 Tell your AI agent: *"Let's plan [feature]. Create a task spec."*
 
-## Workspace Architecture
+The agent enters read-only planning mode, explores your codebase, and produces a YAML spec with objectives, phases, acceptance criteria, and rollback commands. You review it, approve it, and the agent executes autonomously within those bounds.
 
-Trellis is designed to be added as a **submodule** so your AI agent has a complete scaffold alongside your project code. The agent reads the prompts, schemas, and config from Trellis, while your project-specific policies live in the root-level AGENTS.md, CONVENTIONS.md, and CLAUDE.md.
+## What It Actually Does
 
-```text
-.trellis/                    # Framework (shared, versioned)
-  .ai/config.yaml            # Default validation config
-  .ai/prompts/               # Plan + exec mode instructions
-  .ai/schemas/spec.json      # Spec validation schema
-  cli/trellis                # CLI tool
-
-your-project/                # Your code + customizations
-  AGENTS.md                  # YOUR invariants, YOUR domain rules
-  CONVENTIONS.md             # YOUR tech stack, YOUR patterns
-  CLAUDE.md                  # YOUR commands, YOUR project overview
-  .ai/config.local.yaml      # YOUR overrides (merges on top of base)
-  .ai/specs/                 # YOUR task specs (gitignored or committed)
-```
-
-The submodule stays clean and updatable. Your customizations live in your repo.
-
-## Key Features
-
-- **Spec-driven** - every task is a versioned, schema-validated YAML artifact
-- **Approval gate** - human reviews the plan before any code changes
-- **Phase-by-phase execution** - with acceptance criteria at every checkpoint
-- **Validation profiles** - light, standard, strict (configured in `config.yaml`)
-- **Self-evaluation** - agents score work against a rubric (7/10 threshold)
-- **Resume protocol** - interrupted executions can pick up where they left off
-- **Rollback commands** - per-phase rollback for safe failure recovery
-- **Executable verification** - `trellis exec` runs acceptance criteria and records pass/fail results
-- **Scope audit** - `trellis audit` compares spec vs git diff to detect undeclared changes
-- **Config overlay** - `config.local.yaml` merges on top of base config; submodule stays updatable
-- **Reporting** - `trellis report` aggregates pass rates, self-eval stats, and scope drift across specs
-- **Agent-agnostic** - works with Claude, Cursor, Copilot, Windsurf, or any AI agent
-
-## Trellis Structure
-
-```text
-.ai/
-  config.yaml           # Validation rules, rubric, safety controls
-  prompts/plan.md       # Planning mode instructions
-  prompts/exec.md       # Execution mode instructions
-  schemas/spec.json     # Spec validation schema
-  specs/                # Task specs by lifecycle status
-    examples/           # Example completed spec
-    drafts/             # Planning in progress
-    approved/           # Ready for execution
-    active/             # Currently executing
-    archive/            # Completed work
-  OPERATORS.md          # Human cheat sheet
-
-cli/trellis             # CLI tool (Python 3, no deps)
-AGENTS.md               # Canonical agent guide (all AI agents)
-CLAUDE.md               # Claude Code specific notes
-CONVENTIONS.md          # Coding standards template
-```
+- **Spec-driven** - Every task is a versioned, schema-validated YAML artifact. Not a prompt. Not a conversation. A machine-readable contract.
+- **Approval gate** - No code changes until a human reviews the plan. The agent thinks; you decide.
+- **Phase-by-phase execution** - Acceptance criteria at every checkpoint, not just at the end.
+- **Scope audit** - `trellis audit` compares what the spec declared against what actually changed in git. Undeclared changes get flagged.
+- **Self-evaluation** - Agents score their own work against a configurable rubric. Below 7/10 triggers a second pass.
+- **Rollback commands** - Per-phase rollback for safe failure recovery. Every phase declares how to undo itself.
+- **Resume protocol** - Interrupted executions pick up where they left off.
+- **Validation profiles** - Light, standard, or strict, configured per-task or derived from risk level.
+- **Reporting** - `trellis report` aggregates pass rates, self-eval scores, and scope drift across your entire spec history.
+- **Agent-agnostic** - Works with Claude, Cursor, Copilot, Windsurf, or any AI coding agent.
 
 ## Documentation
 
 | File | Audience | Purpose |
 | ---- | -------- | ------- |
-| [AGENTS.md](AGENTS.md) | AI agents | Canonical guide - invariants, modes, validation, conventions |
+| [AGENTS.md](AGENTS.md) | AI agents | Invariants, modes, validation, conventions |
 | [CLAUDE.md](CLAUDE.md) | Claude Code | Claude-specific tool tips |
 | [CONVENTIONS.md](CONVENTIONS.md) | AI agents | Coding standards template |
 | [.ai/config.yaml](.ai/config.yaml) | Both | All configuration in one place |
@@ -169,8 +127,12 @@ CONVENTIONS.md          # Coding standards template
 
 ## License
 
-MIT License - free to use, modify, and distribute.
+MIT
 
 ## Contributing
 
-Contributions welcome. Follow the spec-driven approach and document changes in commit messages.
+Contributions welcome. Follow the spec-driven approach - practice what we preach.
+
+---
+
+Built by [Sourcey](https://sourcey.com). We build AI infrastructure that works in production, not in pitch decks.
