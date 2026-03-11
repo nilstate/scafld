@@ -15,7 +15,7 @@ from pathlib import Path
 # Constants
 # ---------------------------------------------------------------------------
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 AI_DIR = ".ai"
 SPECS_DIR = f"{AI_DIR}/specs"
 DRAFTS_DIR = f"{SPECS_DIR}/drafts"
@@ -24,6 +24,8 @@ ACTIVE_DIR = f"{SPECS_DIR}/active"
 ARCHIVE_DIR = f"{SPECS_DIR}/archive"
 LOGS_DIR = f"{AI_DIR}/logs"
 SCHEMA_PATH = f"{AI_DIR}/schemas/spec.json"
+CONFIG_PATH = f"{AI_DIR}/config.yaml"
+CONFIG_LOCAL_PATH = f"{AI_DIR}/config.local.yaml"
 
 STATUS_FOLDERS = {
     "draft": DRAFTS_DIR,
@@ -90,6 +92,90 @@ def c(code, text):
 
 def now_iso():
     return datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def deep_merge(base, overlay):
+    """Deep merge overlay dict into base dict. Overlay wins on conflicts."""
+    result = dict(base)
+    for key, val in overlay.items():
+        if key in result and isinstance(result[key], dict) and isinstance(val, dict):
+            result[key] = deep_merge(result[key], val)
+        else:
+            result[key] = val
+    return result
+
+
+def simple_yaml_load(text):
+    """Minimal YAML loader for config files (handles scalars and nested dicts).
+
+    Not a full YAML parser - handles the subset used in config.yaml:
+    key: value, nested dicts, and simple lists. Good enough for config overlay.
+    """
+    result = {}
+    stack = [(result, -1)]  # (dict, indent_level)
+
+    for line in text.splitlines():
+        # Skip comments and blank lines
+        stripped = line.strip()
+        if not stripped or stripped.startswith('#'):
+            continue
+
+        # Calculate indent
+        indent = len(line) - len(line.lstrip())
+
+        # Pop stack to find parent at correct indent level
+        while len(stack) > 1 and stack[-1][1] >= indent:
+            stack.pop()
+
+        current_dict = stack[-1][0]
+
+        # List item: "- value"
+        if stripped.startswith('- '):
+            # We don't need full list support for config overlay
+            continue
+
+        # Key: value
+        m = re.match(r'^(\s*)([\w_.-]+)\s*:\s*(.*?)$', line)
+        if not m:
+            continue
+
+        key = m.group(2)
+        raw_val = m.group(3).strip()
+
+        if raw_val == '' or raw_val.startswith('#'):
+            # Nested dict - create child
+            child = {}
+            current_dict[key] = child
+            stack.append((child, indent))
+        else:
+            # Scalar value
+            current_dict[key] = parse_yaml_value(raw_val)
+
+    return result
+
+
+def load_config(root):
+    """Load config with local overlay support."""
+    config = {}
+
+    # Load base config
+    base_path = root / CONFIG_PATH
+    if base_path.exists():
+        try:
+            config = simple_yaml_load(base_path.read_text())
+        except Exception:
+            pass
+
+    # Merge local overlay
+    local_path = root / CONFIG_LOCAL_PATH
+    if local_path.exists():
+        try:
+            local = simple_yaml_load(local_path.read_text())
+            config = deep_merge(config, local)
+        except Exception:
+            pass
+
+    return config
 
 
 def find_root():
@@ -373,6 +459,41 @@ def cmd_init(args):
             print(f"  {c(C_GREEN, 'linked')}: {link_path} -> {rel_target}")
     print()
 
+    # Create starter config.local.yaml
+    local_config = project_root / CONFIG_LOCAL_PATH
+    if local_config.exists():
+        print(f"  {c(C_DIM, 'skip')}: {CONFIG_LOCAL_PATH} (exists)")
+    else:
+        local_config.write_text('''# Project-specific config overlay
+# Values here merge on top of .ai/config.yaml (from Trellis submodule).
+# Only include sections you want to override - everything else inherits.
+
+# CUSTOMIZE: Replace with your actual build/test/lint commands
+validation:
+  per_phase:
+    compile_check: "echo 'Replace: your build command'"
+    targeted_tests: "echo 'Replace: your test command'"
+  pre_commit:
+    full_test_suite: "echo 'Replace: your full test suite'"
+    linter_suite: "echo 'Replace: your linter'"
+    typecheck: "echo 'Replace: your typecheck'"
+
+# CUSTOMIZE: Replace with your actual tech stack
+tech_stack:
+  backend:
+    language: "Your language (e.g., Python 3.11, Ruby 3.2)"
+    framework: "Your framework (e.g., Django, Rails, FastAPI)"
+  frontend:
+    framework: "Your framework (e.g., React, Vue, Next.js)"
+
+# CUSTOMIZE: Replace with your actual directory layout
+repo_layout:
+  backend: "backend/"
+  frontend: "frontend/"
+''')
+        print(f"  {c(C_GREEN, 'created')}: {CONFIG_LOCAL_PATH}")
+    print()
+
     # Install CLI symlink
     print(f"{c(C_BOLD, 'CLI:')}")
     cli_src = (trellis_dir / "cli" / "trellis").resolve()
@@ -404,7 +525,7 @@ def cmd_init(args):
   1. Edit {c(C_CYAN, 'AGENTS.md')} - add your project's invariants
   2. Edit {c(C_CYAN, 'CONVENTIONS.md')} - add your tech stack and patterns
   3. Edit {c(C_CYAN, 'CLAUDE.md')} - add project overview and commands
-  4. Edit {c(C_CYAN, '.ai/config.yaml')} - replace placeholder validation commands
+  4. Edit {c(C_CYAN, '.ai/config.local.yaml')} - set your build/test/lint commands
 
   Then: {c(C_BOLD, 'trellis new my-feature')} or tell your agent {c(C_BOLD, '"Let\'s plan [feature]."')}
 """)
@@ -749,99 +870,135 @@ def cmd_validate(args):
         print(f"  phases: {total}")
 
 
+def parse_yaml_value(raw):
+    """Parse a YAML scalar value, handling quotes and escapes."""
+    v = raw.strip()
+    if not v:
+        return ""
+    # Double-quoted: unescape \"
+    if v.startswith('"') and v.endswith('"'):
+        return v[1:-1].replace('\\"', '"')
+    # Single-quoted
+    if v.startswith("'") and v.endswith("'"):
+        return v[1:-1].replace("''", "'")
+    return v
+
+
 def parse_acceptance_criteria(text):
-    """Extract acceptance criteria from all phases."""
+    """Extract acceptance criteria from all phases using indent-aware parsing."""
     criteria = []
     lines = text.splitlines()
     current_phase = None
-    in_ac = False
-    current_ac = {}
+    i = 0
 
-    for i, line in enumerate(lines):
-        # Track phase id
-        m = re.match(r'^\s+-\s+id:\s*"?(phase\d+)"?', line)
+    while i < len(lines):
+        line = lines[i]
+
+        # Track phase id - matches both "- id: phase1" and "- id: \"phase1\""
+        m = re.match(r'^(\s+)-\s+id:\s*(.+)$', line)
         if m:
-            current_phase = m.group(1)
-            in_ac = False
-            continue
-
-        if re.match(r'^\s+acceptance_criteria:', line):
-            in_ac = True
-            continue
-
-        if in_ac:
-            # New criteria item
-            m = re.match(r'^\s+-\s+id:\s*"?([^"]+)"?', line)
-            if m:
-                if current_ac.get("id"):
-                    criteria.append(current_ac)
-                current_ac = {"id": m.group(1), "phase": current_phase}
+            val = parse_yaml_value(m.group(2))
+            if re.match(r'^phase\d+$', val):
+                current_phase = val
+                i += 1
                 continue
 
-            # End of acceptance_criteria block
-            if line.strip() and not line.startswith(' ' * 6) and not line.startswith('\t\t\t'):
-                if not line.startswith(' ' * 8) and re.match(r'^\s{4}\w', line):
-                    if current_ac.get("id"):
-                        criteria.append(current_ac)
-                        current_ac = {}
-                    in_ac = False
+        # Enter acceptance_criteria or validation block (under a phase)
+        if current_phase and re.match(r'^(\s+)(acceptance_criteria|validation)\s*:', line):
+            block_indent = len(line) - len(line.lstrip())
+            i += 1
+            # Parse list items in this block
+            while i < len(lines):
+                item_line = lines[i]
+                # Empty line - skip
+                if not item_line.strip():
+                    i += 1
                     continue
-
-            # Fields within criteria
-            for field in ("type", "description", "command", "expected"):
-                m = re.match(rf'^\s+{field}:\s*"?([^"]+)"?\s*$', line)
+                item_indent = len(item_line) - len(item_line.lstrip())
+                # Dedented past block - exit
+                if item_indent <= block_indent and item_line.strip():
+                    break
+                # List item start: "- id: ..." or "- dod_id: ..."
+                m = re.match(r'^(\s+)-\s+(id|dod_id):\s*(.+)$', item_line)
                 if m:
-                    current_ac[field] = m.group(1).strip().strip('"').strip("'")
+                    item_base_indent = len(m.group(1))
+                    ac = {"id": parse_yaml_value(m.group(3)), "phase": current_phase}
+                    i += 1
+                    # Read fields for this item
+                    while i < len(lines):
+                        field_line = lines[i]
+                        if not field_line.strip():
+                            i += 1
+                            continue
+                        fi = len(field_line) - len(field_line.lstrip())
+                        # Dedented to item level or less - done with this item
+                        if fi <= item_base_indent and field_line.strip():
+                            break
+                        # New list item at same level
+                        if field_line.strip().startswith('- ') and fi == item_base_indent:
+                            break
+                        # Parse key: value
+                        fm = re.match(r'^\s+([\w_]+):\s*(.*)$', field_line)
+                        if fm:
+                            key = fm.group(1)
+                            if key in ("type", "description", "command", "expected"):
+                                ac[key] = parse_yaml_value(fm.group(2))
+                        i += 1
+                    criteria.append(ac)
+                else:
+                    i += 1
+            continue
 
-    if current_ac.get("id"):
-        criteria.append(current_ac)
+        i += 1
 
     return criteria
 
 
 def record_exec_result(text, ac_id, passed, output_snippet=""):
     """Record execution result for an acceptance criterion in the spec."""
-    # Find the acceptance criterion and add/update result fields
     lines = text.splitlines(True)
-    result_lines = []
-    found = False
+    result = []
     i = 0
     while i < len(lines):
-        result_lines.append(lines[i])
-        if re.search(rf'id:\s*"?{re.escape(ac_id)}"?', lines[i]):
-            found = True
-            # Skip ahead to find where this criterion's fields end
-            indent = len(lines[i]) - len(lines[i].lstrip())
+        line = lines[i]
+        # Match the id line for this criterion (id: or dod_id:)
+        if re.search(rf'(?:id|dod_id):\s*"?{re.escape(ac_id)}"?\s*$', line):
+            result.append(line)
+            # Determine the indent for sibling fields
+            item_match = re.match(r'^(\s+)-\s+', line)
+            if item_match:
+                field_indent = ' ' * (len(item_match.group(1)) + 2)
+            else:
+                field_indent = ' ' * (len(line) - len(line.lstrip()))
             i += 1
-            # Collect existing fields, skip old result/result_output
-            ac_fields = []
+            # Copy existing fields, skip old result/executed_at/result_output
             while i < len(lines):
-                line = lines[i]
-                if not line.strip():
+                fl = lines[i]
+                if not fl.strip():
                     break
-                line_indent = len(line) - len(line.lstrip())
-                if line_indent <= indent and line.strip().startswith('- '):
+                fi = len(fl) - len(fl.lstrip())
+                expected_fi = len(field_indent)
+                # Dedented or new list item - done
+                if fi < expected_fi:
                     break
-                if line_indent <= indent and not line.strip().startswith('-') and line_indent <= indent:
-                    # Check if it's a new block at same or lower indent
-                    if line_indent <= indent:
-                        break
-                if not re.match(r'^\s+(result|result_output|executed_at):', line):
-                    ac_fields.append(line)
+                if fi == expected_fi - 2 and fl.strip().startswith('- '):
+                    break
+                if re.match(r'^\s+(result|result_output|executed_at):', fl):
+                    i += 1
+                    continue
+                result.append(fl)
                 i += 1
-            result_lines.extend(ac_fields)
-            # Add result fields
-            pad = ' ' * (indent + 8)
-            result_lines.append(f'{pad}result: "{"pass" if passed else "fail"}"\n')
-            result_lines.append(f'{pad}executed_at: "{now_iso()}"\n')
+            # Append new result fields
+            result.append(f'{field_indent}result: "{"pass" if passed else "fail"}"\n')
+            result.append(f'{field_indent}executed_at: "{now_iso()}"\n')
             if output_snippet:
-                # Truncate and sanitize
                 snippet = output_snippet[:200].replace('"', '\\"').replace('\n', ' ')
-                result_lines.append(f'{pad}result_output: "{snippet}"\n')
+                result.append(f'{field_indent}result_output: "{snippet}"\n')
             continue
+        result.append(line)
         i += 1
 
-    return ''.join(result_lines)
+    return ''.join(result)
 
 
 def cmd_exec(args):
@@ -1058,6 +1215,129 @@ def cmd_diff(args):
         sys.exit(1)
 
 
+def cmd_report(args):
+    """Aggregate stats across archived specs."""
+    root = require_root()
+    specs = find_all_specs(root)
+
+    if not specs:
+        print(f"{c(C_DIM, 'No specs found.')}")
+        return
+
+    # Collect stats
+    total = 0
+    by_status = {}
+    by_month = {}
+    sizes = {}
+    risks = {}
+    self_eval_scores = []
+    exec_pass = 0
+    exec_fail = 0
+    exec_total = 0
+    specs_with_exec = 0
+    specs_without_exec = 0
+    phase_counts = []
+
+    for spec_path, label in specs:
+        text = spec_path.read_text()
+        total += 1
+
+        status = yaml_read_field(text, "status") or "unknown"
+        by_status[status] = by_status.get(status, 0) + 1
+
+        # Month grouping from label
+        if label.startswith("archive/"):
+            month = label.split("/", 1)[1]
+            by_month[month] = by_month.get(month, 0) + 1
+
+        size = yaml_read_nested(text, "task", "size") or "unknown"
+        sizes[size] = sizes.get(size, 0) + 1
+
+        risk = yaml_read_nested(text, "task", "risk_level") or "unknown"
+        risks[risk] = risks.get(risk, 0) + 1
+
+        # Self-eval scores
+        score_match = re.search(r'total:\s*(\d+)', text)
+        if score_match:
+            self_eval_scores.append(int(score_match.group(1)))
+
+        # Exec results
+        passes = len(re.findall(r'result:\s*"?pass"?', text))
+        fails = len(re.findall(r'result:\s*"?fail"?', text))
+        if passes or fails:
+            exec_pass += passes
+            exec_fail += fails
+            exec_total += passes + fails
+            specs_with_exec += 1
+        else:
+            specs_without_exec += 1
+
+        # Phase counts
+        t, _, _, _ = count_phases(text)
+        if t > 0:
+            phase_counts.append(t)
+
+    # Print report
+    print(f"{c(C_BOLD, 'Trellis Report')}")
+    print(f"  {total} total specs")
+    print()
+
+    # Status breakdown
+    print(f"{c(C_BOLD, 'By status:')}")
+    for status in ["completed", "failed", "cancelled", "in_progress", "approved", "draft"]:
+        count = by_status.get(status, 0)
+        if count:
+            color = STATUS_COLORS.get(status, "")
+            pct = count / total * 100
+            bar = "#" * int(pct / 2)
+            print(f"  {c(color, f'{status:14s}')} {count:4d}  {pct:5.1f}%  {c(C_DIM, bar)}")
+    print()
+
+    # Monthly activity
+    if by_month:
+        print(f"{c(C_BOLD, 'By month:')}")
+        for month in sorted(by_month.keys(), reverse=True)[:6]:
+            print(f"  {month}  {by_month[month]:3d} specs")
+        print()
+
+    # Size/risk distribution
+    if any(v != "unknown" for v in sizes):
+        print(f"{c(C_BOLD, 'Sizes:')}  ", end="")
+        print("  ".join(f"{s}: {sizes.get(s, 0)}" for s in ["micro", "small", "medium", "large"] if sizes.get(s, 0)))
+        print(f"{c(C_BOLD, 'Risks:')}  ", end="")
+        print("  ".join(f"{r}: {risks.get(r, 0)}" for r in ["low", "medium", "high"] if risks.get(r, 0)))
+        print()
+
+    # Self-eval stats
+    if self_eval_scores:
+        avg = sum(self_eval_scores) / len(self_eval_scores)
+        perfect = sum(1 for s in self_eval_scores if s == 10)
+        below_7 = sum(1 for s in self_eval_scores if s < 7)
+        print(f"{c(C_BOLD, 'Self-eval:')}")
+        print(f"  avg: {avg:.1f}/10  ({len(self_eval_scores)} scored)")
+        if perfect:
+            pct = perfect / len(self_eval_scores) * 100
+            color = C_YELLOW if pct > 50 else C_DIM
+            print(f"  {c(color, f'perfect 10s: {perfect} ({pct:.0f}%)')}")
+        if below_7:
+            print(f"  below threshold: {below_7}")
+        print()
+
+    # Exec results
+    if exec_total:
+        pass_rate = exec_pass / exec_total * 100
+        print(f"{c(C_BOLD, 'Exec results:')}")
+        print(f"  {c(C_GREEN, f'{exec_pass} passed')} / {c(C_RED, f'{exec_fail} failed')}  ({pass_rate:.0f}% pass rate)")
+        print(f"  {specs_with_exec} specs with results, {specs_without_exec} without")
+        print()
+
+    # Phase stats
+    if phase_counts:
+        avg_phases = sum(phase_counts) / len(phase_counts)
+        print(f"{c(C_BOLD, 'Phases:')}  avg {avg_phases:.1f} per spec, range {min(phase_counts)}-{max(phase_counts)}")
+        print()
+
+
 def cmd_version(args):
     print(f"trellis {VERSION}")
 
@@ -1130,6 +1410,9 @@ def main():
     p_diff = sub.add_parser("diff", help="Show git history and changes for a spec")
     p_diff.add_argument("task_id", help="Task ID")
 
+    # report
+    p_report = sub.add_parser("report", help="Aggregate stats across all specs")
+
     args = parser.parse_args()
 
     if args.version:
@@ -1150,6 +1433,7 @@ def main():
         "exec": cmd_exec,
         "audit": cmd_audit,
         "diff": cmd_diff,
+        "report": cmd_report,
     }
 
     if args.command in commands:

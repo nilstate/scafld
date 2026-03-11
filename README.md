@@ -51,7 +51,8 @@ This sets up the workspace and installs `trellis` to `~/.local/bin/` so you can 
 your-project/
   .trellis/                 # Trellis submodule (don't edit directly)
   .ai/
-    config.yaml            -> .trellis/.ai/config.yaml (symlink, copy to customize)
+    config.yaml            -> .trellis/.ai/config.yaml (symlink)
+    config.local.yaml      # YOUR overrides (created by init)
     prompts/               -> .trellis/.ai/prompts/ (symlink)
     schemas/               -> .trellis/.ai/schemas/ (symlink)
     specs/
@@ -72,7 +73,7 @@ The init command copies template files to your project root. These are yours to 
 1. **AGENTS.md** - Add your project's architectural invariants, domain rules, and forbidden actions
 2. **CONVENTIONS.md** - Add your tech stack, naming conventions, testing patterns, and commands
 3. **CLAUDE.md** - Add project overview, essential commands, and agent-specific tips
-4. **`.ai/config.yaml`** - Replace the symlink with a copy and update validation commands for your build/test/lint tools
+4. **`.ai/config.local.yaml`** - Set your build/test/lint commands (merges on top of base config)
 
 ### CLI
 
@@ -89,6 +90,7 @@ trellis diff <task-id>                                   # Show git history for 
 trellis complete <task-id>                               # active/ -> archive/
 trellis fail <task-id>                                   # active/ -> archive/ (failed)
 trellis cancel <task-id>                                 # active/ -> archive/ (cancelled)
+trellis report                                           # Aggregate stats across all specs
 ```
 
 **Tip:** Add `.trellis/cli` to your PATH, or alias `trellis` to `.trellis/cli/trellis`.
@@ -112,6 +114,7 @@ your-project/                # Your code + customizations
   AGENTS.md                  # YOUR invariants, YOUR domain rules
   CONVENTIONS.md             # YOUR tech stack, YOUR patterns
   CLAUDE.md                  # YOUR commands, YOUR project overview
+  .ai/config.local.yaml      # YOUR overrides (merges on top of base)
   .ai/specs/                 # YOUR task specs (gitignored or committed)
 ```
 
@@ -128,6 +131,8 @@ The submodule stays clean and updatable. Your customizations live in your repo.
 - **Rollback commands** - per-phase rollback for safe failure recovery
 - **Executable verification** - `trellis exec` runs acceptance criteria and records pass/fail results
 - **Scope audit** - `trellis audit` compares spec vs git diff to detect undeclared changes
+- **Config overlay** - `config.local.yaml` merges on top of base config; submodule stays updatable
+- **Reporting** - `trellis report` aggregates pass rates, self-eval stats, and scope drift across specs
 - **Agent-agnostic** - works with Claude, Cursor, Copilot, Windsurf, or any AI agent
 
 ## Trellis Structure

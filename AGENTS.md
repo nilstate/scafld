@@ -187,4 +187,5 @@ trellis diff <task-id>            # show git history for spec
 trellis complete <task-id>        # active/ -> archive/
 trellis fail <task-id>            # active/ -> archive/ (failed)
 trellis cancel <task-id>          # active/ -> archive/ (cancelled)
+trellis report                    # aggregate stats across all specs
 ```

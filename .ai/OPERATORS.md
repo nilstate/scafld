@@ -73,6 +73,7 @@ trellis diff my-task              # show git history for spec
 trellis complete my-task          # active/ -> archive/YYYY-MM/
 trellis fail my-task              # active/ -> archive/ (failed)
 trellis cancel my-task            # active/ -> archive/ (cancelled)
+trellis report                    # aggregate stats across all specs
 ```
 
 ---
