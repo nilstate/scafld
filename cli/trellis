@@ -459,6 +459,26 @@ def cmd_init(args):
             print(f"  {c(C_GREEN, 'linked')}: {link_path} -> {rel_target}")
     print()
 
+    # Update .gitignore
+    print(f"{c(C_BOLD, 'Gitignore:')}")
+    gitignore = project_root / ".gitignore"
+    trellis_entries = [
+        "# Trellis",
+        ".ai/logs/",
+    ]
+    if gitignore.exists():
+        existing = gitignore.read_text()
+        if "# Trellis" in existing:
+            print(f"  {c(C_DIM, 'skip')}: .gitignore (Trellis entries exist)")
+        else:
+            with open(gitignore, "a") as f:
+                f.write("\n" + "\n".join(trellis_entries) + "\n")
+            print(f"  {c(C_GREEN, 'updated')}: .gitignore (added Trellis entries)")
+    else:
+        gitignore.write_text("\n".join(trellis_entries) + "\n")
+        print(f"  {c(C_GREEN, 'created')}: .gitignore")
+    print()
+
     # Create starter config.local.yaml
     local_config = project_root / CONFIG_LOCAL_PATH
     if local_config.exists():
