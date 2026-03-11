@@ -224,23 +224,6 @@
             }
           }
         },
-        "constraints": {
-          "type": "object",
-          "properties": {
-            "approvals_required": {
-              "type": "array",
-              "items": {"type": "string"}
-            },
-            "non_goals": {
-              "type": "array",
-              "items": {"type": "string"}
-            }
-          }
-        },
-        "info_sources": {
-          "type": "array",
-          "items": {"type": "string"}
-        },
         "notes": {"type": "string"}
       }
     },
@@ -335,21 +318,19 @@
                   "description": "Shell command to run for automated validation. Expected for compile, test, boundary, integration, and security types."
                 },
                 "expected": {"type": "string"},
-                "validation": {
-                  "type": "string",
-                  "enum": ["automated", "manual"]
-                },
                 "result": {
-                  "type": "object",
-                  "properties": {
-                    "status": {
-                      "type": "string",
-                      "enum": ["pending", "pass", "fail"]
-                    },
-                    "timestamp": {"type": "string", "format": "date-time"},
-                    "output": {"type": "string"},
-                    "notes": {"type": "string"}
-                  }
+                  "type": "string",
+                  "enum": ["pass", "fail"],
+                  "description": "Result recorded by trellis exec"
+                },
+                "executed_at": {
+                  "type": "string",
+                  "format": "date-time",
+                  "description": "When the criterion was last executed"
+                },
+                "result_output": {
+                  "type": "string",
+                  "description": "Truncated command output from trellis exec"
                 }
               }
             }

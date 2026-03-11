@@ -7,6 +7,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -213,6 +214,35 @@ def find_all_specs(root):
     return specs
 
 
+def append_planning_log(text, summary, actor="cli"):
+    """Append a planning_log entry to the spec text."""
+    entry = f'  - timestamp: "{now_iso()}"\n    actor: "{actor}"\n    summary: "{summary}"'
+    # Find planning_log section and append
+    if re.search(r'^planning_log:', text, re.MULTILINE):
+        # Find the last entry or the planning_log line itself
+        # Insert before the next top-level key after planning_log
+        lines = text.splitlines(True)
+        insert_idx = None
+        in_log = False
+        for i, line in enumerate(lines):
+            if re.match(r'^planning_log:', line):
+                in_log = True
+                continue
+            if in_log:
+                if line.strip() and not line[0].isspace():
+                    insert_idx = i
+                    break
+        if insert_idx is None:
+            # planning_log is at end of file
+            text = text.rstrip('\n') + '\n' + entry + '\n'
+        else:
+            lines.insert(insert_idx, entry + '\n')
+            text = ''.join(lines)
+    else:
+        text += f'\nplanning_log:\n{entry}\n'
+    return text
+
+
 def move_spec(root, spec_path, new_status):
     """Move spec to the correct folder and update status + timestamp."""
     text = spec_path.read_text()
@@ -228,6 +258,16 @@ def move_spec(root, spec_path, new_status):
     # Update fields
     text = yaml_set_field(text, "status", new_status)
     text = yaml_set_field(text, "updated", now_iso())
+
+    # Auto-append planning_log entry
+    action_labels = {
+        "approved": "Spec approved",
+        "in_progress": "Execution started",
+        "completed": "Spec completed",
+        "failed": "Spec marked failed",
+        "cancelled": "Spec cancelled",
+    }
+    text = append_planning_log(text, action_labels.get(new_status, f"Status changed to {new_status}"))
 
     # Determine destination
     if new_status in ("completed", "failed", "cancelled"):
@@ -570,10 +610,39 @@ def cmd_start(args):
     move_spec(root, spec, "in_progress")
 
 
+def check_self_eval(text, task_id):
+    """Warn if self-eval looks like a rubber stamp."""
+    # Look for self_eval or perf_eval score
+    score_match = re.search(r'(?:self_eval|perf_eval|score):\s*(\d+)', text)
+    if not score_match:
+        print(f"  {c(C_YELLOW, 'warn')}: no self-eval score found in spec")
+        return
+
+    score = int(score_match.group(1))
+    has_deviations = bool(re.search(r'deviations:', text, re.MULTILINE))
+    has_improvements = bool(re.search(r'improvements:', text, re.MULTILINE))
+
+    if score >= 9 and not has_deviations and not has_improvements:
+        print(f"  {c(C_YELLOW, 'warn')}: self-eval {score}/10 with no deviations or improvements noted")
+        print(f"         scores above 8 should document at least one deviation or improvement")
+    elif score == 10:
+        print(f"  {c(C_YELLOW, 'note')}: perfect 10/10 - are you sure? 10 means flawless with improvements beyond spec")
+
+
 def cmd_complete(args):
     """Move spec from active to archive (completed)."""
     root = require_root()
     spec = require_spec(root, args.task_id)
+    text = spec.read_text()
+
+    # Check for exec results - warn if no criteria were executed
+    has_results = bool(re.search(r'result:\s*"?(pass|fail)"?', text, re.MULTILINE))
+    if not has_results:
+        print(f"  {c(C_YELLOW, 'warn')}: no exec results recorded. Run '{c(C_BOLD, f'trellis exec {args.task_id}')}' first")
+
+    # Check self-eval honesty
+    check_self_eval(text, args.task_id)
+
     move_spec(root, spec, "completed")
 
 
@@ -680,6 +749,315 @@ def cmd_validate(args):
         print(f"  phases: {total}")
 
 
+def parse_acceptance_criteria(text):
+    """Extract acceptance criteria from all phases."""
+    criteria = []
+    lines = text.splitlines()
+    current_phase = None
+    in_ac = False
+    current_ac = {}
+
+    for i, line in enumerate(lines):
+        # Track phase id
+        m = re.match(r'^\s+-\s+id:\s*"?(phase\d+)"?', line)
+        if m:
+            current_phase = m.group(1)
+            in_ac = False
+            continue
+
+        if re.match(r'^\s+acceptance_criteria:', line):
+            in_ac = True
+            continue
+
+        if in_ac:
+            # New criteria item
+            m = re.match(r'^\s+-\s+id:\s*"?([^"]+)"?', line)
+            if m:
+                if current_ac.get("id"):
+                    criteria.append(current_ac)
+                current_ac = {"id": m.group(1), "phase": current_phase}
+                continue
+
+            # End of acceptance_criteria block
+            if line.strip() and not line.startswith(' ' * 6) and not line.startswith('\t\t\t'):
+                if not line.startswith(' ' * 8) and re.match(r'^\s{4}\w', line):
+                    if current_ac.get("id"):
+                        criteria.append(current_ac)
+                        current_ac = {}
+                    in_ac = False
+                    continue
+
+            # Fields within criteria
+            for field in ("type", "description", "command", "expected"):
+                m = re.match(rf'^\s+{field}:\s*"?([^"]+)"?\s*$', line)
+                if m:
+                    current_ac[field] = m.group(1).strip().strip('"').strip("'")
+
+    if current_ac.get("id"):
+        criteria.append(current_ac)
+
+    return criteria
+
+
+def record_exec_result(text, ac_id, passed, output_snippet=""):
+    """Record execution result for an acceptance criterion in the spec."""
+    # Find the acceptance criterion and add/update result fields
+    lines = text.splitlines(True)
+    result_lines = []
+    found = False
+    i = 0
+    while i < len(lines):
+        result_lines.append(lines[i])
+        if re.search(rf'id:\s*"?{re.escape(ac_id)}"?', lines[i]):
+            found = True
+            # Skip ahead to find where this criterion's fields end
+            indent = len(lines[i]) - len(lines[i].lstrip())
+            i += 1
+            # Collect existing fields, skip old result/result_output
+            ac_fields = []
+            while i < len(lines):
+                line = lines[i]
+                if not line.strip():
+                    break
+                line_indent = len(line) - len(line.lstrip())
+                if line_indent <= indent and line.strip().startswith('- '):
+                    break
+                if line_indent <= indent and not line.strip().startswith('-') and line_indent <= indent:
+                    # Check if it's a new block at same or lower indent
+                    if line_indent <= indent:
+                        break
+                if not re.match(r'^\s+(result|result_output|executed_at):', line):
+                    ac_fields.append(line)
+                i += 1
+            result_lines.extend(ac_fields)
+            # Add result fields
+            pad = ' ' * (indent + 8)
+            result_lines.append(f'{pad}result: "{"pass" if passed else "fail"}"\n')
+            result_lines.append(f'{pad}executed_at: "{now_iso()}"\n')
+            if output_snippet:
+                # Truncate and sanitize
+                snippet = output_snippet[:200].replace('"', '\\"').replace('\n', ' ')
+                result_lines.append(f'{pad}result_output: "{snippet}"\n')
+            continue
+        i += 1
+
+    return ''.join(result_lines)
+
+
+def cmd_exec(args):
+    """Run acceptance criteria commands and record results."""
+    root = require_root()
+    spec = require_spec(root, args.task_id)
+    text = spec.read_text()
+
+    status = yaml_read_field(text, "status")
+    if status not in ("in_progress", "approved"):
+        print(f"{c(C_RED, 'error')}: spec must be in_progress or approved to exec (current: {status})")
+        sys.exit(1)
+
+    criteria = parse_acceptance_criteria(text)
+    if not criteria:
+        print(f"{c(C_YELLOW, 'warn')}: no acceptance criteria found in spec")
+        return
+
+    # Filter by phase if specified
+    if args.phase:
+        criteria = [ac for ac in criteria if ac.get("phase") == args.phase]
+        if not criteria:
+            print(f"{c(C_YELLOW, 'warn')}: no criteria found for phase {args.phase}")
+            return
+
+    # Filter to only runnable criteria (have a command)
+    runnable = [ac for ac in criteria if ac.get("command") and ac["command"] != "TODO"]
+    manual = [ac for ac in criteria if not ac.get("command") or ac["command"] == "TODO"]
+
+    if not runnable and not manual:
+        print(f"{c(C_YELLOW, 'warn')}: no criteria found")
+        return
+
+    print(f"{c(C_BOLD, f'Executing acceptance criteria for {args.task_id}')}")
+    if args.phase:
+        print(f"  phase: {args.phase}")
+    print()
+
+    passed = 0
+    failed = 0
+    skipped = 0
+
+    for ac in runnable:
+        ac_id = ac["id"]
+        cmd = ac["command"]
+        expected = ac.get("expected", "")
+        desc = ac.get("description", ac_id)
+
+        print(f"  {c(C_CYAN, ac_id)}: {desc}")
+        print(f"    $ {c(C_DIM, cmd)}")
+
+        try:
+            result = subprocess.run(
+                cmd, shell=True, capture_output=True, text=True,
+                timeout=120, cwd=str(root),
+            )
+            output = (result.stdout + result.stderr).strip()
+
+            # Determine pass/fail
+            ac_passed = result.returncode == 0
+            if expected and expected.lower() == "no matches":
+                ac_passed = result.returncode != 0 or not output
+
+            if ac_passed:
+                print(f"    {c(C_GREEN, 'PASS')}")
+                passed += 1
+            else:
+                print(f"    {c(C_RED, 'FAIL')} (exit code {result.returncode})")
+                if output:
+                    for line in output.splitlines()[:5]:
+                        print(f"    {c(C_DIM, line)}")
+                failed += 1
+
+            text = record_exec_result(text, ac_id, ac_passed, output[:200])
+
+        except subprocess.TimeoutExpired:
+            print(f"    {c(C_RED, 'TIMEOUT')} (120s)")
+            text = record_exec_result(text, ac_id, False, "Command timed out after 120s")
+            failed += 1
+        except Exception as e:
+            print(f"    {c(C_RED, 'ERROR')}: {e}")
+            text = record_exec_result(text, ac_id, False, str(e))
+            failed += 1
+
+    for ac in manual:
+        ac_id = ac["id"]
+        desc = ac.get("description", ac_id)
+        print(f"  {c(C_DIM, ac_id)}: {desc} (manual - skipped)")
+        skipped += 1
+
+    # Write results back
+    spec.write_text(text)
+
+    print()
+    summary_parts = [c(C_GREEN, f"{passed} passed")]
+    if failed:
+        summary_parts.append(c(C_RED, f"{failed} failed"))
+    if skipped:
+        summary_parts.append(c(C_DIM, f"{skipped} manual"))
+    print(f"  {' / '.join(summary_parts)}")
+
+    if failed:
+        sys.exit(1)
+
+
+def cmd_audit(args):
+    """Compare spec changes against actual git diff to detect scope creep."""
+    root = require_root()
+    spec = require_spec(root, args.task_id)
+    text = spec.read_text()
+
+    # Extract declared files from phases[*].changes[*].file
+    declared = set()
+    for m in re.finditer(r'^\s+file:\s*"?([^"\n]+)"?', text, re.MULTILINE):
+        f = m.group(1).strip()
+        if f != "TODO":
+            declared.add(f)
+
+    if not declared:
+        print(f"{c(C_YELLOW, 'warn')}: no files declared in spec phases")
+        return
+
+    # Get actual changed files from git
+    base_ref = args.base or "HEAD~1"
+    try:
+        result = subprocess.run(
+            ["git", "diff", "--name-only", base_ref],
+            capture_output=True, text=True, cwd=str(root),
+        )
+        if result.returncode != 0:
+            # Try diffing against main/master
+            for branch in ("main", "master"):
+                result = subprocess.run(
+                    ["git", "diff", "--name-only", branch],
+                    capture_output=True, text=True, cwd=str(root),
+                )
+                if result.returncode == 0:
+                    base_ref = branch
+                    break
+            else:
+                print(f"{c(C_RED, 'error')}: git diff failed. Use --base to specify a ref.")
+                sys.exit(1)
+
+        actual = set(line.strip() for line in result.stdout.splitlines() if line.strip())
+    except FileNotFoundError:
+        print(f"{c(C_RED, 'error')}: git not found")
+        sys.exit(1)
+
+    if not actual:
+        print(f"{c(C_DIM, 'No files changed in git diff')}")
+        return
+
+    print(f"{c(C_BOLD, f'Audit: {args.task_id}')} (vs {base_ref})")
+    print()
+
+    # Scope creep: files changed but not in spec
+    undeclared = actual - declared
+    # Missing: files in spec but not changed
+    missing = declared - actual
+    # Matched
+    matched = declared & actual
+
+    if matched:
+        print(f"  {c(C_GREEN, 'Declared & changed')} ({len(matched)}):")
+        for f in sorted(matched):
+            print(f"    {c(C_GREEN, '✓')} {f}")
+
+    if undeclared:
+        print(f"\n  {c(C_RED, 'Scope creep - changed but not in spec')} ({len(undeclared)}):")
+        for f in sorted(undeclared):
+            print(f"    {c(C_RED, '!')} {f}")
+
+    if missing:
+        print(f"\n  {c(C_YELLOW, 'In spec but not changed')} ({len(missing)}):")
+        for f in sorted(missing):
+            print(f"    {c(C_YELLOW, '?')} {f}")
+
+    print()
+    if undeclared:
+        pct = len(undeclared) / len(actual) * 100
+        print(f"  {c(C_RED, f'Scope drift: {pct:.0f}%')} ({len(undeclared)}/{len(actual)} files undeclared)")
+        sys.exit(1)
+    else:
+        print(f"  {c(C_GREEN, 'Clean')} - all changes match spec")
+
+
+def cmd_diff(args):
+    """Show git diff for a spec file."""
+    root = require_root()
+    spec = require_spec(root, args.task_id)
+    rel = spec.relative_to(root)
+
+    try:
+        result = subprocess.run(
+            ["git", "log", "--oneline", "-10", "--follow", "--", str(rel)],
+            capture_output=True, text=True, cwd=str(root),
+        )
+        if result.stdout.strip():
+            print(f"{c(C_BOLD, f'History: {rel}')}")
+            print(result.stdout)
+        else:
+            print(f"{c(C_DIM, 'No git history for this spec')}")
+
+        # Show diff if uncommitted changes exist
+        diff_result = subprocess.run(
+            ["git", "diff", "--", str(rel)],
+            capture_output=True, text=True, cwd=str(root),
+        )
+        if diff_result.stdout.strip():
+            print(f"{c(C_BOLD, 'Uncommitted changes:')}")
+            print(diff_result.stdout)
+    except FileNotFoundError:
+        print(f"{c(C_RED, 'error')}: git not found")
+        sys.exit(1)
+
+
 def cmd_version(args):
     print(f"trellis {VERSION}")
 
@@ -738,6 +1116,20 @@ def main():
     p_validate = sub.add_parser("validate", help="Validate spec against schema")
     p_validate.add_argument("task_id", help="Task ID")
 
+    # exec
+    p_exec = sub.add_parser("exec", help="Run acceptance criteria and record results")
+    p_exec.add_argument("task_id", help="Task ID")
+    p_exec.add_argument("-p", "--phase", help="Run only criteria for this phase (e.g. phase1)")
+
+    # audit
+    p_audit = sub.add_parser("audit", help="Check spec changes vs actual git diff")
+    p_audit.add_argument("task_id", help="Task ID")
+    p_audit.add_argument("-b", "--base", help="Git base ref (default: HEAD~1)")
+
+    # diff
+    p_diff = sub.add_parser("diff", help="Show git history and changes for a spec")
+    p_diff.add_argument("task_id", help="Task ID")
+
     args = parser.parse_args()
 
     if args.version:
@@ -755,6 +1147,9 @@ def main():
         "fail": cmd_fail,
         "cancel": cmd_cancel,
         "validate": cmd_validate,
+        "exec": cmd_exec,
+        "audit": cmd_audit,
+        "diff": cmd_diff,
     }
 
     if args.command in commands:

@@ -83,6 +83,9 @@ trellis status <task-id>                                 # Show spec details
 trellis validate <task-id>                               # Validate against schema
 trellis approve <task-id>                                # drafts/ -> approved/
 trellis start <task-id>                                  # approved/ -> active/
+trellis exec <task-id> [-p phase]                        # Run acceptance criteria, record results
+trellis audit <task-id> [-b base-ref]                    # Check spec vs actual git diff
+trellis diff <task-id>                                   # Show git history for a spec
 trellis complete <task-id>                               # active/ -> archive/
 trellis fail <task-id>                                   # active/ -> archive/ (failed)
 trellis cancel <task-id>                                 # active/ -> archive/ (cancelled)
@@ -123,6 +126,8 @@ The submodule stays clean and updatable. Your customizations live in your repo.
 - **Self-evaluation** - agents score work against a rubric (7/10 threshold)
 - **Resume protocol** - interrupted executions can pick up where they left off
 - **Rollback commands** - per-phase rollback for safe failure recovery
+- **Executable verification** - `trellis exec` runs acceptance criteria and records pass/fail results
+- **Scope audit** - `trellis audit` compares spec vs git diff to detect undeclared changes
 - **Agent-agnostic** - works with Claude, Cursor, Copilot, Windsurf, or any AI agent
 
 ## Trellis Structure

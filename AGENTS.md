@@ -181,6 +181,9 @@ trellis status <task-id>          # show details + phase progress
 trellis validate <task-id>        # check against schema
 trellis approve <task-id>         # drafts/ -> approved/
 trellis start <task-id>           # approved/ -> active/
+trellis exec <task-id>            # run acceptance criteria, record results
+trellis audit <task-id>           # compare spec changes vs git diff
+trellis diff <task-id>            # show git history for spec
 trellis complete <task-id>        # active/ -> archive/
 trellis fail <task-id>            # active/ -> archive/ (failed)
 trellis cancel <task-id>          # active/ -> archive/ (cancelled)

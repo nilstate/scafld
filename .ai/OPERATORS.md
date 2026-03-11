@@ -65,6 +65,11 @@ trellis status my-task            # show details + phase progress
 trellis validate my-task          # check against schema
 trellis approve my-task           # drafts/ -> approved/
 trellis start my-task             # approved/ -> active/
+trellis exec my-task              # run acceptance criteria, record results
+trellis exec my-task -p phase1    # run criteria for one phase only
+trellis audit my-task             # compare spec files vs git diff
+trellis audit my-task -b main     # audit against specific base ref
+trellis diff my-task              # show git history for spec
 trellis complete my-task          # active/ -> archive/YYYY-MM/
 trellis fail my-task              # active/ -> archive/ (failed)
 trellis cancel my-task            # active/ -> archive/ (cancelled)
@@ -94,10 +99,23 @@ draft → under_review → approved → in_progress → completed
 
 ---
 
-## 7. Tips
+## 7. Verification Workflow
+
+After execution, before completing:
+
+```bash
+trellis exec my-task              # runs acceptance criteria, records pass/fail
+trellis audit my-task -b main     # checks for scope creep (undeclared file changes)
+trellis complete my-task          # warns if no exec results or suspicious self-eval
+```
+
+---
+
+## 8. Tips
 
 - **Always read the spec before executing** — understand what you're building
 - **Keep phases small** — easier to validate and rollback
-- **Log everything** — `.ai/logs/{task-id}.log` is your audit trail
-- **Self-eval honestly** — the 7/10 threshold keeps quality high
+- **Run `trellis exec` before completing** — prove the work, don't just claim it
+- **Run `trellis audit` on big changes** — catch scope creep early
+- **Self-eval honestly** — the 7/10 threshold keeps quality high; 10/10 requires justification
 - **Archive completed specs** — they're your project history
