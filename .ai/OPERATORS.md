@@ -1,0 +1,111 @@
+# Trellis — Operator Cheat Sheet
+
+A short, human-friendly guide for working with Trellis task specs.
+For full details, see `.ai/README.md` and `.ai/specs/README.md`.
+
+---
+
+## 1. Tiny Change (Micro/Small, Low Risk)
+
+Use this for trivial, low-risk edits (comments, copy tweaks, tiny refactors).
+
+- In the spec:
+  - `task.size: "micro"` or `"small"`
+  - `task.risk_level: "low"`
+  - Optionally set `task.acceptance.validation_profile: "light"`
+- Workflow:
+  - Plan: generate/update spec under `.ai/specs/drafts/`
+  - Approve: move to `.ai/specs/approved/` and set `status: "approved"`
+  - Execute: move to `.ai/specs/active/` and set `status: "in_progress"`
+  - Complete: move to `.ai/specs/archive/YYYY-MM/` and set `status: "completed"`
+
+---
+
+## 2. Normal Task (Small/Medium, Medium Risk)
+
+Use this for typical feature work and non-trivial refactors.
+
+- In the spec:
+  - `task.size: "small"` or `"medium"`
+  - `task.risk_level: "medium"`
+  - Usually `task.acceptance.validation_profile: "standard"`
+- Workflow:
+  - Plan: ensure `task.acceptance.definition_of_done` and `phases[*].acceptance_criteria` tell the same story.
+  - Approve: move to approved folder
+  - Execute: run all `acceptance_criteria` plus per-phase validation
+  - Complete: run full standard profile validation before archiving
+
+---
+
+## 3. Big Change (Medium/Large, High Risk)
+
+Use this for high-impact work (auth, persistence, complex refactors).
+
+- In the spec:
+  - `task.size: "medium"` or `"large"`
+  - `task.risk_level: "high"`
+  - Usually `task.acceptance.validation_profile: "strict"`
+- Workflow:
+  - Plan:
+    - Explicitly call out invariants and risks
+    - Use multiple phases with narrow scopes and strong acceptance criteria
+  - Approve: move to approved folder
+  - Execute: run all per-phase checks plus full `strict` profile
+  - Complete: thorough validation before archiving
+
+---
+
+## 4. Quick Commands Reference
+
+```bash
+# View spec status
+cat .ai/specs/drafts/my-task.yaml | grep status
+
+# Approve a spec (manual)
+# 1. Edit the file and set status: "approved"
+# 2. Move: mv .ai/specs/drafts/my-task.yaml .ai/specs/approved/
+
+# Start execution (manual)
+# 1. Edit the file and set status: "in_progress"
+# 2. Move: mv .ai/specs/approved/my-task.yaml .ai/specs/active/
+
+# Mark completed
+# 1. Edit the file and set status: "completed"
+# 2. Move: mv .ai/specs/active/my-task.yaml .ai/specs/archive/$(date +%Y-%m)/
+
+# Mark failed/cancelled
+# 1. Set status: "failed" or "cancelled"
+# 2. Move to archive
+```
+
+---
+
+## 5. Validation Profiles
+
+| Profile | When to Use | What Runs |
+|---------|-------------|-----------|
+| `light` | micro/small, low risk | compile, acceptance items, perf eval |
+| `standard` | small/medium, medium risk | compile, tests, lint, typecheck, security, perf eval |
+| `strict` | medium/large, high risk | all standard checks + broader coverage |
+
+---
+
+## 6. Status Lifecycle
+
+```
+draft → under_review → approved → in_progress → completed
+                                      ↓           ↓
+                                   (blocked)   failed
+                                      ↓           ↓
+                                   (resume)   cancelled
+```
+
+---
+
+## 7. Tips
+
+- **Always read the spec before executing** — understand what you're building
+- **Keep phases small** — easier to validate and rollback
+- **Log everything** — `.ai/logs/{task-id}.log` is your audit trail
+- **Self-eval honestly** — the 7/10 threshold keeps quality high
+- **Archive completed specs** — they're your project history
