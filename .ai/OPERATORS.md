@@ -70,7 +70,9 @@ trellis exec my-task -p phase1    # run criteria for one phase only
 trellis audit my-task             # compare spec files vs git diff
 trellis audit my-task -b main     # audit against specific base ref
 trellis diff my-task              # show git history for spec
-trellis complete my-task          # active/ -> archive/YYYY-MM/
+trellis review my-task            # run automated passes + adversarial review prompt
+trellis complete my-task          # read review, record verdict, archive (requires review)
+trellis complete my-task -f       # archive without review (--force)
 trellis fail my-task              # active/ -> archive/ (failed)
 trellis cancel my-task            # active/ -> archive/ (cancelled)
 trellis report                    # aggregate stats across all specs
@@ -91,24 +93,28 @@ trellis report                    # aggregate stats across all specs
 ## 6. Status Lifecycle
 
 ```
-draft → under_review → approved → in_progress → completed
+draft → under_review → approved → in_progress → review → completed
                                       ↓           ↓
-                                   (blocked)   failed
-                                      ↓           ↓
-                                   (resume)   cancelled
+                                   (blocked)     failed
+                                      ↓           ↑
+                                   (resume)    fix + re-review
 ```
 
 ---
 
-## 7. Verification Workflow
+## 7. Review & Completion Workflow
 
 After execution, before completing:
 
 ```bash
-trellis exec my-task              # runs acceptance criteria, records pass/fail
-trellis audit my-task -b main     # checks for scope creep (undeclared file changes)
-trellis complete my-task          # warns if no exec results or suspicious self-eval
+trellis review my-task            # runs automated passes, scaffolds adversarial review
+                                  # agent fills in findings in .ai/reviews/my-task.md
+trellis complete my-task          # reads review, records verdict, archives
+                                  # refuses if no review or blocking findings
+trellis complete my-task -f       # force archive without passing review
 ```
+
+Review rounds accumulate — each `trellis review` appends a numbered section. Prior rounds provide context for subsequent reviewers.
 
 ---
 
@@ -116,7 +122,7 @@ trellis complete my-task          # warns if no exec results or suspicious self-
 
 - **Always read the spec before executing** — understand what you're building
 - **Keep phases small** — easier to validate and rollback
-- **Run `trellis exec` before completing** — prove the work, don't just claim it
-- **Run `trellis audit` on big changes** — catch scope creep early
+- **Run `trellis review` before completing** — the adversarial review catches what acceptance criteria miss
+- **Review in a fresh session when possible** — avoids confirmation bias from the execution session
 - **Self-eval honestly** — the 7/10 threshold keeps quality high; 10/10 requires justification
 - **Archive completed specs** — they're your project history

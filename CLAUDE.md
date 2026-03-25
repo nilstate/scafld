@@ -12,15 +12,21 @@ Claude-specific tips for working with Trellis.
 - Use `Grep` and `Glob` for codebase exploration instead of bash `find`/`grep`.
 - Prefer `Edit` (targeted replacement) over `Write` (full file overwrite) for existing files.
 
+## Spec Management
+
+**Always use the `trellis` CLI for spec lifecycle management.** Never manually move, copy, or rename spec files. Never manually change the `status` field.
+
 ## Entering Trellis Modes
 
 - **Plan mode:** Read `.ai/prompts/plan.md`, then explore and generate a spec.
 - **Exec mode:** Read `.ai/prompts/exec.md`, then load the approved spec and execute.
+- **Review mode:** Run `trellis review <task-id>`, then read `.ai/prompts/review.md` and the review file. Fill in findings.
 
 ## Prompting Patterns
 
 ```
 "Let's plan [feature]. Create a task spec."
 "Execute the [task-id] spec."
+"Review the [task-id] spec."
 "Show me the current phase status."
 ```

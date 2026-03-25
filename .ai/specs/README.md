@@ -48,9 +48,18 @@ trellis approve my-task
 
 AI moves spec to `active/`, sets `status: "in_progress"`, and executes phases.
 
-### 4. Completion
+### 4. Review
 
-Mark complete (moves to `archive/YYYY-MM/`):
+Run adversarial review before completing:
+
+```bash
+trellis review my-task
+# Fill in findings in .ai/reviews/my-task.md
+```
+
+### 5. Completion
+
+Mark complete (reads review, records verdict, moves to `archive/YYYY-MM/`):
 
 ```bash
 trellis complete my-task
@@ -66,6 +75,7 @@ Each spec validated by `.ai/schemas/spec.json` includes:
 - **`planning_log`:** Chronological entries summarizing planning steps
 - **`phases`:** Ordered execution units with `changes[].content_spec`, acceptance criteria, and per-phase status
 - **`rollback`:** Strategy and per-phase commands for safe reversions
+- **`review`:** Verdict, pass results, and finding counts recorded by `trellis complete`
 - **`self_eval` / `deviations` / `metadata`:** Populated during execution
 
 ---

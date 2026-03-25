@@ -74,6 +74,12 @@ No test fixtures, mocks, or conditional test-only logic in production code. Test
 
 ---
 
+## Spec Management
+
+**Always use the `trellis` CLI for spec lifecycle management.** Never manually move, copy, or rename spec files between directories. Never manually change the `status` field. The CLI enforces validation, state transitions, and the review gate — bypassing it breaks the audit trail.
+
+---
+
 ## Operating Modes
 
 ### Planning Mode
@@ -174,8 +180,10 @@ Only commit when explicitly asked by the user.
 | `.ai/config.yaml` | Validation, rubric, safety, profiles |
 | `.ai/prompts/plan.md` | Planning mode instructions |
 | `.ai/prompts/exec.md` | Execution mode instructions |
+| `.ai/prompts/review.md` | Adversarial review mode instructions |
 | `.ai/schemas/spec.json` | Spec JSON schema |
 | `.ai/specs/` | Task specs by status (drafts/approved/active/archive) |
+| `.ai/reviews/` | Review findings per spec (gitignored, accumulates rounds) |
 | `.ai/logs/` | Execution logs (ReAct traces) |
 | `CONVENTIONS.md` | Coding standards |
 
