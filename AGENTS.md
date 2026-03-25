@@ -32,11 +32,11 @@ For detailed planning instructions, read `.ai/prompts/plan.md`. For execution, r
 ## Spec Status Lifecycle
 
 ```text
-draft → under_review → approved → in_progress → completed
+draft → under_review → approved → in_progress → review → completed
   ↓                                    ↓           ↓
 (edit)                             (blocked)     failed
-                                      ↓           ↓
-                                  (resume)    cancelled
+                                      ↓           ↑
+                                  (resume)    fix + re-review
 ```
 
 Valid transitions:
@@ -92,6 +92,14 @@ No test fixtures, mocks, or conditional test-only logic in production code. Test
 - **Autonomy:** Execute all phases without pausing unless blocked, deviating from spec, or hitting a destructive action not covered by spec
 
 For trivial changes (typos, single-line fixes), skip the spec workflow and work directly.
+
+### Review Mode
+
+- **When:** All phases complete, before `trellis complete`
+- **Actions:** Run `trellis review`, then adversarial code review (ideally in a fresh session)
+- **Output:** Findings written to `.ai/reviews/{task-id}.md`, verdict recorded in spec
+- **Prompt:** Read `.ai/prompts/review.md` before entering this mode
+- **Mandate:** Find problems, not confirm success. A review that finds zero issues is suspicious.
 
 ---
 
@@ -184,7 +192,9 @@ trellis start <task-id>           # approved/ -> active/
 trellis exec <task-id>            # run acceptance criteria, record results
 trellis audit <task-id>           # compare spec changes vs git diff
 trellis diff <task-id>            # show git history for spec
-trellis complete <task-id>        # active/ -> archive/
+trellis review <task-id>          # run automated passes + generate review prompt
+trellis complete <task-id>        # read review, record verdict, archive (requires review)
+trellis complete <task-id> -f     # archive without review (--force)
 trellis fail <task-id>            # active/ -> archive/ (failed)
 trellis cancel <task-id>          # active/ -> archive/ (cancelled)
 trellis report                    # aggregate stats across all specs

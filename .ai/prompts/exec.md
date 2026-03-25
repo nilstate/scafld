@@ -156,6 +156,21 @@ Once all phases complete, run pre-commit validation using the appropriate profil
 
 ---
 
+## Adversarial Review
+
+After all phases complete and before `trellis complete`:
+
+1. Run `trellis review <task-id>` — runs automated passes (spec compliance, scope drift) and generates the review file
+2. Start a **fresh agent session** (recommended) to avoid confirmation bias
+3. Read `.ai/prompts/review.md` for the review prompt and attack vectors
+4. Review the spec + git diff, write findings to `.ai/reviews/{task-id}.md`
+5. Fix any blocking findings if needed
+6. Run `trellis complete <task-id>` — reads the review, records verdict, archives
+
+`trellis complete` will **refuse to archive** if no review file exists or if blocking findings are present. Use `--force` to override (e.g., when a human has reviewed manually).
+
+---
+
 ## Self-Evaluation & Deviations
 
 After all phases and final validation:

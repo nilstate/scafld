@@ -369,6 +369,36 @@
       }
     },
 
+    "review": {
+      "type": "object",
+      "description": "Adversarial review results recorded by trellis complete",
+      "properties": {
+        "timestamp": {"type": "string", "format": "date-time"},
+        "verdict": {
+          "type": "string",
+          "enum": ["pass", "fail", "pass_with_issues"],
+          "description": "pass = no findings, fail = blocking findings, pass_with_issues = non-blocking only"
+        },
+        "passes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "result"],
+            "properties": {
+              "id": {"type": "string"},
+              "result": {
+                "type": "string",
+                "enum": ["pass", "fail", "pass_with_issues"]
+              }
+            }
+          }
+        },
+        "review_rounds": {"type": "integer", "minimum": 0, "description": "Number of review rounds before passing"},
+        "blocking_count": {"type": "integer", "minimum": 0},
+        "non_blocking_count": {"type": "integer", "minimum": 0}
+      }
+    },
+
     "self_eval": {
       "type": "object",
       "properties": {

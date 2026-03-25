@@ -15,7 +15,7 @@ from pathlib import Path
 # Constants
 # ---------------------------------------------------------------------------
 
-VERSION = "1.3.0"
+VERSION = "1.4.0"
 AI_DIR = ".ai"
 SPECS_DIR = f"{AI_DIR}/specs"
 DRAFTS_DIR = f"{SPECS_DIR}/drafts"
@@ -23,6 +23,7 @@ APPROVED_DIR = f"{SPECS_DIR}/approved"
 ACTIVE_DIR = f"{SPECS_DIR}/active"
 ARCHIVE_DIR = f"{SPECS_DIR}/archive"
 LOGS_DIR = f"{AI_DIR}/logs"
+REVIEWS_DIR = f"{AI_DIR}/reviews"
 SCHEMA_PATH = f"{AI_DIR}/schemas/spec.json"
 CONFIG_PATH = f"{AI_DIR}/config.yaml"
 CONFIG_LOCAL_PATH = f"{AI_DIR}/config.local.yaml"
@@ -410,7 +411,7 @@ def cmd_init(args):
     # Create directories
     print(f"{c(C_BOLD, 'Directories:')}")
     for d in [DRAFTS_DIR, APPROVED_DIR, ACTIVE_DIR, ARCHIVE_DIR, LOGS_DIR,
-              f"{AI_DIR}/schemas", f"{AI_DIR}/prompts"]:
+              f"{AI_DIR}/schemas", f"{AI_DIR}/prompts", f"{AI_DIR}/reviews"]:
         p = project_root / d
         p.mkdir(parents=True, exist_ok=True)
         print(f"  {c(C_GREEN, 'ok')}: {d}/")
@@ -423,6 +424,7 @@ def cmd_init(args):
         (f"{AI_DIR}/schemas/spec.json", f"{AI_DIR}/schemas/spec.json"),
         (f"{AI_DIR}/prompts/plan.md", f"{AI_DIR}/prompts/plan.md"),
         (f"{AI_DIR}/prompts/exec.md", f"{AI_DIR}/prompts/exec.md"),
+        (f"{AI_DIR}/prompts/review.md", f"{AI_DIR}/prompts/review.md"),
         (f"{AI_DIR}/README.md", f"{AI_DIR}/README.md"),
         (f"{AI_DIR}/OPERATORS.md", f"{AI_DIR}/OPERATORS.md"),
         (f"{SPECS_DIR}/README.md", f"{SPECS_DIR}/README.md"),
@@ -490,6 +492,7 @@ repo_layout:
     trellis_entries = [
         "# Trellis",
         ".ai/logs/",
+        ".ai/reviews/",
     ]
     if gitignore.exists():
         existing = gitignore.read_text()
@@ -745,7 +748,7 @@ def check_self_eval(text, task_id):
 
 
 def cmd_complete(args):
-    """Move spec from active to archive (completed)."""
+    """Move spec from active to archive (completed). Reads review file and gates on verdict."""
     root = require_root()
     spec = require_spec(root, args.task_id)
     text = spec.read_text()
@@ -755,7 +758,80 @@ def cmd_complete(args):
     if not has_results:
         print(f"  {c(C_YELLOW, 'warn')}: no exec results recorded. Run '{c(C_BOLD, f'trellis exec {args.task_id}')}' first")
 
-    # Check self-eval honesty
+    # --- Review gate ---
+    review_file = root / REVIEWS_DIR / f"{args.task_id}.md"
+    force = getattr(args, 'force', False)
+
+    if not review_file.exists():
+        if force:
+            print(f"  {c(C_YELLOW, 'warn')}: no review file found (--force, skipping review gate)")
+        else:
+            print(f"  {c(C_RED, 'error')}: no review found. Run '{c(C_BOLD, f'trellis review {args.task_id}')}' first")
+            print(f"         use {c(C_DIM, '--force')} to skip review gate")
+            sys.exit(1)
+    else:
+        verdict, blocking, non_blocking, review_count = parse_review_file(review_file)
+
+        if verdict is None:
+            if force:
+                print(f"  {c(C_YELLOW, 'warn')}: review not completed (--force, skipping)")
+            else:
+                print(f"  {c(C_RED, 'error')}: review file exists but is not completed")
+                print(f"         complete the adversarial review in {c(C_CYAN, str(review_file.relative_to(root)))}")
+                print(f"         use {c(C_DIM, '--force')} to skip review gate")
+                sys.exit(1)
+        elif verdict == "fail":
+            print(f"  {c(C_RED, 'review')}: FAIL — {len(blocking)} blocking finding(s)")
+            for finding in blocking[:5]:
+                print(f"    {finding}")
+            if not force:
+                print(f"\n  fix blocking findings, then re-run review")
+                print(f"  use {c(C_DIM, '--force')} to override")
+                sys.exit(1)
+            else:
+                print(f"  {c(C_YELLOW, 'warn')}: archiving despite failed review (--force)")
+        elif verdict == "pass_with_issues":
+            print(f"  {c(C_YELLOW, 'review')}: pass with {len(non_blocking)} non-blocking finding(s)")
+            for finding in non_blocking[:5]:
+                print(f"    {c(C_DIM, finding)}")
+        else:
+            print(f"  {c(C_GREEN, 'review')}: pass")
+
+        # Record review verdict into spec
+        # Automated passes already passed (trellis review exits 1 on failure)
+        # so they are always "pass" if we reach trellis complete
+        agent_result = verdict or "incomplete"
+        review_block = f"""
+review:
+  timestamp: "{now_iso()}"
+  verdict: "{agent_result}"
+  review_rounds: {review_count}
+  passes:
+    - id: spec_compliance
+      result: "pass"
+    - id: scope_drift
+      result: "pass"
+    - id: adversarial_review
+      result: "{agent_result}"
+  blocking_count: {len(blocking)}
+  non_blocking_count: {len(non_blocking)}
+"""
+        # Insert review block before self_eval or deviations or metadata, or at end
+        if re.search(r'^self_eval:', text, re.MULTILINE):
+            text = re.sub(r'^(self_eval:)', review_block.strip() + '\n\n\\1', text, count=1, flags=re.MULTILINE)
+        elif re.search(r'^deviations:', text, re.MULTILINE):
+            text = re.sub(r'^(deviations:)', review_block.strip() + '\n\n\\1', text, count=1, flags=re.MULTILINE)
+        elif re.search(r'^metadata:', text, re.MULTILINE):
+            text = re.sub(r'^(metadata:)', review_block.strip() + '\n\n\\1', text, count=1, flags=re.MULTILINE)
+        else:
+            text = text.rstrip() + '\n\n' + review_block.strip() + '\n'
+
+        spec.write_text(text)
+
+        # Review file persists — it's an accumulating log of all review rounds.
+        # Gitignored, but available locally for reference.
+
+    # Check self-eval honesty (legacy, still useful as a secondary signal)
     check_self_eval(text, args.task_id)
 
     move_spec(root, spec, "completed")
@@ -773,6 +849,246 @@ def cmd_cancel(args):
     root = require_root()
     spec = require_spec(root, args.task_id)
     move_spec(root, spec, "cancelled")
+
+
+def cmd_review(args):
+    """Run automated review passes and generate adversarial review prompt."""
+    root = require_root()
+    spec = require_spec(root, args.task_id)
+    text = spec.read_text()
+
+    status = yaml_read_field(text, "status")
+    if status != "in_progress":
+        print(f"{c(C_RED, 'error')}: spec must be in_progress to review (current: {status})")
+        sys.exit(1)
+
+    print(f"{c(C_BOLD, f'Review: {args.task_id}')}")
+    print()
+
+    pass_results = {}
+
+    # --- Automated pass 1: spec_compliance (re-run acceptance criteria) ---
+    print(f"  {c(C_CYAN, 'spec_compliance')}: Re-running acceptance criteria")
+    try:
+        result = subprocess.run(
+            f"trellis exec {args.task_id} --resume",
+            shell=True, capture_output=True, text=True, timeout=300, cwd=str(root),
+        )
+        if result.returncode == 0:
+            print(f"    {c(C_GREEN, 'PASS')}")
+            pass_results["spec_compliance"] = True
+        else:
+            print(f"    {c(C_RED, 'FAIL')}")
+            output = (result.stdout + result.stderr).strip()
+            for line in output.splitlines()[-5:]:
+                print(f"    {c(C_DIM, line)}")
+            pass_results["spec_compliance"] = False
+    except (subprocess.TimeoutExpired, Exception) as e:
+        print(f"    {c(C_RED, 'ERROR')}: {e}")
+        pass_results["spec_compliance"] = False
+
+    # --- Automated pass 2: scope_drift (trellis audit) ---
+    print(f"  {c(C_CYAN, 'scope_drift')}: Checking spec scope vs git diff")
+    try:
+        result = subprocess.run(
+            f"trellis audit {args.task_id}",
+            shell=True, capture_output=True, text=True, timeout=60, cwd=str(root),
+        )
+        if result.returncode == 0:
+            print(f"    {c(C_GREEN, 'PASS')}")
+            pass_results["scope_drift"] = True
+        else:
+            print(f"    {c(C_RED, 'FAIL')}")
+            output = (result.stdout + result.stderr).strip()
+            for line in output.splitlines()[-5:]:
+                print(f"    {c(C_DIM, line)}")
+            pass_results["scope_drift"] = False
+    except (subprocess.TimeoutExpired, Exception) as e:
+        print(f"    {c(C_RED, 'ERROR')}: {e}")
+        pass_results["scope_drift"] = False
+
+    passed = sum(1 for v in pass_results.values() if v)
+    failed = sum(1 for v in pass_results.values() if not v)
+
+    print()
+    summary_parts = []
+    if passed:
+        summary_parts.append(c(C_GREEN, f"{passed} passed"))
+    if failed:
+        summary_parts.append(c(C_RED, f"{failed} failed"))
+    print(f"  Automated passes: {' / '.join(summary_parts)}")
+    print()
+
+    # --- Accumulate review file (append, don't overwrite) ---
+    reviews_dir = root / REVIEWS_DIR
+    reviews_dir.mkdir(parents=True, exist_ok=True)
+    review_file = reviews_dir / f"{args.task_id}.md"
+
+    task_title = yaml_read_nested(text, "task", "title") or args.task_id
+    task_summary = yaml_read_nested(text, "task", "summary") or ""
+
+    # Collect changed files from spec phases
+    changed_files = re.findall(r'^\s+-\s+file:\s*"?([^"\n]+)"?', text, re.MULTILINE)
+    files_section = "\n".join(f"- {f}" for f in sorted(set(changed_files))) if changed_files else "- (see git diff)"
+
+    # Build automated pass summary
+    passes_section = "\n".join(
+        f"- {name}: {'PASS' if result else 'FAIL'}"
+        for name, result in pass_results.items()
+    )
+
+    # Count existing review rounds
+    existing_text = review_file.read_text() if review_file.exists() else ""
+    review_count = len(re.findall(r'^## Review \d+', existing_text, re.MULTILINE)) + 1
+
+    if review_count == 1:
+        # First review — write header + context + first review section
+        review_file.write_text(f"""# Review: {args.task_id}
+
+## Spec
+{task_title}
+{task_summary}
+
+## Files Changed
+{files_section}
+
+---
+
+## Review {review_count} — {now_iso()}
+
+### Automated Passes
+{passes_section}
+
+### Blocking
+
+### Non-blocking
+
+### Verdict
+
+""")
+    else:
+        # Subsequent review — append new section
+        with open(review_file, "a") as f:
+            f.write(f"""
+---
+
+## Review {review_count} — {now_iso()}
+
+### Automated Passes
+{passes_section}
+
+### Blocking
+
+### Non-blocking
+
+### Verdict
+
+""")
+
+    if failed:
+        print(f"  {c(C_RED, 'error')}: {failed} automated pass(es) failed — fix before reviewing")
+        print(f"  resolve failures, then re-run: {c(C_BOLD, f'trellis review {args.task_id}')}")
+        sys.exit(1)
+
+    # --- Phase 2: Print adversarial review prompt for the agent ---
+    review_path_rel = str(review_file.relative_to(root))
+    spec_path_rel = str(spec.relative_to(root))
+
+    print(f"""{c(C_BOLD, 'ADVERSARIAL REVIEW')}
+
+  Your job is to find problems in the changes made for this spec. Not confirm
+  success — find what's wrong. A review that finds zero issues is suspicious.
+
+  {c(C_BOLD, 'Read:')}
+    - Spec: {c(C_CYAN, spec_path_rel)}
+    - Git diff of all changes made during execution
+    - Project CONVENTIONS.md and AGENTS.md
+    - Prior review rounds in {c(C_CYAN, review_path_rel)} (if any — don't re-report fixed issues)
+
+  {c(C_BOLD, 'Attack vectors:')}
+
+    {c(C_CYAN, '1. Regression hunt')} — For each modified file, find every caller and
+       importer. What assumptions do they make that this change violates?
+       Check function signatures, return shapes, event schemas, exports.
+
+    {c(C_CYAN, '2. Convention violations')} — Read CONVENTIONS.md and AGENTS.md.
+       Does the new code violate any documented rule? Cite the rule and the line.
+
+    {c(C_CYAN, '3. Defect scan')} — Hunt for: hardcoded values that should be dynamic,
+       off-by-one errors, missing null checks at boundaries, race conditions,
+       copy-paste errors, unhandled error paths, security issues.
+
+  {c(C_BOLD, 'Rules:')}
+    - Every finding must cite a specific file and line number
+    - Classify as blocking (must fix) or non-blocking (should fix)
+    - Do not suggest improvements — only flag defects and omissions
+    - Do not modify any code — review only
+
+  {c(C_BOLD, 'Severity:')} critical (runtime/security) > high (common case) > medium (edge case) > low (smell)
+
+  {c(C_BOLD, 'Write findings to:')} {c(C_CYAN, review_path_rel)}
+    The latest review section (Review {review_count}) is already scaffolded.
+    Fill in the ### Blocking, ### Non-blocking, and ### Verdict subsections.
+
+    - **severity** `file:line` — description
+    Verdict: pass | fail | pass_with_issues
+
+  When done: {c(C_BOLD, f'trellis complete {args.task_id}')}
+""")
+
+
+def parse_review_file(review_path):
+    """Parse the LATEST review section from an accumulating review file.
+    Returns (verdict, blocking, non_blocking, review_count)."""
+    if not review_path.exists():
+        return None, [], [], 0
+
+    text = review_path.read_text()
+
+    # Find all review sections
+    review_sections = re.split(r'^## Review \d+', text, flags=re.MULTILINE)
+    review_count = len(review_sections) - 1  # First split part is the header
+
+    if review_count == 0:
+        return None, [], [], 0
+
+    # Parse the last review section
+    last_section = review_sections[-1]
+
+    # Parse verdict from last section
+    verdict_match = re.search(r'^### Verdict\s*\n\s*(\w+)', last_section, re.MULTILINE)
+    verdict = verdict_match.group(1).strip() if verdict_match else None
+
+    # Parse findings from last section
+    blocking = []
+    non_blocking = []
+
+    blocking_match = re.search(r'### Blocking\s*\n(.*?)(?=### Non-blocking|### Verdict|$)', last_section, re.DOTALL)
+    non_blocking_match = re.search(r'### Non-blocking\s*\n(.*?)(?=### Verdict|$)', last_section, re.DOTALL)
+
+    def parse_findings(section_text):
+        findings = []
+        for line in section_text.strip().splitlines():
+            line = line.strip()
+            if line.startswith("- **") and "`" in line:
+                findings.append(line)
+        return findings
+
+    if blocking_match:
+        blocking = parse_findings(blocking_match.group(1))
+    if non_blocking_match:
+        non_blocking = parse_findings(non_blocking_match.group(1))
+
+    # Derive verdict from findings if not explicitly set
+    if not verdict or verdict not in ("pass", "fail", "pass_with_issues"):
+        if blocking:
+            verdict = "fail"
+        elif non_blocking:
+            verdict = "pass_with_issues"
+        else:
+            verdict = None  # No findings, no explicit verdict = not completed
+
+    return verdict, blocking, non_blocking, review_count
 
 
 def validate_spec(root, spec):
@@ -1459,9 +1775,14 @@ def main():
     p_start = sub.add_parser("start", help="Start execution of approved spec")
     p_start.add_argument("task_id", help="Task ID")
 
+    # review
+    p_review = sub.add_parser("review", help="Run review passes and generate adversarial review prompt")
+    p_review.add_argument("task_id", help="Task ID")
+
     # complete
     p_complete = sub.add_parser("complete", help="Mark spec as completed")
     p_complete.add_argument("task_id", help="Task ID")
+    p_complete.add_argument("-f", "--force", action="store_true", help="Skip review gate")
 
     # fail
     p_fail = sub.add_parser("fail", help="Mark spec as failed")
@@ -1506,6 +1827,7 @@ def main():
         "list": cmd_list,
         "approve": cmd_approve,
         "start": cmd_start,
+        "review": cmd_review,
         "complete": cmd_complete,
         "fail": cmd_fail,
         "cancel": cmd_cancel,

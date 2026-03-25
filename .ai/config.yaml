@@ -174,6 +174,33 @@ rubric:
   on_below_threshold: "perform_second_pass"
 
 # =============================================================================
+# ADVERSARIAL REVIEW
+# =============================================================================
+# Mandatory review gate before trellis complete can archive a spec.
+# Every spec gets the same review — no profiles.
+# Recommended: run the agent review in a fresh context/session.
+review:
+  # Automated passes (run by CLI during trellis review)
+  passes:
+    - id: spec_compliance
+      type: command
+      description: "Re-run acceptance criteria to verify code satisfies spec"
+      command: "trellis exec {task_id} --resume"
+
+    - id: scope_drift
+      type: command
+      description: "Compare spec scope vs actual git diff — flag undeclared changes"
+      command: "trellis audit {task_id}"
+
+  # Agent review — single adversarial pass covering three attack vectors:
+  #   1. Regression hunt: check callers/imports of modified files for breakage
+  #   2. Convention check: verify new code follows CONVENTIONS.md and AGENTS.md
+  #   3. Dark patterns: hunt for hardcoded values, off-by-ones, race conditions, copy-paste errors
+  # Prompt template: .ai/prompts/review.md
+  # Findings written to: .ai/reviews/{task-id}.md
+  agent_review: true
+
+# =============================================================================
 # REACT PATTERN (reasoning + acting)
 # =============================================================================
 react:

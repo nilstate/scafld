@@ -27,6 +27,10 @@ User Request
  (autonomous)       with validation at every checkpoint
     |
     v
+ REVIEW             Adversarial self-review finds what
+                    execution missed (ideally fresh session)
+    |
+    v
  Archive            Completed spec + audit trail
 ```
 
@@ -127,10 +131,11 @@ trellis status <task-id>                                 # Show spec details
 trellis validate <task-id>                               # Validate against schema
 trellis approve <task-id>                                # Validate + move to approved
 trellis start <task-id>                                  # Move to active
-trellis exec <task-id> [-p phase] [-r]                   # Run acceptance criteria (-r = resume)
+trellis exec <task-id> [-p phase] [-r]                    # Run acceptance criteria (-r = resume)
 trellis audit <task-id> [-b base-ref]                    # Spec vs actual git diff
 trellis diff <task-id>                                   # Git history for a spec
-trellis complete <task-id>                               # Archive as completed
+trellis review <task-id>                                 # Run automated passes + generate review prompt
+trellis complete <task-id> [-f]                           # Read review, record verdict, archive (-f = skip review)
 trellis fail <task-id>                                   # Archive as failed
 trellis cancel <task-id>                                 # Archive as cancelled
 trellis report                                           # Aggregate stats
@@ -180,6 +185,7 @@ The agent enters read-only planning mode, explores your codebase, and produces a
 - **Approval gate** - No code changes until a human reviews the plan. The agent thinks; you decide.
 - **Phase-by-phase execution** - Acceptance criteria at every checkpoint, not just at the end.
 - **Scope audit** - `trellis audit` compares what the spec declared against what actually changed in git. Undeclared changes get flagged.
+- **Adversarial review** - Before archiving, agents review their own work with a hostile lens — hunting regressions, convention violations, and subtle bugs. `trellis complete` refuses to archive without a passing review.
 - **Self-evaluation** - Agents score their own work against a configurable rubric. Below 7/10 triggers a second pass.
 - **Rollback commands** - Per-phase rollback for safe failure recovery. Every phase declares how to undo itself.
 - **Resume protocol** - Interrupted executions pick up where they left off.
