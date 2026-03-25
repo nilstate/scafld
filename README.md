@@ -125,9 +125,9 @@ trellis new <task-id> [-t title] [-s size] [-r risk]     # Scaffold a new spec
 trellis list [filter]                                    # List all specs
 trellis status <task-id>                                 # Show spec details
 trellis validate <task-id>                               # Validate against schema
-trellis approve <task-id>                                # Move to approved
+trellis approve <task-id>                                # Validate + move to approved
 trellis start <task-id>                                  # Move to active
-trellis exec <task-id> [-p phase]                        # Run acceptance criteria
+trellis exec <task-id> [-p phase] [-r]                   # Run acceptance criteria (-r = resume)
 trellis audit <task-id> [-b base-ref]                    # Spec vs actual git diff
 trellis diff <task-id>                                   # Git history for a spec
 trellis complete <task-id>                               # Archive as completed

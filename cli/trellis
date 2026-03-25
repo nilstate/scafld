@@ -15,7 +15,7 @@ from pathlib import Path
 # Constants
 # ---------------------------------------------------------------------------
 
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 AI_DIR = ".ai"
 SPECS_DIR = f"{AI_DIR}/specs"
 DRAFTS_DIR = f"{SPECS_DIR}/drafts"
@@ -702,9 +702,19 @@ def cmd_list(args):
 
 
 def cmd_approve(args):
-    """Move spec from drafts to approved."""
+    """Move spec from drafts to approved. Validates first."""
     root = require_root()
     spec = require_spec(root, args.task_id)
+
+    errors = validate_spec(root, spec)
+    if errors:
+        rel = spec.relative_to(root)
+        print(f"{c(C_RED, 'error')}: spec has validation errors, cannot approve")
+        for e in errors:
+            print(f"  - {e}")
+        print(f"\n  fix the spec, then retry: {c(C_BOLD, f'trellis approve {args.task_id}')}")
+        sys.exit(1)
+
     move_spec(root, spec, "approved")
 
 
@@ -765,68 +775,50 @@ def cmd_cancel(args):
     move_spec(root, spec, "cancelled")
 
 
-def cmd_validate(args):
-    """Validate a spec against the JSON schema."""
-    root = require_root()
-    spec = require_spec(root, args.task_id)
-
-    # Find schema
+def validate_spec(root, spec):
+    """Validate a spec against the JSON schema. Returns list of errors (empty = valid)."""
     schema_path = root / SCHEMA_PATH
     if not schema_path.exists():
-        print(f"{c(C_RED, 'error')}: schema not found at {SCHEMA_PATH}")
-        sys.exit(1)
+        return [f"schema not found at {SCHEMA_PATH}"]
 
-    schema_text = schema_path.read_text()
     try:
-        schema = json.loads(schema_text)
+        schema = json.loads(schema_path.read_text())
     except json.JSONDecodeError as e:
-        print(f"{c(C_RED, 'error')}: invalid schema JSON: {e}")
-        sys.exit(1)
+        return [f"invalid schema JSON: {e}"]
 
-    # Basic YAML-to-dict parsing using only stdlib
-    # We'll do structural validation of required fields
     text = spec.read_text()
-    rel = spec.relative_to(root)
     errors = []
 
     required_top = schema.get("required", [])
     for field in required_top:
         if not yaml_read_field(text, field):
-            # Check if it's a block field (like task:, phases:)
             if not re.search(rf'^{field}:', text, re.MULTILINE):
                 errors.append(f"missing required field: {field}")
 
-    # Check task_id format
     task_id = yaml_read_field(text, "task_id")
     if task_id and not re.match(r'^[a-z0-9-]+$', task_id):
         errors.append(f"task_id must be kebab-case: got '{task_id}'")
 
-    # Check status enum
     status = yaml_read_field(text, "status")
     valid_statuses = ["draft", "blocked", "under_review", "approved", "in_progress",
                       "completed", "failed", "cancelled"]
     if status and status not in valid_statuses:
         errors.append(f"invalid status: '{status}' (expected one of: {', '.join(valid_statuses)})")
 
-    # Check spec_version
     sv = yaml_read_field(text, "spec_version")
     if sv and not re.match(r'^\d+\.\d+$', sv):
         errors.append(f"spec_version must be semver: got '{sv}'")
 
-    # Check phases exist
     if not re.search(r'^phases:', text, re.MULTILINE):
         errors.append("missing required field: phases")
     else:
-        # Check each phase has required fields
         phase_ids = re.findall(r'^\s+-\s+id:\s*"?(phase\d+)"?', text, re.MULTILINE)
         if not phase_ids:
             errors.append("phases array is empty (at least 1 phase required)")
 
-    # Check planning_log exists
     if not re.search(r'^planning_log:', text, re.MULTILINE):
         errors.append("missing required field: planning_log")
 
-    # Check task block required fields
     if re.search(r'^task:', text, re.MULTILINE):
         task_required = ["title", "summary", "size", "risk_level"]
         for field in task_required:
@@ -835,12 +827,27 @@ def cmd_validate(args):
     else:
         errors.append("missing required field: task")
 
+    return errors
+
+
+def cmd_validate(args):
+    """Validate a spec against the JSON schema."""
+    root = require_root()
+    spec = require_spec(root, args.task_id)
+    rel = spec.relative_to(root)
+    text = spec.read_text()
+
+    errors = validate_spec(root, spec)
+
     if errors:
         print(f"{c(C_RED, 'FAIL')}: {rel}")
         for e in errors:
             print(f"  - {e}")
         sys.exit(1)
     else:
+        sv = yaml_read_field(text, "spec_version")
+        task_id = yaml_read_field(text, "task_id")
+        status = yaml_read_field(text, "status")
         print(f"{c(C_GREEN, 'PASS')}: {rel}")
         print(f"  spec_version: {sv}")
         print(f"  task_id: {task_id}")
@@ -920,7 +927,7 @@ def parse_acceptance_criteria(text):
                         fm = re.match(r'^\s+([\w_]+):\s*(.*)$', field_line)
                         if fm:
                             key = fm.group(1)
-                            if key in ("type", "description", "command", "expected", "cwd"):
+                            if key in ("type", "description", "command", "expected", "cwd", "result"):
                                 ac[key] = parse_yaml_value(fm.group(2))
                         i += 1
                     criteria.append(ac)
@@ -1003,17 +1010,26 @@ def cmd_exec(args):
             print(f"{c(C_YELLOW, 'warn')}: no criteria found for phase {args.phase}")
             return
 
+    # Resume mode: skip criteria that already passed
+    skipped_resume = 0
+    if args.resume:
+        before = len(criteria)
+        criteria = [ac for ac in criteria if ac.get("result") != "pass"]
+        skipped_resume = before - len(criteria)
+
     # Filter to only runnable criteria (have a command)
     runnable = [ac for ac in criteria if ac.get("command") and ac["command"] != "TODO"]
     manual = [ac for ac in criteria if not ac.get("command") or ac["command"] == "TODO"]
 
-    if not runnable and not manual:
+    if not runnable and not manual and not skipped_resume:
         print(f"{c(C_YELLOW, 'warn')}: no criteria found")
         return
 
     print(f"{c(C_BOLD, f'Executing acceptance criteria for {args.task_id}')}")
     if args.phase:
         print(f"  phase: {args.phase}")
+    if skipped_resume:
+        print(f"  {c(C_DIM, f'resume: skipping {skipped_resume} already-passed criteria')}")
     print()
 
     passed = 0
@@ -1090,7 +1106,13 @@ def cmd_exec(args):
     spec.write_text(text)
 
     print()
-    summary_parts = [c(C_GREEN, f"{passed} passed")]
+    summary_parts = []
+    if passed or skipped_resume:
+        total_pass = passed + skipped_resume
+        label = f"{total_pass} passed"
+        if skipped_resume:
+            label += f" ({skipped_resume} prior)"
+        summary_parts.append(c(C_GREEN, label))
     if failed:
         summary_parts.append(c(C_RED, f"{failed} failed"))
     if skipped:
@@ -1397,6 +1419,7 @@ def main():
     p_exec = sub.add_parser("exec", help="Run acceptance criteria and record results")
     p_exec.add_argument("task_id", help="Task ID")
     p_exec.add_argument("-p", "--phase", help="Run only criteria for this phase (e.g. phase1)")
+    p_exec.add_argument("-r", "--resume", action="store_true", help="Skip criteria that already passed")
 
     # audit
     p_audit = sub.add_parser("audit", help="Check spec changes vs actual git diff")
