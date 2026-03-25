@@ -156,6 +156,18 @@ acceptance_criteria:
 
 Commands without `cwd` run from the workspace root. The path must be relative and must resolve within the workspace — paths that escape the root are rejected.
 
+You can also set a **spec-level default** under `task.context.cwd` so you don't repeat it on every criterion:
+
+```yaml
+task:
+  context:
+    cwd: api
+    packages:
+      - app/services
+```
+
+Individual criteria can still override with their own `cwd`.
+
 ## Usage
 
 Tell your AI agent: *"Let's plan [feature]. Create a task spec."*

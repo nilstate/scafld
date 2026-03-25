@@ -827,6 +827,17 @@ def validate_spec(root, spec):
     else:
         errors.append("missing required field: task")
 
+    # Check for TODO placeholders in actionable fields
+    todo_patterns = [
+        (r'^\s+(?:command|content_spec|description|file):\s*"?TODO', "has TODO placeholder"),
+        (r'^\s+-\s+"?TODO', "has TODO list item"),
+    ]
+    for pattern, msg in todo_patterns:
+        matches = re.findall(pattern, text, re.MULTILINE)
+        if matches:
+            errors.append(f"{msg} ({len(matches)} occurrence{'s' if len(matches) > 1 else ''})")
+            break  # One error is enough
+
     return errors
 
 
@@ -987,6 +998,48 @@ def record_exec_result(text, ac_id, passed, output_snippet=""):
     return ''.join(result)
 
 
+def check_expected(returncode, output, expected):
+    """Check command result against expected outcome.
+
+    Handles common patterns:
+      "exit code 0"          → check returncode
+      "0 failures"           → search output for "0 failures" (and reject N failures where N>0)
+      "no matches"           → pass if output is empty or command returned non-zero
+      "Syntax OK"            → search output for literal string
+      any other string       → search output for literal match (case-insensitive)
+      empty/missing          → fall back to exit code 0
+    """
+    if not expected:
+        return returncode == 0
+
+    exp = expected.strip()
+    exp_lower = exp.lower()
+
+    # "no matches" — pass when output is empty
+    if exp_lower == "no matches":
+        return returncode != 0 or not output
+
+    # "exit code N"
+    m = re.match(r'^exit\s+code\s+(\d+)$', exp_lower)
+    if m:
+        return returncode == int(m.group(1))
+
+    # "0 failures" — check exit code AND that output doesn't contain "N failures" where N > 0
+    if exp_lower == "0 failures":
+        if returncode != 0:
+            return False
+        # Look for rspec/test patterns like "2 failures" or "1 failure"
+        fail_match = re.search(r'(\d+)\s+failures?', output)
+        if fail_match and int(fail_match.group(1)) > 0:
+            return False
+        return True
+
+    # Literal substring match (case-insensitive) — "Syntax OK", "success", etc.
+    if returncode != 0:
+        return False
+    return exp_lower in output.lower()
+
+
 def cmd_exec(args):
     """Run acceptance criteria commands and record results."""
     root = require_root()
@@ -997,6 +1050,12 @@ def cmd_exec(args):
     if status not in ("in_progress", "approved"):
         print(f"{c(C_RED, 'error')}: spec must be in_progress or approved to exec (current: {status})")
         sys.exit(1)
+
+    # Spec-level default cwd (task.context.cwd) — used when criterion has no cwd
+    spec_cwd = None
+    m = re.search(r'^\s+context:.*?\n(?:\s+\S.*\n)*?\s+cwd:\s*"?([^"\n]+)"?', text, re.MULTILINE)
+    if m:
+        spec_cwd = m.group(1).strip().strip('"').strip("'")
 
     criteria = parse_acceptance_criteria(text)
     if not criteria:
@@ -1044,21 +1103,22 @@ def cmd_exec(args):
 
         print(f"  {c(C_CYAN, ac_id)}: {desc}")
 
-        # Resolve working directory (default: workspace root)
+        # Resolve working directory: criterion cwd > spec-level cwd > workspace root
+        effective_cwd = ac.get("cwd") or spec_cwd
         ac_cwd = root
-        if ac.get("cwd"):
-            ac_cwd = (root / ac["cwd"]).resolve()
+        if effective_cwd:
+            ac_cwd = (root / effective_cwd).resolve()
             if not str(ac_cwd).startswith(str(root.resolve())):
-                print(f"    {c(C_RED, 'ERROR')}: cwd '{ac['cwd']}' escapes workspace root")
-                text = record_exec_result(text, ac_id, False, f"cwd '{ac['cwd']}' escapes workspace root")
+                print(f"    {c(C_RED, 'ERROR')}: cwd '{effective_cwd}' escapes workspace root")
+                text = record_exec_result(text, ac_id, False, f"cwd '{effective_cwd}' escapes workspace root")
                 failed += 1
                 continue
             if not ac_cwd.is_dir():
-                print(f"    {c(C_RED, 'ERROR')}: cwd '{ac['cwd']}' is not a directory")
-                text = record_exec_result(text, ac_id, False, f"cwd '{ac['cwd']}' not found")
+                print(f"    {c(C_RED, 'ERROR')}: cwd '{effective_cwd}' is not a directory")
+                text = record_exec_result(text, ac_id, False, f"cwd '{effective_cwd}' not found")
                 failed += 1
                 continue
-            cwd_suffix = f"  {c(C_DIM, '(in ' + ac['cwd'] + '/)')}"
+            cwd_suffix = f"  {c(C_DIM, '(in ' + effective_cwd + '/)')}"
         else:
             cwd_suffix = ""
         print(f"    $ {c(C_DIM, cmd)}{cwd_suffix}")
@@ -1071,15 +1131,15 @@ def cmd_exec(args):
             output = (result.stdout + result.stderr).strip()
 
             # Determine pass/fail
-            ac_passed = result.returncode == 0
-            if expected and expected.lower() == "no matches":
-                ac_passed = result.returncode != 0 or not output
+            ac_passed = check_expected(result.returncode, output, expected)
 
             if ac_passed:
                 print(f"    {c(C_GREEN, 'PASS')}")
                 passed += 1
             else:
                 print(f"    {c(C_RED, 'FAIL')} (exit code {result.returncode})")
+                if expected:
+                    print(f"    expected: {c(C_DIM, expected)}")
                 if output:
                     for line in output.splitlines()[:5]:
                         print(f"    {c(C_DIM, line)}")

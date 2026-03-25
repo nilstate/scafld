@@ -103,6 +103,10 @@
             "related_docs": {
               "type": "array",
               "items": {"type": "string"}
+            },
+            "cwd": {
+              "type": "string",
+              "description": "Default working directory for acceptance criteria commands, relative to workspace root. Individual criteria can override with their own cwd."
             }
           }
         },
