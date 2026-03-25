@@ -1,0 +1,164 @@
+spec_version: "1.1"
+task_id: "exec-per-criterion-cwd"
+created: "2026-03-25T05:00:00Z"
+updated: "2026-03-25T04:37:54Z"
+status: "completed"
+
+task:
+  title: "Per-criterion working directory for trellis exec"
+  summary: >
+    In monorepo/workspace setups, trellis exec runs all commands from the
+    workspace root. Backend commands need `cd api &&` prefixes, frontend
+    commands need `cd app &&`, etc. This is fragile and verbose. Add an
+    optional `cwd` field on acceptance criteria so each command can declare
+    its working directory relative to the workspace root. Commands without
+    `cwd` continue to run from root (backward-compatible).
+  size: "small"
+  risk_level: "low"
+
+  context:
+    packages:
+      - cli
+      - .ai/schemas
+    files_impacted:
+      - path: cli/trellis
+        lines: "920-925"
+        reason: "parse_acceptance_criteria must extract cwd field from criteria"
+      - path: cli/trellis
+        lines: "1030-1040"
+        reason: "cmd_exec must resolve and validate cwd before running subprocess"
+      - path: .ai/schemas/spec.json
+        lines: "acceptance_criteria items"
+        reason: "Add optional cwd property to criterion schema"
+      - path: README.md
+        lines: "CLI section"
+        reason: "Document the cwd field in the spec format"
+    invariants:
+      - "domain_boundaries"
+    related_docs:
+      - README.md
+
+  objectives:
+    - "Acceptance criteria can declare cwd relative to workspace root"
+    - "Commands without cwd run from workspace root (backward-compatible)"
+    - "cwd paths that escape the workspace root are rejected"
+    - "Missing cwd directories produce a clear error, not a Python traceback"
+    - "The resolved directory is shown in exec output for clarity"
+
+  scope:
+    in_scope:
+      - "cwd field parsing in parse_acceptance_criteria"
+      - "cwd resolution and validation in cmd_exec"
+      - "Schema update for the optional cwd property"
+      - "README documentation"
+    out_of_scope:
+      - "Global per-spec cwd (would break multi-repo specs)"
+      - "cwd on validation pipeline commands in config.yaml"
+
+  dependencies:
+    - "None"
+
+  assumptions:
+    - "cwd is always relative to workspace root"
+    - "Absolute paths are not supported (could escape sandbox)"
+
+  touchpoints:
+    - area: "cli/trellis"
+      description: "CLI exec command and criteria parser"
+      links:
+        - "cli/trellis"
+    - area: ".ai/schemas/spec.json"
+      description: "Spec validation schema"
+      links:
+        - ".ai/schemas/spec.json"
+
+  risks:
+    - description: "Symlinks in cwd could escape workspace root"
+      impact: low
+      mitigation: "Use resolve() and check the resolved path starts with the resolved root"
+
+  acceptance:
+    validation_profile: "light"
+    definition_of_done:
+      - id: dod1
+        description: "cwd field is parsed from acceptance criteria"
+        status: pending
+      - id: dod2
+        description: "Commands run from the specified cwd directory"
+        status: pending
+      - id: dod3
+        description: "Missing cwd produces a clear error (not a traceback)"
+        status: pending
+      - id: dod4
+        description: "cwd escaping workspace root is rejected"
+        status: pending
+      - id: dod5
+        description: "Commands without cwd still run from workspace root"
+        status: pending
+
+  constraints:
+    approvals_required: []
+    non_goals:
+      - "Do not add a global cwd to specs or config"
+
+planning_log:
+  - timestamp: "2026-03-25T05:00:00Z"
+    actor: "agent"
+    summary: >
+      Identified the issue: trellis exec hardcodes cwd=root for all subprocess
+      calls. In monorepo workspaces, specs must prefix every command with
+      cd <submodule> &&. Per-criterion cwd is the minimal, backward-compatible fix.
+      A global spec-level cwd was considered but rejected because multi-repo
+      specs may have criteria targeting different submodules.
+
+  - timestamp: "2026-03-25T04:36:15Z"
+    actor: "cli"
+    summary: "Spec approved"
+  - timestamp: "2026-03-25T04:36:15Z"
+    actor: "cli"
+    summary: "Execution started"
+  - timestamp: "2026-03-25T04:37:54Z"
+    actor: "cli"
+    summary: "Spec completed"
+phases:
+  - id: phase1
+    name: "Add cwd to criteria parser and exec runner"
+    objective: "Parse cwd from spec YAML and use it when running commands"
+    changes:
+      - file: cli/trellis
+        action: modify
+        content_spec: >
+          In parse_acceptance_criteria: add "cwd" to the allowed keys list.
+          In cmd_exec: resolve cwd as (root / ac["cwd"]).resolve() when present,
+          validate it doesn't escape root and is a directory, pass to subprocess.
+          Print the cwd label in output when set.
+    acceptance_criteria:
+      - id: ac1
+        type: compile
+        description: "CLI passes Python syntax check"
+        command: "python3 -c \"import py_compile; py_compile.compile('cli/trellis', doraise=True)\""
+        cwd: /home/kam/dev/trellis
+        expected: "exit code 0"
+        result: "pass"
+        executed_at: "2026-03-25T04:37:48Z"
+
+  - id: phase2
+    name: "Update schema and docs"
+    objective: "Document the cwd field in the spec schema and README"
+    dependencies: [phase1]
+    changes:
+      - file: .ai/schemas/spec.json
+        action: modify
+        content_spec: "Add optional cwd string property to acceptance_criteria items"
+      - file: README.md
+        action: modify
+        content_spec: "Add a note about per-criterion cwd in the CLI/spec documentation"
+    acceptance_criteria:
+      - id: ac2
+        type: compile
+        description: "Schema is valid JSON"
+        command: "python3 -c \"import json; json.load(open('.ai/schemas/spec.json'))\""
+        cwd: /home/kam/dev/trellis
+        expected: "exit code 0"
+        result: "pass"
+        executed_at: "2026-03-25T04:37:48Z"

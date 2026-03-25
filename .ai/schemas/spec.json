@@ -218,7 +218,8 @@
                   },
                   "description": {"type": "string"},
                   "command": {"type": "string"},
-                  "expected": {"type": "string"}
+                  "expected": {"type": "string"},
+                  "cwd": {"type": "string", "description": "Working directory relative to workspace root"}
                 }
               }
             }
@@ -318,6 +319,10 @@
                   "description": "Shell command to run for automated validation. Expected for compile, test, boundary, integration, and security types."
                 },
                 "expected": {"type": "string"},
+                "cwd": {
+                  "type": "string",
+                  "description": "Working directory for the command, relative to workspace root. Useful in monorepo/workspace setups where different criteria target different submodules."
+                },
                 "result": {
                   "type": "string",
                   "enum": ["pass", "fail"],

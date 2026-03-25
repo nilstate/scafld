@@ -920,7 +920,7 @@ def parse_acceptance_criteria(text):
                         fm = re.match(r'^\s+([\w_]+):\s*(.*)$', field_line)
                         if fm:
                             key = fm.group(1)
-                            if key in ("type", "description", "command", "expected"):
+                            if key in ("type", "description", "command", "expected", "cwd"):
                                 ac[key] = parse_yaml_value(fm.group(2))
                         i += 1
                     criteria.append(ac)
@@ -1027,12 +1027,30 @@ def cmd_exec(args):
         desc = ac.get("description", ac_id)
 
         print(f"  {c(C_CYAN, ac_id)}: {desc}")
-        print(f"    $ {c(C_DIM, cmd)}")
+
+        # Resolve working directory (default: workspace root)
+        ac_cwd = root
+        if ac.get("cwd"):
+            ac_cwd = (root / ac["cwd"]).resolve()
+            if not str(ac_cwd).startswith(str(root.resolve())):
+                print(f"    {c(C_RED, 'ERROR')}: cwd '{ac['cwd']}' escapes workspace root")
+                text = record_exec_result(text, ac_id, False, f"cwd '{ac['cwd']}' escapes workspace root")
+                failed += 1
+                continue
+            if not ac_cwd.is_dir():
+                print(f"    {c(C_RED, 'ERROR')}: cwd '{ac['cwd']}' is not a directory")
+                text = record_exec_result(text, ac_id, False, f"cwd '{ac['cwd']}' not found")
+                failed += 1
+                continue
+            cwd_suffix = f"  {c(C_DIM, '(in ' + ac['cwd'] + '/)')}"
+        else:
+            cwd_suffix = ""
+        print(f"    $ {c(C_DIM, cmd)}{cwd_suffix}")
 
         try:
             result = subprocess.run(
                 cmd, shell=True, capture_output=True, text=True,
-                timeout=120, cwd=str(root),
+                timeout=120, cwd=str(ac_cwd),
             )
             output = (result.stdout + result.stderr).strip()
 

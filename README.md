@@ -136,6 +136,26 @@ trellis cancel <task-id>                                 # Archive as cancelled
 trellis report                                           # Aggregate stats
 ```
 
+### Per-Criterion Working Directory
+
+In monorepo/workspace setups, different acceptance criteria may target different submodules. Use the optional `cwd` field to set the working directory for a command, relative to the workspace root:
+
+```yaml
+acceptance_criteria:
+  - id: ac1
+    type: test
+    cwd: api
+    command: "bundle exec rspec spec/services/"
+    expected: "0 failures"
+  - id: ac2
+    type: test
+    cwd: app
+    command: "yarn test"
+    expected: "0 failures"
+```
+
+Commands without `cwd` run from the workspace root. The path must be relative and must resolve within the workspace — paths that escape the root are rejected.
+
 ## Usage
 
 Tell your AI agent: *"Let's plan [feature]. Create a task spec."*
