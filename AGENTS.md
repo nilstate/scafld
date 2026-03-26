@@ -102,10 +102,10 @@ For trivial changes (typos, single-line fixes), skip the spec workflow and work 
 ### Review Mode
 
 - **When:** All phases complete, before `trellis complete`
-- **Actions:** Run `trellis review`, then adversarial code review (ideally in a fresh session)
+- **Actions:** Run `trellis review`, then adversarial code review (ideally in a fresh session) and update the latest review round's provenance metadata
 - **Output:** Findings written to `.ai/reviews/{task-id}.md`, verdict recorded in spec
 - **Prompt:** Read `.ai/prompts/review.md` before entering this mode
-- **Mandate:** Find problems, not confirm success. A review that finds zero issues is suspicious.
+- **Mandate:** Find problems, not confirm success. A review that finds zero issues is suspicious. `trellis complete` only bypasses a blocked gate through the audited `--human-reviewed --reason` path. Local CLI checks improve workflow integrity, but stronger guarantees still need CI or merge gate enforcement, review artifacts bound to the reviewed diff or commit, and out-of-band approval or an external reviewer.
 
 ---
 
@@ -202,7 +202,7 @@ trellis audit <task-id>           # compare spec changes vs git diff
 trellis diff <task-id>            # show git history for spec
 trellis review <task-id>          # run automated passes + generate review prompt
 trellis complete <task-id>        # read review, record verdict, archive (requires review)
-trellis complete <task-id> -f     # archive without review (--force)
+trellis complete <task-id> --human-reviewed --reason "manual audit"  # exceptional audited override for a blocked review gate
 trellis fail <task-id>            # active/ -> archive/ (failed)
 trellis cancel <task-id>          # active/ -> archive/ (cancelled)
 trellis report                    # aggregate stats across all specs

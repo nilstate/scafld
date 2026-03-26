@@ -11,10 +11,10 @@ Trellis is a spec-driven framework for AI agent task planning and execution. Eve
 1. **Plan:** AI generates a task spec in `.ai/specs/drafts/` via conversational ReAct loop
 2. **Approve:** Developer reviews and moves spec to `.ai/specs/approved/`
 3. **Execute:** AI picks up the approved spec, executes phases, validates at each checkpoint
-4. **Review:** Adversarial review finds what execution missed — `trellis review` runs automated passes and prompts the agent to attack its own diff
-5. **Archive:** Completed specs move to `.ai/specs/archive/YYYY-MM/` with review verdict recorded
+4. **Review:** Adversarial review finds what execution missed — `trellis review` runs automated passes, scaffolds a machine-validated review artifact, and records review provenance in the latest round
+5. **Archive:** Completed specs move to `.ai/specs/archive/YYYY-MM/` with truthful review results recorded, or a human-reviewed override audited explicitly when the gate is blocked
 
-The approval gate is the human oversight boundary. The review gate is the quality boundary. During execution, the agent operates autonomously through all phases, pausing only when blocked or deviating from the spec.
+The approval gate is the human oversight boundary. The review gate is the quality boundary. During execution, the agent operates autonomously through all phases, pausing only when blocked or deviating from the spec. A normal completion path still stays agent-driven; the human-reviewed override is an exceptional audited escape hatch, not the default workflow.
 
 ---
 

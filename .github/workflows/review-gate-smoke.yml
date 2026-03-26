@@ -1,0 +1,29 @@
+name: Review Gate Smoke
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  review-gate-smoke:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Validate CLI syntax
+        run: PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile cli/trellis
+
+      - name: Validate smoke harness syntax
+        run: bash -n tests/review_gate_smoke.sh
+
+      - name: Run review gate smoke matrix
+        run: ./tests/review_gate_smoke.sh all

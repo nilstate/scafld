@@ -32,7 +32,7 @@ A review that finds zero issues is suspicious. Look harder.
 3. Read `CONVENTIONS.md` and `AGENTS.md`
 4. Read `.ai/reviews/{task-id}.md` — if prior review rounds exist, read what was found before. Don't re-report fixed issues. Note if a prior finding persists.
 5. Attack the diff through the three vectors below
-6. Write findings into the latest review section in `.ai/reviews/{task-id}.md`
+6. Write findings into the latest review section in `.ai/reviews/{task-id}.md` and update the review provenance metadata for the reviewer who actually performed the review
 
 ---
 
@@ -81,10 +81,26 @@ For each change, actively hunt for:
 
 ## Output
 
-`trellis review` scaffolds the review file at `.ai/reviews/{task-id}.md` with numbered review sections. Fill in the latest section:
+`trellis review` scaffolds the review file at `.ai/reviews/{task-id}.md` with numbered review sections. Fill in the latest section using the fixed Review Artifact v2 contract:
 
-```markdown
+````markdown
 ## Review N — {timestamp}
+
+### Metadata
+```json
+{
+  "schema_version": 2,
+  "round_status": "completed",
+  "reviewer_mode": "fresh_agent",
+  "reviewer_session": "session-id-or-empty-string",
+  "reviewed_at": "{timestamp}",
+  "override_reason": null,
+  "automated_passes": {
+    "spec_compliance": "pass",
+    "scope_drift": "pass"
+  }
+}
+```
 
 ### Automated Passes
 - spec_compliance: PASS
@@ -98,9 +114,9 @@ For each change, actively hunt for:
 
 ### Verdict
 {pass | fail | pass_with_issues}
-```
+````
 
-Prior review rounds remain in the file as context. Don't modify them — only fill in the latest section.
+Set `reviewer_mode` to `fresh_agent`, `auto`, or `executor` to match the real reviewer. Leave `override_reason` as `null` for normal reviews. Prior review rounds remain in the file as context. Don't modify them — only fill in the latest section.
 
 **Verdict rules:** Any blocking finding → `fail`. Non-blocking only → `pass_with_issues`. Clean → `pass`.
 

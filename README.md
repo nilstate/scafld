@@ -1,5 +1,7 @@
 # Trellis
 
+[![Review Gate Smoke](https://github.com/sourcey/trellis/actions/workflows/review-gate-smoke.yml/badge.svg)](https://github.com/sourcey/trellis/actions/workflows/review-gate-smoke.yml)
+
 An opinionated orchestration layer for AI coding agents.
 
 Most AI coding tools let agents jump straight into your codebase and start writing. No plan. No review. No audit trail. Just vibes and a prayer.
@@ -185,13 +187,24 @@ The agent enters read-only planning mode, explores your codebase, and produces a
 - **Approval gate** - No code changes until a human reviews the plan. The agent thinks; you decide.
 - **Phase-by-phase execution** - Acceptance criteria at every checkpoint, not just at the end.
 - **Scope audit** - `trellis audit` compares what the spec declared against what actually changed in git. Undeclared changes get flagged.
-- **Adversarial review** - Before archiving, agents review their own work with a hostile lens — hunting regressions, convention violations, and subtle bugs. `trellis complete` refuses to archive without a passing review.
+- **Adversarial review** - Before archiving, `trellis review` runs automated checks and scaffolds a machine-validated review round with review provenance. `trellis complete` requires a structurally valid latest review or an exceptional human-reviewed override with an audited reason.
 - **Self-evaluation** - Agents score their own work against a configurable rubric. Below 7/10 triggers a second pass.
 - **Rollback commands** - Per-phase rollback for safe failure recovery. Every phase declares how to undo itself.
 - **Resume protocol** - Interrupted executions pick up where they left off.
 - **Validation profiles** - Light, standard, or strict, configured per-task or derived from risk level.
 - **Reporting** - `trellis report` aggregates pass rates, self-eval scores, and scope drift across your entire spec history.
 - **Agent-agnostic** - Works with Claude, Cursor, Copilot, Windsurf, or any AI coding agent.
+
+## Trust Boundary
+
+Trellis now enforces a materially stronger local review workflow, but local CLI checks are still not the whole trust boundary.
+
+For best-in-class review governance, add the next layer outside the agent session:
+
+- **CI or merge gate** validates the latest review artifact before code lands
+- **Diff or commit binding** ties the review artifact to the exact reviewed diff or commit
+- **External reviewer driver** runs the adversarial review from a configurable tool or service instead of trusting the executor path alone
+- **Out-of-band approval** moves human override out of the terminal session and into a separate approval surface
 
 ## Documentation
 
