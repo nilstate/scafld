@@ -132,7 +132,7 @@ phases:
         expected: "exit code 0"
         result: "pass"
         executed_at: "2026-03-26T09:07:45Z"
-        result_output: "README.md:3:[![Review Gate Smoke](https://github.com/sourcey/trellis/actions/workflows/review-gate-smoke.yml/badge.svg)](https://github.com/sourcey/trellis/actions/workflows/review-gate-smoke.yml) .gi"
+        result_output: "README.md:3:[![Review Gate Smoke](https://github.com/nilstate/trellis/actions/workflows/review-gate-smoke.yml/badge.svg)](https://github.com/nilstate/trellis/actions/workflows/review-gate-smoke.yml) .gi"
     status: "pending"
 
 rollback:

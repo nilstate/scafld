@@ -1,8 +1,10 @@
 # Trellis
 
-[![Review Gate Smoke](https://github.com/sourcey/trellis/actions/workflows/review-gate-smoke.yml/badge.svg)](https://github.com/sourcey/trellis/actions/workflows/review-gate-smoke.yml)
+[![Review Gate Smoke](https://github.com/nilstate/trellis/actions/workflows/review-gate-smoke.yml/badge.svg)](https://github.com/nilstate/trellis/actions/workflows/review-gate-smoke.yml)
 
 An opinionated orchestration layer for AI coding agents.
+
+Canonical repo: `https://github.com/nilstate/trellis`. Default branch: `main`.
 
 Most AI coding tools let agents jump straight into your codebase and start writing. No plan. No review. No audit trail. Just vibes and a prayer.
 
@@ -45,12 +47,13 @@ The spec is the contract. It forces the planning to happen explicitly, in a form
 ## Install
 
 ```bash
-git clone https://github.com/sourcey/trellis.git ~/.trellis && ~/.trellis/install.sh
+git clone https://github.com/nilstate/trellis.git ~/.trellis && ~/.trellis/install.sh
+curl -fsSL https://raw.githubusercontent.com/nilstate/trellis/main/install.sh | sh
 ```
 
 This clones Trellis to `~/.trellis` and symlinks the `trellis` command to `~/.local/bin/`.
 
-To update: `cd ~/.trellis && git pull`
+To update: `cd ~/.trellis && git pull origin main`
 
 ## Setup
 
@@ -137,7 +140,9 @@ trellis exec <task-id> [-p phase] [-r]                    # Run acceptance crite
 trellis audit <task-id> [-b base-ref]                    # Spec vs actual git diff
 trellis diff <task-id>                                   # Git history for a spec
 trellis review <task-id>                                 # Run automated passes + generate review prompt
-trellis complete <task-id> [-f]                           # Read review, record verdict, archive (-f = skip review)
+trellis complete <task-id>                                # Read review, record verdict, archive (requires passing review)
+trellis complete <task-id> --human-reviewed --reason "manual audit"
+                                                          # Exceptional audited override when the gate is blocked
 trellis fail <task-id>                                   # Archive as failed
 trellis cancel <task-id>                                 # Archive as cancelled
 trellis report                                           # Aggregate stats

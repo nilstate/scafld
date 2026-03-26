@@ -2,10 +2,10 @@
 # Trellis installer
 #
 # One-liner:
-#   curl -fsSL https://raw.githubusercontent.com/sourcey/trellis/master/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/nilstate/trellis/main/install.sh | sh
 #
 # Or after cloning:
-#   git clone https://github.com/sourcey/trellis.git ~/.trellis
+#   git clone https://github.com/nilstate/trellis.git ~/.trellis
 #   ~/.trellis/install.sh
 set -e
 
@@ -25,7 +25,7 @@ else
         echo "  Using $TRELLIS_HOME"
     else
         echo "  Cloning to $TRELLIS_HOME"
-        git clone --quiet https://github.com/sourcey/trellis.git "$TRELLIS_HOME"
+        git clone --quiet -b main https://github.com/nilstate/trellis.git "$TRELLIS_HOME"
     fi
 fi
 
