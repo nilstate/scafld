@@ -31,8 +31,8 @@ A review that finds zero issues is suspicious. Look harder.
 2. Read the git diff of all changes
 3. Read `CONVENTIONS.md` and `AGENTS.md`
 4. Read `.ai/reviews/{task-id}.md` — if prior review rounds exist, read what was found before. Don't re-report fixed issues. Note if a prior finding persists.
-5. Attack the diff through the three vectors below
-6. Write findings into the latest review section in `.ai/reviews/{task-id}.md` and update the review provenance metadata for the reviewer who actually performed the review
+5. Attack the diff through the three vectors below — **all three are required**
+6. Write findings into the latest review section in `.ai/reviews/{task-id}.md` — each adversarial section must have content or `trellis complete` will reject. Update the review provenance metadata for the reviewer who actually performed the review.
 
 ---
 
@@ -106,6 +106,19 @@ For each change, actively hunt for:
 - spec_compliance: PASS
 - scope_drift: PASS
 
+### Regression Hunt
+{For each modified file, trace callers/importers. What assumptions break?
+List findings or "No issues found — checked [what you checked]".}
+
+### Convention Check
+{Read CONVENTIONS.md and AGENTS.md. Does new code violate any documented rule?
+List findings or "No issues found — checked [what you checked]".}
+
+### Defect Scan
+{Hunt for hardcoded values, off-by-one, missing null checks, race conditions,
+copy-paste errors, unhandled error paths, security issues.
+List findings or "No issues found — checked [what you checked]".}
+
 ### Blocking
 - **{severity}** `{file}:{line}` — {what's wrong and why it matters}
 
@@ -117,6 +130,8 @@ For each change, actively hunt for:
 ````
 
 Set `reviewer_mode` to `fresh_agent`, `auto`, or `executor` to match the real reviewer. Leave `override_reason` as `null` for normal reviews. Prior review rounds remain in the file as context. Don't modify them — only fill in the latest section.
+
+**All three adversarial sections (Regression Hunt, Convention Check, Defect Scan) must contain content.** Each must have at least one finding or an explicit "No issues found" with a brief note of what was checked. `trellis complete` will reject reviews with empty adversarial sections.
 
 **Verdict rules:** Any blocking finding → `fail`. Non-blocking only → `pass_with_issues`. Clean → `pass`.
 

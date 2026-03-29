@@ -528,6 +528,15 @@ def append_review_round(review_file, task_id, spec_text, metadata, verdict="", b
 ### Automated Passes
 {render_review_automated_passes(metadata.get("automated_passes"))}
 
+### Regression Hunt
+
+
+### Convention Check
+
+
+### Defect Scan
+
+
 ### Blocking
 {blocking_body}
 
@@ -987,11 +996,15 @@ def cmd_complete(args):
     override_applied = False
     override_confirmed_at = None
 
+    empty_adversarial = review_data["empty_adversarial"]
+
     gate_reason = None
     if not review_data["exists"]:
         gate_reason = "no review found"
     elif gate_errors:
         gate_reason = "latest review round is malformed or incomplete"
+    elif empty_adversarial:
+        gate_reason = f"adversarial review incomplete — missing: {', '.join(empty_adversarial)}"
     elif verdict == "fail":
         gate_reason = f"latest review failed with {len(blocking)} blocking finding(s)"
     elif verdict is None:
@@ -1186,38 +1199,44 @@ def cmd_review(args):
     - Project CONVENTIONS.md and AGENTS.md
     - Prior review rounds in {c(C_CYAN, review_path_rel)} (if any — don't re-report fixed issues)
 
-  {c(C_BOLD, 'Attack vectors:')}
+  {c(C_BOLD, 'Attack vectors (all 3 required — trellis complete will reject empty sections):')}
 
-    {c(C_CYAN, '1. Regression hunt')} — For each modified file, find every caller and
+    {c(C_CYAN, '1. Regression Hunt')} — For each modified file, find every caller and
        importer. What assumptions do they make that this change violates?
        Check function signatures, return shapes, event schemas, exports.
+       {c(C_DIM, 'Write findings under ### Regression Hunt')}
 
-    {c(C_CYAN, '2. Convention violations')} — Read CONVENTIONS.md and AGENTS.md.
+    {c(C_CYAN, '2. Convention Check')} — Read CONVENTIONS.md and AGENTS.md.
        Does the new code violate any documented rule? Cite the rule and the line.
+       {c(C_DIM, 'Write findings under ### Convention Check')}
 
-    {c(C_CYAN, '3. Defect scan')} — Hunt for: hardcoded values that should be dynamic,
+    {c(C_CYAN, '3. Defect Scan')} — Hunt for: hardcoded values that should be dynamic,
        off-by-one errors, missing null checks at boundaries, race conditions,
        copy-paste errors, unhandled error paths, security issues.
+       {c(C_DIM, 'Write findings under ### Defect Scan')}
 
   {c(C_BOLD, 'Rules:')}
     - Every finding must cite a specific file and line number
     - Classify as blocking (must fix) or non-blocking (should fix)
     - Do not suggest improvements — only flag defects and omissions
     - Do not modify any code — review only
+    - Each adversarial section must contain at least one finding or an explicit
+      "No issues found" with a brief explanation of what was checked
 
   {c(C_BOLD, 'Severity:')} critical (runtime/security) > high (common case) > medium (edge case) > low (smell)
 
   {c(C_BOLD, 'Write findings to:')} {c(C_CYAN, review_path_rel)}
-    The latest review section (Review {review_count}) is already scaffolded.
-    Update the fenced JSON in {c(C_BOLD, '### Metadata')} with the actual
-    reviewer provenance:
-      - reviewer_mode: fresh_agent | auto | executor
-      - reviewer_session: session identifier or empty string if unavailable
-    Then fill in {c(C_BOLD, '### Blocking')}, {c(C_BOLD, '### Non-blocking')},
-    and {c(C_BOLD, '### Verdict')}.
+    The latest review section (Review {review_count}) is already scaffolded with
+    all required headings. Fill in each section:
 
-    - **severity** `file:line` — description
-    Verdict: pass | fail | pass_with_issues
+    1. Update {c(C_BOLD, '### Metadata')} JSON with reviewer provenance:
+       - reviewer_mode: fresh_agent | auto | executor
+       - reviewer_session: session identifier or empty string
+    2. Fill {c(C_BOLD, '### Regression Hunt')}, {c(C_BOLD, '### Convention Check')},
+       {c(C_BOLD, '### Defect Scan')} with findings from each vector
+    3. Collect blocking/non-blocking findings into {c(C_BOLD, '### Blocking')} and
+       {c(C_BOLD, '### Non-blocking')} using: - **severity** `file:line` — description
+    4. Set {c(C_BOLD, '### Verdict')}: pass | fail | pass_with_issues
 
   When done: {c(C_BOLD, f'trellis complete {args.task_id}')}
 """)
@@ -1235,6 +1254,7 @@ def parse_review_file(review_path):
         "automated_passes": normalize_automated_passes(),
         "round_status": None,
         "reviewer_mode": None,
+        "empty_adversarial": ["Regression Hunt", "Convention Check", "Defect Scan"],
         "errors": [],
     }
     if not review_path.exists():
@@ -1257,12 +1277,23 @@ def parse_review_file(review_path):
         )
         return match.group(1) if match else None
 
+    REQUIRED_SECTIONS = ("Metadata", "Automated Passes", "Blocking", "Non-blocking", "Verdict")
+    ADVERSARIAL_SECTIONS = ("Regression Hunt", "Convention Check", "Defect Scan")
+
     sections = {}
-    for heading in ("Metadata", "Automated Passes", "Blocking", "Non-blocking", "Verdict"):
+    for heading in (*REQUIRED_SECTIONS, *ADVERSARIAL_SECTIONS):
         body = section_body(heading)
         sections[heading] = body
-        if body is None:
+        if body is None and heading in REQUIRED_SECTIONS:
             parsed["errors"].append(f"latest review round is missing ### {heading}")
+
+    # Track which adversarial sections are missing or empty
+    empty_adversarial = []
+    for heading in ADVERSARIAL_SECTIONS:
+        body = sections.get(heading)
+        if body is None or not body.strip():
+            empty_adversarial.append(heading)
+    parsed["empty_adversarial"] = empty_adversarial
 
     blocking = []
     non_blocking = []
