@@ -180,25 +180,31 @@ rubric:
 # Every spec gets the same review — no profiles.
 # Recommended: run the agent review in a fresh context/session.
 review:
-  # Automated passes (run by CLI during trellis review)
-  passes:
-    - id: spec_compliance
-      type: command
-      description: "Re-run acceptance criteria to verify code satisfies spec"
-      command: "trellis exec {task_id} --resume"
+  # Review pipeline is built from named built-in passes only.
+  # Ordering is explicit; Trellis sorts by `order`, not mapping insertion luck.
+  automated_passes:
+    spec_compliance:
+      order: 10
+      title: "Spec Compliance"
+      description: "Re-run acceptance criteria to verify code satisfies the spec"
+    scope_drift:
+      order: 20
+      title: "Scope Drift"
+      description: "Compare spec scope vs actual git diff and flag undeclared changes"
 
-    - id: scope_drift
-      type: command
-      description: "Compare spec scope vs actual git diff — flag undeclared changes"
-      command: "trellis audit {task_id}"
-
-  # Agent review — single adversarial pass covering three attack vectors:
-  #   1. Regression hunt: check callers/imports of modified files for breakage
-  #   2. Convention check: verify new code follows CONVENTIONS.md and AGENTS.md
-  #   3. Dark patterns: hunt for hardcoded values, off-by-ones, race conditions, copy-paste errors
-  # Prompt template: .ai/prompts/review.md
-  # Findings written to: .ai/reviews/{task-id}.md
-  agent_review: true
+  adversarial_passes:
+    regression_hunt:
+      order: 30
+      title: "Regression Hunt"
+      description: "Trace callers, importers, and downstream consumers for regressions"
+    convention_check:
+      order: 40
+      title: "Convention Check"
+      description: "Check changed code against CONVENTIONS.md and AGENTS.md"
+    dark_patterns:
+      order: 50
+      title: "Dark Patterns"
+      description: "Hunt for subtle bugs, hardcodes, races, and safety gaps"
 
 # =============================================================================
 # REACT PATTERN (reasoning + acting)

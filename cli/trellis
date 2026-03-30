@@ -67,11 +67,45 @@ STATUS_COLORS = {
     "cancelled": C_DIM,
 }
 
-REVIEW_SCHEMA_VERSION = 2
-REVIEW_PASS_VALUES = {"pass", "fail", "not_run"}
+REVIEW_SCHEMA_VERSION = 3
+REVIEW_PASS_VALUES = {"pass", "fail", "pass_with_issues", "not_run"}
 REVIEW_VERDICTS = {"pass", "fail", "pass_with_issues", "incomplete"}
-REVIEW_ROUND_STATUSES = {"completed", "override"}
+REVIEW_ROUND_STATUSES = {"in_progress", "completed", "override"}
 REVIEWER_MODES = {"fresh_agent", "auto", "executor", "human_override"}
+DEFAULT_ACCEPTANCE_TIMEOUT_SECONDS = 600
+GENERIC_PASS_EXPECTATIONS = {"all pass", "all tests pass", "all specs pass"}
+REVIEW_PASS_REGISTRY = {
+    "spec_compliance": {
+        "kind": "automated",
+        "title": "Spec Compliance",
+        "description": "Re-run acceptance criteria to verify code satisfies the spec.",
+        "prompt": "Re-run acceptance criteria to confirm the implementation still satisfies the spec.",
+    },
+    "scope_drift": {
+        "kind": "automated",
+        "title": "Scope Drift",
+        "description": "Compare the declared spec scope with the current git diff.",
+        "prompt": "Compare the declared spec scope with the current git diff and flag undeclared work.",
+    },
+    "regression_hunt": {
+        "kind": "adversarial",
+        "title": "Regression Hunt",
+        "description": "Trace callers/importers and downstream consumers for behavior regressions.",
+        "prompt": "For each modified file, find every caller, importer, and downstream consumer. What assumptions do they make that this change violates? Check function signatures, return shapes, event schemas, and exports.",
+    },
+    "convention_check": {
+        "kind": "adversarial",
+        "title": "Convention Check",
+        "description": "Check the diff against documented conventions and agent rules.",
+        "prompt": "Read CONVENTIONS.md and AGENTS.md. Does the new code violate any documented rule? Cite the rule and the specific line.",
+    },
+    "dark_patterns": {
+        "kind": "adversarial",
+        "title": "Dark Patterns",
+        "description": "Hunt for subtle bugs, hardcodes, races, copy-paste errors, and safety gaps.",
+        "prompt": "Actively hunt for hardcoded values, off-by-one errors, missing null checks, race conditions, copy-paste errors, unhandled error paths, and security issues.",
+    },
+}
 
 
 def supports_color():
@@ -404,9 +438,82 @@ def collect_changed_files(text):
     return sorted(set(re.findall(r'^\s+-\s+file:\s*"?([^"\n]+)"?', text, re.MULTILINE)))
 
 
-def normalize_automated_passes(raw_passes=None):
-    """Normalize automated pass values to pass/fail/not_run."""
-    normalized = {"spec_compliance": "not_run", "scope_drift": "not_run"}
+def load_review_topology(root):
+    """Load the configured review topology for built-in review passes."""
+    config = load_config(root)
+    review_config = config.get("review")
+    if not isinstance(review_config, dict):
+        raise ValueError("config.review must be a mapping")
+
+    topology = []
+    seen_ids = set()
+    seen_orders = {}
+
+    for section_key, expected_kind in (("automated_passes", "automated"), ("adversarial_passes", "adversarial")):
+        section = review_config.get(section_key)
+        if not isinstance(section, dict):
+            raise ValueError(f"config.review.{section_key} must be a mapping")
+
+        for pass_id, configured in section.items():
+            builtin = REVIEW_PASS_REGISTRY.get(pass_id)
+            if builtin is None:
+                raise ValueError(f"unknown built-in review pass: {pass_id}")
+            if builtin["kind"] != expected_kind:
+                raise ValueError(f"review pass {pass_id} must be declared under review.{section_key}")
+            if not isinstance(configured, dict):
+                raise ValueError(f"config.review.{section_key}.{pass_id} must be a mapping")
+
+            raw_order = configured.get("order")
+            if raw_order in (None, ""):
+                raise ValueError(f"config.review.{section_key}.{pass_id}.order is required")
+            try:
+                order = int(str(raw_order).strip())
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"config.review.{section_key}.{pass_id}.order must be an integer") from exc
+            if order <= 0:
+                raise ValueError(f"config.review.{section_key}.{pass_id}.order must be > 0")
+            if order in seen_orders:
+                raise ValueError(
+                    f"review pass order {order} is duplicated by {seen_orders[order]} and {pass_id}"
+                )
+
+            title = str(configured.get("title") or builtin["title"]).strip()
+            description = str(configured.get("description") or builtin["description"]).strip()
+            if not title:
+                raise ValueError(f"config.review.{section_key}.{pass_id}.title must be non-empty")
+            if not description:
+                raise ValueError(f"config.review.{section_key}.{pass_id}.description must be non-empty")
+
+            topology.append({
+                "id": pass_id,
+                "kind": expected_kind,
+                "order": order,
+                "title": title,
+                "description": description,
+                "prompt": builtin["prompt"],
+            })
+            seen_ids.add(pass_id)
+            seen_orders[order] = pass_id
+
+    missing = sorted(set(REVIEW_PASS_REGISTRY) - seen_ids)
+    if missing:
+        raise ValueError(f"review topology is missing built-in pass(es): {', '.join(missing)}")
+
+    topology.sort(key=lambda item: (item["order"], item["id"]))
+    return topology
+
+
+def review_passes_by_kind(topology, kind):
+    return [definition for definition in topology if definition["kind"] == kind]
+
+
+def review_pass_ids(topology, kind=None):
+    return [definition["id"] for definition in topology if kind is None or definition["kind"] == kind]
+
+
+def normalize_review_pass_results(topology, raw_passes=None):
+    """Normalize configured review pass results to pass/fail/pass_with_issues/not_run."""
+    normalized = {definition["id"]: "not_run" for definition in topology}
     for key, value in (raw_passes or {}).items():
         if key not in normalized:
             continue
@@ -418,16 +525,17 @@ def normalize_automated_passes(raw_passes=None):
 
 
 def review_pass_label(value):
-    """Human label for automated pass values."""
+    """Human label for review pass values."""
     return {
         "pass": "PASS",
         "fail": "FAIL",
+        "pass_with_issues": "PASS WITH ISSUES",
         "not_run": "NOT RUN",
     }.get(value, str(value).upper())
 
 
-def build_review_metadata(reviewer_mode, round_status, automated_passes, reviewer_session="", override_reason=None):
-    """Build Review Artifact v2 metadata."""
+def build_review_metadata(topology, reviewer_mode, round_status, pass_results, reviewer_session="", override_reason=None):
+    """Build Review Artifact v3 metadata."""
     return {
         "schema_version": REVIEW_SCHEMA_VERSION,
         "round_status": round_status,
@@ -435,12 +543,12 @@ def build_review_metadata(reviewer_mode, round_status, automated_passes, reviewe
         "reviewer_session": reviewer_session,
         "reviewed_at": now_iso(),
         "override_reason": override_reason,
-        "automated_passes": normalize_automated_passes(automated_passes),
+        "pass_results": normalize_review_pass_results(topology, pass_results),
     }
 
 
-def validate_review_metadata(metadata):
-    """Validate Review Artifact v2 metadata. Returns list of errors."""
+def validate_review_metadata(metadata, topology):
+    """Validate Review Artifact v3 metadata. Returns list of errors."""
     if not isinstance(metadata, dict):
         return ["metadata is not an object"]
 
@@ -448,7 +556,7 @@ def validate_review_metadata(metadata):
     if metadata.get("schema_version") != REVIEW_SCHEMA_VERSION:
         errors.append(f"schema_version must be {REVIEW_SCHEMA_VERSION}")
     if metadata.get("round_status") not in REVIEW_ROUND_STATUSES:
-        errors.append("round_status must be completed or override")
+        errors.append("round_status must be in_progress, completed, or override")
     if metadata.get("reviewer_mode") not in REVIEWER_MODES:
         errors.append("reviewer_mode is invalid")
     if not isinstance(metadata.get("reviewer_session"), str):
@@ -459,29 +567,49 @@ def validate_review_metadata(metadata):
     if override_reason is not None and not isinstance(override_reason, str):
         errors.append("override_reason must be a string or null")
 
-    automated_passes = metadata.get("automated_passes")
-    if not isinstance(automated_passes, dict):
-        errors.append("automated_passes must be an object")
+    raw_pass_results = metadata.get("pass_results")
+    if not isinstance(raw_pass_results, dict):
+        errors.append("pass_results must be an object")
     else:
-        for key in ("spec_compliance", "scope_drift"):
-            if automated_passes.get(key) not in REVIEW_PASS_VALUES:
-                errors.append(f"automated_passes.{key} must be pass, fail, or not_run")
+        expected_ids = set(review_pass_ids(topology))
+        provided_ids = set(raw_pass_results)
+        missing = sorted(expected_ids - provided_ids)
+        unexpected = sorted(provided_ids - expected_ids)
+        if missing:
+            errors.append(f"pass_results missing configured pass(es): {', '.join(missing)}")
+        if unexpected:
+            errors.append(f"pass_results includes unknown pass(es): {', '.join(unexpected)}")
+
+        for definition in topology:
+            pass_id = definition["id"]
+            value = raw_pass_results.get(pass_id)
+            if value not in REVIEW_PASS_VALUES:
+                errors.append(f"pass_results.{pass_id} must be one of: {', '.join(sorted(REVIEW_PASS_VALUES))}")
+            elif definition["kind"] == "automated" and value == "pass_with_issues":
+                errors.append(f"pass_results.{pass_id} cannot be pass_with_issues for an automated pass")
+
+        if metadata.get("round_status") == "completed":
+            incomplete = [pass_id for pass_id, value in raw_pass_results.items() if value == "not_run"]
+            if incomplete:
+                errors.append(f"completed review round cannot leave pass_results as not_run: {', '.join(sorted(incomplete))}")
 
     if metadata.get("round_status") == "override":
         if metadata.get("reviewer_mode") != "human_override":
             errors.append("override round must use reviewer_mode=human_override")
         if not isinstance(override_reason, str) or not override_reason.strip():
             errors.append("override round must include a non-empty override_reason")
+    elif override_reason is not None and override_reason != "":
+        errors.append("override_reason must be null unless round_status=override")
 
     return errors
 
 
-def render_review_automated_passes(pass_states):
-    """Render the human-readable automated passes section."""
-    normalized = normalize_automated_passes(pass_states)
+def render_review_pass_results(topology, pass_states):
+    """Render the human-readable pass results section."""
+    normalized = normalize_review_pass_results(topology, pass_states)
     return "\n".join(
-        f"- {name}: {review_pass_label(result)}"
-        for name, result in normalized.items()
+        f"- {definition['id']}: {review_pass_label(normalized[definition['id']])}"
+        for definition in topology
     )
 
 
@@ -507,8 +635,8 @@ def ensure_review_file_header(review_file, task_id, spec_text):
 """)
 
 
-def append_review_round(review_file, task_id, spec_text, metadata, verdict="", blocking=None, non_blocking=None):
-    """Append a review round using Review Artifact v2."""
+def append_review_round(review_file, task_id, spec_text, topology, metadata, verdict="", blocking=None, non_blocking=None, section_bodies=None):
+    """Append a review round using Review Artifact v3."""
     ensure_review_file_header(review_file, task_id, spec_text)
 
     existing_text = review_file.read_text()
@@ -517,6 +645,11 @@ def append_review_round(review_file, task_id, spec_text, metadata, verdict="", b
     blocking_body = "\n".join(blocking or [])
     non_blocking_body = "\n".join(non_blocking or [])
     verdict_body = verdict or ""
+    section_bodies = section_bodies or {}
+    adversarial_sections = "\n\n".join(
+        f"### {definition['title']}\n{section_bodies.get(definition['id'], '')}"
+        for definition in review_passes_by_kind(topology, "adversarial")
+    )
 
     round_text = f"""## Review {review_count} — {now_iso()}
 
@@ -525,17 +658,10 @@ def append_review_round(review_file, task_id, spec_text, metadata, verdict="", b
 {metadata_json}
 ```
 
-### Automated Passes
-{render_review_automated_passes(metadata.get("automated_passes"))}
+### Pass Results
+{render_review_pass_results(topology, metadata.get("pass_results"))}
 
-### Regression Hunt
-
-
-### Convention Check
-
-
-### Defect Scan
-
+{adversarial_sections}
 
 ### Blocking
 {blocking_body}
@@ -792,7 +918,7 @@ task:
         type: "test"
         description: "TODO"
         command: "TODO"
-        expected: "All tests pass"
+        expected: "0 failures"
 
 planning_log:
   - timestamp: "{ts}"
@@ -813,7 +939,7 @@ phases:
         type: "test"
         description: "TODO"
         command: "TODO"
-        expected: "TODO"
+        expected: "0 failures"
     status: "pending"
 
 rollback:
@@ -964,9 +1090,24 @@ def check_self_eval(text, task_id):
         print(f"  {c(C_YELLOW, 'note')}: perfect 10/10 - are you sure? 10 means flawless with improvements beyond spec")
 
 
+def load_or_exit_review_topology(root):
+    """Load the configured review topology or exit with a clear error."""
+    try:
+        return load_review_topology(root)
+    except ValueError as e:
+        print(f"{c(C_RED, 'error')}: invalid review topology in {CONFIG_PATH}")
+        print(f"  {e}")
+        sys.exit(1)
+
+
+def review_passes_are_not_run(pass_results, pass_ids):
+    return all(pass_results.get(pass_id) == "not_run" for pass_id in pass_ids)
+
+
 def cmd_complete(args):
     """Move spec from active to archive (completed). Reads review file and gates on verdict."""
     root = require_root()
+    topology = load_or_exit_review_topology(root)
     spec = require_spec(root, args.task_id)
     text = spec.read_text()
 
@@ -987,27 +1128,32 @@ def cmd_complete(args):
         print(f"  {c(C_RED, 'error')}: {c(C_BOLD, '--reason')} is required with {c(C_BOLD, '--human-reviewed')}")
         sys.exit(1)
 
-    review_data = parse_review_file(review_file)
+    review_data = parse_review_file(review_file, topology)
     verdict = review_data["verdict"]
     blocking = review_data["blocking"]
     non_blocking = review_data["non_blocking"]
-    automated_passes = review_data["automated_passes"]
+    pass_results = review_data["pass_results"]
     gate_errors = list(review_data["errors"])
     override_applied = False
     override_confirmed_at = None
 
     empty_adversarial = review_data["empty_adversarial"]
+    automated_pass_ids = review_pass_ids(topology, "automated")
+    override_section_bodies = {
+        definition["id"]: "Override applied — this pass was not re-reviewed in the override round."
+        for definition in review_passes_by_kind(topology, "adversarial")
+    }
 
     gate_reason = None
     if not review_data["exists"]:
         gate_reason = "no review found"
+    elif empty_adversarial:
+        gate_reason = f"configured review sections incomplete — missing: {', '.join(empty_adversarial)}"
     elif gate_errors:
         gate_reason = "latest review round is malformed or incomplete"
-    elif empty_adversarial:
-        gate_reason = f"adversarial review incomplete — missing: {', '.join(empty_adversarial)}"
     elif verdict == "fail":
         gate_reason = f"latest review failed with {len(blocking)} blocking finding(s)"
-    elif verdict is None:
+    elif verdict in (None, "incomplete") or review_data["round_status"] == "in_progress":
         gate_reason = "latest review is incomplete"
 
     if gate_reason:
@@ -1024,14 +1170,15 @@ def cmd_complete(args):
             print(f"         only a human can override with {c(C_BOLD, '--human-reviewed --reason <why>')}")
             sys.exit(1)
 
-        if not review_data["exists"] or all(value == "not_run" for value in automated_passes.values()):
-            automated_passes = collect_automated_review_passes(root, args.task_id, text)
+        if not review_data["exists"] or review_passes_are_not_run(pass_results, automated_pass_ids):
+            pass_results = collect_automated_review_passes(root, args.task_id, text, topology)
 
         override_confirmed_at = confirm_human_override(args.task_id, gate_reason)
         override_metadata = build_review_metadata(
+            topology,
             reviewer_mode="human_override",
             round_status="override",
-            automated_passes=automated_passes,
+            pass_results=pass_results,
             reviewer_session="",
             override_reason=override_reason,
         )
@@ -1040,16 +1187,18 @@ def cmd_complete(args):
             review_file,
             args.task_id,
             text,
+            topology,
             override_metadata,
             verdict=verdict or "incomplete",
             blocking=blocking,
             non_blocking=non_blocking,
+            section_bodies=override_section_bodies,
         )
-        review_data = parse_review_file(review_file)
+        review_data = parse_review_file(review_file, topology)
         verdict = review_data["verdict"]
         blocking = review_data["blocking"]
         non_blocking = review_data["non_blocking"]
-        automated_passes = review_data["automated_passes"]
+        pass_results = review_data["pass_results"]
         override_applied = True
         print(f"  {c(C_YELLOW, 'override')}: human-reviewed override applied")
     elif human_reviewed:
@@ -1071,6 +1220,7 @@ def cmd_complete(args):
 
     review_block = build_spec_review_block(
         review_data,
+        topology,
         override_applied=override_applied,
         override_reason=override_reason if override_applied else None,
         override_confirmed_at=override_confirmed_at,
@@ -1101,6 +1251,7 @@ def cmd_cancel(args):
 def cmd_review(args):
     """Run automated review passes and generate adversarial review prompt."""
     root = require_root()
+    topology = load_or_exit_review_topology(root)
     spec = require_spec(root, args.task_id)
     text = spec.read_text()
 
@@ -1113,42 +1264,23 @@ def cmd_review(args):
     print()
 
     pass_results = {}
+    automated_passes = review_passes_by_kind(topology, "automated")
+    adversarial_passes = review_passes_by_kind(topology, "adversarial")
 
-    # --- Automated pass 1: spec_compliance (re-run acceptance criteria) ---
-    print(f"  {c(C_CYAN, 'spec_compliance')}: Re-running acceptance criteria")
-    compliance = run_spec_compliance_check(root, text)
-    if compliance["result"] == "pass":
-        print(f"    {c(C_GREEN, 'PASS')}")
-        pass_results["spec_compliance"] = "pass"
-    else:
-        print(f"    {c(C_RED, 'FAIL')}")
-        for line in compliance["lines"][-5:]:
-            print(f"    {c(C_DIM, line)}")
-        pass_results["spec_compliance"] = "fail"
-
-    # --- Automated pass 2: scope_drift (trellis audit) ---
-    print(f"  {c(C_CYAN, 'scope_drift')}: Checking spec scope vs git diff")
-    try:
-        result = subprocess.run(
-            f"trellis audit {args.task_id}",
-            shell=True, capture_output=True, text=True, timeout=60, cwd=str(root),
-        )
-        if result.returncode == 0:
+    for definition in automated_passes:
+        print(f"  {c(C_CYAN, definition['id'])}: {definition['description']}")
+        outcome = run_automated_review_pass(root, args.task_id, text, definition["id"])
+        pass_results[definition["id"]] = outcome["result"]
+        if outcome["result"] == "pass":
             print(f"    {c(C_GREEN, 'PASS')}")
-            pass_results["scope_drift"] = "pass"
         else:
             print(f"    {c(C_RED, 'FAIL')}")
-            output = (result.stdout + result.stderr).strip()
-            for line in output.splitlines()[-5:]:
+            for line in outcome["lines"][-5:]:
                 print(f"    {c(C_DIM, line)}")
-            pass_results["scope_drift"] = "fail"
-    except (subprocess.TimeoutExpired, Exception) as e:
-        print(f"    {c(C_RED, 'ERROR')}: {e}")
-        pass_results["scope_drift"] = "fail"
 
-    normalized_passes = normalize_automated_passes(pass_results)
-    passed = sum(1 for v in normalized_passes.values() if v == "pass")
-    failed = sum(1 for v in normalized_passes.values() if v == "fail")
+    normalized_passes = normalize_review_pass_results(topology, pass_results)
+    passed = sum(1 for definition in automated_passes if normalized_passes[definition["id"]] == "pass")
+    failed = sum(1 for definition in automated_passes if normalized_passes[definition["id"]] == "fail")
 
     print()
     summary_parts = []
@@ -1169,15 +1301,17 @@ def cmd_review(args):
     reviews_dir.mkdir(parents=True, exist_ok=True)
     review_file = reviews_dir / f"{args.task_id}.md"
     review_metadata = build_review_metadata(
+        topology,
         reviewer_mode="executor",
-        round_status="completed",
-        automated_passes=normalized_passes,
+        round_status="in_progress",
+        pass_results=normalized_passes,
         reviewer_session="",
     )
     review_count = append_review_round(
         review_file,
         args.task_id,
         text,
+        topology,
         review_metadata,
         verdict="",
         blocking=[],
@@ -1187,6 +1321,16 @@ def cmd_review(args):
     # --- Phase 2: Print adversarial review prompt for the agent ---
     review_path_rel = str(review_file.relative_to(root))
     spec_path_rel = str(spec.relative_to(root))
+    attack_vectors = []
+    section_titles = []
+    for idx, definition in enumerate(adversarial_passes, start=1):
+        section_titles.append(f"`{definition['id']}` / `### {definition['title']}`")
+        attack_vectors.append(
+            f"    {c(C_CYAN, f'{idx}. {definition['title']}')} — {definition['prompt']}\n"
+            f"       {c(C_DIM, f'Write findings under ### {definition['title']}')}"
+        )
+    attack_vectors_text = "\n\n".join(attack_vectors)
+    section_titles_text = ", ".join(section_titles)
 
     print(f"""{c(C_BOLD, 'ADVERSARIAL REVIEW')}
 
@@ -1199,21 +1343,9 @@ def cmd_review(args):
     - Project CONVENTIONS.md and AGENTS.md
     - Prior review rounds in {c(C_CYAN, review_path_rel)} (if any — don't re-report fixed issues)
 
-  {c(C_BOLD, 'Attack vectors (all 3 required — trellis complete will reject empty sections):')}
+  {c(C_BOLD, 'Configured review passes (all required — trellis complete will reject empty sections):')}
 
-    {c(C_CYAN, '1. Regression Hunt')} — For each modified file, find every caller and
-       importer. What assumptions do they make that this change violates?
-       Check function signatures, return shapes, event schemas, exports.
-       {c(C_DIM, 'Write findings under ### Regression Hunt')}
-
-    {c(C_CYAN, '2. Convention Check')} — Read CONVENTIONS.md and AGENTS.md.
-       Does the new code violate any documented rule? Cite the rule and the line.
-       {c(C_DIM, 'Write findings under ### Convention Check')}
-
-    {c(C_CYAN, '3. Defect Scan')} — Hunt for: hardcoded values that should be dynamic,
-       off-by-one errors, missing null checks at boundaries, race conditions,
-       copy-paste errors, unhandled error paths, security issues.
-       {c(C_DIM, 'Write findings under ### Defect Scan')}
+{attack_vectors_text}
 
   {c(C_BOLD, 'Rules:')}
     - Every finding must cite a specific file and line number
@@ -1230,10 +1362,11 @@ def cmd_review(args):
     all required headings. Fill in each section:
 
     1. Update {c(C_BOLD, '### Metadata')} JSON with reviewer provenance:
+       - round_status: completed
        - reviewer_mode: fresh_agent | auto | executor
        - reviewer_session: session identifier or empty string
-    2. Fill {c(C_BOLD, '### Regression Hunt')}, {c(C_BOLD, '### Convention Check')},
-       {c(C_BOLD, '### Defect Scan')} with findings from each vector
+       - pass_results: keep automated results, and set each adversarial pass to pass | pass_with_issues | fail
+    2. Fill {c(C_BOLD, section_titles_text)} with findings from each vector
     3. Collect blocking/non-blocking findings into {c(C_BOLD, '### Blocking')} and
        {c(C_BOLD, '### Non-blocking')} using: - **severity** `file:line` — description
     4. Set {c(C_BOLD, '### Verdict')}: pass | fail | pass_with_issues
@@ -1242,8 +1375,10 @@ def cmd_review(args):
 """)
 
 
-def parse_review_file(review_path):
-    """Parse the latest review round and validate the Review Artifact v2 contract."""
+def parse_review_file(review_path, topology):
+    """Parse the latest review round and validate the Review Artifact v3 contract."""
+    adversarial_passes = review_passes_by_kind(topology, "adversarial")
+    adversarial_titles = [definition["title"] for definition in adversarial_passes]
     parsed = {
         "exists": review_path.exists(),
         "review_count": 0,
@@ -1251,10 +1386,10 @@ def parse_review_file(review_path):
         "blocking": [],
         "non_blocking": [],
         "metadata": None,
-        "automated_passes": normalize_automated_passes(),
+        "pass_results": normalize_review_pass_results(topology),
         "round_status": None,
         "reviewer_mode": None,
-        "empty_adversarial": ["Regression Hunt", "Convention Check", "Defect Scan"],
+        "empty_adversarial": list(adversarial_titles),
         "errors": [],
     }
     if not review_path.exists():
@@ -1277,19 +1412,18 @@ def parse_review_file(review_path):
         )
         return match.group(1) if match else None
 
-    REQUIRED_SECTIONS = ("Metadata", "Automated Passes", "Blocking", "Non-blocking", "Verdict")
-    ADVERSARIAL_SECTIONS = ("Regression Hunt", "Convention Check", "Defect Scan")
+    required_sections = ("Metadata", "Pass Results", "Blocking", "Non-blocking", "Verdict")
 
     sections = {}
-    for heading in (*REQUIRED_SECTIONS, *ADVERSARIAL_SECTIONS):
+    for heading in (*required_sections, *adversarial_titles):
         body = section_body(heading)
         sections[heading] = body
-        if body is None and heading in REQUIRED_SECTIONS:
+        if body is None and heading in required_sections:
             parsed["errors"].append(f"latest review round is missing ### {heading}")
 
     # Track which adversarial sections are missing or empty
     empty_adversarial = []
-    for heading in ADVERSARIAL_SECTIONS:
+    for heading in adversarial_titles:
         body = sections.get(heading)
         if body is None or not body.strip():
             empty_adversarial.append(heading)
@@ -1327,10 +1461,10 @@ def parse_review_file(review_path):
                 parsed["errors"].append(f"latest review metadata is invalid JSON: {e}")
             else:
                 parsed["metadata"] = metadata
-                parsed["automated_passes"] = normalize_automated_passes(metadata.get("automated_passes"))
+                parsed["pass_results"] = normalize_review_pass_results(topology, metadata.get("pass_results"))
                 parsed["round_status"] = metadata.get("round_status")
                 parsed["reviewer_mode"] = metadata.get("reviewer_mode")
-                for issue in validate_review_metadata(metadata):
+                for issue in validate_review_metadata(metadata, topology):
                     parsed["errors"].append(f"metadata: {issue}")
 
     verdict_body = sections.get("Verdict")
@@ -1376,19 +1510,37 @@ def parse_review_file(review_path):
     if verdict == "incomplete" and parsed["round_status"] == "completed":
         parsed["errors"].append("completed review round cannot use verdict=incomplete")
 
+    adversarial_ids = review_pass_ids(topology, "adversarial")
+    configured_results = parsed["pass_results"]
+    if verdict == "pass":
+        bad = [pass_id for pass_id in adversarial_ids if configured_results.get(pass_id) in {"fail", "pass_with_issues"}]
+        if bad:
+            parsed["errors"].append(f"pass verdict cannot mark adversarial passes as fail/pass_with_issues: {', '.join(sorted(bad))}")
+    if verdict == "pass_with_issues":
+        bad = [pass_id for pass_id in adversarial_ids if configured_results.get(pass_id) == "fail"]
+        if bad:
+            parsed["errors"].append(f"pass_with_issues cannot mark adversarial passes as fail: {', '.join(sorted(bad))}")
+        if not any(configured_results.get(pass_id) == "pass_with_issues" for pass_id in adversarial_ids):
+            parsed["errors"].append("pass_with_issues requires at least one adversarial pass result of pass_with_issues")
+    if verdict == "fail" and parsed["round_status"] == "completed":
+        failing = [pass_id for pass_id, result in configured_results.items() if result == "fail"]
+        if not failing:
+            parsed["errors"].append("fail verdict requires at least one review pass result of fail")
+
     parsed["verdict"] = verdict
     return parsed
 
 
-def build_spec_review_block(review_data, override_applied=False, override_reason=None, override_confirmed_at=None):
+def build_spec_review_block(review_data, topology, override_applied=False, override_reason=None, override_confirmed_at=None):
     """Render the top-level spec review block from parsed review data."""
     metadata = review_data.get("metadata") or {}
     verdict = review_data.get("verdict") or "incomplete"
-    automated_passes = normalize_automated_passes(review_data.get("automated_passes"))
+    pass_results = normalize_review_pass_results(topology, review_data.get("pass_results"))
     timestamp = override_confirmed_at or metadata.get("reviewed_at") or now_iso()
     reviewer_mode = "human_override" if override_applied else (metadata.get("reviewer_mode") or "")
     reviewer_session = "" if override_applied else (metadata.get("reviewer_session") or "")
     round_status = "override" if override_applied else (metadata.get("round_status") or "")
+    applied_override_reason = override_reason if override_reason is not None else metadata.get("override_reason")
 
     lines = [
         "review:",
@@ -1399,15 +1551,19 @@ def build_spec_review_block(review_data, override_applied=False, override_reason
         f"  reviewer_session: {json.dumps(reviewer_session)}",
         f"  round_status: {json.dumps(round_status)}",
         f"  override_applied: {'true' if override_applied else 'false'}",
-        f"  override_reason: {json.dumps(override_reason) if override_reason is not None else 'null'}",
+        f"  override_reason: {json.dumps(applied_override_reason) if applied_override_reason is not None else 'null'}",
         f"  override_confirmed_at: {json.dumps(override_confirmed_at) if override_confirmed_at is not None else 'null'}",
         "  passes:",
-        f"    - id: spec_compliance\n      result: {json.dumps(automated_passes['spec_compliance'])}",
-        f"    - id: scope_drift\n      result: {json.dumps(automated_passes['scope_drift'])}",
-        f"    - id: adversarial_review\n      result: {json.dumps(verdict)}",
+    ]
+    for definition in topology:
+        lines.append(
+            f"    - id: {definition['id']}\n"
+            f"      result: {json.dumps(pass_results[definition['id']])}"
+        )
+    lines.extend([
         f"  blocking_count: {len(review_data.get('blocking', []))}",
         f"  non_blocking_count: {len(review_data.get('non_blocking', []))}",
-    ]
+    ])
     return "\n".join(lines)
 
 
@@ -1456,6 +1612,11 @@ def run_spec_compliance_check(root, text):
         ac_id = ac["id"]
         cmd = ac["command"]
         expected = ac.get("expected", "")
+        try:
+            timeout_seconds = criterion_timeout_seconds(ac)
+        except ValueError as e:
+            failure_lines.append(f"{ac_id}: {e}")
+            continue
 
         effective_cwd = ac.get("cwd") or spec_cwd
         ac_cwd = root
@@ -1474,11 +1635,11 @@ def run_spec_compliance_check(root, text):
                 shell=True,
                 capture_output=True,
                 text=True,
-                timeout=120,
+                timeout=timeout_seconds,
                 cwd=str(ac_cwd),
             )
         except subprocess.TimeoutExpired:
-            failure_lines.append(f"{ac_id}: command timed out after 120s")
+            failure_lines.append(f"{ac_id}: command timed out after {timeout_seconds}s")
             continue
         except Exception as e:
             failure_lines.append(f"{ac_id}: {e}")
@@ -1526,14 +1687,22 @@ def run_scope_drift_check(root, task_id):
     return {"result": "fail", "lines": lines}
 
 
-def collect_automated_review_passes(root, task_id, text):
-    """Collect the current automated review pass states without mutating the spec."""
-    compliance = run_spec_compliance_check(root, text)
-    scope_drift = run_scope_drift_check(root, task_id)
-    return normalize_automated_passes({
-        "spec_compliance": compliance["result"],
-        "scope_drift": scope_drift["result"],
-    })
+def run_automated_review_pass(root, task_id, text, pass_id):
+    """Run one built-in automated review pass."""
+    if pass_id == "spec_compliance":
+        return run_spec_compliance_check(root, text)
+    if pass_id == "scope_drift":
+        return run_scope_drift_check(root, task_id)
+    return {"result": "fail", "lines": [f"unknown automated review pass: {pass_id}"]}
+
+
+def collect_automated_review_passes(root, task_id, text, topology):
+    """Collect the configured automated review pass states without mutating the spec."""
+    pass_results = {}
+    for definition in review_passes_by_kind(topology, "automated"):
+        outcome = run_automated_review_pass(root, task_id, text, definition["id"])
+        pass_results[definition["id"]] = outcome["result"]
+    return normalize_review_pass_results(topology, pass_results)
 
 
 def validate_spec(root, spec):
@@ -1681,6 +1850,7 @@ def parse_acceptance_criteria(text):
                 if m:
                     item_base_indent = len(m.group(1))
                     ac = {"id": parse_yaml_value(m.group(3)), "phase": current_phase}
+                    result_block_indent = None
                     i += 1
                     # Read fields for this item
                     while i < len(lines):
@@ -1695,12 +1865,22 @@ def parse_acceptance_criteria(text):
                         # New list item at same level
                         if field_line.strip().startswith('- ') and fi == item_base_indent:
                             break
+                        if result_block_indent is not None and fi <= result_block_indent:
+                            result_block_indent = None
                         # Parse key: value
                         fm = re.match(r'^\s+([\w_]+):\s*(.*)$', field_line)
                         if fm:
                             key = fm.group(1)
-                            if key in ("type", "description", "command", "expected", "cwd", "result"):
-                                ac[key] = parse_yaml_value(fm.group(2))
+                            value = parse_yaml_value(fm.group(2))
+                            if key in ("type", "description", "command", "expected", "cwd", "timeout_seconds"):
+                                ac[key] = value
+                            elif key == "result":
+                                if value:
+                                    ac[key] = value
+                                else:
+                                    result_block_indent = fi
+                            elif key == "status" and result_block_indent is not None and fi > result_block_indent:
+                                ac["result"] = value
                         i += 1
                     criteria.append(ac)
                 else:
@@ -1728,6 +1908,7 @@ def record_exec_result(text, ac_id, passed, output_snippet=""):
                 field_indent = ' ' * (len(item_match.group(1)) + 2)
             else:
                 field_indent = ' ' * (len(line) - len(line.lstrip()))
+            nested_result = False
             i += 1
             # Copy existing fields, skip old result/executed_at/result_output
             while i < len(lines):
@@ -1741,22 +1922,60 @@ def record_exec_result(text, ac_id, passed, output_snippet=""):
                     break
                 if fi == expected_fi - 2 and fl.strip().startswith('- '):
                     break
-                if re.match(r'^\s+(result|result_output|executed_at):', fl):
+                if fi == expected_fi and re.match(r'^\s+result:\s*$', fl):
+                    nested_result = True
+                    i += 1
+                    while i < len(lines):
+                        nested = lines[i]
+                        if not nested.strip():
+                            i += 1
+                            continue
+                        nested_fi = len(nested) - len(nested.lstrip())
+                        if nested_fi <= expected_fi:
+                            break
+                        i += 1
+                    continue
+                if fi == expected_fi and re.match(r'^\s+(result|result_output|executed_at):', fl):
                     i += 1
                     continue
                 result.append(fl)
                 i += 1
             # Append new result fields
-            result.append(f'{field_indent}result: "{"pass" if passed else "fail"}"\n')
-            result.append(f'{field_indent}executed_at: "{now_iso()}"\n')
-            if output_snippet:
-                snippet = output_snippet[:200].replace('"', '\\"').replace('\n', ' ')
-                result.append(f'{field_indent}result_output: "{snippet}"\n')
+            status = "pass" if passed else "fail"
+            executed_at = now_iso()
+            snippet = output_snippet[:200].replace('"', '\\"').replace('\n', ' ')
+            if nested_result:
+                result.append(f"{field_indent}result:\n")
+                result.append(f'{field_indent}  status: "{status}"\n')
+                result.append(f'{field_indent}  timestamp: "{executed_at}"\n')
+                if output_snippet:
+                    result.append(f'{field_indent}  output: "{snippet}"\n')
+            else:
+                result.append(f'{field_indent}result: "{status}"\n')
+                result.append(f'{field_indent}executed_at: "{executed_at}"\n')
+                if output_snippet:
+                    result.append(f'{field_indent}result_output: "{snippet}"\n')
             continue
         result.append(line)
         i += 1
 
     return ''.join(result)
+
+
+def criterion_timeout_seconds(ac):
+    raw = ac.get("timeout_seconds", "")
+    if raw in ("", None):
+        return DEFAULT_ACCEPTANCE_TIMEOUT_SECONDS
+
+    try:
+        seconds = int(str(raw).strip())
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"invalid timeout_seconds '{raw}'") from exc
+
+    if seconds <= 0:
+        raise ValueError(f"timeout_seconds must be > 0 (got {raw})")
+
+    return seconds
 
 
 def check_expected(returncode, output, expected):
@@ -1790,7 +2009,16 @@ def check_expected(returncode, output, expected):
         if returncode != 0:
             return False
         # Look for rspec/test patterns like "2 failures" or "1 failure"
-        fail_match = re.search(r'(\d+)\s+failures?', output)
+        fail_match = re.search(r'(\d+)\s+failures?', output, re.IGNORECASE)
+        if fail_match and int(fail_match.group(1)) > 0:
+            return False
+        return True
+
+    # Generic pass phrasing — treat as a successful exit with no reported failures
+    if exp_lower in GENERIC_PASS_EXPECTATIONS:
+        if returncode != 0:
+            return False
+        fail_match = re.search(r'(\d+)\s+failures?', output, re.IGNORECASE)
         if fail_match and int(fail_match.group(1)) > 0:
             return False
         return True
@@ -1885,9 +2113,17 @@ def cmd_exec(args):
         print(f"    $ {c(C_DIM, cmd)}{cwd_suffix}")
 
         try:
+            timeout_seconds = criterion_timeout_seconds(ac)
+        except ValueError as e:
+            print(f"    {c(C_RED, 'ERROR')}: {e}")
+            text = record_exec_result(text, ac_id, False, str(e))
+            failed += 1
+            continue
+
+        try:
             result = subprocess.run(
                 cmd, shell=True, capture_output=True, text=True,
-                timeout=120, cwd=str(ac_cwd),
+                timeout=timeout_seconds, cwd=str(ac_cwd),
             )
             output = (result.stdout + result.stderr).strip()
 
@@ -1909,8 +2145,8 @@ def cmd_exec(args):
             text = record_exec_result(text, ac_id, ac_passed, output[:200])
 
         except subprocess.TimeoutExpired:
-            print(f"    {c(C_RED, 'TIMEOUT')} (120s)")
-            text = record_exec_result(text, ac_id, False, "Command timed out after 120s")
+            print(f"    {c(C_RED, 'TIMEOUT')} ({timeout_seconds}s)")
+            text = record_exec_result(text, ac_id, False, f"Command timed out after {timeout_seconds}s")
             failed += 1
         except Exception as e:
             print(f"    {c(C_RED, 'ERROR')}: {e}")

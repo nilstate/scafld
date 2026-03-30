@@ -139,7 +139,7 @@ trellis start <task-id>                                  # Move to active
 trellis exec <task-id> [-p phase] [-r]                    # Run acceptance criteria (-r = resume)
 trellis audit <task-id> [-b base-ref]                    # Spec vs actual git diff
 trellis diff <task-id>                                   # Git history for a spec
-trellis review <task-id>                                 # Run automated passes + generate review prompt
+trellis review <task-id>                                 # Run configured automated passes + scaffold Review Artifact v3
 trellis complete <task-id>                                # Read review, record verdict, archive (requires passing review)
 trellis complete <task-id> --human-reviewed --reason "manual audit"
                                                           # Exceptional audited override when the gate is blocked
@@ -180,6 +180,22 @@ task:
 
 Individual criteria can still override with their own `cwd`.
 
+### Per-Criterion Timeout
+
+Acceptance criteria default to a 600 second timeout. Long-running checks can override that with `timeout_seconds`:
+
+```yaml
+acceptance_criteria:
+  - id: ac3
+    type: test
+    cwd: api
+    command: "bundle exec rspec"
+    expected: "0 failures"
+    timeout_seconds: 900
+```
+
+Use specific expectations like `0 failures` or `exit code 0` when possible. Generic phrases like `All pass` are accepted, but the explicit forms are easier for Trellis to verify and for humans to audit.
+
 ## Usage
 
 Tell your AI agent: *"Let's plan [feature]. Create a task spec."*
@@ -192,13 +208,25 @@ The agent enters read-only planning mode, explores your codebase, and produces a
 - **Approval gate** - No code changes until a human reviews the plan. The agent thinks; you decide.
 - **Phase-by-phase execution** - Acceptance criteria at every checkpoint, not just at the end.
 - **Scope audit** - `trellis audit` compares what the spec declared against what actually changed in git. Undeclared changes get flagged.
-- **Adversarial review** - Before archiving, `trellis review` runs automated checks and scaffolds a machine-validated review round with review provenance. `trellis complete` requires a structurally valid latest review or an exceptional human-reviewed override with an audited reason.
+- **Adversarial review** - Before archiving, `trellis review` runs the configured `spec_compliance` and `scope_drift` passes, scaffolds Review Artifact v3, and prepares the adversarial `regression_hunt`, `convention_check`, and `dark_patterns` sections. `trellis complete` requires a structurally valid latest review or an exceptional human-reviewed override with an audited reason.
 - **Self-evaluation** - Agents score their own work against a configurable rubric. Below 7/10 triggers a second pass.
 - **Rollback commands** - Per-phase rollback for safe failure recovery. Every phase declares how to undo itself.
 - **Resume protocol** - Interrupted executions pick up where they left off.
 - **Validation profiles** - Light, standard, or strict, configured per-task or derived from risk level.
 - **Reporting** - `trellis report` aggregates pass rates, self-eval scores, and scope drift across your entire spec history.
 - **Agent-agnostic** - Works with Claude, Cursor, Copilot, Windsurf, or any AI coding agent.
+
+## Review Pipeline
+
+The default review model is a five-pass pipeline declared in [.ai/config.yaml](.ai/config.yaml):
+
+- `spec_compliance`
+- `scope_drift`
+- `regression_hunt`
+- `convention_check`
+- `dark_patterns`
+
+Pass ordering is explicit through per-pass `order` fields, so the review pipeline does not depend on YAML mapping order. `trellis review` scaffolds Review Artifact v3 with per-pass `pass_results` and `round_status: "in_progress"`. The reviewer fills the configured adversarial sections, updates the metadata to `round_status: "completed"`, and sets final pass results before `trellis complete` archives the spec.
 
 ## Trust Boundary
 

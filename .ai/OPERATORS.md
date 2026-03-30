@@ -70,7 +70,7 @@ trellis exec my-task -p phase1    # run criteria for one phase only
 trellis audit my-task             # compare spec files vs git diff
 trellis audit my-task -b main     # audit against specific base ref
 trellis diff my-task              # show git history for spec
-trellis review my-task            # run automated passes + adversarial review prompt
+trellis review my-task            # run configured automated passes + scaffold Review Artifact v3
 trellis complete my-task          # read review, record verdict, archive (requires review)
 trellis complete my-task --human-reviewed --reason "manual audit"  # exceptional audited override when the review gate is blocked
 trellis fail my-task              # active/ -> archive/ (failed)
@@ -108,14 +108,14 @@ After execution, before completing:
 
 ```bash
 trellis review my-task            # runs automated passes, scaffolds adversarial review
-                                  # reviewer fills in findings + review provenance in .ai/reviews/my-task.md
+                                  # reviewer fills in findings + Review Artifact v3 metadata in .ai/reviews/my-task.md
 trellis complete my-task          # reads review, records verdict, archives
                                   # refuses if the latest review round is missing, malformed, incomplete, or failed
 trellis complete my-task --human-reviewed --reason "manual audit"
                                   # exceptional audited override; requires interactive confirmation
 ```
 
-Review rounds accumulate — each `trellis review` appends a numbered section with a fixed metadata block. Prior rounds provide context for subsequent reviewers and make review provenance visible.
+Review rounds accumulate — each `trellis review` appends a numbered Review Artifact v3 section with per-pass `pass_results`. The default five-layer pipeline is `spec_compliance`, `scope_drift`, `regression_hunt`, `convention_check`, and `dark_patterns`, ordered by explicit `order` fields in `.ai/config.yaml`. Prior rounds provide context for subsequent reviewers and make review provenance visible.
 
 ---
 

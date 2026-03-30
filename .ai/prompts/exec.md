@@ -167,6 +167,8 @@ After all phases complete and before `trellis complete`:
 5. Fix any blocking findings if needed
 6. Run `trellis complete <task-id>` — reads the review, records verdict, archives
 
+The default Review Artifact v3 pipeline is `spec_compliance`, `scope_drift`, `regression_hunt`, `convention_check`, and `dark_patterns`. `trellis review` scaffolds the adversarial sections in configured order and expects the reviewer to update `round_status` plus per-pass `pass_results` before completion.
+
 `trellis complete` will **refuse to archive** if the latest review round is missing, malformed, incomplete, or failed. The only bypass is the exceptional human path: `trellis complete <task-id> --human-reviewed --reason "<why>"`, which requires interactive confirmation and records an audited override.
 
 ---

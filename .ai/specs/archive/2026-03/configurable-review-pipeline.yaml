@@ -1,0 +1,483 @@
+spec_version: "1.1"
+task_id: "configurable-review-pipeline"
+created: "2026-03-30T02:32:37Z"
+updated: "2026-03-30T03:29:00Z"
+status: "completed"
+
+task:
+  title: "Configurable multi-pass review pipeline"
+  summary: >
+    Trellis already has the right review decomposition in spirit: automated
+    checks, scope drift, regression hunt, convention check, and a dark-pattern
+    / defect scan. The problem is that only two automated passes are
+    first-class in the CLI, while the adversarial layers are hardcoded as fixed
+    headings and a single aggregate verdict. Evolve the review system so the
+    five-layer model is configurable, machine-readable, and enforced through a
+    hard cutover to Review Artifact v3 and configured pass topology.
+  size: "large"
+  risk_level: "high"
+
+  context:
+    packages:
+      - "cli"
+      - ".ai"
+      - "tests"
+    files_impacted:
+      - path: "cli/trellis"
+        lines: "all"
+        reason: >
+          Review pass configuration, metadata rendering/parsing, review
+          scaffolding, completion gating, and init-time templates all live in
+          the CLI.
+      - path: ".ai/config.yaml"
+        lines: "review section"
+        reason: >
+          The default review topology and pass descriptions should become
+          first-class config, not hardcoded CLI constants plus prompt text.
+      - path: ".ai/prompts/review.md"
+        lines: "all"
+        reason: >
+          The review prompt currently hardcodes three adversarial sections and
+          needs to align with configurable pass definitions and Review Artifact
+          v3 expectations.
+      - path: "README.md"
+        lines: "review workflow sections"
+        reason: >
+          Public docs need to explain the new review topology, pass results,
+          and hard-cutover expectations.
+      - path: "AGENTS.md"
+        lines: "review mode guidance"
+        reason: >
+          Agent instructions should describe the configured pass model instead
+          of a partially hardcoded review workflow.
+      - path: ".ai/README.md"
+        lines: "review overview"
+        reason: "Framework docs should reflect the new review contract."
+      - path: ".ai/OPERATORS.md"
+        lines: "review workflow"
+        reason: >
+          Human operator docs need the updated mental model and CLI behavior.
+      - path: "tests/review_gate_smoke.sh"
+        lines: "all"
+        reason: >
+          The smoke suite is the repo's main regression net for review-gate
+          behavior and needs new coverage for configurable passes, scaffold
+          output, and completion gating.
+    invariants:
+      - "domain_boundaries"
+      - "no_legacy_code"
+      - "public_api_stable"
+      - "config_from_env"
+    related_docs:
+      - "README.md"
+      - "AGENTS.md"
+      - ".ai/config.yaml"
+      - ".ai/prompts/review.md"
+      - ".ai/OPERATORS.md"
+
+  objectives:
+    - "Make the review topology explicit and configurable in `.ai/config.yaml`"
+    - "Make pass execution order explicit rather than relying on YAML mapping luck"
+    - "Promote the current five review layers to first-class pass records, not just prose headings"
+    - "Upgrade the review artifact so automated and adversarial pass results are both machine-readable"
+    - "Back the new behavior with smoke coverage instead of hand-tested CLI paths"
+
+  scope:
+    in_scope:
+      - "A config-driven review topology using named built-in automated and adversarial passes with explicit order fields"
+      - "Review Artifact v3 metadata with per-pass results"
+      - "Dynamic scaffolding of adversarial sections during `trellis review`"
+      - "Dynamic validation of configured review sections during `trellis complete`"
+      - "A hard cutover to Review Artifact v3 and configured review sections"
+      - "Updated templates and docs copied by `trellis init`"
+      - "Smoke tests for configured pass topology, scaffold output, and completion gating"
+    out_of_scope:
+      - "Arbitrary shell-command review passes defined by end users"
+      - "External reviewer drivers or hosted review services"
+      - "CI merge-gate enforcement or commit/diff binding"
+      - "A full replacement of Trellis' spec YAML parser in this task"
+      - "Compatibility with Review Artifact v2 files or in-progress legacy review rounds"
+      - "Migration tooling for legacy review artifacts"
+      - "UI or dashboard surfaces for review artifacts"
+
+  dependencies:
+    - "Existing review-gate smoke workflow remains the primary regression harness"
+
+  assumptions:
+    - "Review topology will be represented as nested pass mappings with explicit `order` scalars, which fits Trellis' current config loader better than YAML lists"
+    - "Built-in pass ids remain the execution boundary; this task does not open a generic arbitrary-command review engine"
+    - "Phase 1 may need to adjust config-loading and normalization helpers if the current loader cannot parse the final nested pass shape cleanly"
+    - "The default pass set should map to five layers: `spec_compliance`, `scope_drift`, `regression_hunt`, `convention_check`, and `dark_patterns`"
+    - "Hard cutover is acceptable: existing legacy review files or partially-completed review rounds must be regenerated under the new CLI"
+
+  touchpoints:
+    - area: "Review topology config"
+      description: >
+        `.ai/config.yaml` should declare the ordered built-in automated and
+        adversarial passes that Trellis scaffolds and validates.
+    - area: "Review artifact metadata"
+      description: >
+        Review Artifact v3 should record per-pass results for all configured
+        layers instead of only two automated pass states plus one aggregate
+        adversarial verdict.
+    - area: "CLI review flow"
+      description: >
+        `trellis review` should load pass definitions from config, run built-in
+        automated passes, and scaffold the adversarial sections from the same
+        source of truth.
+    - area: "CLI completion gate"
+      description: >
+        `trellis complete` should validate the configured adversarial sections
+        and write truthful per-pass results into the spec review block for the
+        v3 artifact shape.
+    - area: "Templates and prompts"
+      description: >
+        `trellis init`, README, AGENTS, operator docs, and review prompt
+        template should all reflect the same pass model. The init touchpoint is
+        the updated source templates, not a new `cmd_init` workflow.
+    - area: "Smoke coverage"
+      description: >
+        The shell smoke suite should exercise dynamic pass scaffolding,
+        completion validation, and configured review topology behavior.
+
+  risks:
+    - description: >
+        Review behavior is a public Trellis contract; a sloppy migration could
+        break pass accounting or gate semantics across review and completion.
+      impact: "high"
+      mitigation: >
+        Keep built-in pass ids stable, keep one canonical derivation path in
+        `trellis complete`, and back the cutover with explicit smoke coverage.
+    - description: >
+        The current config loader only supports nested mappings and scalar
+        values; phase 1 could discover that the planned nested pass structure
+        needs normalization changes in the CLI.
+      impact: "medium"
+      mitigation: >
+        Treat config loading and normalization as explicit phase 1 work, not an
+        implicit assumption, and cover it with the review-topology smoke case.
+    - description: >
+        Pass execution order is semantically important, but relying on mapping
+        insertion order alone is too subtle for a review pipeline.
+      impact: "medium"
+      mitigation: >
+        Give each configured pass an explicit `order` scalar and sort by it in
+        the CLI so execution and scaffolding order stay deterministic.
+    - description: >
+        Per-pass results can become inconsistent with overall verdict if the CLI
+        does not define one canonical derivation path.
+      impact: "high"
+      mitigation: >
+        Make `trellis complete` the single place that validates pass-state
+        consistency and writes the top-level spec review block.
+
+  acceptance:
+    validation_profile: "light"
+    definition_of_done:
+      - id: "dod1"
+        description: "Review topology is loaded from config as ordered named built-in automated and adversarial passes"
+        status: "done"
+      - id: "dod2"
+        description: "Review Artifact v3 records per-pass results for all configured review layers"
+        status: "done"
+      - id: "dod3"
+        description: "`trellis review` scaffolds the configured adversarial sections and pass metadata without hardcoded section assumptions"
+        status: "done"
+      - id: "dod4"
+        description: "`trellis complete` validates configured pass sections and writes truthful per-pass review results into the spec"
+        status: "done"
+      - id: "dod5"
+        description: "The final nested pass definition shape is explicitly supported by config loading and normalization helpers"
+        status: "done"
+      - id: "dod6"
+        description: "Repo docs and init templates describe the five-layer review model consistently"
+        status: "done"
+      - id: "dod7"
+        description: "Smoke coverage exercises configurable review topology, scaffold output, and completion gating"
+        status: "done"
+    validation:
+      - id: "dod1"
+        type: "compile"
+        description: "CLI remains syntactically valid after review-topology refactor"
+        command: "python3 -m py_compile cli/trellis"
+        expected: "exit code 0"
+      - id: "dod2"
+        type: "test"
+        description: "Smoke case verifies ordered configurable review topology, config loading, and v3 pass metadata"
+        command: "bash tests/review_gate_smoke.sh review-pass-topology"
+        expected: "exit code 0"
+      - id: "dod3"
+        type: "test"
+        description: "Smoke case verifies review scaffolding matches the configured pass topology"
+        command: "bash tests/review_gate_smoke.sh review-scaffold-topology"
+        expected: "exit code 0"
+      - id: "dod4"
+        type: "test"
+        description: "Smoke case verifies completion enforces configured pass sections/results"
+        command: "bash tests/review_gate_smoke.sh review-complete-topology"
+        expected: "exit code 0"
+      - id: "dod6"
+        type: "documentation"
+        description: "Each reviewed doc and template mentions the same five-layer review pipeline"
+        command: "bash -lc 'for f in README.md AGENTS.md .ai/README.md .ai/OPERATORS.md .ai/prompts/review.md .ai/config.yaml; do for term in spec_compliance scope_drift regression_hunt convention_check dark_patterns; do rg -q \"$term\" \"$f\" || { echo \"$f missing $term\"; exit 1; }; done; done; rg -q \"Review Artifact v3\" README.md; rg -q \"Review Artifact v3\" .ai/prompts/review.md'"
+        expected: "exit code 0"
+      - id: "dod7"
+        type: "test"
+        description: "Full review-gate smoke suite remains green"
+        command: "bash tests/review_gate_smoke.sh all"
+        expected: "exit code 0"
+
+  constraints:
+    approvals_required:
+      - "public_api_changes"
+    non_goals:
+      - "Do not add arbitrary user-defined shell commands as review passes"
+      - "Do not require CI or remote services for this evolution"
+      - "Do not add compatibility shims or migration tooling for legacy review artifacts"
+
+  info_sources:
+    - "README.md"
+    - "AGENTS.md"
+    - ".ai/config.yaml"
+    - ".ai/prompts/review.md"
+    - ".ai/README.md"
+    - ".ai/OPERATORS.md"
+    - ".ai/specs/archive/2026-03/exec-per-criterion-cwd.yaml"
+    - "cli/trellis"
+    - "tests/review_gate_smoke.sh"
+  notes: >
+    The key product decision is to keep review passes as named built-ins with a
+    configurable ordered topology, not an arbitrary review-command engine. That
+    keeps the five-layer model explicit while avoiding a new unsafe execution
+    surface. Ordering should be explicit via per-pass `order` scalars rather
+    than implicit mapping order. The init touchpoint is the updated template
+    files copied by `trellis init`; no separate init workflow change is planned.
+
+planning_log:
+  - timestamp: "2026-03-30T02:32:37Z"
+    actor: "user"
+    summary: "Spec created via trellis new"
+  - timestamp: "2026-03-30T02:37:00Z"
+    actor: "agent"
+    summary: >
+      Reviewed Trellis planning and review docs plus the CLI's current review
+      implementation. Confirmed that the conceptual five-layer model already
+      exists in docs, but only two automated passes and three fixed headings are
+      first-class in code.
+  - timestamp: "2026-03-30T02:41:00Z"
+    actor: "agent"
+    summary: >
+      Chose a conservative evolution path: configurable built-in review passes,
+      Review Artifact v3 with per-pass results, dynamic scaffolding/validation,
+      and explicit ordered pass definitions.
+  - timestamp: "2026-03-30T02:47:35Z"
+    actor: "user"
+    summary: >
+      Requested a hard cutover instead of legacy compatibility. Tightened the
+      draft to remove v2 migration work, require explicit pass ordering, add a
+      dedicated scaffold validation case, and clarify that init impact is via
+      updated source templates.
+
+  - timestamp: "2026-03-30T03:02:01Z"
+    actor: "cli"
+    summary: "Spec approved"
+  - timestamp: "2026-03-30T03:02:01Z"
+    actor: "cli"
+    summary: "Execution started"
+  - timestamp: "2026-03-30T03:23:22Z"
+    actor: "agent"
+    summary: >
+      Implemented the configurable five-pass review pipeline with Review
+      Artifact v3, updated the default review topology/config/docs, and
+      expanded the smoke suite to cover ordered topology, dynamic scaffolding,
+      completion enforcement, and the existing override/exec paths.
+  - timestamp: "2026-03-30T03:29:00Z"
+    actor: "cli"
+    summary: "Spec completed"
+phases:
+  - id: "phase1"
+    name: "Define review topology and artifact model"
+    objective: "Move review pass definitions, explicit ordering, and per-pass result semantics into first-class config and metadata helpers"
+    changes:
+      - file: "cli/trellis"
+        action: "update"
+        lines: "all"
+        content_spec: |
+          Introduce one canonical review-topology model for built-in automated
+          and adversarial passes with explicit `order` values. Refactor config
+          loading and normalization helpers as needed so the final nested pass
+          shape is explicitly supported. Refactor metadata helpers so review
+          artifacts record per-pass results for all configured layers in the
+          v3 shape.
+      - file: ".ai/config.yaml"
+        action: "update"
+        lines: "review section"
+        content_spec: |
+          Replace the partially hardcoded review description with an explicit
+          default topology using named built-in automated and adversarial
+          passes, each carrying an explicit `order` scalar in a nested mapping
+          shape compatible with the config loader and `trellis init` templates.
+      - file: ".ai/schemas/spec.json"
+        action: "update"
+        lines: "acceptance criterion schema"
+        content_spec: |
+          Preserve the schema support needed by the hardened execution path so
+          spec validation continues to accept per-criterion timeout metadata
+          alongside the review-pipeline refactor.
+    acceptance_criteria:
+      - id: "ac1_1"
+        type: "compile"
+        description: "CLI still compiles after review-topology helper refactor"
+        command: "python3 -m py_compile cli/trellis"
+        expected: "exit code 0"
+        result:
+          status: "pass"
+          timestamp: "2026-03-30T03:23:22Z"
+          output: "python3 -m py_compile cli/trellis"
+      - id: "ac1_2"
+        type: "test"
+        description: "Smoke case verifies configurable pass topology and v3 metadata normalization"
+        command: "bash tests/review_gate_smoke.sh review-pass-topology"
+        expected: "exit code 0"
+        result:
+          status: "pass"
+          timestamp: "2026-03-30T03:23:22Z"
+          output: "bash tests/review_gate_smoke.sh review-pass-topology"
+    status: "completed"
+    summary: "Added config-driven review topology helpers, Review Artifact v3 metadata, and a topology smoke case."
+
+  - id: "phase2"
+    name: "Drive review and complete from configured passes"
+    objective: "Eliminate hardcoded review headings and pass assumptions from the CLI review flow"
+    changes:
+      - file: "cli/trellis"
+        action: "update"
+        lines: "all"
+        content_spec: |
+          Refactor `trellis review`, `parse_review_file`, and `trellis complete`
+          so they scaffold, parse, and validate adversarial sections from the
+          configured pass topology. Write truthful per-pass results into the
+          top-level spec review block, enforce consistency between pass states
+          and overall verdict, and remove legacy v2 assumptions from the
+          completion path.
+    acceptance_criteria:
+      - id: "ac2_1"
+        type: "test"
+        description: "Review scaffolding follows the configured pass topology"
+        command: "bash tests/review_gate_smoke.sh review-scaffold-topology"
+        expected: "exit code 0"
+        result:
+          status: "pass"
+          timestamp: "2026-03-30T03:23:22Z"
+          output: "bash tests/review_gate_smoke.sh review-scaffold-topology"
+      - id: "ac2_2"
+        type: "test"
+        description: "Completion gate enforces configured pass sections and results"
+        command: "bash tests/review_gate_smoke.sh review-complete-topology"
+        expected: "exit code 0"
+        result:
+          status: "pass"
+          timestamp: "2026-03-30T03:23:22Z"
+          output: "bash tests/review_gate_smoke.sh review-complete-topology"
+    status: "completed"
+    summary: "Removed hardcoded review headings and made review/complete consume the configured pass topology end to end."
+
+  - id: "phase3"
+    name: "Propagate docs, prompts, and smoke coverage"
+    objective: "Make templates, guidance, and regression tests match the new review contract"
+    changes:
+      - file: "README.md"
+        action: "update"
+        lines: "review workflow sections"
+        content_spec: |
+          Document the configurable five-layer review model, Review Artifact v3,
+          explicit pass ordering, and the hard-cutover expectations.
+      - file: "AGENTS.md"
+        action: "update"
+        lines: "review mode guidance"
+        content_spec: |
+          Align the review-mode instructions with configurable built-in review
+          passes and per-pass execution evidence.
+      - file: ".ai/README.md"
+        action: "update"
+        lines: "review overview"
+        content_spec: |
+          Update framework docs to explain the new review artifact and pass
+          model.
+      - file: ".ai/OPERATORS.md"
+        action: "update"
+        lines: "review workflow"
+        content_spec: |
+          Explain the operator-facing workflow for configured review passes and
+          the hard-cutover v3 review contract.
+      - file: ".ai/prompts/review.md"
+        action: "update"
+        lines: "all"
+        content_spec: |
+          Replace the fixed three-section adversarial instructions with
+          language that matches the configured pass model and Review Artifact
+          v3 metadata updates.
+      - file: ".ai/prompts/exec.md"
+        action: "update"
+        lines: "adversarial review section"
+        content_spec: |
+          Keep the execution guidance aligned with the configured five-pass
+          review pipeline and Review Artifact v3 completion expectations.
+      - file: "tests/review_gate_smoke.sh"
+        action: "update"
+        lines: "all"
+        content_spec: |
+          Add smoke cases for configurable review topology, scaffold output,
+          and completion gating with per-pass results.
+    acceptance_criteria:
+      - id: "ac3_1"
+        type: "documentation"
+        description: "Docs mention the configurable five-layer review model"
+        command: "rg -n 'spec_compliance|scope_drift|regression_hunt|convention_check|dark_patterns|Review Artifact v3' README.md AGENTS.md .ai/README.md .ai/OPERATORS.md .ai/prompts/review.md .ai/config.yaml"
+        expected: "exit code 0"
+        result:
+          status: "pass"
+          timestamp: "2026-03-30T03:23:22Z"
+          output: "documentation grep checks passed"
+      - id: "ac3_2"
+        type: "test"
+        description: "Full smoke suite stays green after docs/tests updates"
+        command: "bash tests/review_gate_smoke.sh all"
+        expected: "exit code 0"
+        result:
+          status: "pass"
+          timestamp: "2026-03-30T03:23:22Z"
+          output: "bash tests/review_gate_smoke.sh all"
+    status: "completed"
+    summary: "Updated docs/prompts and rewrote the smoke harness for the new five-pass review contract."
+
+rollback:
+  strategy: "per_phase"
+  commands:
+    phase1: "git checkout HEAD -- cli/trellis .ai/config.yaml"
+    phase2: "git checkout HEAD -- cli/trellis"
+    phase3: "git checkout HEAD -- README.md AGENTS.md .ai/README.md .ai/OPERATORS.md .ai/prompts/review.md tests/review_gate_smoke.sh"
+
+review:
+  timestamp: "2026-03-30T03:27:02Z"
+  verdict: "pass"
+  review_rounds: 1
+  reviewer_mode: "executor"
+  reviewer_session: ""
+  round_status: "completed"
+  override_applied: false
+  override_reason: null
+  override_confirmed_at: null
+  passes:
+    - id: spec_compliance
+      result: "pass"
+    - id: scope_drift
+      result: "pass"
+    - id: regression_hunt
+      result: "pass"
+    - id: convention_check
+      result: "pass"
+    - id: dark_patterns
+      result: "pass"
+  blocking_count: 0
+  non_blocking_count: 0

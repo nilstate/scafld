@@ -223,7 +223,12 @@
                   "description": {"type": "string"},
                   "command": {"type": "string"},
                   "expected": {"type": "string"},
-                  "cwd": {"type": "string", "description": "Working directory relative to workspace root"}
+                  "cwd": {"type": "string", "description": "Working directory relative to workspace root"},
+                  "timeout_seconds": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "Command timeout in seconds. Defaults to 600 when omitted."
+                  }
                 }
               }
             }
@@ -327,10 +332,38 @@
                   "type": "string",
                   "description": "Working directory for the command, relative to workspace root. Useful in monorepo/workspace setups where different criteria target different submodules."
                 },
+                "timeout_seconds": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "description": "Command timeout in seconds. Defaults to 600 when omitted."
+                },
                 "result": {
-                  "type": "string",
-                  "enum": ["pass", "fail"],
-                  "description": "Result recorded by trellis exec"
+                  "oneOf": [
+                    {
+                      "type": "string",
+                      "enum": ["pass", "fail"],
+                      "description": "Flat result recorded by trellis exec"
+                    },
+                    {
+                      "type": "object",
+                      "required": ["status"],
+                      "properties": {
+                        "status": {
+                          "type": "string",
+                          "enum": ["pass", "fail"]
+                        },
+                        "timestamp": {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "output": {
+                          "type": "string"
+                        }
+                      },
+                      "additionalProperties": false,
+                      "description": "Nested result block supported for execution records"
+                    }
+                  ]
                 },
                 "executed_at": {
                   "type": "string",
