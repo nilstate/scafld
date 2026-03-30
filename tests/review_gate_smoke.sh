@@ -54,8 +54,13 @@ assert_file_order() {
   local second="$3"
   local message="$4"
   local first_line second_line
-  first_line="$(rg -n -F -- "$first" "$file" | head -n 1 | cut -d: -f1 || true)"
-  second_line="$(rg -n -F -- "$second" "$file" | head -n 1 | cut -d: -f1 || true)"
+  if command -v rg >/dev/null 2>&1; then
+    first_line="$(rg -n -F -- "$first" "$file" | head -n 1 | cut -d: -f1 || true)"
+    second_line="$(rg -n -F -- "$second" "$file" | head -n 1 | cut -d: -f1 || true)"
+  else
+    first_line="$(grep -n -F -- "$first" "$file" | head -n 1 | cut -d: -f1 || true)"
+    second_line="$(grep -n -F -- "$second" "$file" | head -n 1 | cut -d: -f1 || true)"
+  fi
   [ -n "$first_line" ] || fail "$message (missing '$first')"
   [ -n "$second_line" ] || fail "$message (missing '$second')"
   [ "$first_line" -lt "$second_line" ] || fail "$message"
