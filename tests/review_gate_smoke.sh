@@ -739,6 +739,218 @@ EOF
   assert_contains "$spec_text" 'Command timed out after 1s' "spec should record the configured timeout in result_output"
 }
 
+case_complete_nested_exec_and_self_eval() {
+  local repo task_id output archive_path spec_text
+  repo="$(new_repo)"
+  task_id="complete-nested-exec-and-self-eval"
+  write_changed_file "$repo"
+
+  cat > "$repo/.ai/specs/active/$task_id.yaml" <<EOF
+spec_version: "1.1"
+task_id: "$task_id"
+created: "2026-03-26T00:00:00Z"
+updated: "2026-03-26T00:00:00Z"
+status: "in_progress"
+
+task:
+  title: "Nested exec and self-eval"
+  summary: "Ensure trellis complete recognizes nested acceptance results and self_eval totals"
+  size: "small"
+  risk_level: "low"
+
+phases:
+  - id: "phase1"
+    name: "Nested result shape"
+    objective: "Exercise nested acceptance result parsing"
+    changes:
+      - file: "app.txt"
+        action: "update"
+        lines: "1"
+        content_spec: "Smoke change"
+    acceptance_criteria:
+      - id: "ac1_1"
+        type: "test"
+        description: "Nested result should count as executed"
+        command: "printf '1 example, 0 failures\\n'"
+        expected: "0 failures"
+        result:
+          status: "pass"
+          timestamp: "2026-03-26T00:00:00Z"
+          output: "1 example, 0 failures"
+    status: "completed"
+
+planning_log:
+  - timestamp: "2026-03-26T00:00:00Z"
+    actor: "user"
+    summary: "Bootstrap smoke fixture"
+
+self_eval:
+  completeness: 3
+  architecture_fidelity: 3
+  spec_alignment: 1
+  validation_depth: 1
+  total: 8.8
+  notes: "Nested score fixture"
+  second_pass_performed: false
+
+deviations: []
+EOF
+
+  write_review_v3 "$repo" "$task_id" "pass" "executor" "completed" "pass" "pass" "pass" "pass" "pass" \
+    "No issues found — checked callers of app.txt." \
+    "No issues found — checked AGENTS.md and CONVENTIONS.md." \
+    "No issues found — checked hardcodes and null handling." \
+    "None." \
+    "None."
+
+  capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" trellis complete '$task_id'"
+  assert_not_contains "$output" "no exec results recorded" "complete should recognize nested acceptance results recorded by trellis exec"
+  assert_not_contains "$output" "no self-eval score found in spec" "complete should recognize nested self_eval totals"
+  archive_path="$(archive_spec_path "$repo" "$task_id")"
+  [ -n "$archive_path" ] || fail "complete should archive the nested exec fixture"
+  spec_text="$(cat "$archive_path")"
+  assert_contains "$spec_text" 'status: "completed"' "archived spec should remain completed"
+}
+
+case_report_nested_exec_and_self_eval() {
+  local repo task_id output
+  repo="$(new_repo)"
+  task_id="report-nested-exec-and-self-eval"
+
+  mkdir -p "$repo/.ai/specs/archive/2026-03"
+  cat > "$repo/.ai/specs/archive/2026-03/$task_id.yaml" <<EOF
+spec_version: "1.1"
+task_id: "$task_id"
+created: "2026-03-26T00:00:00Z"
+updated: "2026-03-26T00:00:00Z"
+status: "completed"
+
+task:
+  title: "Report nested parsing"
+  summary: "Ensure trellis report counts nested execution results and decimal self-eval totals"
+  size: "small"
+  risk_level: "low"
+
+phases:
+  - id: "phase1"
+    name: "Nested result shape"
+    objective: "Exercise nested acceptance result parsing in report"
+    changes:
+      - file: "app.txt"
+        action: "update"
+        lines: "1"
+        content_spec: "Smoke change"
+    acceptance_criteria:
+      - id: "ac1_1"
+        type: "test"
+        description: "Nested pass result should count"
+        command: "printf '1 example, 0 failures\\n'"
+        expected: "0 failures"
+        result:
+          status: "pass"
+          timestamp: "2026-03-26T00:00:00Z"
+          output: "1 example, 0 failures"
+    status: "completed"
+
+planning_log:
+  - timestamp: "2026-03-26T00:00:00Z"
+    actor: "user"
+    summary: "Bootstrap smoke fixture"
+
+self_eval:
+  completeness: 3
+  architecture_fidelity: 3
+  spec_alignment: 1
+  validation_depth: 1
+  total: 8.8
+  notes: "Nested score fixture"
+  second_pass_performed: false
+
+deviations: []
+EOF
+
+  capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" trellis report"
+  assert_contains "$output" "avg: 8.8/10  (1 scored)" "report should read decimal self-eval totals from the nested block"
+  assert_contains "$output" "1 passed / 0 failed  (100% pass rate)" "report should count nested acceptance results"
+}
+
+case_status_phase_count_ignores_top_level_status() {
+  local repo task_id output
+  repo="$(new_repo)"
+  task_id="status-phase-count"
+
+  mkdir -p "$repo/.ai/specs/archive/2026-03"
+  cat > "$repo/.ai/specs/archive/2026-03/$task_id.yaml" <<EOF
+spec_version: "1.1"
+task_id: "$task_id"
+created: "2026-03-26T00:00:00Z"
+updated: "2026-03-26T00:00:00Z"
+status: "completed"
+
+task:
+  title: "Status phase counts"
+  summary: "Ensure trellis status only counts statuses from the phases section"
+  size: "small"
+  risk_level: "low"
+
+task_notes:
+  status: "completed"
+
+phases:
+  - id: "phase1"
+    name: "One"
+    objective: "One"
+    changes:
+      - file: "app.txt"
+        action: "update"
+        content_spec: "One"
+    acceptance_criteria:
+      - id: "ac1_1"
+        type: "custom"
+        description: "One"
+        result:
+          status: "pass"
+    status: "completed"
+  - id: "phase2"
+    name: "Two"
+    objective: "Two"
+    changes:
+      - file: "app.txt"
+        action: "update"
+        content_spec: "Two"
+    acceptance_criteria:
+      - id: "ac2_1"
+        type: "custom"
+        description: "Two"
+        result:
+          status: "pass"
+    status: "completed"
+  - id: "phase3"
+    name: "Three"
+    objective: "Three"
+    changes:
+      - file: "app.txt"
+        action: "update"
+        content_spec: "Three"
+    acceptance_criteria:
+      - id: "ac3_1"
+        type: "custom"
+        description: "Three"
+        result:
+          status: "pass"
+    status: "completed"
+
+planning_log:
+  - timestamp: "2026-03-26T00:00:00Z"
+    actor: "user"
+    summary: "Bootstrap smoke fixture"
+EOF
+
+  capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" trellis status '$task_id'"
+  assert_contains "$output" "phases: 3 done  (3 total)" "status should count only phase statuses and not subtract the top-level spec status"
+  assert_not_contains "$output" "1 pending" "status should not invent a pending phase when all phase statuses are completed"
+}
+
 case_all() {
   case_smoke_bootstrap
   case_review_pass_topology
@@ -752,6 +964,9 @@ case_all() {
   case_non_mutating_review
   case_exec_resume_nested_results
   case_exec_timeout_override
+  case_complete_nested_exec_and_self_eval
+  case_report_nested_exec_and_self_eval
+  case_status_phase_count_ignores_top_level_status
 }
 
 main() {
@@ -769,6 +984,9 @@ main() {
     non-mutating-review) case_non_mutating_review ;;
     exec-resume-nested-results) case_exec_resume_nested_results ;;
     exec-timeout-override) case_exec_timeout_override ;;
+    complete-nested-exec-and-self-eval) case_complete_nested_exec_and_self_eval ;;
+    report-nested-exec-and-self-eval) case_report_nested_exec_and_self_eval ;;
+    status-phase-count-ignores-top-level-status) case_status_phase_count_ignores_top_level_status ;;
     all) case_all ;;
     *)
       fail "unknown case: $action"
