@@ -1,8 +1,8 @@
-# Trellis - Agent Guide
+# scafld - Agent Guide
 
 Canonical reference for AI coding agents working with this codebase. Agent-agnostic.
 
-> **Template file.** When setting up Trellis in your project, customize the invariants, forbidden actions, and domain rules below to match your architecture. The generic defaults are a solid starting point.
+> **Template file.** When setting up scafld in your project, customize the invariants, forbidden actions, and domain rules below to match your architecture. The generic defaults are a solid starting point.
 
 **Key files:**
 
@@ -14,7 +14,7 @@ Canonical reference for AI coding agents working with this codebase. Agent-agnos
 
 ---
 
-## How Trellis Works
+## How scafld Works
 
 Spec-driven development: every non-trivial task becomes a machine-readable YAML specification before any code changes happen.
 
@@ -76,7 +76,7 @@ No test fixtures, mocks, or conditional test-only logic in production code. Test
 
 ## Spec Management
 
-**Always use the `trellis` CLI for spec lifecycle management.** Never manually move, copy, or rename spec files between directories. Never manually change the `status` field. The CLI enforces validation, state transitions, and the review gate — bypassing it breaks the audit trail.
+**Always use the `scafld` CLI for spec lifecycle management.** Never manually move, copy, or rename spec files between directories. Never manually change the `status` field. The CLI enforces validation, state transitions, and the review gate — bypassing it breaks the audit trail.
 
 ---
 
@@ -101,11 +101,11 @@ For trivial changes (typos, single-line fixes), skip the spec workflow and work 
 
 ### Review Mode
 
-- **When:** All phases complete, before `trellis complete`
-- **Actions:** Run `trellis review`, then adversarial code review (ideally in a fresh session) and update the latest Review Artifact v3 round with reviewer provenance, `round_status`, and per-pass `pass_results`
+- **When:** All phases complete, before `scafld complete`
+- **Actions:** Run `scafld review`, then adversarial code review (ideally in a fresh session) and update the latest Review Artifact v3 round with reviewer provenance, `round_status`, and per-pass `pass_results`
 - **Output:** Findings written to `.ai/reviews/{task-id}.md`, verdict recorded in spec
 - **Prompt:** Read `.ai/prompts/review.md` before entering this mode
-- **Mandate:** Find problems, not confirm success. A review that finds zero issues is suspicious. The configured built-in passes are `spec_compliance`, `scope_drift`, `regression_hunt`, `convention_check`, and `dark_patterns`. `trellis complete` only bypasses a blocked gate through the audited `--human-reviewed --reason` path. Local CLI checks improve workflow integrity, but stronger guarantees still need CI or merge gate enforcement, review artifacts bound to the reviewed diff or commit, and out-of-band approval or an external reviewer.
+- **Mandate:** Find problems, not confirm success. A review that finds zero issues is suspicious. The configured built-in passes are `spec_compliance`, `scope_drift`, `regression_hunt`, `convention_check`, and `dark_patterns`. `scafld complete` only bypasses a blocked gate through the audited `--human-reviewed --reason` path. Local CLI checks improve workflow integrity, but stronger guarantees still need CI or merge gate enforcement, review artifacts bound to the reviewed diff or commit, and out-of-band approval or an external reviewer.
 
 ---
 
@@ -191,19 +191,19 @@ Only commit when explicitly asked by the user.
 
 ```bash
 # CLI (manages status, validation, file moves)
-trellis new <task-id>             # scaffold a spec in drafts/
-trellis list                      # show all specs
-trellis status <task-id>          # show details + phase progress
-trellis validate <task-id>        # check against schema
-trellis approve <task-id>         # drafts/ -> approved/
-trellis start <task-id>           # approved/ -> active/
-trellis exec <task-id>            # run acceptance criteria, record results
-trellis audit <task-id>           # compare spec changes vs git diff
-trellis diff <task-id>            # show git history for spec
-trellis review <task-id>          # run configured automated passes + scaffold Review Artifact v3
-trellis complete <task-id>        # read review, record verdict, archive (requires review)
-trellis complete <task-id> --human-reviewed --reason "manual audit"  # exceptional audited override for a blocked review gate
-trellis fail <task-id>            # active/ -> archive/ (failed)
-trellis cancel <task-id>          # active/ -> archive/ (cancelled)
-trellis report                    # aggregate stats across all specs
+scafld new <task-id>             # scaffold a spec in drafts/
+scafld list                      # show all specs
+scafld status <task-id>          # show details + phase progress
+scafld validate <task-id>        # check against schema
+scafld approve <task-id>         # drafts/ -> approved/
+scafld start <task-id>           # approved/ -> active/
+scafld exec <task-id>            # run acceptance criteria, record results
+scafld audit <task-id>           # compare spec changes vs git diff
+scafld diff <task-id>            # show git history for spec
+scafld review <task-id>          # run configured automated passes + scaffold Review Artifact v3
+scafld complete <task-id>        # read review, record verdict, archive (requires review)
+scafld complete <task-id> --human-reviewed --reason "manual audit"  # exceptional audited override for a blocked review gate
+scafld fail <task-id>            # active/ -> archive/ (failed)
+scafld cancel <task-id>          # active/ -> archive/ (cancelled)
+scafld report                    # aggregate stats across all specs
 ```

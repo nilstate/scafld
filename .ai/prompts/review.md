@@ -47,9 +47,9 @@ The default built-in five-pass pipeline in `.ai/config.yaml` is:
 - `convention_check`
 - `dark_patterns`
 
-`trellis review` already runs `spec_compliance` and `scope_drift` and scaffolds the adversarial sections in configured order. Your job is to complete the adversarial passes and finalize the metadata for Review Artifact v3.
+`scafld review` already runs `spec_compliance` and `scope_drift` and scaffolds the adversarial sections in configured order. Your job is to complete the adversarial passes and finalize the metadata for Review Artifact v3.
 
-If the project has changed pass titles in `.ai/config.yaml`, follow the headings already scaffolded by `trellis review`. The built-in pass ids stay the same even if the visible section title changes.
+If the project has changed pass titles in `.ai/config.yaml`, follow the headings already scaffolded by `scafld review`. The built-in pass ids stay the same even if the visible section title changes.
 
 ---
 
@@ -98,7 +98,7 @@ For each change, actively hunt for:
 
 ## Output
 
-`trellis review` scaffolds the review file at `.ai/reviews/{task-id}.md` with numbered review sections. Fill in the latest section using the Review Artifact v3 contract:
+`scafld review` scaffolds the review file at `.ai/reviews/{task-id}.md` with numbered review sections. Fill in the latest section using the Review Artifact v3 contract:
 
 ````markdown
 ## Review N — {timestamp}
@@ -162,8 +162,8 @@ Update these metadata fields explicitly:
 
 Prior review rounds remain in the file as context. Do not rewrite them.
 
-**All configured adversarial sections must contain content.** Each must have at least one finding or an explicit "No issues found" with a brief note of what was checked. `trellis complete` will reject reviews with empty configured sections or with `round_status` left at `in_progress`.
+**All configured adversarial sections must contain content.** Each must have at least one finding or an explicit "No issues found" with a brief note of what was checked. `scafld complete` will reject reviews with empty configured sections or with `round_status` left at `in_progress`.
 
 **Verdict rules:** Any blocking finding → `fail`. Non-blocking only → `pass_with_issues`. Clean → `pass`.
 
-When done, run `trellis complete {task-id}`.
+When done, run `scafld complete {task-id}`.

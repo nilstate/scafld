@@ -1,4 +1,4 @@
-# Trellis Configuration
+# scafld Configuration
 # Version: 1.1
 # Purpose: Machine-readable control file for AI coding agents
 
@@ -176,12 +176,12 @@ rubric:
 # =============================================================================
 # ADVERSARIAL REVIEW
 # =============================================================================
-# Mandatory review gate before trellis complete can archive a spec.
+# Mandatory review gate before scafld complete can archive a spec.
 # Every spec gets the same review — no profiles.
 # Recommended: run the agent review in a fresh context/session.
 review:
   # Review pipeline is built from named built-in passes only.
-  # Ordering is explicit; Trellis sorts by `order`, not mapping insertion luck.
+  # Ordering is explicit; scafld sorts by `order`, not mapping insertion luck.
   automated_passes:
     spec_compliance:
       order: 10

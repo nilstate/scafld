@@ -41,7 +41,7 @@ AI generates spec in `drafts/` with `status: "draft"`. If blocked, set `status: 
 Developer reviews, then approves:
 
 ```bash
-trellis approve my-task
+scafld approve my-task
 ```
 
 ### 3. Execution
@@ -53,7 +53,7 @@ AI moves spec to `active/`, sets `status: "in_progress"`, and executes phases.
 Run adversarial review before completing:
 
 ```bash
-trellis review my-task
+scafld review my-task
 # Fill in findings in .ai/reviews/my-task.md
 ```
 
@@ -62,7 +62,7 @@ trellis review my-task
 Mark complete (reads review, records verdict, moves to `archive/YYYY-MM/`):
 
 ```bash
-trellis complete my-task
+scafld complete my-task
 ```
 
 ---
@@ -75,7 +75,7 @@ Each spec validated by `.ai/schemas/spec.json` includes:
 - **`planning_log`:** Chronological entries summarizing planning steps
 - **`phases`:** Ordered execution units with `changes[].content_spec`, acceptance criteria, and per-phase status
 - **`rollback`:** Strategy and per-phase commands for safe reversions
-- **`review`:** Verdict, pass results, and finding counts recorded by `trellis complete`
+- **`review`:** Verdict, pass results, and finding counts recorded by `scafld complete`
 - **`self_eval` / `deviations` / `metadata`:** Populated during execution
 
 ---
@@ -83,11 +83,11 @@ Each spec validated by `.ai/schemas/spec.json` includes:
 ## Finding Work
 
 ```bash
-trellis list                  # All specs
-trellis list active           # Currently executing
-trellis list approved         # Awaiting execution
-trellis list drafts           # Planning in progress
-trellis list archive          # Completed work
+scafld list                  # All specs
+scafld list active           # Currently executing
+scafld list approved         # Awaiting execution
+scafld list drafts           # Planning in progress
+scafld list archive          # Completed work
 ```
 
 ---

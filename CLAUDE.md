@@ -2,7 +2,7 @@
 
 > **Template file.** Add your project overview, essential commands (build, test, dev server), and any Claude-specific tips here.
 
-Claude-specific tips for working with Trellis.
+Claude-specific tips for working with scafld.
 
 **MUST READ:** `AGENTS.md` - the canonical agent guide covering invariants, modes, validation, and conventions. Read it before doing any work.
 
@@ -14,13 +14,13 @@ Claude-specific tips for working with Trellis.
 
 ## Spec Management
 
-**Always use the `trellis` CLI for spec lifecycle management.** Never manually move, copy, or rename spec files. Never manually change the `status` field.
+**Always use the `scafld` CLI for spec lifecycle management.** Never manually move, copy, or rename spec files. Never manually change the `status` field.
 
-## Entering Trellis Modes
+## Entering scafld Modes
 
 - **Plan mode:** Read `.ai/prompts/plan.md`, then explore and generate a spec.
 - **Exec mode:** Read `.ai/prompts/exec.md`, then load the approved spec and execute.
-- **Review mode:** Run `trellis review <task-id>`, then read `.ai/prompts/review.md` and the review file. Fill in findings.
+- **Review mode:** Run `scafld review <task-id>`, then read `.ai/prompts/review.md` and the review file. Fill in findings.
 
 ## Prompting Patterns
 
