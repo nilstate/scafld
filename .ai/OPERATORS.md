@@ -1,6 +1,6 @@
-# Trellis — Operator Cheat Sheet
+# scafld — Operator Cheat Sheet
 
-A short, human-friendly guide for working with Trellis task specs.
+A short, human-friendly guide for working with scafld task specs.
 For full details, see `.ai/README.md` and `.ai/specs/README.md`.
 
 ---
@@ -58,24 +58,24 @@ Use this for high-impact work (auth, persistence, complex refactors).
 ## 4. Quick Commands Reference
 
 ```bash
-trellis new my-task -t "My feature" -s small -r low   # scaffold spec
-trellis list                      # show all specs
-trellis list active               # filter by status
-trellis status my-task            # show details + phase progress
-trellis validate my-task          # check against schema
-trellis approve my-task           # drafts/ -> approved/
-trellis start my-task             # approved/ -> active/
-trellis exec my-task              # run acceptance criteria, record results
-trellis exec my-task -p phase1    # run criteria for one phase only
-trellis audit my-task             # compare spec files vs git diff
-trellis audit my-task -b main     # audit against specific base ref
-trellis diff my-task              # show git history for spec
-trellis review my-task            # run configured automated passes + scaffold Review Artifact v3
-trellis complete my-task          # read review, record verdict, archive (requires review)
-trellis complete my-task --human-reviewed --reason "manual audit"  # exceptional audited override when the review gate is blocked
-trellis fail my-task              # active/ -> archive/ (failed)
-trellis cancel my-task            # active/ -> archive/ (cancelled)
-trellis report                    # aggregate stats across all specs
+scafld new my-task -t "My feature" -s small -r low   # scaffold spec
+scafld list                      # show all specs
+scafld list active               # filter by status
+scafld status my-task            # show details + phase progress
+scafld validate my-task          # check against schema
+scafld approve my-task           # drafts/ -> approved/
+scafld start my-task             # approved/ -> active/
+scafld exec my-task              # run acceptance criteria, record results
+scafld exec my-task -p phase1    # run criteria for one phase only
+scafld audit my-task             # compare spec files vs git diff
+scafld audit my-task -b main     # audit against specific base ref
+scafld diff my-task              # show git history for spec
+scafld review my-task            # run configured automated passes + scaffold Review Artifact v3
+scafld complete my-task          # read review, record verdict, archive (requires review)
+scafld complete my-task --human-reviewed --reason "manual audit"  # exceptional audited override when the review gate is blocked
+scafld fail my-task              # active/ -> archive/ (failed)
+scafld cancel my-task            # active/ -> archive/ (cancelled)
+scafld report                    # aggregate stats across all specs
 ```
 
 ---
@@ -107,15 +107,15 @@ draft → under_review → approved → in_progress → review → completed
 After execution, before completing:
 
 ```bash
-trellis review my-task            # runs automated passes, scaffolds adversarial review
+scafld review my-task            # runs automated passes, scaffolds adversarial review
                                   # reviewer fills in findings + Review Artifact v3 metadata in .ai/reviews/my-task.md
-trellis complete my-task          # reads review, records verdict, archives
+scafld complete my-task          # reads review, records verdict, archives
                                   # refuses if the latest review round is missing, malformed, incomplete, or failed
-trellis complete my-task --human-reviewed --reason "manual audit"
+scafld complete my-task --human-reviewed --reason "manual audit"
                                   # exceptional audited override; requires interactive confirmation
 ```
 
-Review rounds accumulate — each `trellis review` appends a numbered Review Artifact v3 section with per-pass `pass_results`. The default five-layer pipeline is `spec_compliance`, `scope_drift`, `regression_hunt`, `convention_check`, and `dark_patterns`, ordered by explicit `order` fields in `.ai/config.yaml`. Prior rounds provide context for subsequent reviewers and make review provenance visible.
+Review rounds accumulate — each `scafld review` appends a numbered Review Artifact v3 section with per-pass `pass_results`. The default five-layer pipeline is `spec_compliance`, `scope_drift`, `regression_hunt`, `convention_check`, and `dark_patterns`, ordered by explicit `order` fields in `.ai/config.yaml`. Prior rounds provide context for subsequent reviewers and make review provenance visible.
 
 ---
 
@@ -123,7 +123,7 @@ Review rounds accumulate — each `trellis review` appends a numbered Review Art
 
 - **Always read the spec before executing** — understand what you're building
 - **Keep phases small** — easier to validate and rollback
-- **Run `trellis review` before completing** — the adversarial review catches what acceptance criteria miss
+- **Run `scafld review` before completing** — the adversarial review catches what acceptance criteria miss
 - **Review in a fresh session when possible** — avoids confirmation bias from the execution session
 - **Self-eval honestly** — the 7/10 threshold keeps quality high; 10/10 requires justification
 - **Archive completed specs** — they're your project history

@@ -20,7 +20,7 @@ jobs:
           python-version: "3.12"
 
       - name: Validate CLI syntax
-        run: PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile cli/trellis
+        run: PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile cli/scafld
 
       - name: Validate smoke harness syntax
         run: bash -n tests/review_gate_smoke.sh

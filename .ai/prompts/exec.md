@@ -158,18 +158,18 @@ Once all phases complete, run pre-commit validation using the appropriate profil
 
 ## Adversarial Review
 
-After all phases complete and before `trellis complete`:
+After all phases complete and before `scafld complete`:
 
-1. Run `trellis review <task-id>` — runs automated passes (spec compliance, scope drift) and generates the review file
+1. Run `scafld review <task-id>` — runs automated passes (spec compliance, scope drift) and generates the review file
 2. Start a **fresh agent session** when available to reduce confirmation bias
 3. Read `.ai/prompts/review.md` for the review prompt and attack vectors
 4. Review the spec + git diff, write findings to `.ai/reviews/{task-id}.md`, and update the latest round's review provenance metadata
 5. Fix any blocking findings if needed
-6. Run `trellis complete <task-id>` — reads the review, records verdict, archives
+6. Run `scafld complete <task-id>` — reads the review, records verdict, archives
 
-The default Review Artifact v3 pipeline is `spec_compliance`, `scope_drift`, `regression_hunt`, `convention_check`, and `dark_patterns`. `trellis review` scaffolds the adversarial sections in configured order and expects the reviewer to update `round_status` plus per-pass `pass_results` before completion.
+The default Review Artifact v3 pipeline is `spec_compliance`, `scope_drift`, `regression_hunt`, `convention_check`, and `dark_patterns`. `scafld review` scaffolds the adversarial sections in configured order and expects the reviewer to update `round_status` plus per-pass `pass_results` before completion.
 
-`trellis complete` will **refuse to archive** if the latest review round is missing, malformed, incomplete, or failed. The only bypass is the exceptional human path: `trellis complete <task-id> --human-reviewed --reason "<why>"`, which requires interactive confirmation and records an audited override.
+`scafld complete` will **refuse to archive** if the latest review round is missing, malformed, incomplete, or failed. The only bypass is the exceptional human path: `scafld complete <task-id> --human-reviewed --reason "<why>"`, which requires interactive confirmation and records an audited override.
 
 ---
 

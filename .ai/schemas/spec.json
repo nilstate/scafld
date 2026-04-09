@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://github.com/nilstate/trellis/spec-v1.1.json",
-  "title": "Trellis Task Specification",
+  "$id": "https://github.com/nilstate/scafld/spec-v1.1.json",
+  "title": "scafld Task Specification",
   "description": "Machine-readable conversational task specification for AI agents",
   "type": "object",
   "required": ["spec_version", "task_id", "status", "task", "phases", "planning_log", "created", "updated"],
@@ -342,7 +342,7 @@
                     {
                       "type": "string",
                       "enum": ["pass", "fail"],
-                      "description": "Flat result recorded by trellis exec"
+                      "description": "Flat result recorded by scafld exec"
                     },
                     {
                       "type": "object",
@@ -372,7 +372,7 @@
                 },
                 "result_output": {
                   "type": "string",
-                  "description": "Truncated command output from trellis exec"
+                  "description": "Truncated command output from scafld exec"
                 }
               }
             }
@@ -404,7 +404,7 @@
 
     "review": {
       "type": "object",
-      "description": "Adversarial review results recorded by trellis complete",
+      "description": "Adversarial review results recorded by scafld complete",
       "properties": {
         "timestamp": {"type": "string", "format": "date-time"},
         "verdict": {

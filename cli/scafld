@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Trellis CLI - spec-driven development framework for AI coding agents."""
+"""scafld CLI - spec-driven development framework for AI coding agents."""
 
 import argparse
 import datetime
@@ -472,8 +472,8 @@ def move_spec(root, spec_path, new_status):
 def require_root():
     root = find_root()
     if not root:
-        print(f"{c(C_RED, 'error')}: not in a Trellis project (no .ai/ directory found)")
-        print(f"  run '{c(C_BOLD, 'trellis init')}' to set up a workspace")
+        print(f"{c(C_RED, 'error')}: not in a scafld project (no .ai/ directory found)")
+        print(f"  run '{c(C_BOLD, 'scafld init')}' to set up a workspace")
         sys.exit(1)
     return root
 
@@ -788,13 +788,13 @@ def upsert_review_block(text, review_block):
 # ---------------------------------------------------------------------------
 
 def cmd_init(args):
-    """Bootstrap Trellis workspace in the current directory."""
+    """Bootstrap scafld workspace in the current directory."""
     project_root = Path.cwd()
 
-    # Find trellis source (where this script lives)
-    trellis_dir = Path(__file__).resolve().parent.parent
+    # Find scafld source (where this script lives)
+    scafld_dir = Path(__file__).resolve().parent.parent
 
-    print(f"{c(C_BOLD, 'Trellis init')}")
+    print(f"{c(C_BOLD, 'scafld init')}")
     print(f"  project: {project_root}")
     print()
 
@@ -802,14 +802,14 @@ def cmd_init(args):
     print(f"{c(C_BOLD, 'Templates:')}")
     for fname in ["AGENTS.md", "CONVENTIONS.md", "CLAUDE.md"]:
         dest = project_root / fname
-        src = trellis_dir / fname
+        src = scafld_dir / fname
         if dest.exists():
             print(f"  {c(C_DIM, 'skip')}: {fname} (exists)")
         elif src.exists():
             shutil.copy2(str(src), str(dest))
             print(f"  {c(C_GREEN, 'created')}: {fname}")
         else:
-            print(f"  {c(C_YELLOW, 'missing')}: {fname} (not in trellis source)")
+            print(f"  {c(C_YELLOW, 'missing')}: {fname} (not in scafld source)")
     print()
 
     # Create directories
@@ -834,7 +834,7 @@ def cmd_init(args):
         (f"{SPECS_DIR}/README.md", f"{SPECS_DIR}/README.md"),
     ]
     for src_rel, dest_rel in copy_files:
-        src = trellis_dir / src_rel
+        src = scafld_dir / src_rel
         dest = project_root / dest_rel
         if not src.exists():
             continue
@@ -847,7 +847,7 @@ def cmd_init(args):
     print()
 
     # Copy example spec
-    examples_src = trellis_dir / SPECS_DIR / "examples"
+    examples_src = scafld_dir / SPECS_DIR / "examples"
     examples_dest = project_root / SPECS_DIR / "examples"
     if examples_src.is_dir() and not examples_dest.exists():
         shutil.copytree(str(examples_src), str(examples_dest))
@@ -893,21 +893,21 @@ repo_layout:
     # Update .gitignore
     print(f"{c(C_BOLD, 'Gitignore:')}")
     gitignore = project_root / ".gitignore"
-    trellis_entries = [
-        "# Trellis",
+    scafld_entries = [
+        "# scafld",
         ".ai/logs/",
         ".ai/reviews/",
     ]
     if gitignore.exists():
         existing = gitignore.read_text()
-        if "# Trellis" in existing:
-            print(f"  {c(C_DIM, 'skip')}: .gitignore (Trellis entries exist)")
+        if "# scafld" in existing:
+            print(f"  {c(C_DIM, 'skip')}: .gitignore (scafld entries exist)")
         else:
             with open(gitignore, "a") as f:
-                f.write("\n" + "\n".join(trellis_entries) + "\n")
-            print(f"  {c(C_GREEN, 'updated')}: .gitignore (added Trellis entries)")
+                f.write("\n" + "\n".join(scafld_entries) + "\n")
+            print(f"  {c(C_GREEN, 'updated')}: .gitignore (added scafld entries)")
     else:
-        gitignore.write_text("\n".join(trellis_entries) + "\n")
+        gitignore.write_text("\n".join(scafld_entries) + "\n")
         print(f"  {c(C_GREEN, 'created')}: .gitignore")
     print()
 
@@ -918,7 +918,7 @@ repo_layout:
   3. Edit {c(C_CYAN, 'CLAUDE.md')} - add project overview and commands
   4. Edit {c(C_CYAN, '.ai/config.local.yaml')} - set your build/test/lint commands
 
-  Then: {c(C_BOLD, 'trellis new my-feature')} or tell your agent {c(C_BOLD, '"Let\'s plan [feature]."')}
+  Then: {c(C_BOLD, 'scafld new my-feature')} or tell your agent {c(C_BOLD, '"Let\'s plan [feature]."')}
 """)
 
 
@@ -984,7 +984,7 @@ task:
 planning_log:
   - timestamp: "{ts}"
     actor: "user"
-    summary: "Spec created via trellis new"
+    summary: "Spec created via scafld new"
 
 phases:
   - id: "phase1"
@@ -1015,7 +1015,7 @@ rollback:
     print(f"  title: {args.title or task_id.replace('-', ' ').title()}")
     print(f"   size: {size}  risk: {risk}")
     print()
-    print(f"  Edit the spec, then: {c(C_BOLD, f'trellis approve {task_id}')}")
+    print(f"  Edit the spec, then: {c(C_BOLD, f'scafld approve {task_id}')}")
 
 
 def cmd_status(args):
@@ -1062,7 +1062,7 @@ def cmd_list(args):
 
     if not specs:
         print(f"{c(C_DIM, 'No specs found.')}")
-        print(f"  Create one: {c(C_BOLD, 'trellis new my-feature')}")
+        print(f"  Create one: {c(C_BOLD, 'scafld new my-feature')}")
         return
 
     # Filter
@@ -1119,7 +1119,7 @@ def cmd_approve(args):
         print(f"{c(C_RED, 'error')}: spec has validation errors, cannot approve")
         for e in errors:
             print(f"  - {e}")
-        print(f"\n  fix the spec, then retry: {c(C_BOLD, f'trellis approve {args.task_id}')}")
+        print(f"\n  fix the spec, then retry: {c(C_BOLD, f'scafld approve {args.task_id}')}")
         sys.exit(1)
 
     move_spec(root, spec, "approved")
@@ -1173,7 +1173,7 @@ def cmd_complete(args):
     # Check for exec results - warn if no criteria were executed
     has_results = any(ac.get("result") in ("pass", "fail") for ac in parse_acceptance_criteria(text))
     if not has_results:
-        print(f"  {c(C_YELLOW, 'warn')}: no exec results recorded. Run '{c(C_BOLD, f'trellis exec {args.task_id}')}' first")
+        print(f"  {c(C_YELLOW, 'warn')}: no exec results recorded. Run '{c(C_BOLD, f'scafld exec {args.task_id}')}' first")
 
     # --- Review gate ---
     review_file = root / REVIEWS_DIR / f"{args.task_id}.md"
@@ -1219,7 +1219,7 @@ def cmd_complete(args):
         if not human_reviewed:
             print(f"  {c(C_RED, 'error')}: {gate_reason}")
             if not review_data["exists"]:
-                print(f"         run '{c(C_BOLD, f'trellis review {args.task_id}')}' first")
+                print(f"         run '{c(C_BOLD, f'scafld review {args.task_id}')}' first")
             elif gate_errors:
                 for issue in gate_errors[:5]:
                     print(f"         {c(C_DIM, issue)}")
@@ -1352,7 +1352,7 @@ def cmd_review(args):
 
     if failed:
         print(f"  {c(C_RED, 'error')}: {failed} automated pass(es) failed — fix before reviewing")
-        print(f"  resolve failures, then re-run: {c(C_BOLD, f'trellis review {args.task_id}')}")
+        print(f"  resolve failures, then re-run: {c(C_BOLD, f'scafld review {args.task_id}')}")
         sys.exit(1)
 
     # --- Accumulate review file (append, don't overwrite) ---
@@ -1402,7 +1402,7 @@ def cmd_review(args):
     - Project CONVENTIONS.md and AGENTS.md
     - Prior review rounds in {c(C_CYAN, review_path_rel)} (if any — don't re-report fixed issues)
 
-  {c(C_BOLD, 'Configured review passes (all required — trellis complete will reject empty sections):')}
+  {c(C_BOLD, 'Configured review passes (all required — scafld complete will reject empty sections):')}
 
 {attack_vectors_text}
 
@@ -1430,7 +1430,7 @@ def cmd_review(args):
        {c(C_BOLD, '### Non-blocking')} using: - **severity** `file:line` — description
     4. Set {c(C_BOLD, '### Verdict')}: pass | fail | pass_with_issues
 
-  When done: {c(C_BOLD, f'trellis complete {args.task_id}')}
+  When done: {c(C_BOLD, f'scafld complete {args.task_id}')}
 """)
 
 
@@ -1729,7 +1729,7 @@ def run_scope_drift_check(root, task_id):
     """Run scope drift in read-only review mode."""
     try:
         result = subprocess.run(
-            f"trellis audit {task_id}",
+            f"scafld audit {task_id}",
             shell=True,
             capture_output=True,
             text=True,
@@ -2414,7 +2414,7 @@ def cmd_report(args):
             phase_counts.append(t)
 
     # Print report
-    print(f"{c(C_BOLD, 'Trellis Report')}")
+    print(f"{c(C_BOLD, 'scafld Report')}")
     print(f"  {total} total specs")
     print()
 
@@ -2475,7 +2475,7 @@ def cmd_report(args):
 
 
 def cmd_version(args):
-    print(f"trellis {VERSION}")
+    print(f"scafld {VERSION}")
 
 
 # ---------------------------------------------------------------------------
@@ -2484,14 +2484,14 @@ def cmd_version(args):
 
 def main():
     parser = argparse.ArgumentParser(
-        prog="trellis",
+        prog="scafld",
         description="Spec-driven development framework for AI coding agents",
     )
     parser.add_argument("--version", action="store_true", help="Show version")
     sub = parser.add_subparsers(dest="command")
 
     # init
-    p_init = sub.add_parser("init", help="Bootstrap Trellis workspace")
+    p_init = sub.add_parser("init", help="Bootstrap scafld workspace")
 
     # new
     p_new = sub.add_parser("new", help="Create a new spec from template")

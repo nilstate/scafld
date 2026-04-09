@@ -66,20 +66,20 @@ assert_file_order() {
   [ "$first_line" -lt "$second_line" ] || fail "$message"
 }
 
-trellis_cmd() {
-  PATH="$CLI_ROOT:$PATH" trellis "$@"
+scafld_cmd() {
+  PATH="$CLI_ROOT:$PATH" scafld "$@"
 }
 
 new_repo() {
   local repo
-  repo="$(mktemp -d /tmp/trellis-review-smoke.XXXXXX)"
+  repo="$(mktemp -d /tmp/scafld-review-smoke.XXXXXX)"
   TMP_DIRS+=("$repo")
   (
     cd "$repo"
     git init -b main >/dev/null 2>&1
     git config user.email smoke@example.com
     git config user.name "Smoke Test"
-    trellis_cmd init >/dev/null
+    scafld_cmd init >/dev/null
     printf 'base\n' > app.txt
     git add .
     git commit -m "init" >/dev/null 2>&1
@@ -324,7 +324,7 @@ case_smoke_bootstrap() {
   task_id="smoke-bootstrap"
   write_changed_file "$repo"
   write_active_spec "$repo" "$task_id" "grep -q '^changed$' app.txt" "exit code 0" "pass"
-  capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" trellis status '$task_id'"
+  capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld status '$task_id'"
   assert_contains "$output" "Smoke $task_id" "smoke bootstrap should expose a valid fixture repo"
 }
 
@@ -336,7 +336,7 @@ case_review_pass_topology() {
   write_active_spec "$repo" "$task_id" "grep -q '^changed$' app.txt" "exit code 0"
   write_local_order_override "$repo"
 
-  capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" trellis review '$task_id'"
+  capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld review '$task_id'"
   review_file="$repo/.ai/reviews/$task_id.md"
   review_text="$(cat "$review_file")"
 
@@ -356,7 +356,7 @@ case_review_scaffold_topology() {
   write_active_spec "$repo" "$task_id" "grep -q '^changed$' app.txt" "exit code 0"
   write_local_title_override "$repo"
 
-  capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" trellis review '$task_id'"
+  capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld review '$task_id'"
   review_text="$(cat "$repo/.ai/reviews/$task_id.md")"
   assert_contains "$review_text" '### Defect Sweep' "review scaffold should use configured adversarial titles"
   assert_not_contains "$review_text" '### Dark Patterns' "review scaffold should not hardcode default section titles"
@@ -431,7 +431,7 @@ None.
 pass_with_issues
 EOF
 
-  if capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" trellis complete '$task_id'"; then
+  if capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld complete '$task_id'"; then
     fail "complete should reject review files that miss configured section titles"
   fi
   assert_contains "$output" "configured review sections incomplete — missing: Defect Sweep" "complete should validate configured section headings"
@@ -495,7 +495,7 @@ None.
 pass_with_issues
 EOF
 
-  capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" trellis complete '$task_id'"
+  capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld complete '$task_id'"
   archive_path="$(archive_spec_path "$repo" "$task_id")"
   [ -n "$archive_path" ] || fail "complete should archive the spec after a valid v3 review"
   spec_text="$(cat "$archive_path")"
@@ -513,16 +513,16 @@ case_human_override() {
   write_changed_file "$repo"
   write_active_spec "$repo" "$task_id" "false" "exit code 0"
 
-  capture output bash -lc "PATH='$CLI_ROOT':\"\$PATH\" trellis complete --help"
+  capture output bash -lc "PATH='$CLI_ROOT':\"\$PATH\" scafld complete --help"
   assert_contains "$output" "--human-reviewed" "complete help should expose --human-reviewed"
   assert_not_contains "$output" "--force" "complete help should no longer expose --force"
 
-  if capture output bash -lc "cd '$repo' && printf '%s\n' '$task_id' | PATH='$CLI_ROOT':\"\$PATH\" trellis complete '$task_id' --human-reviewed --reason 'manual audit'"; then
+  if capture output bash -lc "cd '$repo' && printf '%s\n' '$task_id' | PATH='$CLI_ROOT':\"\$PATH\" scafld complete '$task_id' --human-reviewed --reason 'manual audit'"; then
     fail "piped override should be rejected"
   fi
   assert_contains "$output" "interactive terminal" "piped override should mention the TTY requirement"
 
-  capture output bash -lc "cd '$repo' && printf '%s\n' '$task_id' | script -qefc 'PATH='\''$CLI_ROOT'\'':\"\$PATH\" trellis complete '\''$task_id'\'' --human-reviewed --reason '\''manual audit'\''' /dev/null"
+  capture output bash -lc "cd '$repo' && printf '%s\n' '$task_id' | script -qefc 'PATH='\''$CLI_ROOT'\'':\"\$PATH\" scafld complete '\''$task_id'\'' --human-reviewed --reason '\''manual audit'\''' /dev/null"
   archive_path="$(archive_spec_path "$repo" "$task_id")"
   [ -n "$archive_path" ] || fail "interactive override should archive the spec"
   spec_text="$(cat "$archive_path")"
@@ -546,7 +546,7 @@ case_duplicate_task_id() {
   mkdir -p "$repo/.ai/specs/archive/2026-03"
   cp "$repo/.ai/specs/active/$task_id.yaml" "$repo/.ai/specs/archive/2026-03/$task_id.yaml"
 
-  if capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" trellis status '$task_id'"; then
+  if capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld status '$task_id'"; then
     fail "duplicate task ids should be rejected"
   fi
   assert_contains "$output" "ambiguous task-id" "duplicate task ids should report ambiguity"
@@ -566,7 +566,7 @@ case_failed_review_round() {
     "No issues found — checked hardcodes and null handling." \
     "None." "None."
 
-  if capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" trellis review '$task_id'"; then
+  if capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld review '$task_id'"; then
     fail "review should fail when automated checks fail"
   fi
   review_count="$(grep -c '^## Review ' "$repo/.ai/reviews/$task_id.md")"
@@ -581,7 +581,7 @@ case_malformed_review() {
   write_active_spec "$repo" "$task_id" "grep -q '^changed$' app.txt" "exit code 0" "pass"
   write_review_without_metadata "$repo" "$task_id"
 
-  if capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" trellis complete '$task_id'"; then
+  if capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld complete '$task_id'"; then
     fail "metadata-free review should be rejected"
   fi
   assert_contains "$output" "malformed or incomplete" "complete should reject malformed review rounds"
@@ -602,7 +602,7 @@ case_provenance_and_results() {
     '- **high** `app.txt:1` — blocker' \
     "None."
 
-  capture output bash -lc "cd '$repo' && printf '%s\n' '$task_id' | script -qefc 'PATH='\''$CLI_ROOT'\'':\"\$PATH\" trellis complete '\''$task_id'\'' --human-reviewed --reason '\''manual audit'\''' /dev/null"
+  capture output bash -lc "cd '$repo' && printf '%s\n' '$task_id' | script -qefc 'PATH='\''$CLI_ROOT'\'':\"\$PATH\" scafld complete '\''$task_id'\'' --human-reviewed --reason '\''manual audit'\''' /dev/null"
   archive_path="$(archive_spec_path "$repo" "$task_id")"
   [ -n "$archive_path" ] || fail "override should archive the spec"
   spec_text="$(cat "$archive_path")"
@@ -624,10 +624,10 @@ case_non_mutating_review() {
   write_changed_file "$repo"
   write_active_spec "$repo" "$task_id" "grep -q '^changed$' app.txt" "exit code 0" "fail"
   before="$(cat "$repo/.ai/specs/active/$task_id.yaml")"
-  bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" trellis review '$task_id'" >/dev/null
+  bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld review '$task_id'" >/dev/null
   after="$(cat "$repo/.ai/specs/active/$task_id.yaml")"
   if [ "$before" != "$after" ]; then
-    fail "trellis review should not mutate existing execution evidence"
+    fail "scafld review should not mutate existing execution evidence"
   fi
 }
 
@@ -681,7 +681,7 @@ planning_log:
     summary: "Bootstrap smoke fixture"
 EOF
 
-  capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" trellis exec '$task_id' --resume"
+  capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld exec '$task_id' --resume"
   assert_contains "$output" "resume: skipping 1 already-passed criteria" "--resume should skip nested pass results"
   assert_contains "$output" "ac1_2" "exec should still run the pending criterion"
   assert_not_contains "$output" "ac1_1: Already passed criterion" "skipped criterion should not be re-executed"
@@ -731,7 +731,7 @@ planning_log:
     summary: "Bootstrap smoke fixture"
 EOF
 
-  if capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" trellis exec '$task_id'"; then
+  if capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld exec '$task_id'"; then
     fail "timeout override should fail when the command exceeds timeout_seconds"
   fi
   assert_contains "$output" "TIMEOUT (1s)" "exec should report the configured timeout"
@@ -754,7 +754,7 @@ status: "in_progress"
 
 task:
   title: "Nested exec and self-eval"
-  summary: "Ensure trellis complete recognizes nested acceptance results and self_eval totals"
+  summary: "Ensure scafld complete recognizes nested acceptance results and self_eval totals"
   size: "small"
   risk_level: "low"
 
@@ -803,8 +803,8 @@ EOF
     "None." \
     "None."
 
-  capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" trellis complete '$task_id'"
-  assert_not_contains "$output" "no exec results recorded" "complete should recognize nested acceptance results recorded by trellis exec"
+  capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld complete '$task_id'"
+  assert_not_contains "$output" "no exec results recorded" "complete should recognize nested acceptance results recorded by scafld exec"
   assert_not_contains "$output" "no self-eval score found in spec" "complete should recognize nested self_eval totals"
   archive_path="$(archive_spec_path "$repo" "$task_id")"
   [ -n "$archive_path" ] || fail "complete should archive the nested exec fixture"
@@ -827,7 +827,7 @@ status: "completed"
 
 task:
   title: "Report nested parsing"
-  summary: "Ensure trellis report counts nested execution results and decimal self-eval totals"
+  summary: "Ensure scafld report counts nested execution results and decimal self-eval totals"
   size: "small"
   risk_level: "low"
 
@@ -869,7 +869,7 @@ self_eval:
 deviations: []
 EOF
 
-  capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" trellis report"
+  capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld report"
   assert_contains "$output" "avg: 8.8/10  (1 scored)" "report should read decimal self-eval totals from the nested block"
   assert_contains "$output" "1 passed / 0 failed  (100% pass rate)" "report should count nested acceptance results"
 }
@@ -889,7 +889,7 @@ status: "completed"
 
 task:
   title: "Status phase counts"
-  summary: "Ensure trellis status only counts statuses from the phases section"
+  summary: "Ensure scafld status only counts statuses from the phases section"
   size: "small"
   risk_level: "low"
 
@@ -946,7 +946,7 @@ planning_log:
     summary: "Bootstrap smoke fixture"
 EOF
 
-  capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" trellis status '$task_id'"
+  capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld status '$task_id'"
   assert_contains "$output" "phases: 3 done  (3 total)" "status should count only phase statuses and not subtract the top-level spec status"
   assert_not_contains "$output" "1 pending" "status should not invent a pending phase when all phase statuses are completed"
 }
