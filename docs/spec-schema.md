@@ -1,0 +1,162 @@
+---
+title: Spec Schema
+description: Full YAML spec reference
+---
+
+# Spec Schema
+
+Spec version: **1.1**. Schema file: `.ai/schemas/spec.json` (JSON Schema v7).
+
+## Top-level fields
+
+```yaml
+spec_version: "1.1"              # required
+task_id: "kebab-case-id"         # required, pattern: ^[a-z0-9-]+$
+created: "2026-04-16T10:00:00Z"  # required, ISO 8601
+updated: "2026-04-16T10:00:00Z"  # required, ISO 8601
+status: "draft"                  # required, see lifecycle
+task: {}                         # required
+phases: []                       # required, min 1
+planning_log: []                 # required, min 1
+```
+
+## Status values
+
+`draft`, `under_review`, `approved`, `in_progress`, `completed`, `failed`, `cancelled`
+
+## task block
+
+```yaml
+task:
+  title: "Human-friendly title"              # min 5 chars
+  summary: "Problem statement and goal"      # min 20 chars
+  size: small                                # micro | small | medium | large
+  risk_level: medium                         # low | medium | high
+
+  context:
+    packages: ["src/auth"]                   # 1+ required
+    files_impacted:                          # optional
+      - path: "src/file.ts"
+        lines: "all"                         # "all", [1,2,3], or "100-150"
+        reason: "Why this file changes"
+    invariants: ["public_api_stable"]        # 1+ required
+    related_docs: ["docs/auth.md"]           # optional
+    cwd: "api"                               # optional, default cwd for criteria
+
+  objectives: ["Outcome 1", "Outcome 2"]     # 1+ required
+
+  scope:                                     # optional
+    in_scope: ["What changes"]
+    out_of_scope: ["What doesn't"]
+
+  touchpoints:                               # 1+ required
+    - area: "src/middleware"
+      description: "New auth middleware"
+      owners: ["team-name"]                  # optional
+      links: ["https://..."]                 # optional
+
+  risks:                                     # optional
+    - description: "Risk description"
+      impact: "low"                          # optional
+      mitigation: "Mitigation plan"          # optional
+
+  acceptance:
+    validation_profile: standard             # optional: light | standard | strict
+    definition_of_done:                      # 1+ required
+      - id: "dod1"
+        description: "Checklist item"
+        status: pending                      # pending | in_progress | done
+        checked_at: ""                       # optional, ISO timestamp
+        notes: ""                            # optional
+    validation:                              # optional
+      - id: "v1"
+        type: compile                        # compile | test | boundary | integration | security | documentation | custom
+        description: "How to verify"
+        command: "npm test"                  # required for automated types
+        expected: "exit code 0"
+        cwd: "submodule"                     # optional
+        timeout_seconds: 600                 # optional, default 600
+
+  dependencies: ["..."]                      # optional
+  assumptions: ["..."]                       # optional
+  constraints: {}                            # optional
+  notes: "Decisions, trade-offs"             # optional
+```
+
+## phases array
+
+```yaml
+phases:
+  - id: phase1                               # pattern: ^phase[0-9]+$
+    name: "Phase name"                       # min 5 chars
+    objective: "What this phase accomplishes" # min 10 chars
+    dependencies: [phase0]                   # optional
+
+    changes:                                 # 1+ required
+      - file: "src/path/to/file.ts"
+        action: create                       # create | update | delete | move
+        move_to: "src/new/path.ts"           # required if action=move
+        lines: "all"                         # optional
+        content_spec: |                      # narrative description
+          What changes in this file.
+
+    acceptance_criteria:                     # 1+ required
+      - id: ac1_1
+        type: test                           # compile | test | boundary | integration | security | documentation | custom
+        description: "What this proves"
+        command: "npm test -- --grep 'auth'"  # required for automated types
+        expected: "exit code 0"
+        cwd: "submodule"                     # optional
+        timeout_seconds: 600                 # optional
+        result: pass                         # filled by scafld exec
+        executed_at: "2026-04-16T..."        # filled by scafld exec
+        result_output: "3 passing"           # filled by scafld exec
+
+    status: pending                          # pending | in_progress | completed | failed | skipped
+```
+
+## Optional blocks
+
+### rollback
+
+```yaml
+rollback:
+  strategy: per_phase                        # per_phase | atomic | manual
+  commands:
+    phase1: "git checkout HEAD -- src/file.ts"
+    phase2: "npm run revert-migration"
+```
+
+### self_eval
+
+```yaml
+self_eval:
+  completeness: 3          # 0-3
+  architecture_fidelity: 2  # 0-3
+  spec_alignment: 1         # 0-2
+  validation_depth: 1       # 0-2
+  total: 7                  # sum, threshold is 7
+  notes: ""
+  second_pass_performed: false
+```
+
+Below 7/10 triggers a mandatory second pass.
+
+### deviations
+
+```yaml
+deviations:
+  - rule: "public_api_stable"
+    reason: "Had to change signature for type safety"
+    mitigation: "Added deprecation warning"
+```
+
+### planning_log
+
+```yaml
+planning_log:
+  - timestamp: "2026-04-16T10:00:00Z"
+    actor: agent                             # user | agent | cli
+    summary: "What changed or was decided"
+    notes: "Optional context"
+```

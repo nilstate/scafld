@@ -1,26 +1,31 @@
-import { defineConfig } from "sourcey";
-
-export default defineConfig({
+export default {
   name: "scafld",
-  theme: {
-    colors: {
-      primary: "#4a90d9",
-      light: "#5ea0e9",
-      dark: "#3a7bc8",
-    },
-  },
   repo: "https://github.com/nilstate/scafld",
   editBranch: "main",
   editBasePath: "docs",
+  theme: {
+    colors: { primary: "#10b981" },
+  },
   navigation: {
     tabs: [
       {
         tab: "Documentation",
-        slug: "",
         groups: [
           {
             group: "Getting Started",
-            pages: ["introduction", "quickstart"],
+            pages: ["introduction", "quickstart", "installation"],
+          },
+          {
+            group: "Workflow",
+            pages: ["lifecycle", "planning", "execution", "review"],
+          },
+          {
+            group: "Reference",
+            pages: ["cli-reference", "spec-schema", "configuration"],
+          },
+          {
+            group: "Advanced",
+            pages: ["validation", "scope-auditing", "invariants", "workspaces"],
           },
         ],
       },
@@ -31,9 +36,4 @@ export default defineConfig({
       { type: "github", href: "https://github.com/nilstate/scafld" },
     ],
   },
-  footer: {
-    links: [
-      { type: "github", href: "https://github.com/nilstate/scafld" },
-    ],
-  },
-});
+};
