@@ -7,7 +7,7 @@ status: "completed"
 task:
   title: "Add smoke CI workflow and badge"
   summary: >
-    Add a GitHub Actions workflow that runs the Trellis review-gate smoke
+    Add a GitHub Actions workflow that runs the Scafld review-gate smoke
     matrix on pushes and pull requests, make the smoke harness portable outside
     the current workstation path, and surface the workflow status with a README
     badge.
@@ -23,7 +23,7 @@ task:
   objectives:
     - "Run the review-gate smoke suite in GitHub Actions"
     - "Keep the smoke harness runnable both locally and in CI"
-    - "Expose workflow status in the Trellis README"
+    - "Expose workflow status in the Scafld README"
   touchpoints:
     - area: "Smoke harness portability"
       description: "The smoke script currently hardcodes a workstation-specific CLI path and must derive it from the repo layout or an override"
@@ -51,7 +51,7 @@ task:
       - id: "v2"
         type: "test"
         description: "CLI still parses after the harness portability change"
-        command: "PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile cli/trellis"
+        command: "PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile cli/scafld"
         expected: "exit code 0"
       - id: "v3"
         type: "test"
@@ -67,7 +67,7 @@ task:
 planning_log:
   - timestamp: "2026-03-26T09:05:13Z"
     actor: "user"
-    summary: "Spec created via trellis new"
+    summary: "Spec created via scafld new"
   - timestamp: "2026-03-26T09:06:00Z"
     actor: "agent"
     summary: "Scoped the change to a portable smoke harness, one GitHub Actions workflow, and a README badge"
@@ -114,7 +114,7 @@ phases:
       - id: "ac1_2"
         type: "test"
         description: "CLI still parses after the harness portability change"
-        command: "PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile cli/trellis"
+        command: "PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile cli/scafld"
         expected: "exit code 0"
         result: "pass"
         executed_at: "2026-03-26T09:07:34Z"
@@ -132,7 +132,7 @@ phases:
         expected: "exit code 0"
         result: "pass"
         executed_at: "2026-03-26T09:07:45Z"
-        result_output: "README.md:3:[![Review Gate Smoke](https://github.com/nilstate/trellis/actions/workflows/review-gate-smoke.yml/badge.svg)](https://github.com/nilstate/trellis/actions/workflows/review-gate-smoke.yml) .gi"
+        result_output: "README.md:3:[![Review Gate Smoke](https://github.com/nilstate/scafld/actions/workflows/review-gate-smoke.yml/badge.svg)](https://github.com/nilstate/scafld/actions/workflows/review-gate-smoke.yml) .gi"
     status: "pending"
 
 rollback:

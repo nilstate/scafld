@@ -127,6 +127,11 @@ def c(code, text):
     return f"{code}{text}{C_RESET}"
 
 
+def emit_json(payload):
+    """Emit machine-readable command output for agent/automation callers."""
+    print(json.dumps(payload, indent=2))
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -291,10 +296,10 @@ def extract_self_eval_score(text):
     return parse_numeric_scalar(yaml_read_field(text, "score"))
 
 
-def parse_phase_statuses(text):
-    """Parse phase statuses from the phases block without counting unrelated statuses."""
+def parse_phase_status_entries(text):
+    """Parse phase ids/statuses from the phases block without counting unrelated statuses."""
     lines = text.splitlines()
-    statuses = []
+    entries = []
     in_phases = False
     i = 0
 
@@ -317,6 +322,7 @@ def parse_phase_statuses(text):
             i += 1
             continue
 
+        phase_id = match.group(1)
         item_indent = len(match.group(0)) - len(match.group(0).lstrip())
         status = "pending"
         i += 1
@@ -338,9 +344,14 @@ def parse_phase_statuses(text):
 
             i += 1
 
-        statuses.append(status)
+        entries.append({"id": phase_id, "status": status})
 
-    return statuses
+    return entries
+
+
+def parse_phase_statuses(text):
+    """Parse phase statuses from the phases block without counting unrelated statuses."""
+    return [entry["status"] for entry in parse_phase_status_entries(text)]
 
 
 def count_phases(text):
@@ -423,7 +434,7 @@ def append_planning_log(text, summary, actor="cli"):
     return text
 
 
-def move_spec(root, spec_path, new_status):
+def move_spec(root, spec_path, new_status, quiet=False):
     """Move spec to the correct folder and update status + timestamp."""
     text = spec_path.read_text()
     current_status = yaml_read_field(text, "status")
@@ -464,8 +475,9 @@ def move_spec(root, spec_path, new_status):
 
     rel_from = spec_path.relative_to(root)
     rel_to = dest.relative_to(root)
-    print(f"{c(C_GREEN, '  moved')}: {rel_from} -> {rel_to}")
-    print(f" {c(C_DIM, 'status')}: {c(STATUS_COLORS.get(new_status, ''), new_status)}")
+    if not quiet:
+        print(f"{c(C_GREEN, '  moved')}: {rel_from} -> {rel_to}")
+        print(f" {c(C_DIM, 'status')}: {c(STATUS_COLORS.get(new_status, ''), new_status)}")
     return dest
 
 
@@ -911,6 +923,7 @@ repo_layout:
         print(f"  {c(C_GREEN, 'created')}: .gitignore")
     print()
 
+    agent_hint = "\"Let's plan [feature].\""
     print(f"""{c(C_BOLD, 'Done!')} Next steps:
 
   1. Edit {c(C_CYAN, 'AGENTS.md')} - add your project's invariants
@@ -918,7 +931,7 @@ repo_layout:
   3. Edit {c(C_CYAN, 'CLAUDE.md')} - add project overview and commands
   4. Edit {c(C_CYAN, '.ai/config.local.yaml')} - set your build/test/lint commands
 
-  Then: {c(C_BOLD, 'scafld new my-feature')} or tell your agent {c(C_BOLD, '"Let\'s plan [feature]."')}
+  Then: {c(C_BOLD, 'scafld new my-feature')} or tell your agent {c(C_BOLD, agent_hint)}
 """)
 
 
@@ -1031,6 +1044,34 @@ def cmd_status(args):
     risk = yaml_read_nested(text, "task", "risk_level") or ""
     updated = yaml_read_field(text, "updated") or ""
     total, completed, failed, in_prog = count_phases(text)
+
+    if getattr(args, "json", False):
+        review_state = {"exists": False, "errors": []}
+        try:
+            topology = load_review_topology(root)
+            review_data = parse_review_file(root / REVIEWS_DIR / f"{args.task_id}.md", topology)
+            review_state = review_data_payload(review_data)
+        except Exception as e:
+            review_state = {"exists": False, "errors": [str(e)]}
+        emit_json({
+            "task_id": args.task_id,
+            "title": title,
+            "file": str(rel),
+            "status": status,
+            "size": size,
+            "risk": risk,
+            "updated_at": updated,
+            "phase_statuses": parse_phase_status_entries(text),
+            "phase_counts": {
+                "total": total,
+                "completed": completed,
+                "failed": failed,
+                "in_progress": in_prog,
+                "pending": total - completed - failed - in_prog,
+            },
+            "review_state": review_state,
+        })
+        return
 
     color = STATUS_COLORS.get(status, "")
     print(f"{c(C_BOLD, title)}")
@@ -1169,10 +1210,11 @@ def cmd_complete(args):
     topology = load_or_exit_review_topology(root)
     spec = require_spec(root, args.task_id)
     text = spec.read_text()
+    json_mode = bool(getattr(args, "json", False))
 
     # Check for exec results - warn if no criteria were executed
     has_results = any(ac.get("result") in ("pass", "fail") for ac in parse_acceptance_criteria(text))
-    if not has_results:
+    if not has_results and not json_mode:
         print(f"  {c(C_YELLOW, 'warn')}: no exec results recorded. Run '{c(C_BOLD, f'scafld exec {args.task_id}')}' first")
 
     # --- Review gate ---
@@ -1181,10 +1223,16 @@ def cmd_complete(args):
     override_reason = (getattr(args, "reason", "") or "").strip()
 
     if override_reason and not human_reviewed:
-        print(f"  {c(C_RED, 'error')}: {c(C_BOLD, '--reason')} requires {c(C_BOLD, '--human-reviewed')}")
+        if json_mode:
+            emit_json({"task_id": args.task_id, "completed_state": "error", "error": "--reason requires --human-reviewed"})
+        else:
+            print(f"  {c(C_RED, 'error')}: {c(C_BOLD, '--reason')} requires {c(C_BOLD, '--human-reviewed')}")
         sys.exit(1)
     if human_reviewed and not override_reason:
-        print(f"  {c(C_RED, 'error')}: {c(C_BOLD, '--reason')} is required with {c(C_BOLD, '--human-reviewed')}")
+        if json_mode:
+            emit_json({"task_id": args.task_id, "completed_state": "error", "error": "--reason is required with --human-reviewed"})
+        else:
+            print(f"  {c(C_RED, 'error')}: {c(C_BOLD, '--reason')} is required with {c(C_BOLD, '--human-reviewed')}")
         sys.exit(1)
 
     review_data = parse_review_file(review_file, topology)
@@ -1217,20 +1265,43 @@ def cmd_complete(args):
 
     if gate_reason:
         if not human_reviewed:
-            print(f"  {c(C_RED, 'error')}: {gate_reason}")
-            if not review_data["exists"]:
-                print(f"         run '{c(C_BOLD, f'scafld review {args.task_id}')}' first")
-            elif gate_errors:
-                for issue in gate_errors[:5]:
-                    print(f"         {c(C_DIM, issue)}")
-            elif blocking:
-                for finding in blocking[:5]:
-                    print(f"         {finding}")
-            print(f"         only a human can override with {c(C_BOLD, '--human-reviewed --reason <why>')}")
+            if json_mode:
+                emit_json({
+                    "task_id": args.task_id,
+                    "completed_state": "blocked",
+                    "gate_reason": gate_reason,
+                    "review_file": str(review_file.relative_to(root)),
+                    "verdict": verdict,
+                    "blocking_count": len(blocking),
+                    "non_blocking_count": len(non_blocking),
+                    "pass_results": pass_results,
+                    "errors": gate_errors,
+                    "blocking": blocking,
+                    "next_command": f"scafld review {args.task_id}" if not review_data["exists"] else None,
+                })
+            else:
+                print(f"  {c(C_RED, 'error')}: {gate_reason}")
+                if not review_data["exists"]:
+                    print(f"         run '{c(C_BOLD, f'scafld review {args.task_id}')}' first")
+                elif gate_errors:
+                    for issue in gate_errors[:5]:
+                        print(f"         {c(C_DIM, issue)}")
+                elif blocking:
+                    for finding in blocking[:5]:
+                        print(f"         {finding}")
+                print(f"         only a human can override with {c(C_BOLD, '--human-reviewed --reason <why>')}")
             sys.exit(1)
 
         if not review_data["exists"] or review_passes_are_not_run(pass_results, automated_pass_ids):
             pass_results = collect_automated_review_passes(root, args.task_id, text, topology)
+
+        if json_mode:
+            emit_json({
+                "task_id": args.task_id,
+                "completed_state": "blocked",
+                "gate_reason": "human-reviewed override requires interactive terminal output; rerun without --json",
+            })
+            sys.exit(1)
 
         override_confirmed_at = confirm_human_override(args.task_id, gate_reason)
         override_metadata = build_review_metadata(
@@ -1261,21 +1332,25 @@ def cmd_complete(args):
         override_applied = True
         print(f"  {c(C_YELLOW, 'override')}: human-reviewed override applied")
     elif human_reviewed:
-        print(f"  {c(C_RED, 'error')}: review gate already passed; {c(C_BOLD, '--human-reviewed')} is only for blocked completion")
+        if json_mode:
+            emit_json({"task_id": args.task_id, "completed_state": "error", "error": "--human-reviewed is only for blocked completion"})
+        else:
+            print(f"  {c(C_RED, 'error')}: review gate already passed; {c(C_BOLD, '--human-reviewed')} is only for blocked completion")
         sys.exit(1)
 
-    if verdict == "fail":
-        print(f"  {c(C_RED, 'review')}: FAIL — {len(blocking)} blocking finding(s)")
-        for finding in blocking[:5]:
-            print(f"    {finding}")
-    elif verdict == "pass_with_issues":
-        print(f"  {c(C_YELLOW, 'review')}: pass with {len(non_blocking)} non-blocking finding(s)")
-        for finding in non_blocking[:5]:
-            print(f"    {c(C_DIM, finding)}")
-    elif verdict == "pass":
-        print(f"  {c(C_GREEN, 'review')}: pass")
-    else:
-        print(f"  {c(C_YELLOW, 'review')}: incomplete")
+    if not json_mode:
+        if verdict == "fail":
+            print(f"  {c(C_RED, 'review')}: FAIL — {len(blocking)} blocking finding(s)")
+            for finding in blocking[:5]:
+                print(f"    {finding}")
+        elif verdict == "pass_with_issues":
+            print(f"  {c(C_YELLOW, 'review')}: pass with {len(non_blocking)} non-blocking finding(s)")
+            for finding in non_blocking[:5]:
+                print(f"    {c(C_DIM, finding)}")
+        elif verdict == "pass":
+            print(f"  {c(C_GREEN, 'review')}: pass")
+        else:
+            print(f"  {c(C_YELLOW, 'review')}: incomplete")
 
     review_block = build_spec_review_block(
         review_data,
@@ -1288,9 +1363,23 @@ def cmd_complete(args):
     spec.write_text(text)
 
     # Check self-eval honesty (legacy, still useful as a secondary signal)
-    check_self_eval(text, args.task_id)
+    if not json_mode:
+        check_self_eval(text, args.task_id)
 
-    move_spec(root, spec, "completed")
+    dest = move_spec(root, spec, "completed", quiet=json_mode)
+    if json_mode:
+        emit_json({
+            "task_id": args.task_id,
+            "completed_state": "completed",
+            "archive_path": str(dest.relative_to(root)),
+            "verdict": verdict,
+            "blocking_count": len(blocking),
+            "non_blocking_count": len(non_blocking),
+            "pass_results": pass_results,
+            "override_applied": override_applied,
+            "review_round": review_data.get("review_count", 0),
+            "review_file": str(review_file.relative_to(root)),
+        })
 
 
 def cmd_fail(args):
@@ -1307,52 +1396,147 @@ def cmd_cancel(args):
     move_spec(root, spec, "cancelled")
 
 
+def automated_pass_payload(definition, outcome):
+    return {
+        "id": definition["id"],
+        "title": definition["title"],
+        "description": definition["description"],
+        "result": outcome["result"],
+        "lines": outcome.get("lines", []),
+    }
+
+
+def render_adversarial_review_prompt(task_id, spec_path_rel, review_path_rel, review_count, adversarial_passes, use_color=True):
+    """Render the reviewer handoff prompt. JSON mode uses this as plain text."""
+
+    def cc(code, text):
+        return c(code, text) if use_color else text
+
+    attack_vectors = []
+    section_titles = []
+    for idx, definition in enumerate(adversarial_passes, start=1):
+        title = definition["title"]
+        prompt = definition["prompt"]
+        section_titles.append(f"`{definition['id']}` / `### {title}`")
+        attack_vectors.append(
+            f"    {cc(C_CYAN, f'{idx}. {title}')} — {prompt}\n"
+            f"       {cc(C_DIM, f'Write findings under ### {title}')}"
+        )
+    attack_vectors_text = "\n\n".join(attack_vectors)
+    section_titles_text = ", ".join(section_titles)
+
+    return f"""{cc(C_BOLD, 'ADVERSARIAL REVIEW')}
+
+  Your job is to find problems in the changes made for this spec. Not confirm
+  success — find what's wrong. A review that finds zero issues is suspicious.
+
+  {cc(C_BOLD, 'Read:')}
+    - Spec: {cc(C_CYAN, spec_path_rel)}
+    - Git diff of all changes made during execution
+    - Project CONVENTIONS.md and AGENTS.md
+    - Prior review rounds in {cc(C_CYAN, review_path_rel)} (if any — don't re-report fixed issues)
+
+  {cc(C_BOLD, 'Configured review passes (all required — scafld complete will reject empty sections):')}
+
+{attack_vectors_text}
+
+  {cc(C_BOLD, 'Rules:')}
+    - Every finding must cite a specific file and line number
+    - Classify as blocking (must fix) or non-blocking (should fix)
+    - Do not suggest improvements — only flag defects and omissions
+    - Do not modify any code — review only
+    - Each adversarial section must contain at least one finding or an explicit
+      "No issues found" with a brief explanation of what was checked
+
+  {cc(C_BOLD, 'Severity:')} critical (runtime/security) > high (common case) > medium (edge case) > low (smell)
+
+  {cc(C_BOLD, 'Write findings to:')} {cc(C_CYAN, review_path_rel)}
+    The latest review section (Review {review_count}) is already scaffolded with
+    all required headings. Fill in each section:
+
+    1. Update {cc(C_BOLD, '### Metadata')} JSON with reviewer provenance:
+       - round_status: completed
+       - reviewer_mode: fresh_agent | auto | executor
+       - reviewer_session: session identifier or empty string
+       - pass_results: keep automated results, and set each adversarial pass to pass | pass_with_issues | fail
+    2. Fill {cc(C_BOLD, section_titles_text)} with findings from each vector
+    3. Collect blocking/non-blocking findings into {cc(C_BOLD, '### Blocking')} and
+       {cc(C_BOLD, '### Non-blocking')} using: - **severity** `file:line` — description
+    4. Set {cc(C_BOLD, '### Verdict')}: pass | fail | pass_with_issues
+
+  When done: {cc(C_BOLD, f'scafld complete {task_id}')}
+"""
+
+
 def cmd_review(args):
     """Run automated review passes and generate adversarial review prompt."""
     root = require_root()
     topology = load_or_exit_review_topology(root)
     spec = require_spec(root, args.task_id)
     text = spec.read_text()
+    json_mode = bool(getattr(args, "json", False))
 
     status = yaml_read_field(text, "status")
     if status != "in_progress":
-        print(f"{c(C_RED, 'error')}: spec must be in_progress to review (current: {status})")
+        if json_mode:
+            emit_json({
+                "task_id": args.task_id,
+                "status": "error",
+                "error": f"spec must be in_progress to review (current: {status})",
+            })
+        else:
+            print(f"{c(C_RED, 'error')}: spec must be in_progress to review (current: {status})")
         sys.exit(1)
 
-    print(f"{c(C_BOLD, f'Review: {args.task_id}')}")
-    print()
+    if not json_mode:
+        print(f"{c(C_BOLD, f'Review: {args.task_id}')}")
+        print()
 
     pass_results = {}
+    automated_results = []
     automated_passes = review_passes_by_kind(topology, "automated")
     adversarial_passes = review_passes_by_kind(topology, "adversarial")
 
     for definition in automated_passes:
-        print(f"  {c(C_CYAN, definition['id'])}: {definition['description']}")
+        if not json_mode:
+            print(f"  {c(C_CYAN, definition['id'])}: {definition['description']}")
         outcome = run_automated_review_pass(root, args.task_id, text, definition["id"])
         pass_results[definition["id"]] = outcome["result"]
-        if outcome["result"] == "pass":
-            print(f"    {c(C_GREEN, 'PASS')}")
-        else:
-            print(f"    {c(C_RED, 'FAIL')}")
-            for line in outcome["lines"][-5:]:
-                print(f"    {c(C_DIM, line)}")
+        automated_results.append(automated_pass_payload(definition, outcome))
+        if not json_mode:
+            if outcome["result"] == "pass":
+                print(f"    {c(C_GREEN, 'PASS')}")
+            else:
+                print(f"    {c(C_RED, 'FAIL')}")
+                for line in outcome["lines"][-5:]:
+                    print(f"    {c(C_DIM, line)}")
 
     normalized_passes = normalize_review_pass_results(topology, pass_results)
     passed = sum(1 for definition in automated_passes if normalized_passes[definition["id"]] == "pass")
     failed = sum(1 for definition in automated_passes if normalized_passes[definition["id"]] == "fail")
 
-    print()
-    summary_parts = []
-    if passed:
-        summary_parts.append(c(C_GREEN, f"{passed} passed"))
-    if failed:
-        summary_parts.append(c(C_RED, f"{failed} failed"))
-    print(f"  Automated passes: {' / '.join(summary_parts)}")
-    print()
+    if not json_mode:
+        print()
+        summary_parts = []
+        if passed:
+            summary_parts.append(c(C_GREEN, f"{passed} passed"))
+        if failed:
+            summary_parts.append(c(C_RED, f"{failed} failed"))
+        print(f"  Automated passes: {' / '.join(summary_parts)}")
+        print()
 
     if failed:
-        print(f"  {c(C_RED, 'error')}: {failed} automated pass(es) failed — fix before reviewing")
-        print(f"  resolve failures, then re-run: {c(C_BOLD, f'scafld review {args.task_id}')}")
+        if json_mode:
+            emit_json({
+                "task_id": args.task_id,
+                "status": "automated_failed",
+                "automated_passes": automated_results,
+                "failed_count": failed,
+                "next_command": f"scafld review {args.task_id}",
+            })
+        else:
+            print(f"  {c(C_RED, 'error')}: {failed} automated pass(es) failed — fix before reviewing")
+            print(f"  resolve failures, then re-run: {c(C_BOLD, f'scafld review {args.task_id}')}")
         sys.exit(1)
 
     # --- Accumulate review file (append, don't overwrite) ---
@@ -1380,58 +1564,34 @@ def cmd_review(args):
     # --- Phase 2: Print adversarial review prompt for the agent ---
     review_path_rel = str(review_file.relative_to(root))
     spec_path_rel = str(spec.relative_to(root))
-    attack_vectors = []
-    section_titles = []
-    for idx, definition in enumerate(adversarial_passes, start=1):
-        section_titles.append(f"`{definition['id']}` / `### {definition['title']}`")
-        attack_vectors.append(
-            f"    {c(C_CYAN, f'{idx}. {definition['title']}')} — {definition['prompt']}\n"
-            f"       {c(C_DIM, f'Write findings under ### {definition['title']}')}"
-        )
-    attack_vectors_text = "\n\n".join(attack_vectors)
-    section_titles_text = ", ".join(section_titles)
-
-    print(f"""{c(C_BOLD, 'ADVERSARIAL REVIEW')}
-
-  Your job is to find problems in the changes made for this spec. Not confirm
-  success — find what's wrong. A review that finds zero issues is suspicious.
-
-  {c(C_BOLD, 'Read:')}
-    - Spec: {c(C_CYAN, spec_path_rel)}
-    - Git diff of all changes made during execution
-    - Project CONVENTIONS.md and AGENTS.md
-    - Prior review rounds in {c(C_CYAN, review_path_rel)} (if any — don't re-report fixed issues)
-
-  {c(C_BOLD, 'Configured review passes (all required — scafld complete will reject empty sections):')}
-
-{attack_vectors_text}
-
-  {c(C_BOLD, 'Rules:')}
-    - Every finding must cite a specific file and line number
-    - Classify as blocking (must fix) or non-blocking (should fix)
-    - Do not suggest improvements — only flag defects and omissions
-    - Do not modify any code — review only
-    - Each adversarial section must contain at least one finding or an explicit
-      "No issues found" with a brief explanation of what was checked
-
-  {c(C_BOLD, 'Severity:')} critical (runtime/security) > high (common case) > medium (edge case) > low (smell)
-
-  {c(C_BOLD, 'Write findings to:')} {c(C_CYAN, review_path_rel)}
-    The latest review section (Review {review_count}) is already scaffolded with
-    all required headings. Fill in each section:
-
-    1. Update {c(C_BOLD, '### Metadata')} JSON with reviewer provenance:
-       - round_status: completed
-       - reviewer_mode: fresh_agent | auto | executor
-       - reviewer_session: session identifier or empty string
-       - pass_results: keep automated results, and set each adversarial pass to pass | pass_with_issues | fail
-    2. Fill {c(C_BOLD, section_titles_text)} with findings from each vector
-    3. Collect blocking/non-blocking findings into {c(C_BOLD, '### Blocking')} and
-       {c(C_BOLD, '### Non-blocking')} using: - **severity** `file:line` — description
-    4. Set {c(C_BOLD, '### Verdict')}: pass | fail | pass_with_issues
-
-  When done: {c(C_BOLD, f'scafld complete {args.task_id}')}
-""")
+    review_prompt = render_adversarial_review_prompt(
+        args.task_id,
+        spec_path_rel,
+        review_path_rel,
+        review_count,
+        adversarial_passes,
+        use_color=not json_mode,
+    )
+    if json_mode:
+        emit_json({
+            "task_id": args.task_id,
+            "status": "review_open",
+            "review_round": review_count,
+            "review_file": review_path_rel,
+            "review_prompt": review_prompt,
+            "automated_passes": automated_results,
+            "required_sections": [
+                "Metadata",
+                "Pass Results",
+                *[definition["title"] for definition in adversarial_passes],
+                "Blocking",
+                "Non-blocking",
+                "Verdict",
+            ],
+            "complete_command": f"scafld complete {args.task_id}",
+        })
+    else:
+        print(review_prompt)
 
 
 def parse_review_file(review_path, topology):
@@ -1588,6 +1748,22 @@ def parse_review_file(review_path, topology):
 
     parsed["verdict"] = verdict
     return parsed
+
+
+def review_data_payload(review_data):
+    """Return a compact JSON-safe review state for status/automation callers."""
+    return {
+        "exists": review_data.get("exists", False),
+        "review_rounds": review_data.get("review_count", 0),
+        "verdict": review_data.get("verdict"),
+        "round_status": review_data.get("round_status"),
+        "reviewer_mode": review_data.get("reviewer_mode"),
+        "blocking_count": len(review_data.get("blocking", [])),
+        "non_blocking_count": len(review_data.get("non_blocking", [])),
+        "pass_results": review_data.get("pass_results", {}),
+        "empty_adversarial": review_data.get("empty_adversarial", []),
+        "errors": review_data.get("errors", []),
+    }
 
 
 def build_spec_review_block(review_data, topology, override_applied=False, override_reason=None, override_confirmed_at=None):
@@ -1838,6 +2014,31 @@ def cmd_validate(args):
     text = spec.read_text()
 
     errors = validate_spec(root, spec)
+    sv = yaml_read_field(text, "spec_version")
+    task_id = yaml_read_field(text, "task_id")
+    status = yaml_read_field(text, "status")
+    total, completed, failed, in_prog = count_phases(text)
+
+    if getattr(args, "json", False):
+        emit_json({
+            "task_id": task_id,
+            "valid": not bool(errors),
+            "schema_version": sv,
+            "status": status,
+            "file": str(rel),
+            "phase_count": total,
+            "phase_counts": {
+                "total": total,
+                "completed": completed,
+                "failed": failed,
+                "in_progress": in_prog,
+                "pending": total - completed - failed - in_prog,
+            },
+            "errors": errors,
+        })
+        if errors:
+            sys.exit(1)
+        return
 
     if errors:
         print(f"{c(C_RED, 'FAIL')}: {rel}")
@@ -1845,14 +2046,10 @@ def cmd_validate(args):
             print(f"  - {e}")
         sys.exit(1)
     else:
-        sv = yaml_read_field(text, "spec_version")
-        task_id = yaml_read_field(text, "task_id")
-        status = yaml_read_field(text, "status")
         print(f"{c(C_GREEN, 'PASS')}: {rel}")
         print(f"  spec_version: {sv}")
         print(f"  task_id: {task_id}")
         print(f"  status: {status}")
-        total, completed, failed, in_prog = count_phases(text)
         print(f"  phases: {total}")
 
 
@@ -2503,6 +2700,7 @@ def main():
     # status
     p_status = sub.add_parser("status", help="Show spec status")
     p_status.add_argument("task_id", help="Task ID")
+    p_status.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
 
     # list
     p_list = sub.add_parser("list", help="List all specs")
@@ -2519,12 +2717,14 @@ def main():
     # review
     p_review = sub.add_parser("review", help="Run review passes and generate adversarial review prompt")
     p_review.add_argument("task_id", help="Task ID")
+    p_review.add_argument("--json", action="store_true", help="Emit machine-readable review handoff JSON")
 
     # complete
     p_complete = sub.add_parser("complete", help="Mark spec as completed")
     p_complete.add_argument("task_id", help="Task ID")
     p_complete.add_argument("--human-reviewed", action="store_true", help="Allow a human-confirmed override when the review gate is blocked")
     p_complete.add_argument("--reason", help="Required with --human-reviewed; records why the override was applied")
+    p_complete.add_argument("--json", action="store_true", help="Emit machine-readable completion JSON")
 
     # fail
     p_fail = sub.add_parser("fail", help="Mark spec as failed")
@@ -2537,6 +2737,7 @@ def main():
     # validate
     p_validate = sub.add_parser("validate", help="Validate spec against schema")
     p_validate.add_argument("task_id", help="Task ID")
+    p_validate.add_argument("--json", action="store_true", help="Emit machine-readable validation JSON")
 
     # exec
     p_exec = sub.add_parser("exec", help="Run acceptance criteria and record results")

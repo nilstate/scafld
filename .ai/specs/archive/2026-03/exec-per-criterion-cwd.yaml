@@ -5,9 +5,9 @@ updated: "2026-03-25T04:37:54Z"
 status: "completed"
 
 task:
-  title: "Per-criterion working directory for trellis exec"
+  title: "Per-criterion working directory for scafld exec"
   summary: >
-    In monorepo/workspace setups, trellis exec runs all commands from the
+    In monorepo/workspace setups, scafld exec runs all commands from the
     workspace root. Backend commands need `cd api &&` prefixes, frontend
     commands need `cd app &&`, etc. This is fragile and verbose. Add an
     optional `cwd` field on acceptance criteria so each command can declare
@@ -21,10 +21,10 @@ task:
       - cli
       - .ai/schemas
     files_impacted:
-      - path: cli/trellis
+      - path: cli/scafld
         lines: "920-925"
         reason: "parse_acceptance_criteria must extract cwd field from criteria"
-      - path: cli/trellis
+      - path: cli/scafld
         lines: "1030-1040"
         reason: "cmd_exec must resolve and validate cwd before running subprocess"
       - path: .ai/schemas/spec.json
@@ -63,10 +63,10 @@ task:
     - "Absolute paths are not supported (could escape sandbox)"
 
   touchpoints:
-    - area: "cli/trellis"
+    - area: "cli/scafld"
       description: "CLI exec command and criteria parser"
       links:
-        - "cli/trellis"
+        - "cli/scafld"
     - area: ".ai/schemas/spec.json"
       description: "Spec validation schema"
       links:
@@ -105,7 +105,7 @@ planning_log:
   - timestamp: "2026-03-25T05:00:00Z"
     actor: "agent"
     summary: >
-      Identified the issue: trellis exec hardcodes cwd=root for all subprocess
+      Identified the issue: scafld exec hardcodes cwd=root for all subprocess
       calls. In monorepo workspaces, specs must prefix every command with
       cd <submodule> &&. Per-criterion cwd is the minimal, backward-compatible fix.
       A global spec-level cwd was considered but rejected because multi-repo
@@ -125,7 +125,7 @@ phases:
     name: "Add cwd to criteria parser and exec runner"
     objective: "Parse cwd from spec YAML and use it when running commands"
     changes:
-      - file: cli/trellis
+      - file: cli/scafld
         action: modify
         content_spec: >
           In parse_acceptance_criteria: add "cwd" to the allowed keys list.
@@ -136,8 +136,8 @@ phases:
       - id: ac1
         type: compile
         description: "CLI passes Python syntax check"
-        command: "python3 -c \"import py_compile; py_compile.compile('cli/trellis', doraise=True)\""
-        cwd: /home/kam/dev/trellis
+        command: "python3 -c \"import py_compile; py_compile.compile('cli/scafld', doraise=True)\""
+        cwd: /home/kam/dev/scafld
         expected: "exit code 0"
         result: "pass"
         executed_at: "2026-03-25T04:37:48Z"
@@ -158,7 +158,7 @@ phases:
         type: compile
         description: "Schema is valid JSON"
         command: "python3 -c \"import json; json.load(open('.ai/schemas/spec.json'))\""
-        cwd: /home/kam/dev/trellis
+        cwd: /home/kam/dev/scafld
         expected: "exit code 0"
         result: "pass"
         executed_at: "2026-03-25T04:37:48Z"
