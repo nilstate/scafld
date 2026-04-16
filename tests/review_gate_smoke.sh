@@ -48,6 +48,23 @@ assert_not_contains() {
   fi
 }
 
+assert_json() {
+  local payload="$1"
+  local expression="$2"
+  local message="$3"
+  JSON_PAYLOAD="$payload" python3 - "$expression" "$message" <<'PY' || fail "$message"
+import json
+import os
+import sys
+
+expression = sys.argv[1]
+message = sys.argv[2]
+data = json.loads(os.environ["JSON_PAYLOAD"])
+if not eval(expression, {"__builtins__": {}}, {"data": data}):
+    raise SystemExit(message)
+PY
+}
+
 assert_file_order() {
   local file="$1"
   local first="$2"
@@ -951,6 +968,40 @@ EOF
   assert_not_contains "$output" "1 pending" "status should not invent a pending phase when all phase statuses are completed"
 }
 
+case_json_outputs() {
+  local repo task_id output archive_path
+  repo="$(new_repo)"
+  task_id="json-outputs"
+  write_changed_file "$repo"
+  write_active_spec "$repo" "$task_id" "grep -q '^changed$' app.txt" "exit code 0" "pass"
+
+  capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld status '$task_id' --json"
+  assert_json "$output" "data['task_id'] == 'json-outputs' and data['status'] == 'in_progress'" "status --json should emit task identity and status"
+  assert_json "$output" "data['phase_statuses'][0]['id'] == 'phase1'" "status --json should emit phase statuses"
+
+  capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld validate '$task_id' --json"
+  assert_json "$output" "data['valid'] is True and data['schema_version'] == '1.1'" "validate --json should emit valid=true"
+
+  capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld review '$task_id' --json"
+  assert_json "$output" "data['status'] == 'review_open' and data['review_round'] == 1" "review --json should open a structured review round"
+  assert_json "$output" "'ADVERSARIAL REVIEW' in data['review_prompt'] and data['review_file'].endswith('json-outputs.md')" "review --json should include prompt and review file"
+  assert_json "$output" "'Regression Hunt' in data['required_sections']" "review --json should list required adversarial sections"
+
+  write_review_v3 \
+    "$repo" "$task_id" "pass" "executor" "completed" \
+    "pass" "pass" "pass" "pass" "pass" \
+    "No issues found — checked callers of app.txt." \
+    "No issues found — checked AGENTS.md and CONVENTIONS.md." \
+    "No issues found — checked hardcodes and null handling." \
+    "None." "None."
+
+  capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld complete '$task_id' --json"
+  assert_json "$output" "data['completed_state'] == 'completed' and data['verdict'] == 'pass'" "complete --json should emit completion state and verdict"
+  assert_json "$output" "data['blocking_count'] == 0 and data['archive_path'].endswith('json-outputs.yaml')" "complete --json should emit gate counts and archive path"
+  archive_path="$(archive_spec_path "$repo" "$task_id")"
+  [ -n "$archive_path" ] || fail "complete --json should archive the spec"
+}
+
 case_all() {
   case_smoke_bootstrap
   case_review_pass_topology
@@ -967,6 +1018,7 @@ case_all() {
   case_complete_nested_exec_and_self_eval
   case_report_nested_exec_and_self_eval
   case_status_phase_count_ignores_top_level_status
+  case_json_outputs
 }
 
 main() {
@@ -987,6 +1039,7 @@ main() {
     complete-nested-exec-and-self-eval) case_complete_nested_exec_and_self_eval ;;
     report-nested-exec-and-self-eval) case_report_nested_exec_and_self_eval ;;
     status-phase-count-ignores-top-level-status) case_status_phase_count_ignores_top_level_status ;;
+    json-outputs) case_json_outputs ;;
     all) case_all ;;
     *)
       fail "unknown case: $action"

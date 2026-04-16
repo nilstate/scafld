@@ -132,15 +132,15 @@ This is how we work. It's not the only way, but if you're running AI agents acro
 ```bash
 scafld new <task-id> [-t title] [-s size] [-r risk]     # Scaffold a new spec
 scafld list [filter]                                    # List all specs
-scafld status <task-id>                                 # Show spec details
-scafld validate <task-id>                               # Validate against schema
+scafld status <task-id> [--json]                        # Show spec details
+scafld validate <task-id> [--json]                      # Validate against schema
 scafld approve <task-id>                                # Validate + move to approved
 scafld start <task-id>                                  # Move to active
 scafld exec <task-id> [-p phase] [-r]                    # Run acceptance criteria (-r = resume)
 scafld audit <task-id> [-b base-ref]                    # Spec vs actual git diff
 scafld diff <task-id>                                   # Git history for a spec
-scafld review <task-id>                                 # Run configured automated passes + scaffold Review Artifact v3
-scafld complete <task-id>                                # Read review, record verdict, archive (requires passing review)
+scafld review <task-id> [--json]                        # Run configured automated passes + scaffold Review Artifact v3
+scafld complete <task-id> [--json]                       # Read review, record verdict, archive (requires passing review)
 scafld complete <task-id> --human-reviewed --reason "manual audit"
                                                           # Exceptional audited override when the gate is blocked
 scafld fail <task-id>                                   # Archive as failed

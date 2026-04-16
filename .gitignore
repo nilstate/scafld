@@ -9,3 +9,5 @@ Thumbs.db
 # Logs
 .ai/logs/
 .ai/reviews/
+
+.runx
