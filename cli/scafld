@@ -15,7 +15,7 @@ from pathlib import Path
 # Constants
 # ---------------------------------------------------------------------------
 
-VERSION = "1.4.0"
+VERSION = "1.4.1"
 AI_DIR = ".ai"
 SPECS_DIR = f"{AI_DIR}/specs"
 DRAFTS_DIR = f"{SPECS_DIR}/drafts"
@@ -938,7 +938,17 @@ repo_layout:
 
 def cmd_new(args):
     """Create a new spec from template."""
-    root = require_root()
+    root = find_root()
+    if root is None:
+        # Auto-init when no scafld workspace exists in cwd ancestry.
+        # The caller explicitly asked to open a spec here; bootstrapping
+        # the workspace is the friendly path. Runs quietly so `scafld new`
+        # stays a one-command gesture even from a bare directory (which
+        # happens in hosted CI, harness sandboxes, and fresh checkouts).
+        root = Path.cwd()
+        for rel in (DRAFTS_DIR, APPROVED_DIR, ACTIVE_DIR, ARCHIVE_DIR, LOGS_DIR,
+                    f"{AI_DIR}/reviews"):
+            (root / rel).mkdir(parents=True, exist_ok=True)
     task_id = args.task_id
 
     # Validate task_id
