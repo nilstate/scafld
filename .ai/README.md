@@ -9,10 +9,11 @@ scafld is a spec-driven framework for AI agent task planning and execution. Ever
 ## How It Works
 
 1. **Plan:** AI generates a task spec in `.ai/specs/drafts/` via conversational ReAct loop
-2. **Approve:** Developer reviews and moves spec to `.ai/specs/approved/`
-3. **Execute:** AI picks up the approved spec, executes phases, validates at each checkpoint
-4. **Review:** Adversarial review finds what execution missed — `scafld review` runs the configured `spec_compliance` and `scope_drift` checks, scaffolds Review Artifact v3, and prepares the adversarial `regression_hunt`, `convention_check`, and `dark_patterns` passes in the latest round
-5. **Archive:** Completed specs move to `.ai/specs/archive/YYYY-MM/` with truthful review results recorded, or a human-reviewed override audited explicitly when the gate is blocked
+2. **Harden (optional):** `scafld harden <task-id>` interrogates the draft one grounded question at a time. Every question and recommended answer cites a spec gap, a verified code location, or an archived precedent. Run on high-risk or ambiguous specs; skip on trivial ones.
+3. **Approve:** Developer reviews and moves spec to `.ai/specs/approved/`. Approve does NOT consult harden status.
+4. **Execute:** AI picks up the approved spec, executes phases, validates at each checkpoint
+5. **Review:** Adversarial review finds what execution missed — `scafld review` runs the configured `spec_compliance` and `scope_drift` checks, scaffolds Review Artifact v3, and prepares the adversarial `regression_hunt`, `convention_check`, and `dark_patterns` passes in the latest round
+6. **Archive:** Completed specs move to `.ai/specs/archive/YYYY-MM/` with truthful review results recorded, or a human-reviewed override audited explicitly when the gate is blocked
 
 The approval gate is the human oversight boundary. The review gate is the quality boundary. During execution, the agent operates autonomously through all phases, pausing only when blocked or deviating from the spec. A normal completion path still stays agent-driven; the human-reviewed override is an exceptional audited escape hatch, not the default workflow.
 

@@ -128,3 +128,9 @@ Risk level determines the default validation profile:
 **Specs that are too prescriptive.** Dictating exact implementations line by line defeats the purpose. Specify the contract, not the algorithm.
 
 **Skipping out_of_scope.** Without explicit boundaries, the agent will "helpfully" refactor adjacent code.
+
+## Hardening
+
+When a spec is finished but you want to stress-test it before approval, run `scafld harden <task-id>`. This enters HARDEN MODE: the agent interrogates the draft one grounded question at a time, walking down the design tree and resolving upstream decisions before downstream ones. Every question must cite its source (a spec gap, a verified code location, or an archived spec precedent), and every recommended answer must do the same. The round is recorded in `harden_rounds` for audit.
+
+Hardening is optional and operator-driven. `scafld approve` does not require it. Run it on high-risk or ambiguous specs; skip it on trivial or well-understood ones. See [CLI reference](./cli-reference.md#scafld-harden) for flags.

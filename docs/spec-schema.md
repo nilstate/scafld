@@ -160,3 +160,36 @@ planning_log:
     summary: "What changed or was decided"
     notes: "Optional context"
 ```
+
+## Harden fields (optional)
+
+Two optional top-level fields record whether the operator has interrogated the draft with `scafld harden`:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `harden_status` | `not_run` \| `in_progress` \| `passed` | Optional. Tracks interrogation state. Independent of the lifecycle `status`. Not consulted by `scafld approve`. |
+| `harden_rounds` | array | Optional. One entry per `scafld harden` invocation. |
+
+Each round:
+
+```yaml
+harden_rounds:
+  - round: 1
+    started_at: "2026-04-20T15:00:00Z"
+    ended_at: "2026-04-20T15:12:00Z"
+    outcome: "passed"                          # in_progress | passed | abandoned
+    questions:
+      - question: "Which module owns session cleanup?"
+        grounded_in: "code:src/auth/session.ts:84"
+        recommended_answer: "src/auth/session.ts:cleanupSession"
+        if_unanswered: "Default to existing cleanupSession."
+        answered_with: "Use existing cleanupSession."
+      - question: "Are there TODOs in files_impacted?"
+        grounded_in: "spec_gap:task.context.files_impacted"
+        recommended_answer: "Enumerate the two unspecified entries."
+      - question: "Does this follow the pattern from the pipeline rewrite?"
+        grounded_in: "archive:configurable-review-pipeline"
+        recommended_answer: "Yes; same cutover discipline."
+```
+
+The `grounded_in` string must match `^(spec_gap:|code:|archive:).+` — these are the only three anti-hallucination patterns. See [planning.md](./planning.md#hardening) for when to run harden.

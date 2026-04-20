@@ -174,6 +174,12 @@ Record significant conversational turns:
 
 ---
 
+## Optional Next Step
+
+When planning is complete, the operator may run `scafld harden <task-id>` to interrogate the draft against grounded questions before approval. This step is optional and can be skipped by approving directly.
+
+---
+
 ## Blocked Planning Template
 
 If planning stops on missing info:

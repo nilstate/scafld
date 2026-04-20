@@ -27,3 +27,9 @@ jobs:
 
       - name: Run review gate smoke matrix
         run: ./tests/review_gate_smoke.sh all
+
+      - name: Validate harden smoke harness syntax
+        run: bash -n tests/harden_smoke.sh
+
+      - name: Run harden smoke
+        run: ./tests/harden_smoke.sh

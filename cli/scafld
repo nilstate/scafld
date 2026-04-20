@@ -839,6 +839,7 @@ def cmd_init(args):
         (f"{AI_DIR}/config.yaml", f"{AI_DIR}/config.yaml"),
         (f"{AI_DIR}/schemas/spec.json", f"{AI_DIR}/schemas/spec.json"),
         (f"{AI_DIR}/prompts/plan.md", f"{AI_DIR}/prompts/plan.md"),
+        (f"{AI_DIR}/prompts/harden.md", f"{AI_DIR}/prompts/harden.md"),
         (f"{AI_DIR}/prompts/exec.md", f"{AI_DIR}/prompts/exec.md"),
         (f"{AI_DIR}/prompts/review.md", f"{AI_DIR}/prompts/review.md"),
         (f"{AI_DIR}/README.md", f"{AI_DIR}/README.md"),
@@ -965,6 +966,7 @@ task_id: "{task_id}"
 created: "{ts}"
 updated: "{ts}"
 status: "draft"
+harden_status: "not_run"
 
 task:
   title: "{args.title or task_id.replace("-", " ").title()}"
@@ -1028,7 +1030,8 @@ rollback:
     print(f"  title: {args.title or task_id.replace('-', ' ').title()}")
     print(f"   size: {size}  risk: {risk}")
     print()
-    print(f"  Edit the spec, then: {c(C_BOLD, f'scafld approve {task_id}')}")
+    print(f"  Edit the spec, then optionally: {c(C_BOLD, f'scafld harden {task_id}')}")
+    print(f"  When ready: {c(C_BOLD, f'scafld approve {task_id}')}")
 
 
 def cmd_status(args):
@@ -2285,6 +2288,61 @@ def check_expected(returncode, output, expected):
     return exp_lower in output.lower()
 
 
+def cmd_harden(args):
+    """Scaffold HARDEN MODE prompt or mark a hardening round passed."""
+    import yaml as _yaml
+    root = require_root()
+    spec = require_spec(root, args.task_id)
+
+    rel = spec.relative_to(root)
+    if not str(rel).startswith(DRAFTS_DIR):
+        print(f"{c(C_RED, 'error')}: harden only operates on drafts (current: {rel.parent})")
+        print(f"  spec must live in {DRAFTS_DIR}/")
+        sys.exit(1)
+
+    data = _yaml.safe_load(spec.read_text()) or {}
+    rounds = data.get("harden_rounds") or []
+
+    if args.mark_passed:
+        if not rounds:
+            print(f"{c(C_RED, 'error')}: no hardening round to mark passed")
+            print(f"  run {c(C_BOLD, f'scafld harden {args.task_id}')} first, then re-run with --mark-passed")
+            sys.exit(1)
+        data["harden_status"] = "passed"
+        rounds[-1]["ended_at"] = now_iso()
+        rounds[-1]["outcome"] = "passed"
+        data["harden_rounds"] = rounds
+        data["updated"] = now_iso()
+        spec.write_text(_yaml.safe_dump(data, sort_keys=False))
+        print(f"{c(C_GREEN, 'hardened')}: {rel}")
+        print(f"  harden_status: passed  round: {rounds[-1]['round']}")
+        return
+
+    prompt_path = root / ".ai/prompts/harden.md"
+    if not prompt_path.exists():
+        print(f"{c(C_RED, 'error')}: harden prompt missing at {prompt_path}")
+        sys.exit(1)
+
+    next_round = len(rounds) + 1
+    rounds.append({
+        "round": next_round,
+        "started_at": now_iso(),
+        "outcome": "in_progress",
+        "questions": [],
+    })
+    data["harden_status"] = "in_progress"
+    data["harden_rounds"] = rounds
+    data["updated"] = now_iso()
+    spec.write_text(_yaml.safe_dump(data, sort_keys=False))
+
+    print(prompt_path.read_text())
+    print()
+    print(f"---")
+    print(f"spec: {rel}")
+    print(f"round: {next_round}")
+    print(f"when done, mark the round passed: {c(C_BOLD, f'scafld harden {args.task_id} --mark-passed')}")
+
+
 def cmd_exec(args):
     """Run acceptance criteria commands and record results."""
     root = require_root()
@@ -2569,12 +2627,21 @@ def cmd_report(args):
     specs_with_exec = 0
     specs_without_exec = 0
     phase_counts = []
+    harden_status_counts = {"not_run": 0, "in_progress": 0, "passed": 0, "absent": 0}
+    specs_with_rounds = 0
 
     for spec_path, label in specs:
         text = spec_path.read_text()
         total += 1
 
         status = yaml_read_field(text, "status") or "unknown"
+        hs = yaml_read_field(text, "harden_status")
+        if hs and hs in harden_status_counts:
+            harden_status_counts[hs] += 1
+        else:
+            harden_status_counts["absent"] += 1
+        if re.search(r'^harden_rounds:\s*\n\s*-\s+round:', text, re.MULTILINE):
+            specs_with_rounds += 1
         by_status[status] = by_status.get(status, 0) + 1
 
         # Month grouping from label
@@ -2670,6 +2737,15 @@ def cmd_report(args):
         print(f"{c(C_BOLD, 'Phases:')}  avg {avg_phases:.1f} per spec, range {min(phase_counts)}-{max(phase_counts)}")
         print()
 
+    # Harden adoption
+    print(f"{c(C_BOLD, 'Harden adoption:')}")
+    for hs in ["passed", "in_progress", "not_run", "absent"]:
+        count = harden_status_counts.get(hs, 0)
+        if count:
+            print(f"  {hs:14s} {count:4d}")
+    print(f"  {'with rounds':14s} {specs_with_rounds:4d}")
+    print()
+
 
 def cmd_version(args):
     print(f"scafld {VERSION}")
@@ -2739,6 +2815,12 @@ def main():
     p_validate.add_argument("task_id", help="Task ID")
     p_validate.add_argument("--json", action="store_true", help="Emit machine-readable validation JSON")
 
+    # harden
+    p_harden = sub.add_parser("harden", help="Run HARDEN MODE prompt or mark a hardening round passed")
+    p_harden.add_argument("task_id", help="Task ID")
+    p_harden.add_argument("--mark-passed", dest="mark_passed", action="store_true",
+                          help="Mark the latest hardening round as passed")
+
     # exec
     p_exec = sub.add_parser("exec", help="Run acceptance criteria and record results")
     p_exec.add_argument("task_id", help="Task ID")
@@ -2775,6 +2857,7 @@ def main():
         "fail": cmd_fail,
         "cancel": cmd_cancel,
         "validate": cmd_validate,
+        "harden": cmd_harden,
         "exec": cmd_exec,
         "audit": cmd_audit,
         "diff": cmd_diff,

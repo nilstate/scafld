@@ -67,6 +67,15 @@ modes:
     show_reasoning: true
 
 # =============================================================================
+# HARDEN
+# =============================================================================
+# Optional pre-approval interrogation phase. Operator-driven: `scafld approve`
+# does NOT gate on harden status. Only non-gating knobs live here.
+harden:
+  max_questions_per_round: 8   # cap per `scafld harden` invocation
+  grounding_required: true     # forbid ungrounded questions in the prompt
+
+# =============================================================================
 # VALIDATION PIPELINES
 # =============================================================================
 # CUSTOMIZE: Replace placeholder commands below with your actual build/test/lint commands.
