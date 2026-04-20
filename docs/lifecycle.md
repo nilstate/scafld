@@ -90,3 +90,11 @@ scafld status add-auth --json
 The lifecycle is intentionally rigid. You can't skip states. You can't move a draft directly to active. This friction is the point; it forces the planning-before-execution discipline that makes specs useful.
 
 If a spec needs changes after approval, cancel it and create a new one. Specs are cheap. Sloppy execution against a stale spec is expensive.
+
+## Harden status
+
+Separate from the lifecycle `status` field, every spec may carry a `harden_status` field recording whether the operator has interrogated the draft with `scafld harden`. Values: `not_run`, `in_progress`, `passed`. Missing field is treated as equivalent to `not_run`.
+
+`scafld approve` does **not** consult `harden_status`. Hardening is optional and operator-driven; you run it when you want to stress-test a draft and skip it for trivial or well-understood specs. The field exists for audit and reporting (`scafld report` shows adoption), not as a gate.
+
+Round semantics: `scafld harden <id>` appends a round and sets `harden_status: in_progress`. `scafld harden <id> --mark-passed` closes the latest round and sets `passed`. Re-running on a passed spec resets to `in_progress` and appends a new round; prior rounds are preserved as audit trail.

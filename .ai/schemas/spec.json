@@ -471,6 +471,44 @@
           "items": {"type": "string"}
         }
       }
+    },
+
+    "harden_status": {
+      "type": "string",
+      "enum": ["not_run", "in_progress", "passed"],
+      "description": "Optional. Tracks whether the operator has run `scafld harden` against this spec. Independent of the lifecycle `status` field; not consulted by `scafld approve`."
+    },
+
+    "harden_rounds": {
+      "type": "array",
+      "description": "Optional. One entry per `scafld harden` invocation.",
+      "items": {
+        "type": "object",
+        "required": ["round", "started_at", "questions"],
+        "properties": {
+          "round": {"type": "integer", "minimum": 1},
+          "started_at": {"type": "string", "format": "date-time"},
+          "ended_at": {"type": "string", "format": "date-time"},
+          "outcome": {"type": "string", "enum": ["in_progress", "passed", "abandoned"]},
+          "questions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["question", "grounded_in"],
+              "properties": {
+                "question": {"type": "string"},
+                "grounded_in": {
+                  "type": "string",
+                  "pattern": "^(spec_gap:|code:|archive:).+"
+                },
+                "recommended_answer": {"type": "string"},
+                "if_unanswered": {"type": "string"},
+                "answered_with": {"type": "string"}
+              }
+            }
+          }
+        }
+      }
     }
   }
 }
