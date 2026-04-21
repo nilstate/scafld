@@ -40,16 +40,16 @@ jobs:
         run: PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile cli/scafld scafld/__init__.py scafld/__main__.py scafld/_version.py scripts/sync_version.py scripts/bump_version.py setup.py
 
       - name: Run review gate smoke
-        run: ./tests/review_gate_smoke.sh all
+        run: bash tests/review_gate_smoke.sh all
 
       - name: Run harden smoke
-        run: ./tests/harden_smoke.sh
+        run: bash tests/harden_smoke.sh
 
       - name: Run update smoke
-        run: ./tests/update_smoke.sh
+        run: bash tests/update_smoke.sh
 
       - name: Run package smoke
-        run: ./tests/package_smoke.sh
+        run: bash tests/package_smoke.sh
 
   build:
     needs: validate
