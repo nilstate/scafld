@@ -31,6 +31,7 @@
     ".ai/specs/README.md",
     ".ai/specs/examples",
     "scafld/*.py",
+    "scafld/**/*.py",
     "AGENTS.md",
     "CLAUDE.md",
     "CONVENTIONS.md",

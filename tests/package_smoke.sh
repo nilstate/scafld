@@ -31,9 +31,9 @@ python3 - <<PY || fail "installed wheel metadata is missing expected homepage"
 from importlib import metadata
 
 md = metadata.metadata("scafld")
-assert md["Home-page"] == "https://0state.com/scafld", md["Home-page"]
 assert md["Author"] == "0state", md["Author"]
 project_urls = md.get_all("Project-URL") or []
+assert "Homepage, https://0state.com/scafld" in project_urls, project_urls
 assert "Documentation, https://0state.com/scafld/docs" in project_urls, project_urls
 requires = md.get_all("Requires-Dist") or []
 assert any(req.startswith("PyYAML") for req in requires), requires
@@ -77,6 +77,8 @@ required = {
     ".ai/schemas/spec.json",
     ".ai/specs/examples/add-error-codes.yaml",
     "scafld/__main__.py",
+    "scafld/commands/__init__.py",
+    "scafld/commands/app.py",
     "scafld/command_runtime.py",
     "scafld/config.py",
     "scafld/error_codes.py",
