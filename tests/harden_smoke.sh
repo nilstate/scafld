@@ -208,7 +208,98 @@ rollback:
 YAML
 run_scafld approve t3 >/dev/null || fail "approve refused a spec with harden_status missing"
 
-echo "[8/9] --mark-passed refuses when harden_rounds is empty"
+echo "[8/11] valid harden citations stay silent on --mark-passed"
+run_scafld new t5 -t 'valid citations' -s small -r low >/dev/null || fail "scafld new t5 failed"
+run_scafld harden t5 >/dev/null || fail "scafld harden t5 failed"
+mkdir -p "$WS/.ai/specs/archive/2026-04"
+cat > "$WS/.ai/specs/archive/2026-04/archived-ok.yaml" <<'YAML'
+spec_version: "1.1"
+task_id: "archived-ok"
+created: "2026-04-20T02:00:00Z"
+updated: "2026-04-20T02:00:00Z"
+status: "completed"
+task:
+  title: "Archived fixture"
+  summary: "Fixture."
+  size: "small"
+  risk_level: "low"
+  context:
+    packages:
+      - "cli"
+    invariants:
+      - "domain_boundaries"
+  objectives:
+    - "Fixture."
+  touchpoints:
+    - area: "cli"
+      description: "Fixture."
+  acceptance:
+    definition_of_done:
+      - id: "dod1"
+        description: "Fixture."
+        status: "completed"
+    validation:
+      - id: "v1"
+        type: "test"
+        description: "noop"
+        command: "true"
+        expected: "0 failures"
+planning_log:
+  - timestamp: "2026-04-20T02:00:00Z"
+    actor: "user"
+    summary: "Fixture."
+phases:
+  - id: "phase1"
+    name: "Fixture"
+    objective: "Fixture."
+    changes:
+      - file: "AGENTS.md"
+        action: "update"
+        content_spec: "Fixture."
+    acceptance_criteria:
+      - id: "ac1_1"
+        type: "test"
+        description: "noop"
+        command: "true"
+        expected: "0 failures"
+    status: "completed"
+rollback:
+  strategy: "per_phase"
+  commands:
+    phase1: "true"
+YAML
+python3 - <<PY || fail "could not write valid harden citations"
+import yaml
+p = "$WS/.ai/specs/drafts/t5.yaml"
+d = yaml.safe_load(open(p))
+d["harden_rounds"][-1]["questions"] = [
+    {"question": "Does AGENTS exist?", "grounded_in": "code:AGENTS.md:1"},
+    {"question": "Does archived fixture exist?", "grounded_in": "archive:archived-ok"},
+]
+open(p, "w").write(yaml.safe_dump(d, sort_keys=False))
+PY
+output=$(run_scafld harden t5 --mark-passed)
+[[ "$output" != *"could not be resolved"* ]] || fail "valid citations unexpectedly warned"
+
+echo "[9/11] invalid harden citations warn but still pass"
+run_scafld new t6 -t 'invalid citations' -s small -r low >/dev/null || fail "scafld new t6 failed"
+run_scafld harden t6 >/dev/null || fail "scafld harden t6 failed"
+python3 - <<PY || fail "could not write invalid harden citations"
+import yaml
+p = "$WS/.ai/specs/drafts/t6.yaml"
+d = yaml.safe_load(open(p))
+d["harden_rounds"][-1]["questions"] = [
+    {"question": "Fake file?", "grounded_in": "code:missing.py:99"},
+    {"question": "Fake archive?", "grounded_in": "archive:not-real"},
+]
+open(p, "w").write(yaml.safe_dump(d, sort_keys=False))
+PY
+output=$(run_scafld harden t6 --mark-passed) || fail "mark-passed should warn, not fail"
+[[ "$output" == *"could not be resolved"* ]] || fail "invalid citations did not warn"
+[[ "$output" == *"code citation not found"* ]] || fail "missing code citation warning absent"
+[[ "$output" == *"archive citation not found"* ]] || fail "missing archive citation warning absent"
+
+echo "[10/11] --mark-passed refuses when harden_rounds is empty"
 run_scafld new t4 -t 'empty rounds' -s small -r low >/dev/null || fail "scafld new t4 failed"
 set +e
 (cd "$WS" && python3 "$CLI" harden t4 --mark-passed >/dev/null 2>&1)
@@ -216,7 +307,7 @@ rc=$?
 set -e
 [ "$rc" -ne 0 ] || fail "--mark-passed should exit non-zero when harden_rounds is empty"
 
-echo "[9/9] cmd_approve body does not reference harden (anti-drift)"
+echo "[11/11] cmd_approve body does not reference harden (anti-drift)"
 python3 - <<PY || fail "cmd_approve unexpectedly references harden"
 import re
 src = open("$REPO_ROOT/cli/scafld").read()

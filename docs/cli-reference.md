@@ -74,7 +74,7 @@ scafld harden <task-id> --mark-passed
 
 Without flags, prints the `HARDEN MODE` prompt from `.ai/prompts/harden.md`, appends a new round to `harden_rounds`, and sets `harden_status: in_progress`. The agent then interviews you one question at a time, upstream decisions first. If the answer is already in the codebase, it should inspect the code instead of asking. Each recorded question carries a `grounded_in` value using one of `spec_gap:<field>`, `code:<file>:<line>`, or `archive:<task_id>`.
 
-With `--mark-passed`, sets `harden_status: passed` and closes the latest round. Refuses if no round has been started.
+With `--mark-passed`, sets `harden_status: passed` and closes the latest round. Refuses if no round has been started. Before closing the round, scafld verifies that `code:` citations point at a real workspace file and in-range line, and that `archive:` citations point at a real archived spec. Unresolvable citations emit warnings but do not block the command.
 
 Optional. `scafld approve` does not require harden to have run.
 
@@ -145,7 +145,7 @@ Run automated passes and scaffold adversarial review.
 scafld review <task-id> [--json]
 ```
 
-Runs spec_compliance and scope_drift checks, then creates/appends a Review Artifact v3 in `.ai/reviews/`.
+Runs spec_compliance and scope_drift checks, then creates/appends a Review Artifact v3 in `.ai/reviews/`. The scaffolded metadata records the reviewed `HEAD`, whether the workspace was dirty, and a fingerprint of the reviewed staged, unstaged, and untracked changes.
 
 ## scafld complete
 
@@ -155,7 +155,7 @@ Archive a spec as completed, gated on review.
 scafld complete <task-id> [--json] [--human-reviewed --reason TEXT]
 ```
 
-Requires a passing review. With `--human-reviewed --reason`, bypasses the review gate with an audited override (requires interactive terminal and explicit confirmation).
+Requires a passing review whose recorded git state still matches the current repo. With `--human-reviewed --reason`, bypasses the review gate with an audited override (requires interactive terminal and explicit confirmation).
 
 ## scafld fail
 
@@ -181,7 +181,7 @@ Aggregate statistics across all specs.
 scafld report
 ```
 
-Reports total specs, breakdown by status/size/risk/month, self-eval averages, exec pass rates, and phase statistics.
+Reports total specs, breakdown by status/size/risk/month, self-eval averages, exec pass rates, and phase statistics. Also prints actionable triage for stale drafts, approved specs waiting to start, active specs with no exec evidence, and active specs whose latest review no longer matches the current git state.
 
 ## scafld update
 
