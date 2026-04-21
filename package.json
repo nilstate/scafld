@@ -1,0 +1,40 @@
+{
+  "name": "scafld",
+  "version": "1.4.2",
+  "description": "Spec-driven development framework for AI coding agents",
+  "license": "MIT",
+  "homepage": "https://github.com/nilstate/scafld#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nilstate/scafld.git"
+  },
+  "bugs": {
+    "url": "https://github.com/nilstate/scafld/issues"
+  },
+  "bin": {
+    "scafld": "cli/scafld"
+  },
+  "files": [
+    "cli/scafld",
+    ".ai/OPERATORS.md",
+    ".ai/README.md",
+    ".ai/config.yaml",
+    ".ai/prompts",
+    ".ai/schemas",
+    ".ai/specs/README.md",
+    ".ai/specs/examples",
+    "AGENTS.md",
+    "CLAUDE.md",
+    "CONVENTIONS.md",
+    "README.md",
+    "LICENSE",
+    "install.sh"
+  ],
+  "keywords": [
+    "ai",
+    "cli",
+    "developer-tools",
+    "planning",
+    "spec-driven"
+  ]
+}

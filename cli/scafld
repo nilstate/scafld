@@ -3,6 +3,7 @@
 
 import argparse
 import datetime
+import hashlib
 import json
 import os
 import re
@@ -15,8 +16,9 @@ from pathlib import Path
 # Constants
 # ---------------------------------------------------------------------------
 
-VERSION = "1.4.1"
+VERSION = "1.4.2"
 AI_DIR = ".ai"
+FRAMEWORK_DIR = f"{AI_DIR}/scafld"
 SPECS_DIR = f"{AI_DIR}/specs"
 DRAFTS_DIR = f"{SPECS_DIR}/drafts"
 APPROVED_DIR = f"{SPECS_DIR}/approved"
@@ -27,6 +29,35 @@ REVIEWS_DIR = f"{AI_DIR}/reviews"
 SCHEMA_PATH = f"{AI_DIR}/schemas/spec.json"
 CONFIG_PATH = f"{AI_DIR}/config.yaml"
 CONFIG_LOCAL_PATH = f"{AI_DIR}/config.local.yaml"
+FRAMEWORK_CONFIG_PATH = f"{FRAMEWORK_DIR}/config.yaml"
+FRAMEWORK_SCHEMA_PATH = f"{FRAMEWORK_DIR}/schemas/spec.json"
+FRAMEWORK_MANIFEST_PATH = f"{FRAMEWORK_DIR}/manifest.json"
+FRAMEWORK_MANIFEST_SCHEMA_VERSION = 1
+FRAMEWORK_BUNDLE_FILES = [
+    (f"{AI_DIR}/config.yaml", FRAMEWORK_CONFIG_PATH),
+    (f"{AI_DIR}/schemas/spec.json", FRAMEWORK_SCHEMA_PATH),
+    (f"{AI_DIR}/prompts/plan.md", f"{FRAMEWORK_DIR}/prompts/plan.md"),
+    (f"{AI_DIR}/prompts/harden.md", f"{FRAMEWORK_DIR}/prompts/harden.md"),
+    (f"{AI_DIR}/prompts/exec.md", f"{FRAMEWORK_DIR}/prompts/exec.md"),
+    (f"{AI_DIR}/prompts/review.md", f"{FRAMEWORK_DIR}/prompts/review.md"),
+    (f"{AI_DIR}/README.md", f"{FRAMEWORK_DIR}/README.md"),
+    (f"{AI_DIR}/OPERATORS.md", f"{FRAMEWORK_DIR}/OPERATORS.md"),
+    (f"{SPECS_DIR}/README.md", f"{FRAMEWORK_DIR}/specs/README.md"),
+    (f"{SPECS_DIR}/examples/add-error-codes.yaml", f"{FRAMEWORK_DIR}/specs/examples/add-error-codes.yaml"),
+]
+SCAN_PRUNE_DIRS = {
+    ".git",
+    ".hg",
+    ".svn",
+    ".venv",
+    "__pycache__",
+    "node_modules",
+    "dist",
+    "build",
+    "coverage",
+    ".next",
+    ".turbo",
+}
 
 STATUS_FOLDERS = {
     "draft": DRAFTS_DIR,
@@ -140,6 +171,148 @@ def now_iso():
     return datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def scafld_source_root():
+    """Directory that contains the canonical scafld source tree."""
+    override = os.environ.get("SCAFLD_SOURCE_ROOT")
+    if override:
+        return Path(override).expanduser().resolve()
+    return Path(__file__).resolve().parent.parent
+
+
+def sha256_bytes(payload):
+    return hashlib.sha256(payload).hexdigest()
+
+
+def source_git_metadata(source_root):
+    """Return source revision metadata when scafld is running from a git checkout."""
+    metadata = {
+        "commit": None,
+        "dirty": None,
+    }
+    if not (source_root / ".git").exists():
+        return metadata
+
+    try:
+        commit = subprocess.run(
+            ["git", "-C", str(source_root), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        if commit.returncode == 0:
+            metadata["commit"] = commit.stdout.strip() or None
+
+        dirty = subprocess.run(
+            ["git", "-C", str(source_root), "status", "--porcelain"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        if dirty.returncode == 0:
+            metadata["dirty"] = bool(dirty.stdout.strip())
+    except Exception:
+        pass
+
+    return metadata
+
+
+def write_bytes_if_changed(path, payload):
+    """Write bytes only when the content changes. Returns created/updated/unchanged."""
+    if path.exists():
+        if path.read_bytes() == payload:
+            return "unchanged"
+        path.write_bytes(payload)
+        return "updated"
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(payload)
+    return "created"
+
+
+def resolve_framework_asset(root, legacy_rel, managed_rel):
+    """Prefer the managed framework bundle when it exists, else fall back to legacy paths."""
+    managed = root / FRAMEWORK_DIR / managed_rel
+    if managed.exists():
+        return managed
+    return root / legacy_rel
+
+
+def resolve_schema_path(root):
+    return resolve_framework_asset(root, SCHEMA_PATH, "schemas/spec.json")
+
+
+def resolve_prompt_path(root, name):
+    return resolve_framework_asset(root, f"{AI_DIR}/prompts/{name}", f"prompts/{name}")
+
+
+def build_framework_manifest(workspace_root, source_root, managed_assets):
+    """Build deterministic metadata that proves which scafld bundle a workspace uses."""
+    git_metadata = source_git_metadata(source_root)
+    return {
+        "schema_version": FRAMEWORK_MANIFEST_SCHEMA_VERSION,
+        "scafld_version": VERSION,
+        "source_commit": git_metadata["commit"],
+        "source_dirty": git_metadata["dirty"],
+        "workspace_config_mode": "legacy_overlay" if (workspace_root / CONFIG_PATH).exists() else "managed_only",
+        "managed_assets": managed_assets,
+    }
+
+
+def sync_framework_bundle(workspace_root, source_root=None):
+    """Install/update the framework-managed runtime bundle inside a workspace."""
+    source_root = source_root or scafld_source_root()
+    created = []
+    updated = []
+    unchanged = []
+    managed_assets = {}
+
+    for src_rel, dest_rel in FRAMEWORK_BUNDLE_FILES:
+        src = source_root / src_rel
+        if not src.exists():
+            continue
+
+        payload = src.read_bytes()
+        managed_assets[dest_rel] = {
+            "source": src_rel,
+            "sha256": sha256_bytes(payload),
+        }
+
+        dest = workspace_root / dest_rel
+        status = write_bytes_if_changed(dest, payload)
+        if status == "created":
+            created.append(dest_rel)
+        elif status == "updated":
+            updated.append(dest_rel)
+        else:
+            unchanged.append(dest_rel)
+
+    manifest_payload = build_framework_manifest(workspace_root, source_root, managed_assets)
+    manifest_text = (json.dumps(manifest_payload, indent=2, sort_keys=True) + "\n").encode()
+    manifest_status = write_bytes_if_changed(workspace_root / FRAMEWORK_MANIFEST_PATH, manifest_text)
+
+    return {
+        "workspace": workspace_root,
+        "created": created,
+        "updated": updated,
+        "unchanged": unchanged,
+        "manifest_status": manifest_status,
+        "manifest_path": workspace_root / FRAMEWORK_MANIFEST_PATH,
+        "manifest": manifest_payload,
+    }
+
+
+def is_scafld_workspace(root):
+    """Detect a scafld workspace root."""
+    ai_root = root / AI_DIR
+    return ai_root.is_dir() and (
+        (root / SPECS_DIR).is_dir()
+        or (root / CONFIG_PATH).exists()
+        or (root / FRAMEWORK_MANIFEST_PATH).exists()
+    )
+
+
 def deep_merge(base, overlay):
     """Deep merge overlay dict into base dict. Overlay wins on conflicts."""
     result = dict(base)
@@ -204,20 +377,13 @@ def load_config(root):
     """Load config with local overlay support."""
     config = {}
 
-    # Load base config
-    base_path = root / CONFIG_PATH
-    if base_path.exists():
+    # Load framework defaults first, then project config, then local overlay.
+    for candidate in [root / FRAMEWORK_CONFIG_PATH, root / CONFIG_PATH, root / CONFIG_LOCAL_PATH]:
+        if not candidate.exists():
+            continue
         try:
-            config = simple_yaml_load(base_path.read_text())
-        except Exception:
-            pass
-
-    # Merge local overlay
-    local_path = root / CONFIG_LOCAL_PATH
-    if local_path.exists():
-        try:
-            local = simple_yaml_load(local_path.read_text())
-            config = deep_merge(config, local)
+            loaded = simple_yaml_load(candidate.read_text())
+            config = deep_merge(config, loaded)
         except Exception:
             pass
 
@@ -225,13 +391,40 @@ def load_config(root):
 
 
 def find_root():
-    """Walk up from cwd to find the project root (contains .ai/ dir)."""
+    """Walk up from cwd to find the nearest scafld workspace root."""
     d = Path.cwd()
     while d != d.parent:
-        if (d / AI_DIR).is_dir():
+        if is_scafld_workspace(d):
             return d
         d = d.parent
     return None
+
+
+def find_workspaces(scan_root):
+    """Recursively discover scafld workspaces under a root path."""
+    scan_root = Path(scan_root).expanduser().resolve()
+    workspaces = []
+    seen = set()
+
+    for current, dirnames, _ in os.walk(scan_root):
+        current_path = Path(current)
+        next_dirs = []
+
+        for dirname in dirnames:
+            if dirname in SCAN_PRUNE_DIRS:
+                continue
+            if dirname == AI_DIR and is_scafld_workspace(current_path):
+                if current_path not in seen:
+                    workspaces.append(current_path)
+                    seen.add(current_path)
+                continue
+            next_dirs.append(dirname)
+
+        # No need to descend into .ai itself, but keep scanning siblings/nested repos.
+        dirnames[:] = next_dirs
+
+    workspaces.sort()
+    return workspaces
 
 
 def yaml_read_field(text, field):
@@ -804,7 +997,7 @@ def cmd_init(args):
     project_root = Path.cwd()
 
     # Find scafld source (where this script lives)
-    scafld_dir = Path(__file__).resolve().parent.parent
+    scafld_dir = scafld_source_root()
 
     print(f"{c(C_BOLD, 'scafld init')}")
     print(f"  project: {project_root}")
@@ -831,6 +1024,20 @@ def cmd_init(args):
         p = project_root / d
         p.mkdir(parents=True, exist_ok=True)
         print(f"  {c(C_GREEN, 'ok')}: {d}/")
+    print()
+
+    print(f"{c(C_BOLD, 'Managed bundle:')}")
+    bundle = sync_framework_bundle(project_root, scafld_dir)
+    if bundle["created"]:
+        bundle_label = c(C_GREEN, "created")
+    elif bundle["updated"]:
+        bundle_label = c(C_YELLOW, "updated")
+    else:
+        bundle_label = c(C_DIM, "skip")
+    print(f"  {bundle_label}: {FRAMEWORK_DIR}/ ({len(bundle['created'])} files created, {len(bundle['updated'])} updated)")
+    manifest_rel = Path(FRAMEWORK_MANIFEST_PATH)
+    manifest_color = C_GREEN if bundle["manifest_status"] == "created" else C_YELLOW if bundle["manifest_status"] == "updated" else C_DIM
+    print(f"  {c(manifest_color, bundle['manifest_status'])}: {manifest_rel}")
     print()
 
     # Copy framework files (config, schemas, prompts, docs)
@@ -874,7 +1081,8 @@ def cmd_init(args):
         print(f"  {c(C_DIM, 'skip')}: {CONFIG_LOCAL_PATH} (exists)")
     else:
         local_config.write_text('''# Project-specific config overlay
-# Values here merge on top of .ai/config.yaml.
+# Values here merge on top of the managed bundle (.ai/scafld/config.yaml)
+# and any project-level .ai/config.yaml overrides.
 # Only include sections you want to override - everything else inherits.
 
 # CUSTOMIZE: Replace with your actual build/test/lint commands
@@ -949,6 +1157,7 @@ def cmd_new(args):
         for rel in (DRAFTS_DIR, APPROVED_DIR, ACTIVE_DIR, ARCHIVE_DIR, LOGS_DIR,
                     f"{AI_DIR}/reviews"):
             (root / rel).mkdir(parents=True, exist_ok=True)
+        sync_framework_bundle(root)
     task_id = args.task_id
 
     # Validate task_id
@@ -1955,9 +2164,9 @@ def collect_automated_review_passes(root, task_id, text, topology):
 
 def validate_spec(root, spec):
     """Validate a spec against the JSON schema. Returns list of errors (empty = valid)."""
-    schema_path = root / SCHEMA_PATH
+    schema_path = resolve_schema_path(root)
     if not schema_path.exists():
-        return [f"schema not found at {SCHEMA_PATH}"]
+        return [f"schema not found at {schema_path.relative_to(root)}"]
 
     try:
         schema = json.loads(schema_path.read_text())
@@ -2328,7 +2537,7 @@ def cmd_harden(args):
         print(f"  harden_status: passed  round: {rounds[-1]['round']}")
         return
 
-    prompt_path = root / ".ai/prompts/harden.md"
+    prompt_path = resolve_prompt_path(root, "harden.md")
     if not prompt_path.exists():
         print(f"{c(C_RED, 'error')}: harden prompt missing at {prompt_path}")
         sys.exit(1)
@@ -2757,6 +2966,86 @@ def cmd_report(args):
     print()
 
 
+def cmd_update(args):
+    """Refresh the managed scafld bundle in one workspace or across a tree."""
+    source_root = scafld_source_root()
+    git_metadata = source_git_metadata(source_root)
+
+    if args.self:
+        if not (source_root / ".git").exists():
+            print(f"{c(C_RED, 'error')}: self-update requires scafld to run from a git checkout")
+            sys.exit(1)
+
+        print(f"{c(C_BOLD, 'Self update:')}")
+        print(f"  source: {source_root}")
+        result = subprocess.run(
+            ["git", "-C", str(source_root), "pull", "--ff-only"],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            output = (result.stdout + result.stderr).strip()
+            print(f"  {c(C_RED, 'failed')}: git pull --ff-only")
+            if output:
+                for line in output.splitlines()[-5:]:
+                    print(f"    {line}")
+            sys.exit(1)
+        print(f"  {c(C_GREEN, 'ok')}: source checkout refreshed")
+        git_metadata = source_git_metadata(source_root)
+        print()
+
+    if args.scan_root:
+        workspaces = find_workspaces(args.scan_root)
+        mode_label = f"scan_root={Path(args.scan_root).expanduser().resolve()}"
+    else:
+        root = find_root()
+        if root is None:
+            if args.self:
+                return
+            print(f"{c(C_RED, 'error')}: not in a scafld project (no .ai/ directory found)")
+            print(f"  run '{c(C_BOLD, 'scafld init')}' first or pass {c(C_BOLD, '--scan-root /path')}")
+            sys.exit(1)
+        workspaces = [root]
+        mode_label = f"workspace={root}"
+
+    if not workspaces:
+        print(f"{c(C_YELLOW, 'warn')}: no scafld workspaces found under {args.scan_root}")
+        return
+
+    print(f"{c(C_BOLD, 'scafld update')}")
+    print(f"  source: {source_root}")
+    print(f"  version: {VERSION}")
+    if git_metadata["commit"]:
+        dirty_suffix = " dirty" if git_metadata["dirty"] else ""
+        print(f"  commit: {git_metadata['commit'][:12]}{dirty_suffix}")
+    print(f"  target: {mode_label}")
+    print()
+
+    total_created = 0
+    total_updated = 0
+    total_unchanged = 0
+
+    for workspace in workspaces:
+        summary = sync_framework_bundle(workspace, source_root)
+        total_created += len(summary["created"])
+        total_updated += len(summary["updated"])
+        total_unchanged += len(summary["unchanged"])
+
+        print(f"{c(C_BOLD, str(workspace))}")
+        print(f"  bundle: {len(summary['created'])} created, {len(summary['updated'])} updated, {len(summary['unchanged'])} unchanged")
+        print(f"  manifest: {summary['manifest_status']} {summary['manifest_path'].relative_to(workspace)}")
+        if args.verbose:
+            for rel in summary["created"]:
+                print(f"    {c(C_GREEN, 'created')} {rel}")
+            for rel in summary["updated"]:
+                print(f"    {c(C_YELLOW, 'updated')} {rel}")
+        print()
+
+    print(f"{c(C_BOLD, 'Summary:')}")
+    print(f"  workspaces: {len(workspaces)}")
+    print(f"  bundle files: {total_created} created, {total_updated} updated, {total_unchanged} unchanged")
+
+
 def cmd_version(args):
     print(f"scafld {VERSION}")
 
@@ -2849,6 +3138,12 @@ def main():
     # report
     p_report = sub.add_parser("report", help="Aggregate stats across all specs")
 
+    # update
+    p_update = sub.add_parser("update", help="Refresh the managed scafld bundle")
+    p_update.add_argument("--scan-root", help="Recursively update all scafld workspaces under this path")
+    p_update.add_argument("--self", action="store_true", help="git pull --ff-only the current scafld checkout before syncing workspaces")
+    p_update.add_argument("--verbose", action="store_true", help="Show created/updated bundle files for each workspace")
+
     args = parser.parse_args()
 
     if args.version:
@@ -2872,6 +3167,7 @@ def main():
         "audit": cmd_audit,
         "diff": cmd_diff,
         "report": cmd_report,
+        "update": cmd_update,
     }
 
     if args.command in commands:

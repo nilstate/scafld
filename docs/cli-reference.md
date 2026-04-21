@@ -15,6 +15,8 @@ scafld init
 
 Creates directories, templates, config files, prompts, and the JSON schema. Safe to re-run -- updates templates without overwriting existing specs.
 
+Also installs the managed runtime bundle in `.ai/scafld/`, which is what `scafld update` refreshes later.
+
 ## scafld new
 
 Create a new spec from the default template.
@@ -75,6 +77,8 @@ Without flags, prints the `HARDEN MODE` prompt from `.ai/prompts/harden.md`, app
 With `--mark-passed`, sets `harden_status: passed` and closes the latest round. Refuses if no round has been started.
 
 Optional. `scafld approve` does not require harden to have run.
+
+When `.ai/scafld/prompts/harden.md` exists, scafld prefers that managed prompt over the legacy `.ai/prompts/harden.md` path.
 
 ## scafld approve
 
@@ -178,6 +182,24 @@ scafld report
 ```
 
 Reports total specs, breakdown by status/size/risk/month, self-eval averages, exec pass rates, and phase statistics.
+
+## scafld update
+
+Refresh the managed scafld bundle in the current workspace, or scan and refresh many workspaces at once.
+
+```bash
+scafld update
+scafld update --scan-root ~/dev
+scafld update --self --scan-root ~/dev
+```
+
+| Flag | Description |
+|------|-------------|
+| `--scan-root PATH` | Recursively find scafld workspaces under `PATH` and refresh each one |
+| `--self` | Run `git pull --ff-only` in the current scafld checkout before syncing workspaces |
+| `--verbose` | Print each created/updated managed file |
+
+`scafld update` only refreshes `.ai/scafld/` and its manifest. It does not overwrite repo-owned `AGENTS.md`, `CLAUDE.md`, `CONVENTIONS.md`, or project-specific `.ai/config.yaml` edits.
 
 ## scafld --version
 

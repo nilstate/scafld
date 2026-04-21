@@ -12,6 +12,20 @@ description: Install and configure scafld
 
 ## Install
 
+Install from PyPI:
+
+```bash
+pip install scafld
+```
+
+Install from npm:
+
+```bash
+npm install -g scafld
+```
+
+The npm package ships the same CLI/runtime bundle, but the executable still requires `python3` at runtime.
+
 Clone the repo and run the install script:
 
 ```bash
@@ -35,7 +49,19 @@ scafld --version
 ## Update
 
 ```bash
-cd ~/.scafld && git pull origin main
+scafld update --self
+```
+
+To refresh the current workspace's managed bundle:
+
+```bash
+scafld update
+```
+
+To refresh every scafld workspace under a root directory:
+
+```bash
+scafld update --scan-root ~/dev
 ```
 
 ## Initialize a project
@@ -50,6 +76,7 @@ This scaffolds the full `.ai/` structure:
 
 ```
 .ai/
+  scafld/               # Managed runtime bundle refreshed by `scafld update`
   config.yaml            # Validation rules, rubric, safety controls
   config.local.yaml      # Your overrides (build/test/lint commands)
   prompts/               # Plan + exec mode instructions
@@ -76,10 +103,11 @@ The `.ai/specs/` directory and `AGENTS.md` should be committed to version contro
 
 scafld uses two config files in `.ai/`:
 
-- `config.yaml` -- base configuration (validation rules, rubric, review passes)
+- `scafld/config.yaml` -- framework-managed defaults refreshed by `scafld update`
+- `config.yaml` -- project-level configuration and overrides committed with the repo
 - `config.local.yaml` -- project-specific overrides (build/test/lint commands)
 
-The local config merges on top of the base. See [Configuration](configuration) for the full reference.
+The local config merges on top of the project config, which itself layers on top of the managed bundle. See [Configuration](configuration) for the full reference.
 
 ## Editor integration
 
