@@ -20,7 +20,10 @@ scafld init
 scafld new add-auth -t "Add JWT authentication" -s medium -r high
 ```
 
-This generates `.ai/specs/drafts/add-auth.yaml` from the default template. Open it and define the task, phases, and acceptance criteria:
+This generates `.ai/specs/drafts/add-auth.yaml` from the default template. When
+scafld already knows the repo shape, the draft also inherits the suggested
+compile and test commands plus a short repo-context header. Open it and fill in
+the task-specific fields:
 
 ```yaml
 spec_version: "1.1"

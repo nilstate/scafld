@@ -981,62 +981,108 @@ def cmd_new(args):
     ts = now_iso()
     size = args.size or "small"
     risk = args.risk or "low"
+    detection = detect_init_config(root)
+    marker_text = ", ".join(detection["markers"]) if detection["markers"] else "none"
+    config = load_config(root)
 
-    template = f'''spec_version: "1.1"
-task_id: "{task_id}"
-created: "{ts}"
-updated: "{ts}"
+    def config_string(*keys):
+        value = config
+        for key in keys:
+            if not isinstance(value, dict):
+                return None
+            value = value.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        return None
+
+    commands = dict(detection["commands"])
+    for key, path in (
+        ("compile_check", ("validation", "per_phase", "compile_check")),
+        ("targeted_tests", ("validation", "per_phase", "targeted_tests")),
+        ("full_test_suite", ("validation", "pre_commit", "full_test_suite")),
+        ("linter_suite", ("validation", "pre_commit", "linter_suite")),
+        ("typecheck", ("validation", "pre_commit", "typecheck")),
+    ):
+        override = config_string(*path)
+        if override:
+            commands[key] = override
+
+    title = args.title or task_id.replace("-", " ").title()
+    summary_prompt = f'TODO: Describe the problem or goal for "{title}". Repo context: {detection["summary"]}.'
+    packages_prompt = f"TODO: replace with affected package(s) or paths. Repo markers: {marker_text}."
+    objective_prompt = f'TODO: State the primary outcome for "{title}".'
+    touchpoint_area = f'TODO: primary area touched by "{title}"'
+    touchpoint_description = f'Replace with the main package, module, or workflow surface affected by "{title}".'
+    compile_description = "Run the repo's suggested compile or build check for this task."
+    test_description = "Run the repo's suggested targeted test command for this task."
+    phase_name = f'TODO: first implementation slice for "{title}"'
+    phase_objective = f'TODO: Describe the first concrete slice of "{title}".'
+    phase_content = f'TODO: Describe the changes for the first slice of "{title}".'
+    phase_acceptance = "Run the repo's suggested targeted test command for this phase."
+
+    template = f'''# Repo context: {detection["summary"]}
+# Repo markers: {marker_text}
+# Suggested validation commands come from repo detection and .ai/config.local.yaml when available.
+spec_version: "1.1"
+task_id: {json.dumps(task_id)}
+created: {json.dumps(ts)}
+updated: {json.dumps(ts)}
 status: "draft"
 harden_status: "not_run"
 
 task:
-  title: "{args.title or task_id.replace("-", " ").title()}"
+  title: {json.dumps(title)}
   summary: >
-    TODO: Describe the problem or goal.
-  size: "{size}"
-  risk_level: "{risk}"
+    {summary_prompt}
+  size: {json.dumps(size)}
+  risk_level: {json.dumps(risk)}
   context:
     packages:
-      - "TODO"
+      - {json.dumps(packages_prompt)}
     invariants:
       - "domain_boundaries"
   objectives:
-    - "TODO: Primary objective"
+    - {json.dumps(objective_prompt)}
   touchpoints:
-    - area: "TODO"
-      description: "TODO"
+    - area: {json.dumps(touchpoint_area)}
+      description: {json.dumps(touchpoint_description)}
   acceptance:
     definition_of_done:
       - id: "dod1"
-        description: "TODO"
+        description: "TODO: define what completion means for this task."
         status: "pending"
     validation:
       - id: "v1"
+        type: "compile"
+        description: {json.dumps(compile_description)}
+        command: {json.dumps(commands["compile_check"])}
+        expected: "exit code 0"
+      - id: "v2"
         type: "test"
-        description: "TODO"
-        command: "TODO"
-        expected: "0 failures"
+        description: {json.dumps(test_description)}
+        command: {json.dumps(commands["targeted_tests"])}
+        expected: "exit code 0"
 
 planning_log:
-  - timestamp: "{ts}"
+  - timestamp: {json.dumps(ts)}
     actor: "user"
     summary: "Spec created via scafld new"
 
 phases:
   - id: "phase1"
-    name: "TODO: Phase name"
-    objective: "TODO: What this phase accomplishes"
+    name: {json.dumps(phase_name)}
+    objective: {json.dumps(phase_objective)}
     changes:
       - file: "TODO"
         action: "update"
         content_spec: |
-          TODO: Describe the changes.
+          {phase_content}
     acceptance_criteria:
       - id: "ac1_1"
         type: "test"
-        description: "TODO"
-        command: "TODO"
-        expected: "0 failures"
+        description: {json.dumps(phase_acceptance)}
+        command: {json.dumps(commands["targeted_tests"])}
+        expected: "exit code 0"
     status: "pending"
 
 rollback:
@@ -1053,10 +1099,21 @@ rollback:
             task_id=task_id,
             state={"status": "draft", "file": str(rel)},
             result={
-                "title": args.title or task_id.replace('-', ' ').title(),
+                "title": title,
                 "size": size,
                 "risk": risk,
                 "auto_initialized": auto_initialized,
+                "repo_context": {
+                    "summary": detection["summary"],
+                    "markers": list(detection["markers"]),
+                    "commands": {
+                        "compile_check": commands["compile_check"],
+                        "targeted_tests": commands["targeted_tests"],
+                        "full_test_suite": commands["full_test_suite"],
+                        "linter_suite": commands["linter_suite"],
+                        "typecheck": commands["typecheck"],
+                    },
+                },
                 "next_commands": [
                     f"scafld harden {task_id}",
                     f"scafld approve {task_id}",

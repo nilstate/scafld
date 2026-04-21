@@ -78,6 +78,7 @@ EOF
 }
 EOF
     python3 "$CLI" init >/dev/null
+    python3 "$CLI" new t1 -t "Update smoke" -s small -r low >/dev/null
   )
 }
 
@@ -108,6 +109,7 @@ python_version = "3.12"
 EOF
     : > uv.lock
     python3 "$CLI" init >/dev/null
+    python3 "$CLI" new t1 -t "Update smoke" -s small -r low >/dev/null
   )
 }
 
@@ -121,6 +123,7 @@ new_fallback_fixture() {
     git config user.email smoke@example.com
     git config user.name "Smoke Test"
     python3 "$CLI" init >/dev/null
+    python3 "$CLI" new t1 -t "Update smoke" -s small -r low >/dev/null
   )
 }
 
@@ -133,7 +136,7 @@ PYTHON_REPO="$ROOT/python-fixture"
 FALLBACK_REPO="$ROOT/fallback-fixture"
 EXPECTED_VERSION="$(python3 "$CLI" --version | awk '{print $2}')"
 
-echo "[1/8] create workspaces and init-detection fixtures"
+echo "[1/10] create workspaces and init-detection fixtures"
 new_workspace "$WS1"
 new_workspace "$WS2"
 new_node_fixture "$NODE_REPO"
@@ -144,30 +147,45 @@ rm -f "$WS1/.ai/prompts/harden.md"
 rm -f "$WS1/.ai/schemas/spec.json"
 printf '\ncustom_marker: "keep-me"\n' >> "$WS1/.ai/config.yaml"
 
-echo "[2/8] init detects a Node toolchain and writes concrete commands"
+echo "[2/10] init detects a Node toolchain and writes concrete commands"
 assert_contains_file "$NODE_REPO/.ai/config.local.yaml" 'Detection: Node repo detected (npm), React, TypeScript' "node fixture should record the detected stack"
 assert_contains_file "$NODE_REPO/.ai/config.local.yaml" 'compile_check: "npm run build"' "node fixture should suggest the build command"
 assert_contains_file "$NODE_REPO/.ai/config.local.yaml" 'targeted_tests: "npm test"' "node fixture should suggest the test command"
 assert_contains_file "$NODE_REPO/.ai/config.local.yaml" 'linter_suite: "npm run lint"' "node fixture should suggest the lint command"
 assert_contains_file "$NODE_REPO/.ai/config.local.yaml" 'typecheck: "npm run typecheck"' "node fixture should suggest the typecheck command"
 
-echo "[3/8] init detects a Python toolchain and writes concrete commands"
+echo "[3/10] new reuses Node repo defaults while keeping task prompts editable"
+assert_contains_file "$NODE_REPO/.ai/specs/drafts/t1.yaml" 'Repo context: Node repo detected (npm), React, TypeScript' "node draft should record the detected repo context"
+assert_contains_file "$NODE_REPO/.ai/specs/drafts/t1.yaml" 'command: "npm run build"' "node draft should inherit the compile command"
+assert_contains_file "$NODE_REPO/.ai/specs/drafts/t1.yaml" 'command: "npm test"' "node draft should inherit the targeted test command"
+assert_contains_file "$NODE_REPO/.ai/specs/drafts/t1.yaml" 'TODO: Describe the problem or goal for "Update smoke". Repo context: Node repo detected (npm), React, TypeScript.' "node draft should keep a contextual summary TODO"
+
+echo "[4/10] init detects a Python toolchain and writes concrete commands"
 assert_contains_file "$PYTHON_REPO/.ai/config.local.yaml" 'Detection: Python repo detected (uv), FastAPI' "python fixture should record the detected stack"
 assert_contains_file "$PYTHON_REPO/.ai/config.local.yaml" 'compile_check: "uv run python -m compileall ."' "python fixture should suggest a compile check"
 assert_contains_file "$PYTHON_REPO/.ai/config.local.yaml" 'targeted_tests: "uv run pytest"' "python fixture should suggest pytest"
 assert_contains_file "$PYTHON_REPO/.ai/config.local.yaml" 'linter_suite: "uv run ruff check ."' "python fixture should suggest ruff"
 assert_contains_file "$PYTHON_REPO/.ai/config.local.yaml" 'typecheck: "uv run mypy ."' "python fixture should suggest mypy"
 
-echo "[4/8] unknown repos keep the safe placeholder fallback"
+echo "[5/10] new reuses Python repo defaults while keeping task prompts editable"
+assert_contains_file "$PYTHON_REPO/.ai/specs/drafts/t1.yaml" 'Repo context: Python repo detected (uv), FastAPI' "python draft should record the detected repo context"
+assert_contains_file "$PYTHON_REPO/.ai/specs/drafts/t1.yaml" 'command: "uv run python -m compileall ."' "python draft should inherit the compile command"
+assert_contains_file "$PYTHON_REPO/.ai/specs/drafts/t1.yaml" 'command: "uv run pytest"' "python draft should inherit the targeted test command"
+assert_contains_file "$PYTHON_REPO/.ai/specs/drafts/t1.yaml" 'TODO: Describe the problem or goal for "Update smoke". Repo context: Python repo detected (uv), FastAPI.' "python draft should keep a contextual summary TODO"
+
+echo "[6/10] unknown repos keep the safe placeholder fallback"
 assert_contains_file "$FALLBACK_REPO/.ai/config.local.yaml" 'Detection: no known Node or Python repo markers found' "fallback fixture should say autodetection fell back"
 assert_contains_file "$FALLBACK_REPO/.ai/config.local.yaml" "compile_check: \"echo 'Replace: your build command'\"" "fallback fixture should keep placeholder commands"
+assert_contains_file "$FALLBACK_REPO/.ai/specs/drafts/t1.yaml" 'Repo context: no known Node or Python repo markers found' "fallback draft should record the fallback repo context"
+assert_contains_file "$FALLBACK_REPO/.ai/specs/drafts/t1.yaml" "command: \"echo 'Replace: your build command'\"" "fallback draft should keep the compile placeholder"
+assert_contains_file "$FALLBACK_REPO/.ai/specs/drafts/t1.yaml" "command: \"echo 'Replace: your test command'\"" "fallback draft should keep the test placeholder"
 
-echo "[5/8] scafld update --scan-root recreates managed bundles"
+echo "[7/10] scafld update --scan-root recreates managed bundles"
 python3 "$CLI" update --scan-root "$ROOT" >/dev/null || fail "scan-root update failed"
 [ -f "$WS1/.ai/scafld/manifest.json" ] || fail "ws1 missing managed manifest"
 [ -f "$WS2/.ai/scafld/manifest.json" ] || fail "ws2 missing managed manifest"
 
-echo "[6/8] manifest records the current scafld version"
+echo "[8/10] manifest records the current scafld version"
 python3 - <<PY || fail "manifest missing expected version or managed assets"
 import json
 
@@ -178,11 +196,11 @@ for path in ("$WS1/.ai/scafld/manifest.json", "$WS2/.ai/scafld/manifest.json"):
     assert ".ai/scafld/schemas/spec.json" in data["managed_assets"], data["managed_assets"].keys()
 PY
 
-echo "[7/8] repo-owned config stays intact"
+echo "[9/10] repo-owned config stays intact"
 grep -q 'custom_marker: "keep-me"' "$WS1/.ai/config.yaml" \
   || fail "update overwrote repo-specific config"
 
-echo "[8/8] managed prompt and schema power legacy workspaces"
+echo "[10/10] managed prompt and schema power legacy workspaces"
 validate_output="$(run_scafld "$WS1" validate t1 2>&1 || true)"
 [[ "$validate_output" != *"schema not found"* ]] || fail "validate did not use managed schema"
 [[ "$validate_output" == *"TODO placeholder"* ]] || fail "validate did not reach schema-backed validation"
