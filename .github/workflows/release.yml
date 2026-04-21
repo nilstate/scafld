@@ -1,0 +1,159 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Validate canonical version against tag
+        run: python3 scripts/sync_version.py --check --tag "${GITHUB_REF_NAME#v}"
+
+      - name: Validate Python syntax
+        run: PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile cli/scafld scafld/__init__.py scafld/__main__.py scafld/_version.py scripts/sync_version.py scripts/bump_version.py setup.py
+
+      - name: Run review gate smoke
+        run: ./tests/review_gate_smoke.sh all
+
+      - name: Run harden smoke
+        run: ./tests/harden_smoke.sh
+
+      - name: Run update smoke
+        run: ./tests/update_smoke.sh
+
+      - name: Run package smoke
+        run: ./tests/package_smoke.sh
+
+  build:
+    needs: validate
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Validate canonical version against tag
+        run: python3 scripts/sync_version.py --check --tag "${GITHUB_REF_NAME#v}"
+
+      - name: Install Python build tooling
+        run: python3 -m pip install --upgrade pip build
+
+      - name: Build Python artifacts
+        run: |
+          rm -rf release-artifacts dist build scafld.egg-info
+          mkdir -p release-artifacts/dist release-artifacts/npm
+          python3 -m build --outdir release-artifacts/dist
+
+      - name: Build npm tarball
+        run: npm pack --pack-destination release-artifacts/npm
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-artifacts
+          path: release-artifacts/**
+          if-no-files-found: error
+
+  publish-pypi:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      id-token: write
+
+    steps:
+      - name: Download release artifacts
+        uses: actions/download-artifact@v5
+        with:
+          name: release-artifacts
+          path: release-artifacts
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: release-artifacts/dist
+
+  publish-npm:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+
+      - name: Download release artifacts
+        uses: actions/download-artifact@v5
+        with:
+          name: release-artifacts
+          path: release-artifacts
+
+      - name: Publish to npm
+        run: npm publish --provenance release-artifacts/npm/*.tgz
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  github-release:
+    needs:
+      - publish-pypi
+      - publish-npm
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download release artifacts
+        uses: actions/download-artifact@v5
+        with:
+          name: release-artifacts
+          path: release-artifacts
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v3
+        with:
+          generate_release_notes: true
+          files: |
+            release-artifacts/dist/*
+            release-artifacts/npm/*

@@ -1,10 +1,22 @@
+import re
 from pathlib import Path
 
 from setuptools import setup
 
 
 ROOT = Path(__file__).resolve().parent
-VERSION = "1.4.2"
+
+
+def read_version():
+    version_file = ROOT / "scafld" / "_version.py"
+    text = version_file.read_text(encoding="utf-8")
+    match = re.search(r'^__version__\s*=\s*"([^"]+)"\s*$', text, re.MULTILINE)
+    if not match:
+        raise RuntimeError(f"could not read __version__ from {version_file}")
+    return match.group(1)
+
+
+VERSION = read_version()
 
 
 def runtime_data_files():
@@ -28,6 +40,8 @@ def runtime_data_files():
     ]
     for path in ai_roots:
         files.append(("share/scafld/.ai", [str(path)]))
+
+    files.append(("share/scafld/scafld", [str(ROOT / "scafld" / "_version.py")]))
 
     for path in sorted((ROOT / ".ai" / "prompts").rglob("*")):
         if path.is_file():
@@ -78,7 +92,6 @@ setup(
         "Development Status :: 4 - Beta",
         "Environment :: Console",
         "Intended Audience :: Developers",
-        "License :: OSI Approved :: MIT License",
         "Programming Language :: Python :: 3",
         "Programming Language :: Python :: 3 :: Only",
         "Programming Language :: Python :: 3.9",

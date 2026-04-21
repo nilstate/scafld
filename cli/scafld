@@ -16,7 +16,6 @@ from pathlib import Path
 # Constants
 # ---------------------------------------------------------------------------
 
-VERSION = "1.4.2"
 AI_DIR = ".ai"
 FRAMEWORK_DIR = f"{AI_DIR}/scafld"
 SPECS_DIR = f"{AI_DIR}/specs"
@@ -58,6 +57,18 @@ SCAN_PRUNE_DIRS = {
     ".next",
     ".turbo",
 }
+
+
+def read_canonical_version(version_file):
+    """Read the canonical scafld version from the tracked version module."""
+    text = version_file.read_text(encoding="utf-8")
+    match = re.search(r'^__version__\s*=\s*"([^"]+)"\s*$', text, re.MULTILINE)
+    if not match:
+        raise RuntimeError(f"could not read __version__ from {version_file}")
+    return match.group(1)
+
+
+VERSION = read_canonical_version(Path(__file__).resolve().parent.parent / "scafld" / "_version.py")
 
 STATUS_FOLDERS = {
     "draft": DRAFTS_DIR,

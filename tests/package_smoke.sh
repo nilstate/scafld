@@ -4,6 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 CLI="$REPO_ROOT/cli/scafld"
+SYNC_VERSION="$REPO_ROOT/scripts/sync_version.py"
 TMP_DIRS=()
 
 cleanup() {
@@ -22,12 +23,15 @@ EXPECTED_VERSION="$(python3 "$CLI" --version | awk '{print $2}')"
 DIST_DIR="$(mktemp -d /tmp/scafld-package-smoke.XXXXXX)"
 TMP_DIRS+=("$DIST_DIR")
 
-echo "[1/4] build wheel"
+echo "[1/5] canonical version is in sync"
+python3 "$SYNC_VERSION" --check >/dev/null || fail "version sync check failed"
+
+echo "[2/5] build wheel"
 python3 -m pip wheel "$REPO_ROOT" --no-deps -w "$DIST_DIR" >/dev/null || fail "wheel build failed"
 WHEEL="$(find "$DIST_DIR" -maxdepth 1 -name "scafld-*.whl" | head -n 1)"
 [ -n "$WHEEL" ] || fail "wheel not produced"
 
-echo "[2/4] installed wheel exposes the expected version"
+echo "[3/5] installed wheel exposes the expected version"
 python3 -m venv "$DIST_DIR/venv"
 # shellcheck disable=SC1091
 source "$DIST_DIR/venv/bin/activate"
@@ -44,7 +48,7 @@ project_urls = md.get_all("Project-URL") or []
 assert "Documentation, https://0state.com/scafld/docs" in project_urls, project_urls
 PY
 
-echo "[3/4] installed wheel can init a workspace"
+echo "[4/5] installed wheel can init a workspace"
 WS="$(mktemp -d /tmp/scafld-wheel-workspace.XXXXXX)"
 TMP_DIRS+=("$WS")
 (cd "$WS" && scafld init >/dev/null) || fail "installed wheel could not init"
@@ -58,8 +62,8 @@ assert manifest["scafld_version"] == "$EXPECTED_VERSION", manifest["scafld_versi
 assert (workspace / ".ai" / "scafld" / "prompts" / "harden.md").exists()
 PY
 
-echo "[4/4] npm pack dry-run exposes the expected tarball"
-PACK_JSON="$(cd "$REPO_ROOT" && npm pack --json --dry-run)"
+echo "[5/5] npm pack dry-run exposes the expected tarball"
+PACK_JSON="$(cd "$REPO_ROOT" && npm pack --json --dry-run --silent)"
 PACK_JSON="$PACK_JSON" python3 - <<PY || fail "npm pack output did not match expected contents"
 import json
 import os
@@ -75,6 +79,7 @@ required = {
     ".ai/prompts/harden.md",
     ".ai/schemas/spec.json",
     ".ai/specs/examples/add-error-codes.yaml",
+    "scafld/_version.py",
     "AGENTS.md",
     "CLAUDE.md",
     "CONVENTIONS.md",
@@ -88,13 +93,16 @@ assert not missing, missing
 assert ".ai/scafld/manifest.json" not in files
 PY
 
-node - <<'JS' || fail "package.json metadata is missing expected homepage"
-const pkg = require("/home/kam/dev/scafld/package.json");
+PACKAGE_JSON_PATH="$REPO_ROOT/package.json" EXPECTED_VERSION="$EXPECTED_VERSION" node - <<'JS' || fail "package.json metadata is missing expected homepage"
+const pkg = require(process.env.PACKAGE_JSON_PATH);
 if (pkg.homepage !== "https://0state.com/scafld") {
   throw new Error(`homepage=${pkg.homepage}`);
 }
 if (pkg.author !== "0state") {
   throw new Error(`author=${pkg.author}`);
+}
+if (pkg.version !== process.env.EXPECTED_VERSION) {
+  throw new Error(`version=${pkg.version}`);
 }
 JS
 
