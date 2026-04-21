@@ -286,6 +286,11 @@
                   "type": "string",
                   "enum": ["create", "update", "delete", "move"]
                 },
+                "ownership": {
+                  "type": "string",
+                  "enum": ["exclusive", "shared"],
+                  "description": "Whether this file is exclusively owned by this spec (default) or intentionally shared with other active specs."
+                },
                 "move_to": {
                   "type": "string",
                   "description": "Destination path when action is 'move'"

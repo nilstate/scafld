@@ -117,6 +117,7 @@ AUDIT_IGNORED_PREFIXES = (
     f"{LOGS_DIR}/",
 )
 AUDIT_IGNORED_FILES = {CONFIG_LOCAL_PATH}
+CHANGE_OWNERSHIP_VALUES = {"exclusive", "shared"}
 
 
 def git_sync_excluded_paths():
@@ -410,9 +411,61 @@ def move_result_payload(root, move_result):
     }
 
 
+def collect_changed_files_regex(text):
+    """Collect declared files with a lightweight regex fallback."""
+    return sorted(set(re.findall(r'^\s+-\s+file:\s*"?([^"\n]+)"?', text, re.MULTILINE)))
+
+
+def normalize_change_ownership(value):
+    """Normalize one change ownership value, defaulting to exclusive."""
+    if isinstance(value, str) and value in CHANGE_OWNERSHIP_VALUES:
+        return value
+    return "exclusive"
+
+
+def collect_declared_change_map(text):
+    """Collect declared files and ownership from spec phases."""
+    try:
+        yaml = require_pyyaml()
+        data = yaml.safe_load(text) or {}
+    except Exception:
+        return {path: "exclusive" for path in collect_changed_files_regex(text)}
+
+    if not isinstance(data, dict):
+        return {}
+
+    phases = data.get("phases")
+    if not isinstance(phases, list):
+        return {}
+
+    by_file = {}
+    for phase in phases:
+        if not isinstance(phase, dict):
+            continue
+        changes = phase.get("changes")
+        if not isinstance(changes, list):
+            continue
+        for change in changes:
+            if not isinstance(change, dict):
+                continue
+            path = change.get("file")
+            if not isinstance(path, str):
+                continue
+            path = path.strip()
+            if not path:
+                continue
+            ownership = normalize_change_ownership(change.get("ownership"))
+            current = by_file.get(path)
+            if current == "exclusive" or ownership == "exclusive":
+                by_file[path] = "exclusive"
+            else:
+                by_file[path] = "shared"
+    return dict(sorted(by_file.items()))
+
+
 def collect_changed_files(text):
     """Collect unique changed files declared in spec phases."""
-    return sorted(set(re.findall(r'^\s+-\s+file:\s*"?([^"\n]+)"?', text, re.MULTILINE)))
+    return sorted(collect_declared_change_map(text))
 
 
 def filter_audit_paths(paths):
@@ -425,8 +478,8 @@ def filter_audit_paths(paths):
     }
 
 
-def active_declared_files(root, exclude_task_id=None):
-    """Collect declared file sets for other active specs."""
+def active_declared_changes(root, exclude_task_id=None):
+    """Collect declared file ownership by task for other active specs."""
     active_dir = root / ACTIVE_DIR
     declared = {}
     if not active_dir.is_dir():
@@ -437,10 +490,115 @@ def active_declared_files(root, exclude_task_id=None):
         if task_id == exclude_task_id:
             continue
         text = spec_path.read_text()
-        files = sorted({path for path in collect_changed_files(text) if path != "TODO"})
+        files = {
+            path: ownership
+            for path, ownership in collect_declared_change_map(text).items()
+            if path != "TODO"
+        }
         if files:
-            declared[task_id] = files
+            declared[task_id] = dict(sorted(files.items()))
     return declared
+
+
+def active_declared_files(root, exclude_task_id=None):
+    """Collect declared file sets for other active specs."""
+    return {
+        task_id: sorted(files)
+        for task_id, files in active_declared_changes(root, exclude_task_id=exclude_task_id).items()
+    }
+
+
+def active_changes_by_file(active_changes):
+    """Invert active change ownership by task into per-file declarations."""
+    by_file = {}
+    for task_id, files in active_changes.items():
+        for path, ownership in files.items():
+            by_file.setdefault(path, []).append({
+                "task_id": task_id,
+                "ownership": ownership,
+            })
+    for path, entries in by_file.items():
+        by_file[path] = sorted(entries, key=lambda entry: entry["task_id"])
+    return by_file
+
+
+def classify_active_overlap(declared_changes, other_active_changes):
+    """Split shared overlap from conflicting overlap across active specs."""
+    other_by_file = active_changes_by_file(other_active_changes)
+    shared_with_other_active = set()
+    active_overlap = set()
+    shared_details = {}
+    conflict_details = {}
+
+    for path, ownership in declared_changes.items():
+        overlapping = other_by_file.get(path, [])
+        if not overlapping:
+            continue
+        task_ids = [entry["task_id"] for entry in overlapping]
+        if ownership == "shared" and all(entry["ownership"] == "shared" for entry in overlapping):
+            shared_with_other_active.add(path)
+            shared_details[path] = task_ids
+        else:
+            active_overlap.add(path)
+            conflict_details[path] = task_ids
+
+    return {
+        "shared_with_other_active": shared_with_other_active,
+        "active_overlap": active_overlap,
+        "shared_details": shared_details,
+        "conflict_details": conflict_details,
+        "other_by_file": other_by_file,
+    }
+
+
+def describe_other_active_specs(path, detail_map):
+    """Format the other active specs that also declare one path."""
+    task_ids = detail_map.get(path, [])
+    return ", ".join(task_ids)
+
+
+def build_audit_file_payloads(
+    declared_changes,
+    actual,
+    covered_by_other_active,
+    shared_with_other_active,
+    active_overlap,
+    overlap_details,
+    other_by_file,
+):
+    """Build per-file structured audit payloads."""
+    files = []
+    all_paths = sorted(set(declared_changes) | set(actual))
+    for path in all_paths:
+        status = "matched"
+        if path in covered_by_other_active:
+            status = "covered_by_other_active"
+        elif path in actual and path not in declared_changes:
+            status = "undeclared"
+        elif path in declared_changes and path not in actual:
+            status = "missing"
+
+        overlap = "none"
+        if path in shared_with_other_active:
+            overlap = "shared"
+        elif path in active_overlap:
+            overlap = "conflict"
+
+        payload = {
+            "path": path,
+            "status": status,
+            "declared": path in declared_changes,
+            "changed": path in actual,
+            "overlap": overlap,
+        }
+        ownership = declared_changes.get(path)
+        if ownership:
+            payload["ownership"] = ownership
+        task_ids = overlap_details.get(path) or [entry["task_id"] for entry in other_by_file.get(path, [])]
+        if task_ids:
+            payload["other_active_specs"] = task_ids
+        files.append(payload)
+    return files
 
 
 def load_review_topology(root):
@@ -2415,6 +2573,13 @@ def validate_spec(root, spec):
             errors.append(f"{msg} ({len(matches)} occurrence{'s' if len(matches) > 1 else ''})")
             break  # One error is enough
 
+    ownership_values = re.findall(r'^\s+ownership:\s*"?([^"\n]+)"?', text, re.MULTILINE)
+    invalid_ownership = sorted({value for value in ownership_values if value not in CHANGE_OWNERSHIP_VALUES})
+    for value in invalid_ownership:
+        errors.append(
+            f"invalid change ownership: '{value}' (expected one of: {', '.join(sorted(CHANGE_OWNERSHIP_VALUES))})"
+        )
+
     return errors
 
 
@@ -3154,15 +3319,27 @@ def cmd_audit(args):
     spec = require_spec(root, args.task_id)
     text = spec.read_text()
     json_mode = bool(getattr(args, "json", False))
+    mode_label = "working tree" if not args.base else f"vs {args.base}"
 
     # Extract declared files from phases[*].changes[*].file
-    declared = {path for path in collect_changed_files(text) if path != "TODO"}
-    other_active_specs = active_declared_files(root, exclude_task_id=args.task_id)
-    other_active_declared = {
-        path
-        for files in other_active_specs.values()
-        for path in files
+    declared_changes = {
+        path: ownership
+        for path, ownership in collect_declared_change_map(text).items()
+        if path != "TODO"
     }
+    declared = set(declared_changes)
+    other_active_changes = active_declared_changes(root, exclude_task_id=args.task_id)
+    other_active_specs = {
+        task_id: sorted(files)
+        for task_id, files in other_active_changes.items()
+    }
+    overlap_state = classify_active_overlap(declared_changes, other_active_changes)
+    shared_with_other_active = overlap_state["shared_with_other_active"]
+    active_overlap = overlap_state["active_overlap"]
+    shared_details = overlap_state["shared_details"]
+    conflict_details = overlap_state["conflict_details"]
+    other_by_file = overlap_state["other_by_file"]
+    other_active_declared = set(other_by_file)
 
     if not declared:
         warning = "no files declared in spec phases"
@@ -3177,9 +3354,22 @@ def cmd_audit(args):
                     "undeclared": [],
                     "missing": [],
                     "covered_by_other_active": [],
+                    "covered_by_other_active_details": {},
+                    "shared_with_other_active": [],
+                    "shared_with_other_active_details": {},
                     "active_overlap": [],
+                    "active_overlap_details": {},
                     "other_active_specs": other_active_specs,
-                    "counts": {"declared": 0, "matched": 0, "undeclared": 0, "missing": 0, "covered_by_other_active": 0, "active_overlap": 0},
+                    "files": [],
+                    "counts": {
+                        "declared": 0,
+                        "matched": 0,
+                        "undeclared": 0,
+                        "missing": 0,
+                        "covered_by_other_active": 0,
+                        "shared_with_other_active": 0,
+                        "active_overlap": 0,
+                    },
                 },
                 warnings=[warning],
             )
@@ -3188,7 +3378,6 @@ def cmd_audit(args):
         return
 
     # Get actual changed files from git.
-    mode_label = "working tree"
     if args.base:
         actual, error = list_changed_files_against_ref(root, args.base)
         if actual is None:
@@ -3196,7 +3385,6 @@ def cmd_audit(args):
                 f"could not diff against base ref {args.base!r}",
                 [error] if error else [],
             )
-        mode_label = f"vs {args.base}"
     else:
         actual, error = list_working_tree_changed_files(root)
         if actual is None:
@@ -3207,33 +3395,6 @@ def cmd_audit(args):
 
     actual = filter_audit_paths(actual)
 
-    if not actual:
-        result = {
-            "declared": sorted(declared),
-            "matched": [],
-            "undeclared": [],
-            "missing": sorted(declared),
-            "counts": {
-                "declared": len(declared),
-                "matched": 0,
-                "undeclared": 0,
-                "missing": len(declared),
-            },
-        }
-        if json_mode:
-            emit_command_json(
-                "audit",
-                task_id=args.task_id,
-                state={"mode": mode_label},
-                result=result,
-            )
-            return
-        if args.base:
-            print(f"{c(C_DIM, f'No files changed vs {args.base}')}")
-        else:
-            print(f"{c(C_DIM, 'No files changed in working tree')}")
-        return
-
     # Scope creep: files changed but not in spec
     covered_by_other_active = (actual - declared) & other_active_declared
     undeclared = actual - declared - covered_by_other_active
@@ -3241,21 +3402,42 @@ def cmd_audit(args):
     missing = declared - actual
     # Matched
     matched = declared & actual
-    active_overlap = declared & other_active_declared
+    overlap_details = {}
+    overlap_details.update(shared_details)
+    overlap_details.update(conflict_details)
+    covered_by_other_active_details = {
+        path: [entry["task_id"] for entry in other_by_file.get(path, [])]
+        for path in covered_by_other_active
+    }
+    files = build_audit_file_payloads(
+        declared_changes,
+        actual,
+        covered_by_other_active,
+        shared_with_other_active,
+        active_overlap,
+        overlap_details,
+        other_by_file,
+    )
     result = {
         "declared": sorted(declared),
         "matched": sorted(matched),
         "undeclared": sorted(undeclared),
         "missing": sorted(missing),
         "covered_by_other_active": sorted(covered_by_other_active),
+        "covered_by_other_active_details": covered_by_other_active_details,
+        "shared_with_other_active": sorted(shared_with_other_active),
+        "shared_with_other_active_details": shared_details,
         "active_overlap": sorted(active_overlap),
+        "active_overlap_details": conflict_details,
         "other_active_specs": other_active_specs,
+        "files": files,
         "counts": {
             "declared": len(declared),
             "matched": len(matched),
             "undeclared": len(undeclared),
             "missing": len(missing),
             "covered_by_other_active": len(covered_by_other_active),
+            "shared_with_other_active": len(shared_with_other_active),
             "active_overlap": len(active_overlap),
         },
     }
@@ -3272,7 +3454,10 @@ def cmd_audit(args):
                 code="scope_drift",
                 details=(
                     [f"{path} changed but is not declared in the spec" for path in sorted(undeclared)]
-                    + [f"{path} is also declared by another active spec" for path in sorted(active_overlap)]
+                    + [
+                        f"{path} conflicts with active spec(s): {describe_other_active_specs(path, conflict_details)}"
+                        for path in sorted(active_overlap)
+                    ]
                 ),
                 exit_code=1,
             ) if undeclared or active_overlap else None,
@@ -3284,10 +3469,17 @@ def cmd_audit(args):
     print(f"{c(C_BOLD, f'Audit: {args.task_id}')} ({mode_label})")
     print()
 
+    if not actual:
+        if args.base:
+            print(f"  {c(C_DIM, f'No files changed vs {args.base}')}")
+        else:
+            print(f"  {c(C_DIM, 'No files changed in working tree')}")
+
     if matched:
         print(f"  {c(C_GREEN, 'Declared & changed')} ({len(matched)}):")
         for f in sorted(matched):
-            print(f"    {c(C_GREEN, '✓')} {f}")
+            suffix = f" [{declared_changes[f]}]" if declared_changes.get(f) != "exclusive" else ""
+            print(f"    {c(C_GREEN, '✓')} {f}{suffix}")
 
     if undeclared:
         print(f"\n  {c(C_RED, 'Scope creep - changed but not in spec')} ({len(undeclared)}):")
@@ -3297,12 +3489,23 @@ def cmd_audit(args):
     if covered_by_other_active:
         print(f"\n  {c(C_CYAN, 'Covered by other active specs')} ({len(covered_by_other_active)}):")
         for f in sorted(covered_by_other_active):
-            print(f"    {c(C_CYAN, '↷')} {f}")
+            owners = describe_other_active_specs(f, covered_by_other_active_details)
+            suffix = f" ({owners})" if owners else ""
+            print(f"    {c(C_CYAN, '↷')} {f}{suffix}")
+
+    if shared_with_other_active:
+        print(f"\n  {c(C_CYAN, 'Shared with other active specs')} ({len(shared_with_other_active)}):")
+        for f in sorted(shared_with_other_active):
+            owners = describe_other_active_specs(f, shared_details)
+            suffix = f" ({owners})" if owners else ""
+            print(f"    {c(C_CYAN, '≈')} {f}{suffix}")
 
     if active_overlap:
-        print(f"\n  {c(C_RED, 'Conflict - also declared in other active specs')} ({len(active_overlap)}):")
+        print(f"\n  {c(C_RED, 'Conflict - exclusive overlap with other active specs')} ({len(active_overlap)}):")
         for f in sorted(active_overlap):
-            print(f"    {c(C_RED, '×')} {f}")
+            owners = describe_other_active_specs(f, conflict_details)
+            suffix = f" ({owners})" if owners else ""
+            print(f"    {c(C_RED, '×')} {f}{suffix}")
 
     if missing:
         print(f"\n  {c(C_YELLOW, 'In spec but not changed')} ({len(missing)}):")
@@ -3311,14 +3514,17 @@ def cmd_audit(args):
 
     print()
     if undeclared:
-        pct = len(undeclared) / len(actual) * 100
+        pct = len(undeclared) / len(actual) * 100 if actual else 0
         print(f"  {c(C_RED, f'Scope drift: {pct:.0f}%')} ({len(undeclared)}/{len(actual)} files undeclared)")
         sys.exit(1)
     if active_overlap:
         print(f"  {c(C_RED, 'Conflict')} - {len(active_overlap)} file(s) are claimed by multiple active specs")
         sys.exit(1)
     else:
-        print(f"  {c(C_GREEN, 'Clean')} - all changes match spec")
+        if not actual:
+            print(f"  {c(C_GREEN, 'Clean')} - no scope drift detected")
+        else:
+            print(f"  {c(C_GREEN, 'Clean')} - all changes match spec")
 
 
 def cmd_diff(args):

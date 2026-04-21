@@ -96,6 +96,7 @@ phases:
     changes:                                 # 1+ required
       - file: "src/path/to/file.ts"
         action: create                       # create | update | delete | move
+        ownership: exclusive                 # optional: exclusive | shared
         move_to: "src/new/path.ts"           # required if action=move
         lines: "all"                         # optional
         content_spec: |                      # narrative description
@@ -115,6 +116,11 @@ phases:
 
     status: pending                          # pending | in_progress | completed | failed | skipped
 ```
+
+`ownership` defaults to `exclusive`. Use `shared` only for intentional
+coordination surfaces that multiple active specs may touch at the same time,
+such as shared planning docs or workflow artifacts. Audit still treats mixed
+or exclusive overlap as a conflict.
 
 ## Optional blocks
 
