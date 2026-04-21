@@ -4,10 +4,12 @@ import unittest
 from pathlib import Path
 
 from scafld.git_state import (
+    bind_task_branch,
     build_origin_sync_payload,
     capture_workspace_git_state,
     list_changed_files_against_ref,
     list_working_tree_changed_files,
+    refresh_origin_sync,
 )
 
 
@@ -118,6 +120,43 @@ class GitStateTest(unittest.TestCase):
             self.assertEqual(sync["status"], "drift")
             self.assertIn("workspace has uncommitted changes", sync["reasons"])
             self.assertTrue(any("expected feature-task" in reason for reason in sync["reasons"]))
+
+    def test_refresh_origin_sync_persists_checked_snapshot(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            init_repo(root)
+            (root / "tracked.txt").write_text("updated\n", encoding="utf-8")
+
+            origin, sync = refresh_origin_sync(
+                root,
+                {"git": {"branch": "main"}},
+                checked_at="2026-04-21T12:00:00Z",
+            )
+
+            self.assertEqual(sync["status"], "drift")
+            self.assertEqual(origin["sync"]["status"], "drift")
+            self.assertEqual(origin["sync"]["last_checked_at"], "2026-04-21T12:00:00Z")
+            self.assertIn("workspace has uncommitted changes", origin["sync"]["reasons"])
+
+    def test_bind_task_branch_creates_branch_and_records_origin(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            init_repo(root)
+
+            result = bind_task_branch(
+                root,
+                "feature-task",
+                {},
+                bound_at="2026-04-21T12:00:00Z",
+            )
+
+            self.assertEqual(result["action"], "created_branch")
+            self.assertEqual(result["branch"], "feature-task")
+            self.assertEqual(result["origin"]["git"]["branch"], "feature-task")
+            self.assertEqual(result["origin"]["git"]["mode"], "created_branch")
+            self.assertEqual(result["origin"]["sync"]["status"], "in_sync")
+            self.assertEqual(result["sync"]["status"], "in_sync")
+            self.assertEqual(git(root, "branch", "--show-current").stdout.strip(), "feature-task")
 
 
 if __name__ == "__main__":
