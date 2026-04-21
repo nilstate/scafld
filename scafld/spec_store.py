@@ -134,22 +134,31 @@ def yaml_read_nested(text, parent, field):
 
 def append_planning_log(text, summary, actor="cli"):
     """Append a planning_log entry to the spec text."""
-    entry = f'  - timestamp: "{now_iso()}"\n    actor: "{actor}"\n    summary: "{summary}"'
     if re.search(r"^planning_log:", text, re.MULTILINE):
         lines = text.splitlines(True)
         insert_idx = None
         in_log = False
+        bullet_indent = "  "
+        field_indent = "    "
         for index, line in enumerate(lines):
             if re.match(r"^planning_log:", line):
                 in_log = True
                 continue
-            if in_log and line.strip() and not line[0].isspace():
+            if not in_log or not line.strip():
+                continue
+            if re.match(r"^\s*-\s", line):
+                bullet_indent = re.match(r"^(\s*)-\s", line).group(1)
+                field_indent = bullet_indent + "  "
+                continue
+            if not line[0].isspace():
                 insert_idx = index
                 break
+        entry = f'{bullet_indent}- timestamp: "{now_iso()}"\n{field_indent}actor: "{actor}"\n{field_indent}summary: "{summary}"'
         if insert_idx is None:
             return text.rstrip("\n") + "\n" + entry + "\n"
         lines.insert(insert_idx, entry + "\n")
         return "".join(lines)
+    entry = f'  - timestamp: "{now_iso()}"\n    actor: "{actor}"\n    summary: "{summary}"'
     return text + f"\nplanning_log:\n{entry}\n"
 
 

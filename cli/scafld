@@ -634,31 +634,6 @@ def cmd_init(args):
     if not json_mode:
         print()
 
-    if not json_mode:
-        print(f"{c(C_BOLD, 'Managed bundle:')}")
-    bundle = sync_framework_bundle(project_root, scafld_dir)
-    result["bundle"] = {
-        "created": list(bundle["created"]),
-        "updated": list(bundle["updated"]),
-        "unchanged": list(bundle["unchanged"]),
-        "manifest_status": bundle["manifest_status"],
-        "manifest_path": str(bundle["manifest_path"].relative_to(project_root)),
-        "manifest": bundle["manifest"],
-    }
-    if bundle["created"]:
-        bundle_label = c(C_GREEN, "created")
-    elif bundle["updated"]:
-        bundle_label = c(C_YELLOW, "updated")
-    else:
-        bundle_label = c(C_DIM, "skip")
-    if not json_mode:
-        print(f"  {bundle_label}: {FRAMEWORK_DIR}/ ({len(bundle['created'])} files created, {len(bundle['updated'])} updated)")
-    manifest_rel = Path(FRAMEWORK_MANIFEST_PATH)
-    manifest_color = C_GREEN if bundle["manifest_status"] == "created" else C_YELLOW if bundle["manifest_status"] == "updated" else C_DIM
-    if not json_mode:
-        print(f"  {c(manifest_color, bundle['manifest_status'])}: {manifest_rel}")
-        print()
-
     # Copy framework files (config, schemas, prompts, docs)
     if not json_mode:
         print(f"{c(C_BOLD, 'Framework files:')}")
@@ -692,6 +667,33 @@ def cmd_init(args):
                 print(f"  {c(C_GREEN, 'created')}: {dest_rel}")
         result["framework_files"].append({"path": dest_rel, "action": action, "note": note})
     if not json_mode:
+        print()
+
+    # Sync the managed bundle after the legacy overlay exists so repeated
+    # `scafld init` runs do not churn the manifest on already-initialized repos.
+    if not json_mode:
+        print(f"{c(C_BOLD, 'Managed bundle:')}")
+    bundle = sync_framework_bundle(project_root, scafld_dir)
+    result["bundle"] = {
+        "created": list(bundle["created"]),
+        "updated": list(bundle["updated"]),
+        "unchanged": list(bundle["unchanged"]),
+        "manifest_status": bundle["manifest_status"],
+        "manifest_path": str(bundle["manifest_path"].relative_to(project_root)),
+        "manifest": bundle["manifest"],
+    }
+    if bundle["created"]:
+        bundle_label = c(C_GREEN, "created")
+    elif bundle["updated"]:
+        bundle_label = c(C_YELLOW, "updated")
+    else:
+        bundle_label = c(C_DIM, "skip")
+    if not json_mode:
+        print(f"  {bundle_label}: {FRAMEWORK_DIR}/ ({len(bundle['created'])} files created, {len(bundle['updated'])} updated)")
+    manifest_rel = Path(FRAMEWORK_MANIFEST_PATH)
+    manifest_color = C_GREEN if bundle["manifest_status"] == "created" else C_YELLOW if bundle["manifest_status"] == "updated" else C_DIM
+    if not json_mode:
+        print(f"  {c(manifest_color, bundle['manifest_status'])}: {manifest_rel}")
         print()
 
     # Copy example spec
