@@ -59,7 +59,11 @@ curl -fsSL https://raw.githubusercontent.com/nilstate/scafld/main/install.sh | s
 
 `pip install scafld` installs the console entry point plus the runtime bundle used by `scafld init` and `scafld update`.
 
-`npm install -g scafld` installs the same CLI package for environments that distribute tooling through npm. The CLI still requires `python3` at runtime because the executable itself is Python.
+`npm install -g scafld` installs the same CLI package for environments that distribute tooling through npm. The CLI still requires `python3` at runtime because the executable itself is Python. Commands that edit YAML specs, such as `scafld harden`, also need `PyYAML` available in that Python runtime:
+
+```bash
+python3 -m pip install PyYAML
+```
 
 The git install clones scafld to `~/.scafld` and symlinks the `scafld` command to `~/.local/bin/`.
 
@@ -74,11 +78,11 @@ To refresh every scafld workspace under a development tree: `scafld update --sca
 The canonical release version lives in `scafld/_version.py`. Everything else derives from that.
 
 ```bash
-python3 scripts/bump_version.py 1.4.3
+python3 scripts/bump_version.py X.Y.Z
 python3 scripts/sync_version.py --check
-git commit -am "Release v1.4.3"
-git tag v1.4.3
-git push origin main v1.4.3
+git commit -am "Release vX.Y.Z"
+git tag vX.Y.Z
+git push origin main vX.Y.Z
 ```
 
 Pushing the tag triggers the release workflow, which validates the tree, builds both packages, publishes to PyPI and npm, and creates the GitHub release.

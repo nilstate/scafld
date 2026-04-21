@@ -46,6 +46,8 @@ assert md["Home-page"] == "https://0state.com/scafld", md["Home-page"]
 assert md["Author"] == "0state", md["Author"]
 project_urls = md.get_all("Project-URL") or []
 assert "Documentation, https://0state.com/scafld/docs" in project_urls, project_urls
+requires = md.get_all("Requires-Dist") or []
+assert any(req.startswith("PyYAML") for req in requires), requires
 PY
 
 echo "[4/5] installed wheel can init a workspace"

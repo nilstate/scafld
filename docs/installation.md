@@ -18,13 +18,19 @@ Install from PyPI:
 pip install scafld
 ```
 
+The PyPI package installs `PyYAML` automatically as a runtime dependency.
+
 Install from npm:
 
 ```bash
 npm install -g scafld
 ```
 
-The npm package ships the same CLI/runtime bundle, but the executable still requires `python3` at runtime.
+The npm package ships the same CLI/runtime bundle, but the executable still requires `python3` at runtime. Commands that edit YAML specs, such as `scafld harden`, also need `PyYAML` installed in that Python runtime:
+
+```bash
+python3 -m pip install PyYAML
+```
 
 Clone the repo and run the install script:
 
