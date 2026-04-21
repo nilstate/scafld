@@ -1,9 +1,15 @@
 {
   "name": "scafld",
-  "version": "1.4.2",
+  "version": "1.4.3",
   "description": "Spec-driven development framework for AI coding agents",
   "author": "0state",
   "license": "MIT",
+  "scripts": {
+    "version:bump": "python3 scripts/bump_version.py",
+    "version:check": "python3 scripts/sync_version.py --check",
+    "version:sync": "python3 scripts/sync_version.py --write",
+    "prepack": "python3 scripts/sync_version.py --check --quiet"
+  },
   "homepage": "https://0state.com/scafld",
   "repository": {
     "type": "git",
@@ -24,6 +30,7 @@
     ".ai/schemas",
     ".ai/specs/README.md",
     ".ai/specs/examples",
+    "scafld/_version.py",
     "AGENTS.md",
     "CLAUDE.md",
     "CONVENTIONS.md",

@@ -1,6 +1,12 @@
 # Python
 __pycache__/
 *.pyc
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
 build/
 dist/
 *.egg-info/
@@ -14,5 +20,6 @@ Thumbs.db
 .ai/logs/
 .ai/reviews/
 .ai/scafld/
+docs/node_modules/
 
 .runx

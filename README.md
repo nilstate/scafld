@@ -69,6 +69,20 @@ To refresh the managed bundle in the current workspace: `scafld update`
 
 To refresh every scafld workspace under a development tree: `scafld update --scan-root ~/dev`
 
+## Release
+
+The canonical release version lives in `scafld/_version.py`. Everything else derives from that.
+
+```bash
+python3 scripts/bump_version.py 1.4.3
+python3 scripts/sync_version.py --check
+git commit -am "Release v1.4.3"
+git tag v1.4.3
+git push origin main v1.4.3
+```
+
+Pushing the tag triggers the release workflow, which validates the tree, builds both packages, publishes to PyPI and npm, and creates the GitHub release.
+
 ## Setup
 
 ```bash

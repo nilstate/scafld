@@ -8,28 +8,44 @@ on:
 
 jobs:
   review-gate-smoke:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          package-manager-cache: false
+
       - name: Validate CLI syntax
-        run: PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile cli/scafld
+        run: PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile cli/scafld scafld/__init__.py scafld/__main__.py scafld/_version.py scripts/sync_version.py scripts/bump_version.py setup.py
+
+      - name: Validate version sync
+        run: python3 scripts/sync_version.py --check
 
       - name: Validate smoke harness syntax
-        run: bash -n tests/review_gate_smoke.sh
+        run: |
+          bash -n tests/review_gate_smoke.sh
+          bash -n tests/harden_smoke.sh
+          bash -n tests/update_smoke.sh
+          bash -n tests/package_smoke.sh
 
       - name: Run review gate smoke matrix
         run: ./tests/review_gate_smoke.sh all
 
-      - name: Validate harden smoke harness syntax
-        run: bash -n tests/harden_smoke.sh
-
       - name: Run harden smoke
         run: ./tests/harden_smoke.sh
+
+      - name: Run update smoke
+        run: ./tests/update_smoke.sh
+
+      - name: Run package smoke
+        run: ./tests/package_smoke.sh
