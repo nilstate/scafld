@@ -98,7 +98,7 @@ jobs:
     needs: build
     runs-on: ubuntu-24.04
     permissions:
-      id-token: write
+      contents: read
 
     steps:
       - name: Download release artifacts
@@ -111,6 +111,7 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: release-artifacts/dist
+          password: ${{ secrets.PYPI_API_TOKEN }}
           skip-existing: true
 
   publish-npm:
