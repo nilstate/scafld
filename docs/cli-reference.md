@@ -98,6 +98,10 @@ scafld status <task-id> [--json]
 
 Displays title, location, current status, phase progress, and last updated timestamp.
 
+When the spec contains `origin` metadata, the human view also shows the source
+reference, bound branch/base, binding mode, remote, and current sync status so
+an operator can understand the git/PR context without switching to `--json`.
+
 JSON mode also exposes the spec's stored `origin` block plus a live `sync`
 payload showing current branch, head SHA, and any git drift reasons.
 

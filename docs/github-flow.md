@@ -12,26 +12,130 @@ That distinction matters. The spec, review artifact, origin binding, and sync
 state remain the source of truth. PR bodies, issue comments, and CI checks are
 deterministic projections of that source state, not a second workflow object.
 
-## Core flow
+## What belongs in scafld
+
+scafld owns the local engineering state:
+
+- what the task is
+- what branch it is bound to
+- whether the workspace drifted
+- whether review passed
+- how much acceptance work is done
+
+GitHub-facing tools should project that state outward. They should not rebuild
+it from markdown scraping, branch-name conventions, or extra wrapper-only task
+objects.
+
+## Issue -> Branch -> Review -> PR
+
+The happy path looks like this:
 
 ```bash
+scafld new add-auth -t "Add auth middleware"
+scafld approve add-auth
+scafld start add-auth
 scafld branch add-auth
+scafld status add-auth
+scafld exec add-auth
+scafld review add-auth
 scafld summary add-auth
 scafld checks add-auth --json
 scafld pr-body add-auth
 ```
 
-- `branch` binds the task to the working branch and records repo/base/upstream
-  facts in `origin`
-- `summary` renders concise markdown for issue comments, chat updates, or job
-  summaries
-- `checks --json` emits CI-friendly status/detail fields without terminal
-  scraping
-- `pr-body` renders a deterministic pull-request body from the same spec state
+That sequence is enough to drive local work, issue updates, CI checks, and PR
+body generation from one spec.
 
-## Example CI usage
+## 1. Record the issue source
 
-Inside GitHub Actions or another local CI runner:
+scafld itself does not fetch GitHub issues. A wrapper such as runx, or a human,
+can stamp provider metadata into `origin.source` when a task starts.
+
+Example:
+
+```yaml
+origin:
+  source:
+    system: "github"
+    kind: "issue"
+    id: "123"
+    title: "Add auth middleware"
+    url: "https://github.com/org/repo/issues/123"
+```
+
+That tells the rest of the workflow what this task came from without making
+scafld depend on the GitHub API.
+
+## 2. Bind the task to a branch
+
+Use `scafld branch` to create or bind the working branch and record the git
+binding in the spec:
+
+```bash
+scafld branch add-auth
+```
+
+After that, `scafld status` should tell a human operator what this task is tied
+to without needing `--json`:
+
+```text
+Add Auth Middleware
+     id: add-auth
+   file: .ai/specs/active/add-auth.yaml
+ status: in_progress
+ phases: 1 active / 2 pending  (3 total)
+ source: github issue #123 - Add auth middleware
+    url: https://github.com/org/repo/issues/123
+ branch: add-auth  base: origin/main
+upstream: origin/add-auth
+binding: created branch
+ remote: origin
+   sync: in_sync
+updated: 2026-04-21T10:00:00Z
+```
+
+The important point is not the exact spacing. The important point is that the
+human surface now answers:
+
+- what upstream issue this task came from
+- what branch is bound
+- whether the branch was created, rebound, or checked out
+- whether the workspace is still in sync
+
+## 3. Execute and review locally
+
+The branch is not the workflow object. The spec is. Keep driving the task
+through the spec lifecycle:
+
+```bash
+scafld exec add-auth
+scafld review add-auth
+```
+
+At that point scafld owns the information GitHub projections need:
+
+- acceptance progress
+- review verdict and findings
+- branch/base/upstream binding
+- sync drift reasons, if any
+
+## 4. Publish the issue update
+
+Use `summary` for issue comments, chat updates, or job summaries:
+
+```bash
+scafld summary add-auth
+```
+
+The markdown is concise on purpose. It tells outside systems what matters
+without inventing another summary format.
+
+Wrappers should publish that markdown directly or consume `summary --json` if
+they need both the rendered markdown and the underlying projection model.
+
+## 5. Publish the CI check
+
+Use `checks --json` inside GitHub Actions or any other CI runner:
 
 ```bash
 scafld checks add-auth --json > /tmp/scafld-check.json
@@ -49,7 +153,7 @@ PY
 That is the whole point of the projection layer: CI consumes structured fields
 that already exist natively in scafld.
 
-## PR body generation
+## 6. Publish the PR body
 
 Use the rendered body directly:
 
@@ -69,14 +173,16 @@ The output carries:
 Because it is generated from the live spec state, it stays aligned with the
 actual engineering work instead of depending on hand-maintained PR prose.
 
-## Wrapper boundary
+## 7. Keep wrappers thin
 
 Wrappers such as runx should stay thin here:
 
+- record issue metadata in `origin.source`
 - call native scafld commands
 - consume native JSON envelopes
 - publish the rendered markdown or structured check payloads
-- avoid rebuilding task/review/origin logic from file paths or markdown parsing
+- avoid rebuilding task, review, or git-binding logic from file paths or
+  markdown parsing
 
 That is how scafld stops feeling like an extra system and starts feeling like
 the engineering system.

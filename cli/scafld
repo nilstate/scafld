@@ -1209,6 +1209,50 @@ def build_projection_model(root, spec, task_id):
     })
 
 
+def summarize_origin_source(origin):
+    """Render one concise human-readable origin source summary."""
+    source = origin.get("source") if isinstance(origin.get("source"), dict) else {}
+    if not source:
+        return None
+
+    system = source.get("system")
+    kind = source.get("kind")
+    identifier = source.get("id")
+    title = source.get("title")
+    url = source.get("url")
+
+    parts = []
+    if isinstance(system, str) and system:
+        parts.append(system)
+    if isinstance(kind, str) and kind:
+        parts.append(kind)
+    if identifier not in (None, ""):
+        ident_text = str(identifier).strip()
+        if kind in ("issue", "pr") and ident_text.isdigit():
+            ident_text = f"#{ident_text}"
+        if ident_text:
+            parts.append(ident_text)
+
+    summary = " ".join(parts)
+    if isinstance(title, str) and title:
+        return f"{summary} - {title}" if summary else title
+    if summary:
+        return summary
+    if isinstance(url, str) and url:
+        return url
+    return None
+
+
+def humanize_binding_mode(mode):
+    """Render one branch-binding mode for humans."""
+    labels = {
+        "created_branch": "created branch",
+        "checked_out_existing": "checked out existing branch",
+        "bound_current": "bound current branch",
+    }
+    return labels.get(mode, mode)
+
+
 def cmd_status(args):
     """Show status of a spec."""
     root = require_root()
@@ -1278,10 +1322,24 @@ def cmd_status(args):
         if pending > 0:
             phase_parts.append(c(C_DIM, f"{pending} pending"))
         print(f" phases: {' / '.join(phase_parts)}  ({total} total)")
+    source_summary = summarize_origin_source(origin)
+    source = origin.get("source") if isinstance(origin.get("source"), dict) else {}
+    repo_binding = origin.get("repo") if isinstance(origin.get("repo"), dict) else {}
     git_binding = origin.get("git") if isinstance(origin.get("git"), dict) else {}
+    if source_summary:
+        print(f" source: {source_summary}")
+    source_url = source.get("url") if isinstance(source.get("url"), str) else None
+    if source_url and source_url != source_summary:
+        print(f"    url: {c(C_DIM, source_url)}")
     if git_binding.get("branch"):
         base_display = git_binding.get("base_ref") or "unknown"
         print(f" branch: {git_binding['branch']}  base: {base_display}")
+    if git_binding.get("upstream"):
+        print(f"upstream: {git_binding['upstream']}")
+    if git_binding.get("mode"):
+        print(f"binding: {humanize_binding_mode(git_binding['mode'])}")
+    if repo_binding.get("remote"):
+        print(f" remote: {repo_binding['remote']}")
     if sync.get("status") != "unbound":
         sync_color = {
             "in_sync": C_GREEN,

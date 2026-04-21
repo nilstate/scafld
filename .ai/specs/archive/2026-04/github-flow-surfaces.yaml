@@ -1,0 +1,162 @@
+spec_version: "1.1"
+task_id: "github-flow-surfaces"
+created: "2026-04-21T11:19:03Z"
+updated: "2026-04-21T11:24:46Z"
+status: "completed"
+harden_status: "not_run"
+
+task:
+  title: "Polish GitHub flow surfaces"
+  summary: >
+    Make the git/PR/issue projection story legible to both humans and wrappers.
+    Today `docs/github-flow.md` is still too thin to prove the intended
+    engineering-system workflow, and human `scafld status` omits the origin
+    source metadata that explains what branch binding is actually tied to. This
+    round should expand the docs into a real issue-to-PR walkthrough, surface
+    source/binding context in the terminal status view, and prove the new human
+    output in the existing git-origin smoke.
+  size: "small"
+  risk_level: "medium"
+  context:
+    packages:
+      - "cli"
+      - "docs"
+      - "tests"
+    invariants:
+      - "domain_boundaries"
+      - "human_output_remains_default"
+      - "spec_remains_the_single_source_of_truth"
+      - "wrappers_stay_thin"
+  objectives:
+    - "Show source and binding facts in human `scafld status` when origin metadata exists."
+    - "Expand the GitHub flow documentation into a concrete issue-to-branch-to-review-to-PR walkthrough."
+    - "Prove the human status surface in smoke coverage so the docs match real operator output."
+  touchpoints:
+    - area: "cli/scafld"
+      description: "Render source, binding mode, and upstream context in the human status output."
+    - area: "docs/github-flow.md"
+      description: "Document the complete GitHub-facing flow with end-to-end examples."
+    - area: "docs/cli-reference.md"
+      description: "Document the richer human status surface."
+    - area: "tests/git_origin_smoke.sh"
+      description: "Assert the new human status lines in a real git workspace."
+  acceptance:
+    definition_of_done:
+      - id: "dod1"
+        description: "Human `scafld status` shows origin source and binding context when present."
+        status: "done"
+      - id: "dod2"
+        description: "`docs/github-flow.md` contains a concrete issue-to-PR walkthrough rather than a thin command list."
+        status: "done"
+      - id: "dod3"
+        description: "Smoke coverage proves the human status surface in a git-bound task fixture."
+        status: "done"
+    validation:
+      - id: "v1"
+        type: "integration"
+        description: "Git origin smoke passes with the richer human status surface."
+        command: "./tests/git_origin_smoke.sh"
+        expected: "exit code 0"
+        timeout_seconds: 240
+      - id: "v2"
+        type: "documentation"
+        description: "GitHub flow doc includes the end-to-end workflow sections."
+        command: "grep -En -- \"Issue -> Branch -> Review -> PR|scafld status|scafld checks|scafld pr-body\" docs/github-flow.md"
+        expected: "exit code 0"
+        timeout_seconds: 60
+
+planning_log:
+  - timestamp: "2026-04-21T11:19:03Z"
+    actor: "user"
+    summary: "Spec created via scafld new"
+  - timestamp: "2026-04-21T11:20:00Z"
+    actor: "assistant"
+    summary: "Expanded the draft into a focused GitHub-flow ergonomics slice covering human status output, docs, and smoke proof."
+
+  - timestamp: "2026-04-21T11:20:44Z"
+    actor: "cli"
+    summary: "Spec approved"
+  - timestamp: "2026-04-21T11:21:05Z"
+    actor: "cli"
+    summary: "Execution started"
+  - timestamp: "2026-04-21T11:24:46Z"
+    actor: "cli"
+    summary: "Spec completed"
+phases:
+  - id: "phase1"
+    name: "Show GitHub Flow Clearly"
+    objective: "Make the local status surface and GitHub flow docs reflect the real branch-bound workflow."
+    changes:
+      - file: "cli/scafld"
+        action: "update"
+        content_spec: |
+          Extend human `scafld status` to render origin source facts and richer
+          binding context without changing the machine-facing JSON contract.
+      - file: "docs/github-flow.md"
+        action: "update"
+        content_spec: |
+          Replace the thin overview with an end-to-end issue-to-branch-to-review
+          to summary/checks/pr-body walkthrough grounded in the native scafld
+          commands.
+      - file: "docs/cli-reference.md"
+        action: "update"
+        content_spec: |
+          Document the richer human `status` view alongside the existing JSON
+          contract notes.
+      - file: "tests/git_origin_smoke.sh"
+        action: "update"
+        content_spec: |
+          Add a fixture origin source and assert that human `scafld status`
+          shows the new source/binding lines.
+    acceptance_criteria:
+      - id: "ac1_1"
+        type: "integration"
+        description: "Git origin smoke passes with the richer human status surface."
+        command: "./tests/git_origin_smoke.sh"
+        expected: "exit code 0"
+        timeout_seconds: 240
+        result: "pass"
+        executed_at: "2026-04-21T11:24:07Z"
+        result_output: "[1/8] init workspace and baseline commit [2/8] branch --json creates a task branch and records origin metadata [3/8] human status surfaces source and binding context [4/8] status --json surfaces origi"
+      - id: "ac1_2"
+        type: "documentation"
+        description: "GitHub flow doc includes the end-to-end workflow sections."
+        command: "grep -En -- \"Issue -> Branch -> Review -> PR|scafld status|scafld checks|scafld pr-body\" docs/github-flow.md"
+        expected: "exit code 0"
+        timeout_seconds: 60
+        result: "pass"
+        executed_at: "2026-04-21T11:24:07Z"
+        result_output: "29:## Issue -> Branch -> Review -> PR 38:scafld status add-auth 42:scafld checks add-auth --json 43:scafld pr-body add-auth 78:After that, `scafld status` should tell a human operator what this task i"
+    status: "completed"
+
+rollback:
+  strategy: "per_phase"
+  commands:
+    phase1: "git checkout HEAD -- cli/scafld docs/github-flow.md docs/cli-reference.md tests/git_origin_smoke.sh"
+
+review:
+  timestamp: "2026-04-21T11:24:16Z"
+  verdict: "pass"
+  review_rounds: 1
+  reviewer_mode: "executor"
+  reviewer_session: ""
+  round_status: "completed"
+  override_applied: false
+  override_reason: null
+  override_confirmed_at: null
+  reviewed_head: "60c2aa7707f702f5472f385e723bce12e00e583d"
+  reviewed_dirty: true
+  reviewed_diff: "029219252e73e10eaa404b8e00995f6f2b29b5b44ec27128a7f7772a1d1030fc"
+  passes:
+    - id: spec_compliance
+      result: "pass"
+    - id: scope_drift
+      result: "pass"
+    - id: regression_hunt
+      result: "pass"
+    - id: convention_check
+      result: "pass"
+    - id: dark_patterns
+      result: "pass"
+  blocking_count: 0
+  non_blocking_count: 0
