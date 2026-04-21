@@ -21,6 +21,11 @@ system bolted on beside Git, pull requests, issues, and CI. That is why the
 workflow object stays in the spec while commands such as `summary`, `checks`,
 and `pr-body` project the same truth onto normal engineering surfaces.
 
+If an outer system keeps its own receipts, journals, or pushed outputs, that
+state should stay outside scafld. scafld owns the repo-local workflow object
+and emits projections; wrappers can publish or record those projections without
+mirroring wrapper-managed state back into the spec.
+
 ```text
 User Request
     |

@@ -11,6 +11,8 @@ state GitHub-facing tools should publish.
 That distinction matters. The spec, review artifact, origin binding, and sync
 state remain the source of truth. PR bodies, issue comments, and CI checks are
 deterministic projections of that source state, not a second workflow object.
+If a wrapper keeps its own receipts, journals, or pushed outputs, those records
+live outside scafld and consume the projections scafld emits.
 
 ## What belongs in scafld
 
@@ -131,7 +133,9 @@ The markdown is concise on purpose. It tells outside systems what matters
 without inventing another summary format.
 
 Wrappers should publish that markdown directly or consume `summary --json` if
-they need both the rendered markdown and the underlying projection model.
+they need both the rendered markdown and the underlying projection model. JSON
+mode includes `result.projection.surface = engineering_summary` so wrappers can
+route it without guessing.
 
 ## 5. Publish the CI check
 
@@ -152,6 +156,8 @@ PY
 
 That is the whole point of the projection layer: CI consumes structured fields
 that already exist natively in scafld.
+`checks --json` also includes `result.projection.surface = ci_check` for
+callers that map scafld projections into their own output records.
 
 ## 6. Publish the PR body
 
@@ -172,6 +178,8 @@ The output carries:
 
 Because it is generated from the live spec state, it stays aligned with the
 actual engineering work instead of depending on hand-maintained PR prose.
+`pr-body --json` includes `result.projection.surface = pull_request_body` for
+the same reason.
 
 ## 7. Keep wrappers thin
 
@@ -180,6 +188,10 @@ Wrappers such as runx should stay thin here:
 - record issue metadata in `origin.source`
 - call native scafld commands
 - consume native JSON envelopes
+- map `summary`, `checks`, and `pr-body` into wrapper-owned output objects or
+  upstream push calls when needed
+- keep receipts, journals, and pushed-output identifiers outside the scafld
+  spec
 - publish the rendered markdown or structured check payloads
 - avoid rebuilding task, review, or git-binding logic from file paths or
   markdown parsing

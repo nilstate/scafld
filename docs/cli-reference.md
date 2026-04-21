@@ -224,6 +224,8 @@ scafld summary <task-id> [--json]
 Default output is markdown suitable for issue comments, chat updates, or CI job
 summaries. JSON mode returns the same projection model plus the rendered
 markdown block so wrappers do not have to reformat task state themselves.
+`result.projection` identifies the intended downstream surface as
+`engineering_summary`.
 
 ## scafld checks
 
@@ -242,6 +244,7 @@ The check status is:
 
 JSON mode returns:
 
+- `result.projection` describing the intended downstream surface (`ci_check`)
 - the full projection model
 - `check.status`, `check.summary`, and `check.details`
 - a markdown summary derived from the same model
@@ -258,7 +261,8 @@ scafld pr-body <task-id> [--json]
 
 The body includes workflow state, current branch/sync details, review state,
 acceptance progress, objectives, and risk notes. JSON mode returns both the
-underlying model and the rendered markdown.
+underlying model and the rendered markdown, plus `result.projection` with the
+intended downstream surface (`pull_request_body`).
 
 ## scafld exec
 

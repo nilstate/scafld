@@ -56,6 +56,25 @@ def emit_cli_error(error, colorize=None, red_code="", stream=None):
         stream.write(f"  {detail}\n")
 
 
+def projection_metadata(command):
+    """Describe the intended downstream surface for one projection command."""
+    descriptors = {
+        "summary": {
+            "surface": "engineering_summary",
+            "rendering": "markdown",
+        },
+        "checks": {
+            "surface": "ci_check",
+            "rendering": "json",
+        },
+        "pr-body": {
+            "surface": "pull_request_body",
+            "rendering": "markdown",
+        },
+    }
+    return dict(descriptors.get(command, {"surface": "projection", "rendering": "json"}))
+
+
 def projection_check(model):
     """Derive a CI-friendly check payload from one projection model."""
     review = model.get("review") or {}
