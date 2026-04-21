@@ -105,6 +105,8 @@ CONVENTIONS.md           # Coding standards
 
 The `.ai/specs/` directory and `AGENTS.md` should be committed to version control. Specs are project artifacts, not personal notes.
 
+When `scafld init` sees common repo markers such as `package.json`, lockfiles, `pyproject.toml`, or `requirements.txt`, it now seeds `.ai/config.local.yaml` with suggested build, test, lint, and typecheck commands. Unknown repo shapes keep the existing safe placeholder commands.
+
 ## Configuration
 
 scafld uses two config files in `.ai/`:

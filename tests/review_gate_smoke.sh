@@ -207,6 +207,36 @@ pass_label() {
   esac
 }
 
+inject_review_git_state() {
+  local repo="$1"
+  local task_id="$2"
+  REVIEW_REPO="$repo" REVIEW_TASK_ID="$task_id" CLI_SCRIPT="$REPO_ROOT/cli/scafld" python3 - <<'PY'
+import json
+import os
+import pathlib
+import re
+import runpy
+
+repo = pathlib.Path(os.environ["REVIEW_REPO"])
+task_id = os.environ["REVIEW_TASK_ID"]
+namespace = runpy.run_path(os.environ["CLI_SCRIPT"])
+state, error = namespace["capture_review_git_state"](repo, f".ai/reviews/{task_id}.md")
+if error:
+    raise SystemExit(error)
+
+review_path = repo / ".ai" / "reviews" / f"{task_id}.md"
+text = review_path.read_text()
+matches = list(re.finditer(r"```json\s*\n(.*?)\n```", text, re.DOTALL))
+if not matches:
+    raise SystemExit("review metadata JSON block not found")
+
+metadata_match = matches[-1]
+metadata = json.loads(metadata_match.group(1))
+metadata.update(state)
+review_path.write_text(text[:metadata_match.start(1)] + json.dumps(metadata, indent=2) + text[metadata_match.end(1):])
+PY
+}
+
 write_review_v3() {
   local repo="$1"
   local task_id="$2"
@@ -283,6 +313,7 @@ $non_blocking_body
 ### Verdict
 $verdict
 EOF
+  inject_review_git_state "$repo" "$task_id"
 }
 
 write_review_without_metadata() {
@@ -359,6 +390,9 @@ case_review_pass_topology() {
 
   assert_contains "$review_text" '"schema_version": 3' "review metadata should use schema_version 3"
   assert_contains "$review_text" '"round_status": "in_progress"' "review metadata should start in_progress"
+  assert_contains "$review_text" '"reviewed_head": "' "review metadata should record the reviewed commit"
+  assert_contains "$review_text" '"reviewed_dirty": true' "review metadata should record dirty workspace state"
+  assert_contains "$review_text" '"reviewed_diff": "' "review metadata should record the reviewed workspace fingerprint"
   assert_contains "$review_text" '"pass_results": {' "review metadata should include pass_results"
   assert_contains "$review_text" '"convention_check": "not_run"' "adversarial pass results should be scaffolded"
   assert_file_order "$review_file" "- convention_check: NOT RUN" "- regression_hunt: NOT RUN" "pass results should follow configured order"
@@ -447,6 +481,7 @@ None.
 ### Verdict
 pass_with_issues
 EOF
+  inject_review_git_state "$repo" "$task_id"
 
   if capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld complete '$task_id'"; then
     fail "complete should reject review files that miss configured section titles"
@@ -511,6 +546,7 @@ None.
 ### Verdict
 pass_with_issues
 EOF
+  inject_review_git_state "$repo" "$task_id"
 
   capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld complete '$task_id'"
   archive_path="$(archive_spec_path "$repo" "$task_id")"
@@ -521,6 +557,34 @@ EOF
   assert_contains "$spec_text" '- id: convention_check' "archived spec should record the configured adversarial passes"
   assert_contains "$spec_text" '- id: dark_patterns' "archived spec should record the configured adversarial passes"
   assert_contains "$spec_text" 'result: "pass_with_issues"' "archived spec should preserve per-pass results"
+}
+
+case_review_git_binding() {
+  local repo task_id output archive_path spec_text
+  repo="$(new_repo)"
+  task_id="review-git-binding"
+  write_changed_file "$repo"
+  write_active_spec "$repo" "$task_id" "grep -q '^changed$' app.txt" "exit code 0" "pass"
+  write_review_v3 \
+    "$repo" "$task_id" "pass" "fresh_agent" "completed" \
+    "pass" "pass" "pass" "pass" "pass" \
+    "No issues found — checked callers of app.txt." \
+    "No issues found — checked AGENTS.md and CONVENTIONS.md." \
+    "No issues found — checked hardcodes and null handling." \
+    "None." "None."
+
+  printf 'changed again\n' > "$repo/app.txt"
+  if capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld complete '$task_id'"; then
+    fail "complete should reject reviews after the workspace changes"
+  fi
+  assert_contains "$output" "current workspace no longer matches the reviewed git state" "complete should block when the reviewed diff no longer matches"
+
+  capture output bash -lc "cd '$repo' && printf '%s\n' '$task_id' | script -qefc 'PATH='\''$CLI_ROOT'\'':\"\$PATH\" scafld complete '\''$task_id'\'' --human-reviewed --reason '\''manual audit'\''' /dev/null"
+  archive_path="$(archive_spec_path "$repo" "$task_id")"
+  [ -n "$archive_path" ] || fail "override should archive a git-bound review"
+  spec_text="$(cat "$archive_path")"
+  assert_contains "$spec_text" 'reviewed_head: "' "archived spec should record the reviewed commit"
+  assert_contains "$spec_text" 'reviewed_diff: "' "archived spec should record the reviewed workspace fingerprint"
 }
 
 case_human_override() {
@@ -1007,6 +1071,7 @@ case_all() {
   case_review_pass_topology
   case_review_scaffold_topology
   case_review_complete_topology
+  case_review_git_binding
   case_human_override
   case_duplicate_task_id
   case_failed_review_round
@@ -1028,6 +1093,7 @@ main() {
     review-pass-topology) case_review_pass_topology ;;
     review-scaffold-topology) case_review_scaffold_topology ;;
     review-complete-topology) case_review_complete_topology ;;
+    review-git-binding) case_review_git_binding ;;
     human-override) case_human_override ;;
     duplicate-task-id) case_duplicate_task_id ;;
     failed-review-round) case_failed_review_round ;;

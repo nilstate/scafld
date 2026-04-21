@@ -34,6 +34,8 @@ Creates `.ai/reviews/{task-id}.md` with a Review Artifact v3 structure. This sca
 
 A reviewer (ideally a fresh agent session) fills in these sections with findings, each citing a specific file and line.
 
+The scaffolded metadata also binds the review to the git state that was actually reviewed: current `HEAD`, whether the workspace was dirty, and a fingerprint of staged, unstaged, and untracked changes. The review file itself is excluded from that fingerprint so writing findings does not invalidate the review.
+
 ## Review artifact format
 
 The review file at `.ai/reviews/{task-id}.md` contains metadata and findings:
@@ -45,6 +47,9 @@ The review file at `.ai/reviews/{task-id}.md` contains metadata and findings:
   "reviewer_mode": "fresh_agent",
   "reviewer_session": "",
   "reviewed_at": "2026-04-16T12:00:00Z",
+  "reviewed_head": "0123456789abcdef0123456789abcdef01234567",
+  "reviewed_dirty": true,
+  "reviewed_diff": "8e2e0f2d5fe2a5e6db5a5f9e4d63ed1f4996f2d2cdece9d89a43be9b6f21a1a3",
   "pass_results": {
     "spec_compliance": "pass",
     "scope_drift": "pass",
@@ -75,6 +80,8 @@ This reads the latest review round and gates on:
 
 - Review file exists
 - Latest round has `round_status: completed`
+- Review metadata includes the reviewed git state
+- Current `HEAD` and workspace fingerprint still match what was reviewed
 - All adversarial sections have content
 - Verdict is `pass` or `pass_with_issues`
 
@@ -93,6 +100,7 @@ This requires:
 - Explicit confirmation (you type the task-id to confirm)
 - Re-runs automated passes if not already passed
 - Creates an override review round with `reviewer_mode: human_override`
+- Records the current reviewed git state in the override round as audit evidence
 
 The override is audited -- the reason and timestamp are recorded in the review file.
 

@@ -121,6 +121,7 @@ your-project/
 2. **CONVENTIONS.md** - Your tech stack, naming conventions, testing patterns
 3. **CLAUDE.md** - Project overview, essential commands, agent-specific tips
 4. **`.ai/config.local.yaml`** - Your build/test/lint commands (merges on top of config.yaml)
+   `scafld init` now pre-populates this file from common Node and Python repo markers when it can, then falls back to safe placeholders when it cannot.
 
 ## Project Structure
 

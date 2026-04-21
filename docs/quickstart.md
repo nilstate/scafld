@@ -12,6 +12,8 @@ cd your-project
 scafld init
 ```
 
+`scafld init` will suggest starter commands in `.ai/config.local.yaml` when it recognizes common Node or Python repo markers. Review them before relying on them.
+
 ## Create a spec
 
 ```bash
@@ -120,6 +122,16 @@ scafld report
 ```
 
 Prints aggregate statistics: pass rates, self-eval scores, size/risk distributions, monthly activity.
+
+The report now also includes triage sections for stale drafts, approved specs waiting to start, active specs with no exec evidence, and review drift.
+
+## Verify the workflow
+
+```bash
+bash tests/lifecycle_smoke.sh
+```
+
+This end-to-end smoke test exercises the happy path from `init` through `complete` and verifies that `report` still surfaces actionable triage.
 
 ## Next steps
 
