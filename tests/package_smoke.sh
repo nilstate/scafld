@@ -34,6 +34,15 @@ source "$DIST_DIR/venv/bin/activate"
 pip install --no-deps "$WHEEL" >/dev/null || fail "wheel install failed"
 output="$(scafld --version)"
 [[ "$output" == "scafld $EXPECTED_VERSION" ]] || fail "installed wheel reported '$output'"
+python3 - <<PY || fail "installed wheel metadata is missing expected homepage"
+from importlib import metadata
+
+md = metadata.metadata("scafld")
+assert md["Home-page"] == "https://0state.com/scafld", md["Home-page"]
+assert md["Author"] == "0state", md["Author"]
+project_urls = md.get_all("Project-URL") or []
+assert "Documentation, https://0state.com/scafld/docs" in project_urls, project_urls
+PY
 
 echo "[3/4] installed wheel can init a workspace"
 WS="$(mktemp -d /tmp/scafld-wheel-workspace.XXXXXX)"
@@ -78,5 +87,15 @@ missing = sorted(required - files)
 assert not missing, missing
 assert ".ai/scafld/manifest.json" not in files
 PY
+
+node - <<'JS' || fail "package.json metadata is missing expected homepage"
+const pkg = require("/home/kam/dev/scafld/package.json");
+if (pkg.homepage !== "https://0state.com/scafld") {
+  throw new Error(`homepage=${pkg.homepage}`);
+}
+if (pkg.author !== "0state") {
+  throw new Error(`author=${pkg.author}`);
+}
+JS
 
 echo "PASS: package smoke"

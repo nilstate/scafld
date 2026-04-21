@@ -55,12 +55,17 @@ setup(
     description="Spec-driven development framework for AI coding agents",
     long_description=(ROOT / "README.md").read_text(encoding="utf-8"),
     long_description_content_type="text/markdown",
-    url="https://github.com/nilstate/scafld",
+    author="0state",
+    url="https://0state.com/scafld",
     project_urls={
+        "Homepage": "https://0state.com/scafld",
+        "Documentation": "https://0state.com/scafld/docs",
         "Source": "https://github.com/nilstate/scafld",
         "Issues": "https://github.com/nilstate/scafld/issues",
     },
     license="MIT",
+    license_files=["LICENSE"],
+    keywords=["ai", "cli", "developer-tools", "planning", "spec-driven"],
     python_requires=">=3.9",
     packages=["scafld"],
     entry_points={
