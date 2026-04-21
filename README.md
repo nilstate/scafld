@@ -251,7 +251,7 @@ The agent enters read-only planning mode, explores your codebase, and produces a
 ## What It Actually Does
 
 - **Spec-driven** - Every task is a versioned, schema-validated YAML artifact. Not a prompt. Not a conversation. A machine-readable contract.
-- **Harden (optional)** - Interrogate a draft against grounded questions before approval; every question and recommended answer must cite a spec gap, a verified code location, or an archived precedent. Refuses to invent citations or rehash settled fields.
+- **Harden (optional)** - Stress-test a draft before approval. Ask one question at a time, inspect code before asking when the repo already holds the answer, record why each question exists via `grounded_in`, and stop instead of padding the loop.
 - **Approval gate** - No code changes until a human reviews the plan. The agent thinks; you decide.
 - **Phase-by-phase execution** - Acceptance criteria at every checkpoint, not just at the end.
 - **Scope audit** - `scafld audit` compares what the spec declared against what actually changed in git. Undeclared changes get flagged.
