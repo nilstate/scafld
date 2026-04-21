@@ -26,15 +26,12 @@ from scafld.command_runtime import find_root, find_workspaces, require_root
 from scafld.error_codes import ErrorCode as EC
 from scafld.errors import ScafldError
 from scafld.git_state import (
-    branch_exists,
+    bind_task_branch,
     build_origin_sync_payload,
     capture_review_git_state,
-    capture_workspace_git_state,
-    checkout_branch,
-    create_branch,
     list_changed_files_against_ref,
     list_working_tree_changed_files,
-    ref_exists,
+    refresh_origin_sync,
     source_git_metadata,
 )
 from scafld.hardening import verify_harden_round_citations
@@ -48,12 +45,10 @@ from scafld.output import (
     render_projection_summary,
 )
 from scafld.projections import (
-    build_origin_binding,
     build_projection_model,
     humanize_binding_mode,
     origin_payload,
     phase_counts,
-    stored_sync_snapshot,
     summarize_origin_source,
 )
 from scafld.reviewing import (
@@ -74,7 +69,6 @@ from scafld.spec_store import (
     find_spec,
     load_spec_document,
     move_spec,
-    prune_empty,
     require_spec,
     write_spec_document,
     yaml_read_field,
@@ -1232,117 +1226,31 @@ def cmd_branch(args):
             code=EC.INVALID_SPEC_STATUS,
         )
 
-    live_state, error = capture_workspace_git_state(root, excluded_rels=git_sync_excluded_paths())
-    if live_state is None:
-        raise ScafldError(
-            "branch requires a git work tree",
-            [error] if error else [],
-            code=EC.GIT_REPOSITORY_REQUIRED,
-        )
-
     existing_origin = origin_payload(data)
-    existing_git = existing_origin.get("git") if isinstance(existing_origin.get("git"), dict) else {}
-
-    if args.bind_current:
-        if live_state.get("detached"):
-            raise ScafldError(
-                "cannot bind the current branch from a detached HEAD",
-                ["checkout a branch first or rerun without --bind-current"],
-                code=EC.DETACHED_HEAD,
-            )
-        current_branch_name = live_state.get("branch")
-        if args.name and args.name != current_branch_name:
-            raise ScafldError(
-                "--name must match the current branch when used with --bind-current",
-                [f"current branch: {current_branch_name}"],
-                code=EC.INVALID_ARGUMENTS,
-            )
-        desired_branch = current_branch_name
-        base_ref = args.base or existing_git.get("base_ref") or live_state.get("default_base_ref")
-        action = "bound_current"
-    else:
-        desired_branch = args.name or existing_git.get("branch") or args.task_id
-        base_ref = args.base or existing_git.get("base_ref") or live_state.get("default_base_ref")
-
-        if live_state.get("detached"):
-            raise ScafldError(
-                "cannot switch branches from a detached HEAD",
-                ["checkout a branch first, then rerun scafld branch"],
-                code=EC.DETACHED_HEAD,
-            )
-
-        if live_state.get("branch") == desired_branch:
-            action = "bound_current"
-        else:
-            if live_state.get("dirty"):
-                raise ScafldError(
-                    "refusing to switch branches with uncommitted changes",
-                    ["commit or stash changes, or use --bind-current to record the current branch as-is"],
-                    code=EC.DIRTY_WORKTREE,
-                )
-            if branch_exists(root, desired_branch):
-                error = checkout_branch(root, desired_branch)
-                if error:
-                    raise ScafldError(
-                        f"could not checkout branch {desired_branch}",
-                        [error],
-                        code=EC.GIT_CHECKOUT_FAILED,
-                    )
-                action = "checked_out_existing"
-            else:
-                if not base_ref:
-                    raise ScafldError(
-                        "could not determine a base ref for branch creation",
-                        ["provide --base explicitly or create a main/master branch first"],
-                        code=EC.BASE_REF_REQUIRED,
-                    )
-                if not ref_exists(root, base_ref):
-                    raise ScafldError(
-                        f"base ref does not exist locally: {base_ref}",
-                        ["fetch or create the base ref, then retry"],
-                        code=EC.BASE_REF_NOT_FOUND,
-                    )
-                error = create_branch(root, desired_branch, base_ref)
-                if error:
-                    raise ScafldError(
-                        f"could not create branch {desired_branch} from {base_ref}",
-                        [error],
-                        code=EC.GIT_BRANCH_CREATE_FAILED,
-                    )
-                action = "created_branch"
-
-            live_state, error = capture_workspace_git_state(root, excluded_rels=git_sync_excluded_paths())
-            if live_state is None:
-                raise ScafldError(
-                    "could not capture git state after binding the branch",
-                    [error] if error else [],
-                    code=EC.GIT_STATE_UNAVAILABLE,
-                )
-
     timestamp = now_iso()
-    origin = build_origin_binding(
+    binding = bind_task_branch(
+        root,
+        args.task_id,
         existing_origin,
-        live_state,
-        desired_branch,
-        base_ref,
-        action,
+        name=args.name,
+        base=args.base,
+        bind_current=args.bind_current,
         bound_at=timestamp,
+        excluded_rels=git_sync_excluded_paths(),
     )
-    sync = build_origin_sync_payload(root, origin, excluded_rels=git_sync_excluded_paths())
-    origin["sync"] = stored_sync_snapshot(sync, checked_at=timestamp)
-    data["origin"] = origin
+    data["origin"] = binding["origin"]
     data["updated"] = timestamp
     write_spec_document(spec, data)
 
     result = {
-        "action": action,
+        "action": binding["action"],
         "origin": origin_payload(data),
-        "sync": sync,
+        "sync": binding["sync"],
     }
     state = {
         "file": str(rel),
         "status": status,
-        "branch": desired_branch,
+        "branch": binding["branch"],
     }
 
     if getattr(args, "json", False):
@@ -1350,11 +1258,11 @@ def cmd_branch(args):
         return
 
     print(f"{c(C_GREEN, 'bound')}: {rel}")
-    print(f" action: {action}")
-    print(f" branch: {desired_branch}")
-    if base_ref:
-        print(f"   base: {base_ref}")
-    sync_status = sync.get("status") or "unknown"
+    print(f" action: {binding['action']}")
+    print(f" branch: {binding['branch']}")
+    if binding["base_ref"]:
+        print(f"   base: {binding['base_ref']}")
+    sync_status = binding["sync"].get("status") or "unknown"
     sync_color = C_GREEN if sync_status == "in_sync" else C_YELLOW
     print(f"   sync: {c(sync_color, sync_status)}")
 
@@ -1377,11 +1285,13 @@ def cmd_sync(args):
             next_action=f"scafld branch {args.task_id}",
         )
 
-    sync = build_origin_sync_payload(root, origin, excluded_rels=git_sync_excluded_paths())
-    stored_origin = data.get("origin") if isinstance(data.get("origin"), dict) else {}
     timestamp = now_iso()
-    stored_origin["sync"] = stored_sync_snapshot(sync, checked_at=timestamp)
-    data["origin"] = prune_empty(stored_origin)
+    data["origin"], sync = refresh_origin_sync(
+        root,
+        data.get("origin"),
+        checked_at=timestamp,
+        excluded_rels=git_sync_excluded_paths(),
+    )
     data["updated"] = timestamp
     write_spec_document(spec, data)
 
