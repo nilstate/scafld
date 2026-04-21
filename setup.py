@@ -81,6 +81,7 @@ setup(
     license_files=["LICENSE"],
     keywords=["ai", "cli", "developer-tools", "planning", "spec-driven"],
     python_requires=">=3.9",
+    install_requires=["PyYAML>=6.0,<7"],
     packages=["scafld"],
     entry_points={
         "console_scripts": [

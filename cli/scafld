@@ -68,6 +68,18 @@ def read_canonical_version(version_file):
     return match.group(1)
 
 
+def require_pyyaml():
+    """Import PyYAML with an actionable error for source/npm installs."""
+    try:
+        import yaml
+    except ModuleNotFoundError as exc:
+        print(f"{c(C_RED, 'error')}: scafld harden requires PyYAML")
+        print("  install it into the Python runtime that executes scafld:")
+        print(f"  {c(C_BOLD, 'python3 -m pip install PyYAML')}")
+        raise SystemExit(1) from exc
+    return yaml
+
+
 VERSION = read_canonical_version(Path(__file__).resolve().parent.parent / "scafld" / "_version.py")
 
 STATUS_FOLDERS = {
@@ -2520,7 +2532,7 @@ def check_expected(returncode, output, expected):
 
 def cmd_harden(args):
     """Scaffold HARDEN MODE prompt or mark a hardening round passed."""
-    import yaml as _yaml
+    _yaml = require_pyyaml()
     root = require_root()
     spec = require_spec(root, args.task_id)
 

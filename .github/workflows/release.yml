@@ -24,6 +24,9 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Install runtime dependencies
+        run: python3 -m pip install --upgrade pip PyYAML
+
       - name: Set up Node
         uses: actions/setup-node@v6
         with:
@@ -108,6 +111,7 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: release-artifacts/dist
+          skip-existing: true
 
   publish-npm:
     needs: build
@@ -131,7 +135,13 @@ jobs:
           path: release-artifacts
 
       - name: Publish to npm
-        run: npm publish --provenance release-artifacts/npm/*.tgz
+        run: |
+          PACKAGE_VERSION="${GITHUB_REF_NAME#v}"
+          if npm view "scafld@${PACKAGE_VERSION}" version >/dev/null 2>&1; then
+            echo "scafld@${PACKAGE_VERSION} already published; skipping npm publish"
+            exit 0
+          fi
+          npm publish --provenance release-artifacts/npm/*.tgz
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 

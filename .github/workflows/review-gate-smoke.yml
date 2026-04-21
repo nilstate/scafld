@@ -19,6 +19,9 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Install runtime dependencies
+        run: python3 -m pip install --upgrade pip PyYAML
+
       - name: Set up Node
         uses: actions/setup-node@v6
         with:
