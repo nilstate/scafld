@@ -1,0 +1,15 @@
+include README.md
+include LICENSE
+include AGENTS.md
+include CLAUDE.md
+include CONVENTIONS.md
+include install.sh
+include cli/scafld
+recursive-include .ai/prompts *
+recursive-include .ai/schemas *
+include .ai/OPERATORS.md
+include .ai/README.md
+include .ai/config.yaml
+include .ai/specs/README.md
+recursive-include .ai/specs/examples *
+recursive-include scafld *.py

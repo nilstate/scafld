@@ -1,6 +1,10 @@
 # Python
 __pycache__/
 *.pyc
+build/
+dist/
+*.egg-info/
+*.tgz
 
 # OS
 .DS_Store
@@ -9,5 +13,6 @@ Thumbs.db
 # Logs
 .ai/logs/
 .ai/reviews/
+.ai/scafld/
 
 .runx

@@ -51,13 +51,23 @@ The spec is the contract. It forces the planning to happen explicitly, in a form
 ## Install
 
 ```bash
+pip install scafld
+npm install -g scafld
 git clone https://github.com/nilstate/scafld.git ~/.scafld && ~/.scafld/install.sh
 curl -fsSL https://raw.githubusercontent.com/nilstate/scafld/main/install.sh | sh
 ```
 
-This clones scafld to `~/.scafld` and symlinks the `scafld` command to `~/.local/bin/`.
+`pip install scafld` installs the console entry point plus the runtime bundle used by `scafld init` and `scafld update`.
 
-To update: `cd ~/.scafld && git pull origin main`
+`npm install -g scafld` installs the same CLI package for environments that distribute tooling through npm. The CLI still requires `python3` at runtime because the executable itself is Python.
+
+The git install clones scafld to `~/.scafld` and symlinks the `scafld` command to `~/.local/bin/`.
+
+To update the installed checkout: `scafld update --self`
+
+To refresh the managed bundle in the current workspace: `scafld update`
+
+To refresh every scafld workspace under a development tree: `scafld update --scan-root ~/dev`
 
 ## Setup
 
@@ -71,6 +81,7 @@ This scaffolds the full structure into your project:
 ```text
 your-project/
   .ai/
+    scafld/                # Managed runtime bundle refreshed by `scafld update`
     config.yaml            # Validation rules, rubric, safety controls
     config.local.yaml      # Your overrides (build/test/lint commands)
     prompts/               # Plan + exec mode instructions
@@ -151,7 +162,19 @@ scafld complete <task-id> --human-reviewed --reason "manual audit"
 scafld fail <task-id>                                   # Archive as failed
 scafld cancel <task-id>                                 # Archive as cancelled
 scafld report                                           # Aggregate stats
+scafld update [--scan-root PATH] [--self]               # Refresh the managed framework bundle
 ```
+
+### Managed Bundle
+
+Each workspace now carries a framework-managed runtime bundle under `.ai/scafld/`.
+
+- `.ai/scafld/config.yaml` provides the current scafld defaults
+- `.ai/config.yaml` remains the repo's project-level config/overlay
+- `.ai/config.local.yaml` remains the local machine override layer
+- `.ai/scafld/manifest.json` records the scafld version, source commit, and bundle file hashes
+
+`scafld update` refreshes `.ai/scafld/` without overwriting repo-owned docs or project-specific config.
 
 ### Per-Criterion Working Directory
 
