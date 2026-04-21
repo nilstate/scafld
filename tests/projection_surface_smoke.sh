@@ -162,11 +162,13 @@ assert_contains "$markdown" "## scafld: Projection Flow" "summary should render 
 assert_contains "$markdown" 'Review: `pass_with_issues`' "summary should render the review verdict"
 capture output bash -lc "cd '$WS' && PATH='$CLI_ROOT':\"\$PATH\" scafld summary projection-flow --json"
 assert_json "$output" "data['command'] == 'summary' and data['result']['model']['title'] == 'Projection Flow'" "summary --json should expose the model title"
+assert_json "$output" "data['result']['projection']['surface'] == 'engineering_summary' and data['result']['projection']['rendering'] == 'markdown'" "summary --json should describe the intended projection surface"
 assert_json "$output" "'## scafld: Projection Flow' in data['result']['markdown']" "summary --json markdown should match the human surface"
 
 echo "[3/6] checks --json emits CI-friendly success when review and sync are clean"
 capture output bash -lc "cd '$WS' && PATH='$CLI_ROOT':\"\$PATH\" scafld checks projection-flow --json"
 assert_json "$output" "data['command'] == 'checks' and data['result']['check']['status'] == 'success'" "checks --json should succeed for a clean reviewed spec"
+assert_json "$output" "data['result']['projection']['surface'] == 'ci_check' and data['result']['projection']['rendering'] == 'json'" "checks --json should describe the intended projection surface"
 assert_json "$output" "'review pass_with_issues' in data['result']['check']['summary']" "checks --json should summarize the review state"
 
 echo "[4/6] pr-body renders deterministic workflow markdown"
@@ -176,6 +178,7 @@ assert_contains "$markdown" "## Workflow State" "pr-body should render workflow 
 assert_contains "$markdown" "## Objectives" "pr-body should include objectives"
 capture output bash -lc "cd '$WS' && PATH='$CLI_ROOT':\"\$PATH\" scafld pr-body projection-flow --json"
 assert_json "$output" "data['command'] == 'pr-body' and '## Workflow State' in data['result']['markdown']" "pr-body --json should return the markdown body"
+assert_json "$output" "data['result']['projection']['surface'] == 'pull_request_body' and data['result']['projection']['rendering'] == 'markdown'" "pr-body --json should describe the intended projection surface"
 
 echo "[5/6] checks fail structurally when engineering drift appears"
 printf 'dirty\n' >> "$WS/tracked.txt"

@@ -129,7 +129,8 @@ or exclusive overlap as a conflict.
 `origin` is optional. It records where the task came from and how it binds to
 the local git workspace. The shape stays provider-neutral: a wrapper can record
 GitHub issue metadata in `origin.source`, but scafld itself only owns the repo,
-branch, and sync facts.
+branch, and sync facts. It is not the place to persist wrapper-managed pushed
+outputs, publication identifiers, receipts, or journal state.
 
 ```yaml
 origin:
@@ -169,7 +170,9 @@ origin:
 
 `scafld branch` writes the `repo` and `git` binding. `scafld sync` refreshes the
 `sync` snapshot. `scafld status --json` computes the live sync view directly so
-wrappers do not need to infer branch drift themselves.
+wrappers do not need to infer branch drift themselves. Downstream systems
+should consume projection commands for publishable surfaces instead of extending
+`origin` into a second workflow object.
 
 ### rollback
 
