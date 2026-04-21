@@ -92,9 +92,9 @@ No test fixtures, mocks, or conditional test-only logic in production code. Test
 ### Harden Mode (optional)
 
 - **When:** The operator runs `scafld harden <task-id>` on a draft. You MAY suggest running it for high-risk or ambiguous specs, but MUST NOT block planning or approval on it. `scafld approve` does NOT consult `harden_status`.
-- **Actions:** Interrogate the draft one grounded question at a time. Walk down the design tree and resolve upstream decisions before downstream ones. Record each round in the spec's `harden_rounds` array.
-- **Grounding contract (load-bearing):** every question and recommended answer MUST carry a `grounded_in` value matching exactly one of three patterns: `spec_gap:<field>`, `code:<file>:<line>` (verified by `Read`/`Grep` in the current session), or `archive:<task_id>`. Do not invent citations. If you run out of grounded questions, stop.
-- **Termination:** operator types `done`/`stop`, you run out of grounded questions, or you hit `max_questions_per_round` from `.ai/config.yaml`.
+- **Actions:** Interrogate the draft one question at a time. Resolve upstream decisions before downstream ones. If a question can be answered by exploring the codebase, explore first and bring the verified finding back instead of asking the operator to repeat it. Record each round in the spec's `harden_rounds` array.
+- **Grounding contract:** each recorded question carries one `grounded_in` value using exactly one of `spec_gap:<field>`, `code:<file>:<line>` (verified in the current session), or `archive:<task_id>`. Use it as audit trail, not ceremony. Do not invent citations. If you run out of genuine grounded questions, stop.
+- **Termination:** operator types `done`/`stop`, you run out of genuine grounded questions, or you hit `max_questions_per_round` from `.ai/config.yaml` (a cap, not a target).
 - **Output:** appended round in `harden_rounds`; `harden_status: in_progress` while the loop runs. Operator finalises via `scafld harden <task-id> --mark-passed`.
 - **Prompt:** Read `.ai/prompts/harden.md` before entering this mode.
 

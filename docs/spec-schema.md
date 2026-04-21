@@ -192,4 +192,4 @@ harden_rounds:
         recommended_answer: "Yes; same cutover discipline."
 ```
 
-The `grounded_in` string must match `^(spec_gap:|code:|archive:).+` — these are the only three anti-hallucination patterns. See [planning.md](./planning.md#hardening) for when to run harden.
+The `grounded_in` string must match `^(spec_gap:|code:|archive:).+`. It records why the question existed: a spec gap, a verified code location, or an archived precedent. Treat it as audit trail for the question, not a license to invent citations. See [planning.md](./planning.md#hardening) for when to run harden.

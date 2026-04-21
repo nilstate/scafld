@@ -72,7 +72,7 @@ scafld harden <task-id>
 scafld harden <task-id> --mark-passed
 ```
 
-Without flags, prints the `HARDEN MODE` prompt from `.ai/prompts/harden.md`, appends a new round to `harden_rounds`, and sets `harden_status: in_progress`. The agent then interviews you, one grounded question at a time, until you stop the loop. Every question must cite its source using one of `spec_gap:<field>`, `code:<file>:<line>`, or `archive:<task_id>`.
+Without flags, prints the `HARDEN MODE` prompt from `.ai/prompts/harden.md`, appends a new round to `harden_rounds`, and sets `harden_status: in_progress`. The agent then interviews you one question at a time, upstream decisions first. If the answer is already in the codebase, it should inspect the code instead of asking. Each recorded question carries a `grounded_in` value using one of `spec_gap:<field>`, `code:<file>:<line>`, or `archive:<task_id>`.
 
 With `--mark-passed`, sets `harden_status: passed` and closes the latest round. Refuses if no round has been started.
 
