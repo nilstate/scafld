@@ -314,6 +314,172 @@ def build_spec_review_block(review_data, topology, override_applied=False, overr
     return "\n".join(lines)
 
 
+def parse_review_file(review_path, topology):
+    """Parse the latest review round and validate the Review Artifact v3 contract."""
+    adversarial_passes = review_passes_by_kind(topology, "adversarial")
+    adversarial_titles = [definition["title"] for definition in adversarial_passes]
+    parsed = {
+        "exists": review_path.exists(),
+        "review_count": 0,
+        "verdict": None,
+        "blocking": [],
+        "non_blocking": [],
+        "metadata": None,
+        "pass_results": normalize_review_pass_results(topology),
+        "round_status": None,
+        "reviewer_mode": None,
+        "empty_adversarial": list(adversarial_titles),
+        "errors": [],
+    }
+    if not review_path.exists():
+        return parsed
+
+    text = review_path.read_text()
+    matches = list(re.finditer(r'^## Review \d+\s+—.*$', text, re.MULTILINE))
+    parsed["review_count"] = len(matches)
+    if not matches:
+        parsed["errors"].append("review file has no review rounds")
+        return parsed
+
+    last_section = text[matches[-1].end():]
+
+    def section_body(heading):
+        match = re.search(
+            rf'^### {re.escape(heading)}\s*\n(.*?)(?=^### |\Z)',
+            last_section,
+            re.MULTILINE | re.DOTALL,
+        )
+        return match.group(1) if match else None
+
+    required_sections = ("Metadata", "Pass Results", "Blocking", "Non-blocking", "Verdict")
+
+    sections = {}
+    for heading in (*required_sections, *adversarial_titles):
+        body = section_body(heading)
+        sections[heading] = body
+        if body is None and heading in required_sections:
+            parsed["errors"].append(f"latest review round is missing ### {heading}")
+
+    empty_adversarial = []
+    for heading in adversarial_titles:
+        body = sections.get(heading)
+        if body is None or not body.strip():
+            empty_adversarial.append(heading)
+    parsed["empty_adversarial"] = empty_adversarial
+
+    blocking = []
+    non_blocking = []
+    for heading, bucket in (("Blocking", blocking), ("Non-blocking", non_blocking)):
+        body = sections.get(heading)
+        if body is None:
+            continue
+        for line in body.strip().splitlines():
+            stripped = line.strip()
+            if not stripped:
+                continue
+            normalized = stripped.lower().strip(".")
+            if normalized in {"none", "- none", "n/a", "(none)"}:
+                continue
+            if stripped.startswith("* "):
+                stripped = "- " + stripped[2:].strip()
+            if stripped.startswith("- "):
+                bucket.append(stripped)
+    parsed["blocking"] = blocking
+    parsed["non_blocking"] = non_blocking
+
+    metadata_body = sections.get("Metadata")
+    if metadata_body is not None:
+        metadata_match = re.search(r'```json\s*\n(.*?)\n```', metadata_body, re.DOTALL)
+        if not metadata_match:
+            parsed["errors"].append("latest review metadata must contain a fenced json block")
+        else:
+            try:
+                metadata = json.loads(metadata_match.group(1))
+            except json.JSONDecodeError as e:
+                parsed["errors"].append(f"latest review metadata is invalid JSON: {e}")
+            else:
+                parsed["metadata"] = metadata
+                parsed["pass_results"] = normalize_review_pass_results(topology, metadata.get("pass_results"))
+                parsed["round_status"] = metadata.get("round_status")
+                parsed["reviewer_mode"] = metadata.get("reviewer_mode")
+                for issue in validate_review_metadata(metadata, topology):
+                    parsed["errors"].append(f"metadata: {issue}")
+
+    verdict_body = sections.get("Verdict")
+    verdict = None
+    if verdict_body is None:
+        parsed["errors"].append("latest review round is missing a verdict body")
+    else:
+        normalized_verdict = re.sub(r'[`*_]+', ' ', verdict_body.lower())
+        normalized_verdict = re.sub(r'\s+', ' ', normalized_verdict).strip()
+        if "pass with issues" in normalized_verdict:
+            verdict = "pass_with_issues"
+        elif "pass_with_issues" in normalized_verdict:
+            verdict = "pass_with_issues"
+        elif re.search(r'\bfail\b', normalized_verdict):
+            verdict = "fail"
+        elif re.search(r'\bpass\b', normalized_verdict):
+            verdict = "pass"
+        elif re.search(r'\bincomplete\b', normalized_verdict):
+            verdict = "incomplete"
+        elif normalized_verdict:
+            parsed["errors"].append("latest review verdict is invalid")
+        else:
+            parsed["errors"].append("latest review verdict is empty")
+
+    if verdict is None:
+        if blocking:
+            verdict = "fail"
+        elif non_blocking:
+            verdict = "pass_with_issues"
+
+    if verdict == "fail" and not blocking:
+        parsed["errors"].append("verdict fail requires at least one blocking finding")
+    if verdict == "pass_with_issues":
+        if blocking:
+            parsed["errors"].append("pass_with_issues cannot include blocking findings")
+        if not non_blocking:
+            parsed["errors"].append("pass_with_issues requires at least one non-blocking finding")
+    if verdict == "pass":
+        if blocking:
+            parsed["errors"].append("pass verdict cannot include blocking findings")
+        if non_blocking:
+            parsed["errors"].append("pass verdict cannot include non-blocking findings")
+    if verdict == "incomplete" and parsed["round_status"] == "completed":
+        parsed["errors"].append("completed review round cannot use verdict=incomplete")
+
+    adversarial_ids = review_pass_ids(topology, "adversarial")
+    configured_results = parsed["pass_results"]
+    if verdict == "pass":
+        bad = [
+            pass_id
+            for pass_id in adversarial_ids
+            if configured_results.get(pass_id) in {"fail", "pass_with_issues"}
+        ]
+        if bad:
+            parsed["errors"].append(
+                "pass verdict cannot mark adversarial passes as fail/pass_with_issues: "
+                + ", ".join(sorted(bad))
+            )
+    if verdict == "pass_with_issues":
+        bad = [pass_id for pass_id in adversarial_ids if configured_results.get(pass_id) == "fail"]
+        if bad:
+            parsed["errors"].append(
+                f"pass_with_issues cannot mark adversarial passes as fail: {', '.join(sorted(bad))}"
+            )
+        if not any(configured_results.get(pass_id) == "pass_with_issues" for pass_id in adversarial_ids):
+            parsed["errors"].append(
+                "pass_with_issues requires at least one adversarial pass result of pass_with_issues"
+            )
+    if verdict == "fail" and parsed["round_status"] == "completed":
+        failing = [pass_id for pass_id, result in configured_results.items() if result == "fail"]
+        if not failing:
+            parsed["errors"].append("fail verdict requires at least one review pass result of fail")
+
+    parsed["verdict"] = verdict
+    return parsed
+
+
 def review_data_payload(review_data):
     """Return a compact JSON-safe review state for status/automation callers."""
     metadata = review_data.get("metadata") or {}
@@ -332,3 +498,11 @@ def review_data_payload(review_data):
         "empty_adversarial": review_data.get("empty_adversarial", []),
         "errors": review_data.get("errors", []),
     }
+
+
+def load_review_state(review_path, topology):
+    """Load one parsed review payload without raising review-parse exceptions."""
+    try:
+        return review_data_payload(parse_review_file(review_path, topology))
+    except Exception as exc:
+        return {"exists": False, "errors": [str(exc)]}

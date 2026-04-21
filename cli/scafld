@@ -23,6 +23,7 @@ from scafld.config import (
     render_init_local_config,
 )
 from scafld.command_runtime import find_root, find_workspaces, require_root
+from scafld.error_codes import ErrorCode as EC
 from scafld.errors import ScafldError
 from scafld.git_state import (
     branch_exists,
@@ -34,41 +35,42 @@ from scafld.git_state import (
     list_changed_files_against_ref,
     list_working_tree_changed_files,
     ref_exists,
-    run_git_capture,
     source_git_metadata,
 )
-from scafld.hardening import find_archived_spec, parse_code_grounded_in, verify_harden_round_citations
+from scafld.hardening import verify_harden_round_citations
 from scafld.output import (
     emit_cli_error,
     emit_command_json,
-    emit_json,
     error_payload,
     projection_check,
     render_projection_pr_body,
     render_projection_summary,
 )
+from scafld.projections import (
+    build_origin_binding,
+    build_projection_model,
+    humanize_binding_mode,
+    origin_payload,
+    phase_counts,
+    stored_sync_snapshot,
+    summarize_origin_source,
+)
 from scafld.reviewing import (
-    REVIEWER_MODES,
-    REVIEW_PASS_REGISTRY,
-    REVIEW_PASS_VALUES,
-    REVIEW_ROUND_STATUSES,
-    REVIEW_SCHEMA_VERSION,
     build_review_metadata,
     build_review_topology,
     build_spec_review_block,
+    load_review_state,
+    parse_review_file,
     normalize_review_pass_results,
     render_review_pass_results,
-    review_data_payload,
     review_git_gate_reason,
     review_pass_ids,
-    review_pass_label,
     review_passes_by_kind,
-    validate_review_metadata,
 )
+from scafld.spec_templates import build_new_spec_scaffold
 from scafld.spec_store import (
     find_all_specs,
     find_spec,
-    find_specs,
     load_spec_document,
     move_spec,
     prune_empty,
@@ -76,7 +78,6 @@ from scafld.spec_store import (
     write_spec_document,
     yaml_read_field,
     yaml_read_nested,
-    yaml_set_field,
 )
 
 # ---------------------------------------------------------------------------
@@ -966,132 +967,35 @@ def cmd_new(args):
 
     # Validate task_id
     if not re.match(r'^[a-z0-9][a-z0-9-]*[a-z0-9]$', task_id) and not re.match(r'^[a-z0-9]$', task_id):
-        raise ScafldError("task-id must be kebab-case (a-z, 0-9, hyphens)", code="invalid_task_id")
+        raise ScafldError("task-id must be kebab-case (a-z, 0-9, hyphens)", code=EC.INVALID_TASK_ID)
 
     # Check for conflicts
     existing = find_spec(root, task_id)
     if existing:
         rel = existing.relative_to(root)
-        raise ScafldError(f"spec already exists: {rel}", code="spec_exists")
+        raise ScafldError(f"spec already exists: {rel}", code=EC.SPEC_EXISTS)
 
     dest_dir = root / DRAFTS_DIR
     dest_dir.mkdir(parents=True, exist_ok=True)
     dest = dest_dir / f"{task_id}.yaml"
 
     ts = now_iso()
-    size = args.size or "small"
-    risk = args.risk or "low"
-    detection = detect_init_config(root)
-    marker_text = ", ".join(detection["markers"]) if detection["markers"] else "none"
-    config = load_config(root)
-
-    def config_string(*keys):
-        value = config
-        for key in keys:
-            if not isinstance(value, dict):
-                return None
-            value = value.get(key)
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-        return None
-
-    commands = dict(detection["commands"])
-    for key, path in (
-        ("compile_check", ("validation", "per_phase", "compile_check")),
-        ("targeted_tests", ("validation", "per_phase", "targeted_tests")),
-        ("full_test_suite", ("validation", "pre_commit", "full_test_suite")),
-        ("linter_suite", ("validation", "pre_commit", "linter_suite")),
-        ("typecheck", ("validation", "pre_commit", "typecheck")),
-    ):
-        override = config_string(*path)
-        if override:
-            commands[key] = override
-
-    title = args.title or task_id.replace("-", " ").title()
-    summary_prompt = f'TODO: Describe the problem or goal for "{title}". Repo context: {detection["summary"]}.'
-    packages_prompt = f"TODO: replace with affected package(s) or paths. Repo markers: {marker_text}."
-    objective_prompt = f'TODO: State the primary outcome for "{title}".'
-    touchpoint_area = f'TODO: primary area touched by "{title}"'
-    touchpoint_description = f'Replace with the main package, module, or workflow surface affected by "{title}".'
-    compile_description = "Run the repo's suggested compile or build check for this task."
-    test_description = "Run the repo's suggested targeted test command for this task."
-    phase_name = f'TODO: first implementation slice for "{title}"'
-    phase_objective = f'TODO: Describe the first concrete slice of "{title}".'
-    phase_content = f'TODO: Describe the changes for the first slice of "{title}".'
-    phase_acceptance = "Run the repo's suggested targeted test command for this phase."
-
-    template = f'''# Repo context: {detection["summary"]}
-# Repo markers: {marker_text}
-# Suggested validation commands come from repo detection and .ai/config.local.yaml when available.
-spec_version: "1.1"
-task_id: {json.dumps(task_id)}
-created: {json.dumps(ts)}
-updated: {json.dumps(ts)}
-status: "draft"
-harden_status: "not_run"
-
-task:
-  title: {json.dumps(title)}
-  summary: >
-    {summary_prompt}
-  size: {json.dumps(size)}
-  risk_level: {json.dumps(risk)}
-  context:
-    packages:
-      - {json.dumps(packages_prompt)}
-    invariants:
-      - "domain_boundaries"
-  objectives:
-    - {json.dumps(objective_prompt)}
-  touchpoints:
-    - area: {json.dumps(touchpoint_area)}
-      description: {json.dumps(touchpoint_description)}
-  acceptance:
-    definition_of_done:
-      - id: "dod1"
-        description: "TODO: define what completion means for this task."
-        status: "pending"
-    validation:
-      - id: "v1"
-        type: "compile"
-        description: {json.dumps(compile_description)}
-        command: {json.dumps(commands["compile_check"])}
-        expected: "exit code 0"
-      - id: "v2"
-        type: "test"
-        description: {json.dumps(test_description)}
-        command: {json.dumps(commands["targeted_tests"])}
-        expected: "exit code 0"
-
-planning_log:
-  - timestamp: {json.dumps(ts)}
-    actor: "user"
-    summary: "Spec created via scafld new"
-
-phases:
-  - id: "phase1"
-    name: {json.dumps(phase_name)}
-    objective: {json.dumps(phase_objective)}
-    changes:
-      - file: "TODO"
-        action: "update"
-        content_spec: |
-          {phase_content}
-    acceptance_criteria:
-      - id: "ac1_1"
-        type: "test"
-        description: {json.dumps(phase_acceptance)}
-        command: {json.dumps(commands["targeted_tests"])}
-        expected: "exit code 0"
-    status: "pending"
-
-rollback:
-  strategy: "per_phase"
-  commands:
-    phase1: "git checkout HEAD -- TODO"
-'''
-
-    dest.write_text(template)
+    scaffold = build_new_spec_scaffold(
+        root,
+        task_id,
+        timestamp=ts,
+        title=args.title,
+        size=args.size,
+        risk=args.risk,
+        framework_config_path=FRAMEWORK_CONFIG_PATH,
+        config_path=CONFIG_PATH,
+        config_local_path=CONFIG_LOCAL_PATH,
+    )
+    title = scaffold["title"]
+    size = scaffold["size"]
+    risk = scaffold["risk"]
+    repo_context = scaffold["repo_context"]
+    dest.write_text(scaffold["text"])
     rel = dest.relative_to(root)
     if json_mode:
         emit_command_json(
@@ -1103,17 +1007,7 @@ rollback:
                 "size": size,
                 "risk": risk,
                 "auto_initialized": auto_initialized,
-                "repo_context": {
-                    "summary": detection["summary"],
-                    "markers": list(detection["markers"]),
-                    "commands": {
-                        "compile_check": commands["compile_check"],
-                        "targeted_tests": commands["targeted_tests"],
-                        "full_test_suite": commands["full_test_suite"],
-                        "linter_suite": commands["linter_suite"],
-                        "typecheck": commands["typecheck"],
-                    },
-                },
+                "repo_context": repo_context,
                 "next_commands": [
                     f"scafld harden {task_id}",
                     f"scafld approve {task_id}",
@@ -1128,188 +1022,6 @@ rollback:
     print(f"  Edit the spec, then optionally: {c(C_BOLD, f'scafld harden {task_id}')}")
     print(f"  When ready: {c(C_BOLD, f'scafld approve {task_id}')}")
 
-
-def origin_block(data, key):
-    """Return one origin sub-block as a mapping."""
-    origin = data.get("origin") if isinstance(data.get("origin"), dict) else {}
-    value = origin.get(key)
-    return value if isinstance(value, dict) else {}
-
-
-def origin_payload(data):
-    """Return the structured origin metadata stored in the spec."""
-    return prune_empty({
-        "source": origin_block(data, "source"),
-        "repo": origin_block(data, "repo"),
-        "git": origin_block(data, "git"),
-        "sync": origin_block(data, "sync"),
-    })
-
-
-def stored_sync_snapshot(sync_payload):
-    """Reduce a live sync payload to the portable facts worth persisting in the spec."""
-    actual = sync_payload.get("actual") if isinstance(sync_payload.get("actual"), dict) else {}
-    return prune_empty({
-        "status": sync_payload.get("status"),
-        "last_checked_at": now_iso(),
-        "reasons": list(sync_payload.get("reasons") or []),
-        "actual": {
-            "branch": actual.get("branch"),
-            "head_sha": actual.get("head_sha"),
-            "upstream": actual.get("upstream"),
-            "remote": actual.get("remote"),
-            "remote_url": actual.get("remote_url"),
-            "default_base_ref": actual.get("default_base_ref"),
-            "dirty": actual.get("dirty"),
-            "detached": actual.get("detached"),
-        },
-    })
-
-
-def build_origin_binding(existing_origin, live_state, branch_name, base_ref, mode):
-    """Merge live branch binding facts into the spec's provider-neutral origin block."""
-    existing_origin = existing_origin if isinstance(existing_origin, dict) else {}
-    return prune_empty({
-        "source": existing_origin.get("source") if isinstance(existing_origin.get("source"), dict) else {},
-        "repo": {
-            "root": ".",
-            "remote": live_state.get("remote"),
-            "remote_url": live_state.get("remote_url"),
-        },
-        "git": {
-            "branch": branch_name,
-            "base_ref": base_ref,
-            "upstream": live_state.get("upstream"),
-            "mode": mode,
-            "bound_at": now_iso(),
-        },
-        "sync": existing_origin.get("sync") if isinstance(existing_origin.get("sync"), dict) else {},
-    })
-
-
-def load_review_state(root, task_id):
-    """Load the current review state without mutating anything."""
-    review_state = {"exists": False, "errors": []}
-    try:
-        topology = load_review_topology(root)
-        review_data = parse_review_file(root / REVIEWS_DIR / f"{task_id}.md", topology)
-        review_state = review_data_payload(review_data)
-    except Exception as e:
-        review_state = {"exists": False, "errors": [str(e)]}
-    return review_state
-
-
-def acceptance_summary(criteria):
-    """Summarize acceptance results for projection surfaces."""
-    passed = sum(1 for criterion in criteria if criterion.get("result") == "pass")
-    failed = sum(1 for criterion in criteria if criterion.get("result") == "fail")
-    total = len(criteria)
-    pending = max(total - passed - failed, 0)
-    manual = sum(1 for criterion in criteria if criterion.get("type") in ("documentation", "custom"))
-    return {
-        "total": total,
-        "passed": passed,
-        "failed": failed,
-        "pending": pending,
-        "manual": manual,
-    }
-
-
-def build_projection_model(root, spec, task_id):
-    """Build one deterministic projection model from the current spec state."""
-    text = spec.read_text()
-    data = load_spec_document(spec)
-    rel = spec.relative_to(root)
-
-    status = yaml_read_field(text, "status") or "unknown"
-    title = yaml_read_nested(text, "task", "title") or task_id
-    summary = yaml_read_nested(text, "task", "summary") or ""
-    size = yaml_read_nested(text, "task", "size") or ""
-    risk = yaml_read_nested(text, "task", "risk_level") or ""
-    updated = yaml_read_field(text, "updated") or ""
-    total, completed, failed, in_prog = count_phases(text)
-    origin = origin_payload(data)
-    sync = build_origin_sync_payload(root, origin, excluded_rels=git_sync_excluded_paths())
-    review_state = load_review_state(root, task_id)
-    criteria = parse_acceptance_criteria(text)
-    task_block = data.get("task") if isinstance(data.get("task"), dict) else {}
-    risks = task_block.get("risks") or []
-    risk_descriptions = [
-        entry.get("description")
-        for entry in risks
-        if isinstance(entry, dict) and entry.get("description")
-    ]
-
-    return prune_empty({
-        "task_id": task_id,
-        "file": str(rel),
-        "title": title,
-        "summary": summary,
-        "status": status,
-        "size": size,
-        "risk": risk,
-        "updated_at": updated,
-        "objectives": list(task_block.get("objectives") or []),
-        "risks": risk_descriptions,
-        "phases": {
-            "entries": parse_phase_status_entries(text),
-            "total": total,
-            "completed": completed,
-            "failed": failed,
-            "in_progress": in_prog,
-            "pending": total - completed - failed - in_prog,
-        },
-        "acceptance": acceptance_summary(criteria),
-        "review": review_state,
-        "origin": origin,
-        "sync": sync,
-    })
-
-
-def summarize_origin_source(origin):
-    """Render one concise human-readable origin source summary."""
-    source = origin.get("source") if isinstance(origin.get("source"), dict) else {}
-    if not source:
-        return None
-
-    system = source.get("system")
-    kind = source.get("kind")
-    identifier = source.get("id")
-    title = source.get("title")
-    url = source.get("url")
-
-    parts = []
-    if isinstance(system, str) and system:
-        parts.append(system)
-    if isinstance(kind, str) and kind:
-        parts.append(kind)
-    if identifier not in (None, ""):
-        ident_text = str(identifier).strip()
-        if kind in ("issue", "pr") and ident_text.isdigit():
-            ident_text = f"#{ident_text}"
-        if ident_text:
-            parts.append(ident_text)
-
-    summary = " ".join(parts)
-    if isinstance(title, str) and title:
-        return f"{summary} - {title}" if summary else title
-    if summary:
-        return summary
-    if isinstance(url, str) and url:
-        return url
-    return None
-
-
-def humanize_binding_mode(mode):
-    """Render one branch-binding mode for humans."""
-    labels = {
-        "created_branch": "created branch",
-        "checked_out_existing": "checked out existing branch",
-        "bound_current": "bound current branch",
-    }
-    return labels.get(mode, mode)
-
-
 def cmd_status(args):
     """Show status of a spec."""
     root = require_root()
@@ -1323,7 +1035,7 @@ def cmd_status(args):
     size = yaml_read_nested(text, "task", "size") or ""
     risk = yaml_read_nested(text, "task", "risk_level") or ""
     updated = yaml_read_field(text, "updated") or ""
-    total, completed, failed, in_prog = count_phases(text)
+    phase_totals = phase_counts(*count_phases(text))
 
     state = {
         "file": str(rel),
@@ -1335,13 +1047,7 @@ def cmd_status(args):
     result = {
         "title": title,
         "phase_statuses": parse_phase_status_entries(text),
-        "phase_counts": {
-            "total": total,
-            "completed": completed,
-            "failed": failed,
-            "in_progress": in_prog,
-            "pending": total - completed - failed - in_prog,
-        },
+        "phase_counts": phase_totals,
     }
     origin = origin_payload(data)
     sync = build_origin_sync_payload(root, origin, excluded_rels=git_sync_excluded_paths())
@@ -1349,13 +1055,12 @@ def cmd_status(args):
     result["sync"] = sync
 
     if getattr(args, "json", False):
-        review_state = {"exists": False, "errors": []}
         try:
             topology = load_review_topology(root)
-            review_data = parse_review_file(root / REVIEWS_DIR / f"{args.task_id}.md", topology)
-            review_state = review_data_payload(review_data)
-        except Exception as e:
-            review_state = {"exists": False, "errors": [str(e)]}
+        except Exception as exc:
+            review_state = {"exists": False, "errors": [str(exc)]}
+        else:
+            review_state = load_review_state(root / REVIEWS_DIR / f"{args.task_id}.md", topology)
         result["review_state"] = review_state
         emit_command_json("status", task_id=args.task_id, state=state, result=result)
         return
@@ -1367,6 +1072,10 @@ def cmd_status(args):
     print(f" status: {c(color, status)}")
     if size or risk:
         print(f"   size: {size}  risk: {risk}")
+    total = phase_totals["total"]
+    completed = phase_totals["completed"]
+    failed = phase_totals["failed"]
+    in_prog = phase_totals["in_progress"]
     if total > 0:
         phase_parts = []
         if completed:
@@ -1375,7 +1084,7 @@ def cmd_status(args):
             phase_parts.append(c(C_CYAN, f"{in_prog} active"))
         if failed:
             phase_parts.append(c(C_RED, f"{failed} failed"))
-        pending = total - completed - failed - in_prog
+        pending = phase_totals["pending"]
         if pending > 0:
             phase_parts.append(c(C_DIM, f"{pending} pending"))
         print(f" phases: {' / '.join(phase_parts)}  ({total} total)")
@@ -1475,7 +1184,7 @@ def cmd_approve(args):
         raise ScafldError(
             "spec has validation errors, cannot approve",
             [f"- {error}" for error in errors] + [f"fix the spec, then retry: scafld approve {args.task_id}"],
-            code="validation_failed",
+            code=EC.VALIDATION_FAILED,
             next_action=f"scafld validate {args.task_id}",
         )
 
@@ -1519,7 +1228,7 @@ def cmd_branch(args):
         raise ScafldError(
             f"cannot bind a branch for a {status} spec",
             [f"spec is archived at {rel}"],
-            code="invalid_spec_status",
+            code=EC.INVALID_SPEC_STATUS,
         )
 
     live_state, error = capture_workspace_git_state(root, excluded_rels=git_sync_excluded_paths())
@@ -1527,7 +1236,7 @@ def cmd_branch(args):
         raise ScafldError(
             "branch requires a git work tree",
             [error] if error else [],
-            code="git_repository_required",
+            code=EC.GIT_REPOSITORY_REQUIRED,
         )
 
     existing_origin = origin_payload(data)
@@ -1538,14 +1247,14 @@ def cmd_branch(args):
             raise ScafldError(
                 "cannot bind the current branch from a detached HEAD",
                 ["checkout a branch first or rerun without --bind-current"],
-                code="detached_head",
+                code=EC.DETACHED_HEAD,
             )
         current_branch_name = live_state.get("branch")
         if args.name and args.name != current_branch_name:
             raise ScafldError(
                 "--name must match the current branch when used with --bind-current",
                 [f"current branch: {current_branch_name}"],
-                code="invalid_arguments",
+                code=EC.INVALID_ARGUMENTS,
             )
         desired_branch = current_branch_name
         base_ref = args.base or existing_git.get("base_ref") or live_state.get("default_base_ref")
@@ -1558,7 +1267,7 @@ def cmd_branch(args):
             raise ScafldError(
                 "cannot switch branches from a detached HEAD",
                 ["checkout a branch first, then rerun scafld branch"],
-                code="detached_head",
+                code=EC.DETACHED_HEAD,
             )
 
         if live_state.get("branch") == desired_branch:
@@ -1568,7 +1277,7 @@ def cmd_branch(args):
                 raise ScafldError(
                     "refusing to switch branches with uncommitted changes",
                     ["commit or stash changes, or use --bind-current to record the current branch as-is"],
-                    code="dirty_worktree",
+                    code=EC.DIRTY_WORKTREE,
                 )
             if branch_exists(root, desired_branch):
                 error = checkout_branch(root, desired_branch)
@@ -1576,7 +1285,7 @@ def cmd_branch(args):
                     raise ScafldError(
                         f"could not checkout branch {desired_branch}",
                         [error],
-                        code="git_checkout_failed",
+                        code=EC.GIT_CHECKOUT_FAILED,
                     )
                 action = "checked_out_existing"
             else:
@@ -1584,20 +1293,20 @@ def cmd_branch(args):
                     raise ScafldError(
                         "could not determine a base ref for branch creation",
                         ["provide --base explicitly or create a main/master branch first"],
-                        code="base_ref_required",
+                        code=EC.BASE_REF_REQUIRED,
                     )
                 if not ref_exists(root, base_ref):
                     raise ScafldError(
                         f"base ref does not exist locally: {base_ref}",
                         ["fetch or create the base ref, then retry"],
-                        code="base_ref_not_found",
+                        code=EC.BASE_REF_NOT_FOUND,
                     )
                 error = create_branch(root, desired_branch, base_ref)
                 if error:
                     raise ScafldError(
                         f"could not create branch {desired_branch} from {base_ref}",
                         [error],
-                        code="git_branch_create_failed",
+                        code=EC.GIT_BRANCH_CREATE_FAILED,
                     )
                 action = "created_branch"
 
@@ -1606,14 +1315,22 @@ def cmd_branch(args):
                 raise ScafldError(
                     "could not capture git state after binding the branch",
                     [error] if error else [],
-                    code="git_state_unavailable",
+                    code=EC.GIT_STATE_UNAVAILABLE,
                 )
 
-    origin = build_origin_binding(existing_origin, live_state, desired_branch, base_ref, action)
+    timestamp = now_iso()
+    origin = build_origin_binding(
+        existing_origin,
+        live_state,
+        desired_branch,
+        base_ref,
+        action,
+        bound_at=timestamp,
+    )
     sync = build_origin_sync_payload(root, origin, excluded_rels=git_sync_excluded_paths())
-    origin["sync"] = stored_sync_snapshot(sync)
+    origin["sync"] = stored_sync_snapshot(sync, checked_at=timestamp)
     data["origin"] = origin
-    data["updated"] = now_iso()
+    data["updated"] = timestamp
     write_spec_document(spec, data)
 
     result = {
@@ -1655,15 +1372,16 @@ def cmd_sync(args):
         raise ScafldError(
             "spec has no bound branch or origin metadata yet",
             [f"bind one first: scafld branch {args.task_id}"],
-            code="origin_unbound",
+            code=EC.ORIGIN_UNBOUND,
             next_action=f"scafld branch {args.task_id}",
         )
 
     sync = build_origin_sync_payload(root, origin, excluded_rels=git_sync_excluded_paths())
     stored_origin = data.get("origin") if isinstance(data.get("origin"), dict) else {}
-    stored_origin["sync"] = stored_sync_snapshot(sync)
+    timestamp = now_iso()
+    stored_origin["sync"] = stored_sync_snapshot(sync, checked_at=timestamp)
     data["origin"] = prune_empty(stored_origin)
-    data["updated"] = now_iso()
+    data["updated"] = timestamp
     write_spec_document(spec, data)
 
     sync_status = sync.get("status")
@@ -1672,14 +1390,14 @@ def cmd_sync(args):
     if sync_status == "drift":
         error = error_payload(
             "git drift detected",
-            code="git_drift",
+            code=EC.GIT_DRIFT,
             details=list(sync.get("reasons") or []),
             exit_code=1,
         )
     elif sync_status == "unavailable":
         error = error_payload(
             "live git state is unavailable",
-            code="git_state_unavailable",
+            code=EC.GIT_STATE_UNAVAILABLE,
             details=list(sync.get("reasons") or []),
             exit_code=1,
         )
@@ -1716,11 +1434,38 @@ def cmd_sync(args):
         sys.exit(1)
 
 
+def projection_model_for_task(root, spec, task_id):
+    """Build one projection model from the current spec plus live review/sync state."""
+    text = spec.read_text()
+    data = load_spec_document(spec)
+    counts = phase_counts(*count_phases(text))
+    origin = origin_payload(data)
+    sync = build_origin_sync_payload(root, origin, excluded_rels=git_sync_excluded_paths())
+    review_path = root / REVIEWS_DIR / f"{task_id}.md"
+    try:
+        topology = load_review_topology(root)
+    except Exception as exc:
+        review_state = {"exists": False, "errors": [str(exc)]}
+    else:
+        review_state = load_review_state(review_path, topology)
+    return build_projection_model(
+        root,
+        spec,
+        task_id,
+        data=data,
+        phase_entries=parse_phase_status_entries(text),
+        phase_counts_payload=counts,
+        criteria=parse_acceptance_criteria(text),
+        review_state=review_state,
+        sync=sync,
+    )
+
+
 def cmd_summary(args):
     """Render a concise deterministic task summary for chat, issues, or logs."""
     root = require_root()
     spec = require_spec(root, args.task_id)
-    model = build_projection_model(root, spec, args.task_id)
+    model = projection_model_for_task(root, spec, args.task_id)
     markdown = render_projection_summary(model)
 
     if getattr(args, "json", False):
@@ -1739,7 +1484,7 @@ def cmd_checks(args):
     """Render CI-friendly task check state from the projection model."""
     root = require_root()
     spec = require_spec(root, args.task_id)
-    model = build_projection_model(root, spec, args.task_id)
+    model = projection_model_for_task(root, spec, args.task_id)
     check = projection_check(model)
     markdown = render_projection_summary(model)
 
@@ -1752,7 +1497,7 @@ def cmd_checks(args):
             result={"model": model, "check": check, "markdown": markdown},
             error=error_payload(
                 check["summary"],
-                code="projection_check_failed",
+                code=EC.PROJECTION_CHECK_FAILED,
                 details=check["details"],
                 exit_code=1,
             ) if check["status"] == "failure" else None,
@@ -1772,7 +1517,7 @@ def cmd_pr_body(args):
     """Render a deterministic PR body from the current spec state."""
     root = require_root()
     spec = require_spec(root, args.task_id)
-    model = build_projection_model(root, spec, args.task_id)
+    model = projection_model_for_task(root, spec, args.task_id)
     markdown = render_projection_pr_body(model)
 
     if getattr(args, "json", False):
@@ -1846,7 +1591,7 @@ def cmd_complete(args):
                 state={"status": yaml_read_field(text, "status")},
                 error=error_payload(
                     "--reason requires --human-reviewed",
-                    code="invalid_arguments",
+                    code=EC.INVALID_ARGUMENTS,
                     exit_code=1,
                 ),
             )
@@ -1862,7 +1607,7 @@ def cmd_complete(args):
                 state={"status": yaml_read_field(text, "status")},
                 error=error_payload(
                     "--reason is required with --human-reviewed",
-                    code="invalid_arguments",
+                    code=EC.INVALID_ARGUMENTS,
                     exit_code=1,
                 ),
             )
@@ -1925,7 +1670,7 @@ def cmd_complete(args):
                     },
                     error=error_payload(
                         gate_reason,
-                        code="review_gate_blocked",
+                        code=EC.REVIEW_GATE_BLOCKED,
                         details=gate_errors or blocking,
                         next_action=f"scafld review {args.task_id}" if not review_data["exists"] else None,
                         exit_code=1,
@@ -1955,7 +1700,7 @@ def cmd_complete(args):
                 state={"status": yaml_read_field(text, "status"), "review_verdict": verdict},
                 error=error_payload(
                     "human-reviewed override requires interactive terminal output; rerun without --json",
-                    code="interactive_required",
+                    code=EC.INTERACTIVE_REQUIRED,
                     exit_code=1,
                 ),
             )
@@ -2006,7 +1751,7 @@ def cmd_complete(args):
                 state={"status": yaml_read_field(text, "status")},
                 error=error_payload(
                     "--human-reviewed is only for blocked completion",
-                    code="invalid_arguments",
+                    code=EC.INVALID_ARGUMENTS,
                     exit_code=1,
                 ),
             )
@@ -2187,7 +1932,7 @@ def cmd_review(args):
                 state={"status": status},
                 error=error_payload(
                     f"spec must be in_progress to review (current: {status})",
-                    code="invalid_spec_status",
+                    code=EC.INVALID_SPEC_STATUS,
                     exit_code=1,
                 ),
             )
@@ -2245,7 +1990,7 @@ def cmd_review(args):
                 },
                 error=error_payload(
                     f"{failed} automated pass(es) failed",
-                    code="automated_review_failed",
+                    code=EC.AUTOMATED_REVIEW_FAILED,
                     next_action=f"scafld review {args.task_id}",
                     exit_code=1,
                 ),
@@ -2269,7 +2014,7 @@ def cmd_review(args):
                 state={"status": status},
                 error=error_payload(
                     f"could not capture reviewed git state: {review_git_error}",
-                    code="review_git_state_unavailable",
+                    code=EC.REVIEW_GIT_STATE_UNAVAILABLE,
                     exit_code=1,
                 ),
             )
@@ -2330,163 +2075,6 @@ def cmd_review(args):
         )
     else:
         print(review_prompt)
-
-
-def parse_review_file(review_path, topology):
-    """Parse the latest review round and validate the Review Artifact v3 contract."""
-    adversarial_passes = review_passes_by_kind(topology, "adversarial")
-    adversarial_titles = [definition["title"] for definition in adversarial_passes]
-    parsed = {
-        "exists": review_path.exists(),
-        "review_count": 0,
-        "verdict": None,
-        "blocking": [],
-        "non_blocking": [],
-        "metadata": None,
-        "pass_results": normalize_review_pass_results(topology),
-        "round_status": None,
-        "reviewer_mode": None,
-        "empty_adversarial": list(adversarial_titles),
-        "errors": [],
-    }
-    if not review_path.exists():
-        return parsed
-
-    text = review_path.read_text()
-    matches = list(re.finditer(r'^## Review \d+\s+—.*$', text, re.MULTILINE))
-    parsed["review_count"] = len(matches)
-    if not matches:
-        parsed["errors"].append("review file has no review rounds")
-        return parsed
-
-    last_section = text[matches[-1].end():]
-
-    def section_body(heading):
-        match = re.search(
-            rf'^### {re.escape(heading)}\s*\n(.*?)(?=^### |\Z)',
-            last_section,
-            re.MULTILINE | re.DOTALL,
-        )
-        return match.group(1) if match else None
-
-    required_sections = ("Metadata", "Pass Results", "Blocking", "Non-blocking", "Verdict")
-
-    sections = {}
-    for heading in (*required_sections, *adversarial_titles):
-        body = section_body(heading)
-        sections[heading] = body
-        if body is None and heading in required_sections:
-            parsed["errors"].append(f"latest review round is missing ### {heading}")
-
-    # Track which adversarial sections are missing or empty
-    empty_adversarial = []
-    for heading in adversarial_titles:
-        body = sections.get(heading)
-        if body is None or not body.strip():
-            empty_adversarial.append(heading)
-    parsed["empty_adversarial"] = empty_adversarial
-
-    blocking = []
-    non_blocking = []
-    for heading, bucket in (("Blocking", blocking), ("Non-blocking", non_blocking)):
-        body = sections.get(heading)
-        if body is None:
-            continue
-        for line in body.strip().splitlines():
-            stripped = line.strip()
-            if not stripped:
-                continue
-            normalized = stripped.lower().strip(".")
-            if normalized in {"none", "- none", "n/a", "(none)"}:
-                continue
-            if stripped.startswith("* "):
-                stripped = "- " + stripped[2:].strip()
-            if stripped.startswith("- "):
-                bucket.append(stripped)
-    parsed["blocking"] = blocking
-    parsed["non_blocking"] = non_blocking
-
-    metadata_body = sections.get("Metadata")
-    if metadata_body is not None:
-        metadata_match = re.search(r'```json\s*\n(.*?)\n```', metadata_body, re.DOTALL)
-        if not metadata_match:
-            parsed["errors"].append("latest review metadata must contain a fenced json block")
-        else:
-            try:
-                metadata = json.loads(metadata_match.group(1))
-            except json.JSONDecodeError as e:
-                parsed["errors"].append(f"latest review metadata is invalid JSON: {e}")
-            else:
-                parsed["metadata"] = metadata
-                parsed["pass_results"] = normalize_review_pass_results(topology, metadata.get("pass_results"))
-                parsed["round_status"] = metadata.get("round_status")
-                parsed["reviewer_mode"] = metadata.get("reviewer_mode")
-                for issue in validate_review_metadata(metadata, topology):
-                    parsed["errors"].append(f"metadata: {issue}")
-
-    verdict_body = sections.get("Verdict")
-    verdict = None
-    if verdict_body is None:
-        parsed["errors"].append("latest review round is missing a verdict body")
-    else:
-        normalized_verdict = re.sub(r'[`*_]+', ' ', verdict_body.lower())
-        normalized_verdict = re.sub(r'\s+', ' ', normalized_verdict).strip()
-        if "pass with issues" in normalized_verdict:
-            verdict = "pass_with_issues"
-        elif "pass_with_issues" in normalized_verdict:
-            verdict = "pass_with_issues"
-        elif re.search(r'\bfail\b', normalized_verdict):
-            verdict = "fail"
-        elif re.search(r'\bpass\b', normalized_verdict):
-            verdict = "pass"
-        elif re.search(r'\bincomplete\b', normalized_verdict):
-            verdict = "incomplete"
-        elif normalized_verdict:
-            parsed["errors"].append("latest review verdict is invalid")
-        else:
-            parsed["errors"].append("latest review verdict is empty")
-
-    if verdict is None:
-        if blocking:
-            verdict = "fail"
-        elif non_blocking:
-            verdict = "pass_with_issues"
-
-    if verdict == "fail" and not blocking:
-        parsed["errors"].append("verdict fail requires at least one blocking finding")
-    if verdict == "pass_with_issues":
-        if blocking:
-            parsed["errors"].append("pass_with_issues cannot include blocking findings")
-        if not non_blocking:
-            parsed["errors"].append("pass_with_issues requires at least one non-blocking finding")
-    if verdict == "pass":
-        if blocking:
-            parsed["errors"].append("pass verdict cannot include blocking findings")
-        if non_blocking:
-            parsed["errors"].append("pass verdict cannot include non-blocking findings")
-    if verdict == "incomplete" and parsed["round_status"] == "completed":
-        parsed["errors"].append("completed review round cannot use verdict=incomplete")
-
-    adversarial_ids = review_pass_ids(topology, "adversarial")
-    configured_results = parsed["pass_results"]
-    if verdict == "pass":
-        bad = [pass_id for pass_id in adversarial_ids if configured_results.get(pass_id) in {"fail", "pass_with_issues"}]
-        if bad:
-            parsed["errors"].append(f"pass verdict cannot mark adversarial passes as fail/pass_with_issues: {', '.join(sorted(bad))}")
-    if verdict == "pass_with_issues":
-        bad = [pass_id for pass_id in adversarial_ids if configured_results.get(pass_id) == "fail"]
-        if bad:
-            parsed["errors"].append(f"pass_with_issues cannot mark adversarial passes as fail: {', '.join(sorted(bad))}")
-        if not any(configured_results.get(pass_id) == "pass_with_issues" for pass_id in adversarial_ids):
-            parsed["errors"].append("pass_with_issues requires at least one adversarial pass result of pass_with_issues")
-    if verdict == "fail" and parsed["round_status"] == "completed":
-        failing = [pass_id for pass_id, result in configured_results.items() if result == "fail"]
-        if not failing:
-            parsed["errors"].append("fail verdict requires at least one review pass result of fail")
-
-    parsed["verdict"] = verdict
-    return parsed
-
 
 def confirm_human_override(task_id, gate_reason):
     """Require interactive confirmation before allowing a human-reviewed override."""
@@ -2738,7 +2326,7 @@ def cmd_validate(args):
             result=result,
             error=error_payload(
                 "spec validation failed",
-                code="validation_failed",
+                code=EC.VALIDATION_FAILED,
                 details=errors,
                 exit_code=1,
             ) if errors else None,
@@ -2758,21 +2346,6 @@ def cmd_validate(args):
         print(f"  task_id: {task_id}")
         print(f"  status: {status}")
         print(f"  phases: {total}")
-
-
-def parse_yaml_value(raw):
-    """Parse a YAML scalar value, handling quotes and escapes."""
-    v = raw.strip()
-    if not v:
-        return ""
-    # Double-quoted: unescape \"
-    if v.startswith('"') and v.endswith('"'):
-        return v[1:-1].replace('\\"', '"')
-    # Single-quoted
-    if v.startswith("'") and v.endswith("'"):
-        return v[1:-1].replace("''", "'")
-    return v
-
 
 def parse_acceptance_criteria(text):
     """Extract acceptance criteria from all phases using indent-aware parsing."""
@@ -3009,7 +2582,7 @@ def cmd_harden(args):
                 state={"file": str(rel)},
                 error=error_payload(
                     f"harden only operates on drafts (current: {rel.parent})",
-                    code="invalid_spec_location",
+                    code=EC.INVALID_SPEC_LOCATION,
                     details=[f"spec must live in {DRAFTS_DIR}/"],
                     exit_code=1,
                 ),
@@ -3032,7 +2605,7 @@ def cmd_harden(args):
                     state={"file": str(rel), "harden_status": data.get("harden_status")},
                     error=error_payload(
                         "no hardening round to mark passed",
-                        code="missing_harden_round",
+                        code=EC.MISSING_HARDEN_ROUND,
                         next_action=f"scafld harden {args.task_id}",
                         exit_code=1,
                     ),
@@ -3078,7 +2651,7 @@ def cmd_harden(args):
                 state={"file": str(rel)},
                 error=error_payload(
                     f"harden prompt missing at {prompt_path}",
-                    code="prompt_missing",
+                    code=EC.PROMPT_MISSING,
                     exit_code=1,
                 ),
             )
@@ -3137,7 +2710,7 @@ def cmd_exec(args):
                 state={"status": status},
                 error=error_payload(
                     f"spec must be in_progress or approved to exec (current: {status})",
-                    code="invalid_spec_status",
+                    code=EC.INVALID_SPEC_STATUS,
                     exit_code=1,
                 ),
             )
@@ -3402,7 +2975,7 @@ def cmd_exec(args):
             result={"criteria": criterion_results, "summary": summary},
             error=error_payload(
                 f"{failed} acceptance criterion/criteria failed",
-                code="acceptance_failed",
+                code=EC.ACCEPTANCE_FAILED,
                 exit_code=1,
             ) if failed else None,
         )
@@ -3566,7 +3139,7 @@ def cmd_audit(args):
             result=result,
             error=error_payload(
                 "scope drift or active-spec overlap detected",
-                code="scope_drift",
+                code=EC.SCOPE_DRIFT,
                 details=(
                     [f"{path} changed but is not declared in the spec" for path in sorted(undeclared)]
                     + [

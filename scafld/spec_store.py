@@ -3,6 +3,7 @@ import re
 import shutil
 from dataclasses import dataclass
 
+from scafld.error_codes import ErrorCode
 from scafld.errors import ScafldError
 
 AI_DIR = ".ai"
@@ -51,7 +52,7 @@ def require_pyyaml():
         raise ScafldError(
             "PyYAML is required for structured spec metadata updates",
             ["install it with: python3 -m pip install PyYAML"],
-            code="missing_dependency",
+            code=ErrorCode.MISSING_DEPENDENCY,
         ) from exc
     return yaml
 
@@ -64,7 +65,7 @@ def load_spec_document(spec_path):
         raise ScafldError(
             f"invalid spec document: {spec_path.name}",
             ["spec root must be a YAML mapping"],
-            code="invalid_spec_document",
+            code=ErrorCode.INVALID_SPEC_DOCUMENT,
         )
     return data
 
@@ -209,13 +210,13 @@ def require_spec(root, task_id):
         raise ScafldError(
             f"spec not found: {task_id}",
             [f"searched: {DRAFTS_DIR}/, {APPROVED_DIR}/, {ACTIVE_DIR}/, {ARCHIVE_DIR}/"],
-            code="spec_not_found",
+            code=ErrorCode.SPEC_NOT_FOUND,
         )
     if len(specs) > 1:
         details = ["matching specs:"]
         details.extend(f"  - {spec.relative_to(root)}" for spec in specs)
         details.append("resolve the duplicate task-id before continuing")
-        raise ScafldError(f"ambiguous task-id: {task_id}", details, code="ambiguous_task_id")
+        raise ScafldError(f"ambiguous task-id: {task_id}", details, code=ErrorCode.AMBIGUOUS_TASK_ID)
     return specs[0]
 
 
@@ -229,7 +230,7 @@ def move_spec(root, spec_path, new_status):
         raise ScafldError(
             f"cannot transition from '{current_status}' to '{new_status}'",
             [f"allowed transitions: {allowed_display}"],
-            code="invalid_transition",
+            code=ErrorCode.INVALID_TRANSITION,
         )
 
     text = yaml_set_field(text, "status", new_status)

@@ -5,39 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 CLI_ROOT="${CLI_ROOT:-$REPO_ROOT/cli}"
 TMP_DIRS=()
-
-cleanup() {
-  if [ "${#TMP_DIRS[@]}" -gt 0 ]; then
-    rm -rf "${TMP_DIRS[@]}"
-  fi
-}
-trap cleanup EXIT
-
-fail() {
-  echo "FAIL: $*" >&2
-  exit 1
-}
-
-capture() {
-  local __var="$1"
-  shift
-  local _captured
-  set +e
-  _captured="$("$@" 2>&1)"
-  local status=$?
-  set -e
-  printf -v "$__var" '%s' "$_captured"
-  return "$status"
-}
-
-assert_contains() {
-  local haystack="$1"
-  local needle="$2"
-  local message="$3"
-  if [[ "$haystack" != *"$needle"* ]]; then
-    fail "$message"
-  fi
-}
+source "$SCRIPT_DIR/smoke_lib.sh"
 
 scafld_cmd() {
   PATH="$CLI_ROOT:$PATH" scafld "$@"

@@ -2,6 +2,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from scafld.error_codes import ErrorCode
 from scafld.errors import ScafldError
 
 AI_DIR = ".ai"
@@ -50,7 +51,7 @@ def require_root(start=None):
         raise ScafldError(
             "not in a scafld project (no .ai/ directory found)",
             ["run 'scafld init' to set up a workspace"],
-            code="workspace_not_found",
+            code=ErrorCode.WORKSPACE_NOT_FOUND,
         )
     return root
 
