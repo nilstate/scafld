@@ -7,6 +7,11 @@ def sha256_bytes(payload):
     return hashlib.sha256(payload).hexdigest()
 
 
+def decode_text(payload):
+    """Decode git stdout bytes into a trimmed text string."""
+    return payload.decode("utf-8", errors="replace").strip()
+
+
 def decode_path_list(payload):
     """Decode a NUL-delimited git path list into sorted relative paths."""
     return sorted(
@@ -72,6 +77,22 @@ def run_git_capture(root, args, timeout=10):
     return proc.stdout, None
 
 
+def run_git_text(root, args, timeout=10):
+    """Run git and decode stdout into text."""
+    payload, error = run_git_capture(root, args, timeout=timeout)
+    if payload is None:
+        return None, error
+    return decode_text(payload) or None, None
+
+
+def run_git_text_optional(root, args, timeout=10):
+    """Run git for optional metadata; return None on lookup failure."""
+    payload, error = run_git_capture(root, args, timeout=timeout)
+    if payload is None:
+        return None
+    return decode_text(payload) or None
+
+
 def git_pathspec(excluded_rels=None):
     """Return a root-scoped pathspec that can exclude one or more relative paths."""
     pathspec = ["--", "."]
@@ -85,6 +106,216 @@ def git_pathspec(excluded_rels=None):
 def review_git_pathspec(excluded_rel=None):
     """Return a root-scoped pathspec that optionally excludes one relative path."""
     return git_pathspec([excluded_rel] if excluded_rel else None)
+
+
+def ref_exists(root, ref_name):
+    """Return True when a commit-ish ref exists locally."""
+    payload, _error = run_git_capture(root, ["rev-parse", "--verify", "--quiet", f"{ref_name}^{{commit}}"])
+    return payload is not None
+
+
+def branch_exists(root, branch_name):
+    """Return True when a local branch exists."""
+    return ref_exists(root, f"refs/heads/{branch_name}")
+
+
+def list_remotes(root):
+    """Return configured git remotes for the repo."""
+    output, error = run_git_text(root, ["remote"])
+    if error:
+        return [], error
+    if not output:
+        return [], None
+    return [line.strip() for line in output.splitlines() if line.strip()], None
+
+
+def remote_from_upstream(upstream):
+    """Return the remote name extracted from an upstream ref."""
+    if upstream and "/" in upstream:
+        return upstream.split("/", 1)[0]
+    return None
+
+
+def default_remote(root):
+    """Prefer origin, otherwise return the first configured remote."""
+    remotes, error = list_remotes(root)
+    if error:
+        return None, error
+    if "origin" in remotes:
+        return "origin", None
+    return (remotes[0], None) if remotes else (None, None)
+
+
+def current_branch(root):
+    """Return the current branch name, or None when detached."""
+    branch_name, error = run_git_text(root, ["rev-parse", "--abbrev-ref", "HEAD"])
+    if error:
+        return None, error
+    if branch_name == "HEAD":
+        return None, None
+    return branch_name, None
+
+
+def current_upstream(root):
+    """Return the symbolic upstream ref for the current branch, if configured."""
+    return run_git_text_optional(root, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"])
+
+
+def remote_url(root, remote_name):
+    """Return the configured URL for a remote, if available."""
+    if not remote_name:
+        return None
+    return run_git_text_optional(root, ["remote", "get-url", remote_name])
+
+
+def working_tree_dirty(root, excluded_rels=None):
+    """Return whether the workspace has changes outside excluded paths."""
+    changed, error = list_working_tree_changed_files(root, excluded_rels=excluded_rels)
+    if changed is None:
+        return None, error
+    return bool(changed), None
+
+
+def resolve_default_base_ref(root, remote_name=None):
+    """Return the best local default base ref for branch creation."""
+    candidate_remotes = []
+    if remote_name:
+        candidate_remotes.append(remote_name)
+    remotes, error = list_remotes(root)
+    if error:
+        return None, error
+    for remote in remotes:
+        if remote not in candidate_remotes:
+            candidate_remotes.append(remote)
+
+    for remote in candidate_remotes:
+        symbolic = run_git_text_optional(root, ["symbolic-ref", f"refs/remotes/{remote}/HEAD"])
+        if symbolic and symbolic.startswith("refs/remotes/"):
+            return symbolic.removeprefix("refs/remotes/"), None
+
+    for local_name in ("main", "master", "trunk", "develop"):
+        if branch_exists(root, local_name):
+            return local_name, None
+
+    branch_name, error = current_branch(root)
+    if error:
+        return None, error
+    return branch_name, None
+
+
+def capture_workspace_git_state(root, excluded_rels=None):
+    """Capture the live git facts needed for origin binding and sync checks."""
+    repo_root, error = run_git_text(root, ["rev-parse", "--show-toplevel"])
+    if error:
+        return None, error
+
+    head_sha, error = run_git_text(root, ["rev-parse", "HEAD"])
+    if error:
+        return None, error
+
+    branch_name, error = current_branch(root)
+    if error:
+        return None, error
+
+    dirty, error = working_tree_dirty(root, excluded_rels=excluded_rels)
+    if error:
+        return None, error
+
+    upstream = current_upstream(root)
+    remote_name = remote_from_upstream(upstream)
+    if not remote_name:
+        remote_name, error = default_remote(root)
+        if error:
+            return None, error
+
+    default_base_ref, error = resolve_default_base_ref(root, remote_name=remote_name)
+    if error:
+        return None, error
+
+    return {
+        "repo_root": repo_root,
+        "branch": branch_name,
+        "head_sha": head_sha,
+        "upstream": upstream,
+        "remote": remote_name,
+        "remote_url": remote_url(root, remote_name),
+        "default_base_ref": default_base_ref,
+        "dirty": bool(dirty),
+        "detached": branch_name is None,
+    }, None
+
+
+def run_git_mutation(root, args, timeout=30):
+    """Run a mutating git command and return an optional error string."""
+    _payload, error = run_git_capture(root, args, timeout=timeout)
+    return error
+
+
+def checkout_branch(root, branch_name):
+    """Checkout an existing local branch."""
+    return run_git_mutation(root, ["checkout", branch_name])
+
+
+def create_branch(root, branch_name, base_ref):
+    """Create and checkout a new local branch from a base ref."""
+    return run_git_mutation(root, ["checkout", "-b", branch_name, base_ref])
+
+
+def build_origin_sync_payload(root, origin=None, excluded_rels=None):
+    """Compare stored origin metadata with live git state."""
+    origin = origin or {}
+    repo_meta = origin.get("repo") if isinstance(origin.get("repo"), dict) else {}
+    git_meta = origin.get("git") if isinstance(origin.get("git"), dict) else {}
+    expected = {
+        "remote": repo_meta.get("remote"),
+        "remote_url": repo_meta.get("remote_url"),
+        "branch": git_meta.get("branch"),
+        "base_ref": git_meta.get("base_ref"),
+        "upstream": git_meta.get("upstream"),
+    }
+
+    actual, error = capture_workspace_git_state(root, excluded_rels=excluded_rels)
+    if actual is None:
+        return {
+            "bound": bool(expected["branch"]),
+            "status": "unavailable",
+            "reasons": [error] if error else [],
+            "expected": expected,
+            "actual": {},
+        }
+
+    reasons = []
+    if expected["branch"]:
+        if actual["detached"]:
+            reasons.append("workspace is on a detached HEAD")
+        if actual["dirty"]:
+            reasons.append("workspace has uncommitted changes")
+        if actual["branch"] != expected["branch"]:
+            current = actual["branch"] or "HEAD"
+            reasons.append(f"current branch is {current}, expected {expected['branch']}")
+        if expected["upstream"] and actual["upstream"] != expected["upstream"]:
+            current = actual["upstream"] or "none"
+            reasons.append(f"current upstream is {current}, expected {expected['upstream']}")
+        if expected["remote"] and actual["remote"] != expected["remote"]:
+            current = actual["remote"] or "none"
+            reasons.append(f"current remote is {current}, expected {expected['remote']}")
+        if expected["remote_url"] and actual["remote_url"] != expected["remote_url"]:
+            current = actual["remote_url"] or "none"
+            reasons.append(f"current remote URL is {current}, expected {expected['remote_url']}")
+        if expected["base_ref"] and not ref_exists(root, expected["base_ref"]):
+            reasons.append(f"expected base ref {expected['base_ref']} is not available locally")
+
+    status = "unbound"
+    if expected["branch"]:
+        status = "drift" if reasons else "in_sync"
+
+    return {
+        "bound": bool(expected["branch"]),
+        "status": status,
+        "reasons": reasons,
+        "expected": expected,
+        "actual": actual,
+    }
 
 
 def list_working_tree_changed_files(root, excluded_rels=None):
