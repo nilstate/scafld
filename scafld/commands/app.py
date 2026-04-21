@@ -6,28 +6,27 @@ import sys
 from scafld.errors import ScafldError
 from scafld.output import emit_cli_error, emit_command_json, error_payload
 
-from .parser import build_parser
-from .registry import command_registry
 from scafld.terminal import C_RED, c
+from .surface import build_parser, resolve_command
 
 __all__ = ["main"]
 
 
 def main(argv=None):
     parser = build_parser()
-    commands = command_registry()
     args = parser.parse_args(argv)
 
     if args.version:
-        commands["version"](args)
+        resolve_command("version")(args)
         return
 
-    if args.command not in commands:
+    command = resolve_command(args.command)
+    if command is None:
         parser.print_help()
         sys.exit(1)
 
     try:
-        commands[args.command](args)
+        command(args)
     except ScafldError as error:
         if getattr(args, "json", False):
             emit_command_json(

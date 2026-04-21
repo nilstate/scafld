@@ -3,11 +3,21 @@ import subprocess
 import sys
 
 from scafld.acceptance import evaluate_acceptance_criterion
-from scafld.reviewing import normalize_review_pass_results, review_passes_by_kind
+from scafld.errors import ScafldError
+from scafld.git_state import capture_review_git_state
+from scafld.review_artifacts import append_review_round, load_review_topology
+from scafld.reviewing import (
+    build_review_metadata,
+    normalize_review_pass_results,
+    parse_review_file,
+    review_git_gate_reason,
+    review_pass_ids,
+    review_passes_by_kind,
+)
 from scafld.spec_parsing import extract_self_eval_score, extract_spec_cwd, now_iso, parse_acceptance_criteria
 from scafld.terminal import C_BOLD, C_CYAN, C_DIM, C_GREEN, C_RED, C_YELLOW, c
 
-from .runtime_bundle import scafld_source_root
+from .runtime_bundle import CONFIG_PATH, REVIEWS_DIR, scafld_source_root
 
 
 def check_self_eval(text, task_id):
@@ -196,3 +206,173 @@ def collect_automated_review_passes(root, task_id, text, topology):
         outcome = run_automated_review_pass(root, task_id, text, definition["id"])
         pass_results[definition["id"]] = outcome["result"]
     return normalize_review_pass_results(topology, pass_results)
+
+
+def load_configured_review_topology(root):
+    try:
+        return load_review_topology(root)
+    except ValueError as exc:
+        raise ScafldError(
+            f"invalid review topology in {CONFIG_PATH}",
+            [str(exc)],
+        ) from exc
+
+
+def review_passes_are_not_run(pass_results, pass_ids):
+    return all(pass_results.get(pass_id) == "not_run" for pass_id in pass_ids)
+
+
+def automated_review_pass_ids(topology):
+    return review_pass_ids(topology, "automated")
+
+
+def run_automated_review_suite(root, task_id, text, topology):
+    automated_results = []
+    pass_results = {}
+    automated_passes = review_passes_by_kind(topology, "automated")
+    adversarial_passes = review_passes_by_kind(topology, "adversarial")
+
+    for definition in automated_passes:
+        outcome = run_automated_review_pass(root, task_id, text, definition["id"])
+        pass_results[definition["id"]] = outcome["result"]
+        automated_results.append(automated_pass_payload(definition, outcome))
+
+    normalized_passes = normalize_review_pass_results(topology, pass_results)
+    passed = sum(1 for definition in automated_passes if normalized_passes[definition["id"]] == "pass")
+    failed = sum(1 for definition in automated_passes if normalized_passes[definition["id"]] == "fail")
+
+    return {
+        "automated_results": automated_results,
+        "automated_passes": automated_passes,
+        "adversarial_passes": adversarial_passes,
+        "normalized_passes": normalized_passes,
+        "passed": passed,
+        "failed": failed,
+    }
+
+
+def open_review_round(root, task_id, spec, text, topology, normalized_passes, *, use_color=True):
+    reviews_dir = root / REVIEWS_DIR
+    reviews_dir.mkdir(parents=True, exist_ok=True)
+    review_file = reviews_dir / f"{task_id}.md"
+    review_git_state, review_git_error = capture_review_git_state(root, review_file.relative_to(root))
+    if review_git_error:
+        raise ScafldError(
+            "could not capture reviewed git state",
+            [review_git_error],
+        )
+
+    review_metadata = build_review_metadata(
+        topology,
+        reviewer_mode="executor",
+        round_status="in_progress",
+        pass_results=normalized_passes,
+        reviewed_at=now_iso(),
+        reviewer_session="",
+        review_git_state=review_git_state,
+    )
+    review_count = append_review_round(
+        review_file,
+        task_id,
+        text,
+        topology,
+        review_metadata,
+        verdict="",
+        blocking=[],
+        non_blocking=[],
+    )
+
+    review_path_rel = str(review_file.relative_to(root))
+    spec_path_rel = str(spec.relative_to(root))
+    adversarial_passes = review_passes_by_kind(topology, "adversarial")
+    review_prompt = render_adversarial_review_prompt(
+        task_id,
+        spec_path_rel,
+        review_path_rel,
+        review_count,
+        adversarial_passes,
+        use_color=use_color,
+    )
+    return {
+        "review_file": review_file,
+        "review_path_rel": review_path_rel,
+        "review_count": review_count,
+        "review_prompt": review_prompt,
+        "required_sections": [
+            "Metadata",
+            "Pass Results",
+            *[definition["title"] for definition in adversarial_passes],
+            "Blocking",
+            "Non-blocking",
+            "Verdict",
+        ],
+    }
+
+
+def evaluate_review_gate(root, review_file, review_data):
+    gate_errors = list(review_data["errors"])
+    current_git_state = None
+    review_metadata = review_data.get("metadata") or {}
+
+    gate_reason = None
+    if not review_data["exists"]:
+        gate_reason = "no review found"
+    elif review_data["empty_adversarial"]:
+        gate_reason = f"configured review sections incomplete — missing: {', '.join(review_data['empty_adversarial'])}"
+    elif gate_errors:
+        gate_reason = "latest review round is malformed or incomplete"
+    elif review_data["verdict"] == "fail":
+        gate_reason = f"latest review failed with {len(review_data['blocking'])} blocking finding(s)"
+    elif review_data["verdict"] in (None, "incomplete") or review_data["round_status"] == "in_progress":
+        gate_reason = "latest review is incomplete"
+    else:
+        current_git_state, current_git_error = capture_review_git_state(root, review_file.relative_to(root))
+        if current_git_error:
+            gate_reason = "current git state is unavailable for review binding"
+            gate_errors.append(f"git state: {current_git_error}")
+        else:
+            gate_reason = review_git_gate_reason(current_git_state, review_metadata)
+
+    return {
+        "gate_reason": gate_reason,
+        "gate_errors": gate_errors,
+        "current_git_state": current_git_state,
+        "review_metadata": review_metadata,
+    }
+
+
+def apply_human_override(root, task_id, text, topology, review_file, review_data, pass_results, override_reason, current_git_state=None):
+    if current_git_state is None:
+        current_git_state, current_git_error = capture_review_git_state(root, review_file.relative_to(root))
+        if current_git_error:
+            raise ScafldError(
+                "current git state is unavailable for review binding",
+                [current_git_error],
+            )
+
+    override_section_bodies = {
+        definition["id"]: "Override applied — this pass was not re-reviewed in the override round."
+        for definition in review_passes_by_kind(topology, "adversarial")
+    }
+    override_metadata = build_review_metadata(
+        topology,
+        reviewer_mode="human_override",
+        round_status="override",
+        pass_results=pass_results,
+        reviewed_at=now_iso(),
+        reviewer_session="",
+        override_reason=override_reason,
+        review_git_state=current_git_state,
+    )
+    append_review_round(
+        review_file,
+        task_id,
+        text,
+        topology,
+        override_metadata,
+        verdict=review_data["verdict"] or "incomplete",
+        blocking=review_data["blocking"],
+        non_blocking=review_data["non_blocking"],
+        section_bodies=override_section_bodies,
+    )
+    return parse_review_file(review_file, topology)

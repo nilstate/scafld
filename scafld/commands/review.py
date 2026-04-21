@@ -3,29 +3,27 @@ import sys
 from scafld.command_runtime import require_root
 from scafld.error_codes import ErrorCode as EC
 from scafld.errors import ScafldError
-from scafld.git_state import capture_review_git_state
 from scafld.output import emit_command_json, error_payload
-from scafld.review_artifacts import append_review_round, load_review_topology, upsert_review_block
+from scafld.review_artifacts import upsert_review_block
 from scafld.reviewing import (
-    build_review_metadata,
     build_spec_review_block,
-    normalize_review_pass_results,
     parse_review_file,
-    review_git_gate_reason,
-    review_pass_ids,
-    review_passes_by_kind,
 )
 from scafld.review_workflow import (
-    automated_pass_payload,
+    apply_human_override,
+    automated_review_pass_ids,
     check_self_eval,
     collect_automated_review_passes,
     confirm_human_override,
-    render_adversarial_review_prompt,
-    run_automated_review_pass,
+    evaluate_review_gate,
+    load_configured_review_topology,
+    open_review_round,
+    review_passes_are_not_run,
+    run_automated_review_suite,
 )
-from scafld.runtime_bundle import CONFIG_PATH, REVIEWS_DIR
+from scafld.runtime_bundle import REVIEWS_DIR
 from scafld.spec_lifecycle import move_result_payload
-from scafld.spec_parsing import now_iso, parse_acceptance_criteria
+from scafld.spec_parsing import parse_acceptance_criteria
 from scafld.spec_store import move_spec, require_spec, yaml_read_field
 from scafld.terminal import C_BOLD, C_CYAN, C_DIM, C_GREEN, C_RED, C_YELLOW, STATUS_COLORS, c
 
@@ -36,25 +34,10 @@ def print_move_result(root, move_result):
     print(f" {c(C_DIM, 'status')}: {c(STATUS_COLORS.get(transition['status'], ''), transition['status'])}")
 
 
-def load_or_exit_review_topology(root):
-    """Load the configured review topology or exit with a clear error."""
-    try:
-        return load_review_topology(root)
-    except ValueError as exc:
-        raise ScafldError(
-            f"invalid review topology in {CONFIG_PATH}",
-            [str(exc)],
-        ) from exc
-
-
-def review_passes_are_not_run(pass_results, pass_ids):
-    return all(pass_results.get(pass_id) == "not_run" for pass_id in pass_ids)
-
-
 def cmd_complete(args):
     """Move spec from active to archive (completed). Reads review file and gates on verdict."""
     root = require_root()
-    topology = load_or_exit_review_topology(root)
+    topology = load_configured_review_topology(root)
     spec = require_spec(root, args.task_id)
     text = spec.read_text()
     json_mode = bool(getattr(args, "json", False))
@@ -105,37 +88,12 @@ def cmd_complete(args):
     blocking = review_data["blocking"]
     non_blocking = review_data["non_blocking"]
     pass_results = review_data["pass_results"]
-    review_metadata = review_data.get("metadata") or {}
-    gate_errors = list(review_data["errors"])
     override_applied = False
     override_confirmed_at = None
-    current_git_state = None
-
-    empty_adversarial = review_data["empty_adversarial"]
-    automated_pass_ids = review_pass_ids(topology, "automated")
-    override_section_bodies = {
-        definition["id"]: "Override applied — this pass was not re-reviewed in the override round."
-        for definition in review_passes_by_kind(topology, "adversarial")
-    }
-
-    gate_reason = None
-    if not review_data["exists"]:
-        gate_reason = "no review found"
-    elif empty_adversarial:
-        gate_reason = f"configured review sections incomplete — missing: {', '.join(empty_adversarial)}"
-    elif gate_errors:
-        gate_reason = "latest review round is malformed or incomplete"
-    elif verdict == "fail":
-        gate_reason = f"latest review failed with {len(blocking)} blocking finding(s)"
-    elif verdict in (None, "incomplete") or review_data["round_status"] == "in_progress":
-        gate_reason = "latest review is incomplete"
-    else:
-        current_git_state, current_git_error = capture_review_git_state(root, review_file.relative_to(root))
-        if current_git_error:
-            gate_reason = "current git state is unavailable for review binding"
-            gate_errors.append(f"git state: {current_git_error}")
-        else:
-            gate_reason = review_git_gate_reason(current_git_state, review_metadata)
+    gate = evaluate_review_gate(root, review_file, review_data)
+    gate_reason = gate["gate_reason"]
+    gate_errors = gate["gate_errors"]
+    current_git_state = gate["current_git_state"]
 
     if gate_reason:
         if not human_reviewed:
@@ -174,7 +132,7 @@ def cmd_complete(args):
                 print(f"         only a human can override with {c(C_BOLD, '--human-reviewed --reason <why>')}")
             sys.exit(1)
 
-        if not review_data["exists"] or review_passes_are_not_run(pass_results, automated_pass_ids):
+        if not review_data["exists"] or review_passes_are_not_run(pass_results, automated_review_pass_ids(topology)):
             pass_results = collect_automated_review_passes(root, args.task_id, text, topology)
 
         if json_mode:
@@ -192,35 +150,17 @@ def cmd_complete(args):
             sys.exit(1)
 
         override_confirmed_at = confirm_human_override(args.task_id, gate_reason)
-        if current_git_state is None:
-            current_git_state, current_git_error = capture_review_git_state(root, review_file.relative_to(root))
-            if current_git_error:
-                raise ScafldError(
-                    "current git state is unavailable for review binding",
-                    [current_git_error],
-                )
-        override_metadata = build_review_metadata(
-            topology,
-            reviewer_mode="human_override",
-            round_status="override",
-            pass_results=pass_results,
-            reviewed_at=override_confirmed_at,
-            reviewer_session="",
-            override_reason=override_reason,
-            review_git_state=current_git_state,
-        )
-        append_review_round(
-            review_file,
+        review_data = apply_human_override(
+            root,
             args.task_id,
             text,
             topology,
-            override_metadata,
-            verdict=verdict or "incomplete",
-            blocking=blocking,
-            non_blocking=non_blocking,
-            section_bodies=override_section_bodies,
+            review_file,
+            review_data,
+            pass_results,
+            override_reason,
+            current_git_state=current_git_state,
         )
-        review_data = parse_review_file(review_file, topology)
         verdict = review_data["verdict"]
         blocking = review_data["blocking"]
         non_blocking = review_data["non_blocking"]
@@ -296,7 +236,7 @@ def cmd_complete(args):
 def cmd_review(args):
     """Run automated review passes and generate adversarial review prompt."""
     root = require_root()
-    topology = load_or_exit_review_topology(root)
+    topology = load_configured_review_topology(root)
     spec = require_spec(root, args.task_id)
     text = spec.read_text()
     json_mode = bool(getattr(args, "json", False))
@@ -323,28 +263,22 @@ def cmd_review(args):
         print(f"{c(C_BOLD, f'Review: {args.task_id}')}")
         print()
 
-    pass_results = {}
-    automated_results = []
-    automated_passes = review_passes_by_kind(topology, "automated")
-    adversarial_passes = review_passes_by_kind(topology, "adversarial")
+    suite = run_automated_review_suite(root, args.task_id, text, topology)
+    automated_results = suite["automated_results"]
+    automated_passes = suite["automated_passes"]
+    normalized_passes = suite["normalized_passes"]
+    passed = suite["passed"]
+    failed = suite["failed"]
 
-    for definition in automated_passes:
+    for definition, outcome in zip(automated_passes, automated_results):
         if not json_mode:
             print(f"  {c(C_CYAN, definition['id'])}: {definition['description']}")
-        outcome = run_automated_review_pass(root, args.task_id, text, definition["id"])
-        pass_results[definition["id"]] = outcome["result"]
-        automated_results.append(automated_pass_payload(definition, outcome))
-        if not json_mode:
             if outcome["result"] == "pass":
                 print(f"    {c(C_GREEN, 'PASS')}")
             else:
                 print(f"    {c(C_RED, 'FAIL')}")
                 for line in outcome["lines"][-5:]:
                     print(f"    {c(C_DIM, line)}")
-
-    normalized_passes = normalize_review_pass_results(topology, pass_results)
-    passed = sum(1 for definition in automated_passes if normalized_passes[definition["id"]] == "pass")
-    failed = sum(1 for definition in automated_passes if normalized_passes[definition["id"]] == "fail")
 
     if not json_mode:
         print()
@@ -379,11 +313,17 @@ def cmd_review(args):
             print(f"  resolve failures, then re-run: {c(C_BOLD, f'scafld review {args.task_id}')}")
         sys.exit(1)
 
-    reviews_dir = root / REVIEWS_DIR
-    reviews_dir.mkdir(parents=True, exist_ok=True)
-    review_file = reviews_dir / f"{args.task_id}.md"
-    review_git_state, review_git_error = capture_review_git_state(root, review_file.relative_to(root))
-    if review_git_error:
+    try:
+        review_round = open_review_round(
+            root,
+            args.task_id,
+            spec,
+            text,
+            topology,
+            normalized_passes,
+            use_color=not json_mode,
+        )
+    except ScafldError as exc:
         if json_mode:
             emit_command_json(
                 "review",
@@ -391,64 +331,28 @@ def cmd_review(args):
                 task_id=args.task_id,
                 state={"status": status},
                 error=error_payload(
-                    f"could not capture reviewed git state: {review_git_error}",
+                    f"{exc.message}: {exc.details[0]}" if exc.details else exc.message,
                     code=EC.REVIEW_GIT_STATE_UNAVAILABLE,
                     exit_code=1,
                 ),
             )
         else:
-            print(f"  {c(C_RED, 'error')}: could not capture reviewed git state")
-            print(f"         {c(C_DIM, review_git_error)}")
+            print(f"  {c(C_RED, 'error')}: {exc.message}")
+            for detail in exc.details:
+                print(f"         {c(C_DIM, detail)}")
         sys.exit(1)
-    review_metadata = build_review_metadata(
-        topology,
-        reviewer_mode="executor",
-        round_status="in_progress",
-        pass_results=normalized_passes,
-        reviewed_at=now_iso(),
-        reviewer_session="",
-        review_git_state=review_git_state,
-    )
-    review_count = append_review_round(
-        review_file,
-        args.task_id,
-        text,
-        topology,
-        review_metadata,
-        verdict="",
-        blocking=[],
-        non_blocking=[],
-    )
-
-    review_path_rel = str(review_file.relative_to(root))
-    spec_path_rel = str(spec.relative_to(root))
-    review_prompt = render_adversarial_review_prompt(
-        args.task_id,
-        spec_path_rel,
-        review_path_rel,
-        review_count,
-        adversarial_passes,
-        use_color=not json_mode,
-    )
     if json_mode:
         emit_command_json(
             "review",
             task_id=args.task_id,
-            state={"status": status, "review_round": review_count},
+            state={"status": status, "review_round": review_round["review_count"]},
             result={
-                "review_file": review_path_rel,
-                "review_prompt": review_prompt,
+                "review_file": review_round["review_path_rel"],
+                "review_prompt": review_round["review_prompt"],
                 "automated_passes": automated_results,
-                "required_sections": [
-                    "Metadata",
-                    "Pass Results",
-                    *[definition["title"] for definition in adversarial_passes],
-                    "Blocking",
-                    "Non-blocking",
-                    "Verdict",
-                ],
+                "required_sections": review_round["required_sections"],
                 "complete_command": f"scafld complete {args.task_id}",
             },
         )
     else:
-        print(review_prompt)
+        print(review_round["review_prompt"])

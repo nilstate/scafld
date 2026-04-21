@@ -1,17 +1,11 @@
-import json
 import re
 import sys
 from pathlib import Path
 
-from scafld.audit_scope import git_sync_excluded_paths
 from scafld.command_runtime import find_root, require_root
 from scafld.error_codes import ErrorCode as EC
 from scafld.errors import ScafldError
-from scafld.git_state import bind_task_branch, build_origin_sync_payload, refresh_origin_sync
 from scafld.output import emit_command_json, error_payload
-from scafld.projections import humanize_binding_mode, origin_payload, phase_counts, summarize_origin_source
-from scafld.review_artifacts import load_review_topology
-from scafld.reviewing import load_review_state
 from scafld.runtime_bundle import (
     ACTIVE_DIR,
     APPROVED_DIR,
@@ -22,23 +16,30 @@ from scafld.runtime_bundle import (
     FRAMEWORK_CONFIG_PATH,
     LOGS_DIR,
     REVIEWS_DIR,
-    resolve_schema_path,
     sync_framework_bundle,
 )
-from scafld.spec_lifecycle import move_result_payload, validate_spec
-from scafld.spec_parsing import count_phases, now_iso, parse_phase_status_entries
+from scafld.spec_lifecycle import (
+    branch_binding_snapshot,
+    filter_specs,
+    listing_groups,
+    move_result_payload,
+    status_snapshot,
+    sync_snapshot,
+    validate_spec,
+    validation_snapshot,
+)
+from scafld.spec_parsing import count_phases, now_iso
 from scafld.spec_store import (
     find_all_specs,
     find_spec,
-    load_spec_document,
     move_spec,
     require_spec,
-    write_spec_document,
     yaml_read_field,
     yaml_read_nested,
 )
 from scafld.spec_templates import build_new_spec_scaffold
 from scafld.terminal import C_BOLD, C_CYAN, C_DIM, C_GREEN, C_RED, C_YELLOW, STATUS_COLORS, c
+from scafld.projections import humanize_binding_mode, summarize_origin_source
 
 
 def print_move_result(root, move_result):
@@ -120,45 +121,23 @@ def cmd_status(args):
     """Show status of a spec."""
     root = require_root()
     spec = require_spec(root, args.task_id)
-    text = spec.read_text()
-    data = load_spec_document(spec)
+    snapshot = status_snapshot(root, spec, args.task_id)
+    state = snapshot["state"]
+    result = snapshot["result"]
     rel = spec.relative_to(root)
 
-    status = yaml_read_field(text, "status") or "unknown"
-    title = yaml_read_nested(text, "task", "title") or ""
-    size = yaml_read_nested(text, "task", "size") or ""
-    risk = yaml_read_nested(text, "task", "risk_level") or ""
-    updated = yaml_read_field(text, "updated") or ""
-    phase_totals = phase_counts(*count_phases(text))
-
-    state = {
-        "file": str(rel),
-        "status": status,
-        "size": size,
-        "risk": risk,
-        "updated_at": updated,
-    }
-    result = {
-        "title": title,
-        "phase_statuses": parse_phase_status_entries(text),
-        "phase_counts": phase_totals,
-    }
-    origin = origin_payload(data)
-    sync = build_origin_sync_payload(root, origin, excluded_rels=git_sync_excluded_paths())
-    result["origin"] = origin
-    result["sync"] = sync
-
     if getattr(args, "json", False):
-        try:
-            topology = load_review_topology(root)
-        except Exception as exc:
-            review_state = {"exists": False, "errors": [str(exc)]}
-        else:
-            review_state = load_review_state(root / REVIEWS_DIR / f"{args.task_id}.md", topology)
-        result["review_state"] = review_state
         emit_command_json("status", task_id=args.task_id, state=state, result=result)
         return
 
+    status = state["status"]
+    title = result["title"]
+    size = state["size"]
+    risk = state["risk"]
+    updated = state["updated_at"]
+    phase_totals = result["phase_counts"]
+    origin = result["origin"]
+    sync = result["sync"]
     color = STATUS_COLORS.get(status, "")
     print(f"{c(C_BOLD, title)}")
     print(f"     id: {args.task_id}")
@@ -218,37 +197,19 @@ def cmd_status(args):
 def cmd_list(args):
     """List all specs."""
     root = require_root()
-    specs = find_all_specs(root)
+    specs = filter_specs(find_all_specs(root), args.filter)
 
     if not specs:
-        print(f"{c(C_DIM, 'No specs found.')}")
-        print(f"  Create one: {c(C_BOLD, 'scafld new my-feature')}")
-        return
-
-    if args.filter:
-        flt = args.filter.lower()
-        if flt in ("draft", "drafts"):
-            specs = [(s, l) for s, l in specs if l == "drafts"]
-        elif flt in ("approved",):
-            specs = [(s, l) for s, l in specs if l == "approved"]
-        elif flt in ("active", "in_progress"):
-            specs = [(s, l) for s, l in specs if l == "active"]
-        elif flt in ("archive", "archived", "completed", "done"):
-            specs = [(s, l) for s, l in specs if l.startswith("archive")]
+        if args.filter:
+            print(f"{c(C_DIM, 'No matching specs.')}")
         else:
-            specs = [(s, l) for s, l in specs if flt in s.stem.lower()]
-
-    if not specs:
-        print(f"{c(C_DIM, 'No matching specs.')}")
+            print(f"{c(C_DIM, 'No specs found.')}")
+            print(f"  Create one: {c(C_BOLD, 'scafld new my-feature')}")
         return
 
-    groups = {}
-    for spec_path, label in specs:
-        groups.setdefault(label, []).append(spec_path)
-
-    for label in groups:
+    for label, group_specs in listing_groups(specs).items():
         print(f"{c(C_BOLD, label)}/")
-        for spec_path in groups[label]:
+        for spec_path in group_specs:
             text = spec_path.read_text()
             status = yaml_read_field(text, "status") or "unknown"
             title = yaml_read_nested(text, "task", "title") or spec_path.stem
@@ -308,43 +269,18 @@ def cmd_branch(args):
     """Create or bind a task branch and record the origin metadata in the spec."""
     root = require_root()
     spec = require_spec(root, args.task_id)
-    rel = spec.relative_to(root)
-    data = load_spec_document(spec)
-    status = data.get("status")
-
-    if status in ("completed", "failed", "cancelled"):
-        raise ScafldError(
-            f"cannot bind a branch for a {status} spec",
-            [f"spec is archived at {rel}"],
-            code=EC.INVALID_SPEC_STATUS,
-        )
-
-    existing_origin = origin_payload(data)
-    timestamp = now_iso()
-    binding = bind_task_branch(
+    snapshot = branch_binding_snapshot(
         root,
+        spec,
         args.task_id,
-        existing_origin,
         name=args.name,
         base=args.base,
         bind_current=args.bind_current,
-        bound_at=timestamp,
-        excluded_rels=git_sync_excluded_paths(),
     )
-    data["origin"] = binding["origin"]
-    data["updated"] = timestamp
-    write_spec_document(spec, data)
-
-    result = {
-        "action": binding["action"],
-        "origin": origin_payload(data),
-        "sync": binding["sync"],
-    }
-    state = {
-        "file": str(rel),
-        "status": status,
-        "branch": binding["branch"],
-    }
+    state = snapshot["state"]
+    result = snapshot["result"]
+    binding = snapshot["binding"]
+    rel = spec.relative_to(root)
 
     if getattr(args, "json", False):
         emit_command_json("branch", task_id=args.task_id, state=state, result=result)
@@ -364,56 +300,15 @@ def cmd_sync(args):
     """Compare a spec's recorded origin binding with the live git workspace."""
     root = require_root()
     spec = require_spec(root, args.task_id)
+    snapshot = sync_snapshot(root, spec, args.task_id)
+    ok = snapshot["ok"]
+    error = snapshot["error"]
+    state = snapshot["state"]
+    result = snapshot["result"]
+    git_binding = snapshot["git_binding"]
+    sync = result["sync"]
+    sync_status = state["sync_status"]
     rel = spec.relative_to(root)
-    data = load_spec_document(spec)
-    status = data.get("status")
-    origin = origin_payload(data)
-    git_binding = origin.get("git") if isinstance(origin.get("git"), dict) else {}
-
-    if not git_binding.get("branch"):
-        raise ScafldError(
-            "spec has no bound branch or origin metadata yet",
-            [f"bind one first: scafld branch {args.task_id}"],
-            code=EC.ORIGIN_UNBOUND,
-            next_action=f"scafld branch {args.task_id}",
-        )
-
-    timestamp = now_iso()
-    data["origin"], sync = refresh_origin_sync(
-        root,
-        data.get("origin"),
-        checked_at=timestamp,
-        excluded_rels=git_sync_excluded_paths(),
-    )
-    data["updated"] = timestamp
-    write_spec_document(spec, data)
-
-    sync_status = sync.get("status")
-    ok = sync_status == "in_sync"
-    error = None
-    if sync_status == "drift":
-        error = error_payload(
-            "git drift detected",
-            code=EC.GIT_DRIFT,
-            details=list(sync.get("reasons") or []),
-            exit_code=1,
-        )
-    elif sync_status == "unavailable":
-        error = error_payload(
-            "live git state is unavailable",
-            code=EC.GIT_STATE_UNAVAILABLE,
-            details=list(sync.get("reasons") or []),
-            exit_code=1,
-        )
-    state = {
-        "file": str(rel),
-        "status": status,
-        "sync_status": sync_status,
-    }
-    result = {
-        "origin": origin_payload(data),
-        "sync": sync,
-    }
 
     if getattr(args, "json", False):
         emit_command_json("sync", ok=ok, task_id=args.task_id, state=state, result=result, error=error)
@@ -441,32 +336,12 @@ def cmd_validate(args):
     """Validate a spec against the JSON schema."""
     root = require_root()
     spec = require_spec(root, args.task_id)
+    snapshot = validation_snapshot(root, spec)
+    state = snapshot["state"]
+    result = snapshot["result"]
+    task_id = snapshot["task_id"]
+    errors = snapshot["errors"]
     rel = spec.relative_to(root)
-    text = spec.read_text()
-
-    errors = validate_spec(root, spec)
-    spec_version = yaml_read_field(text, "spec_version")
-    task_id = yaml_read_field(text, "task_id")
-    status = yaml_read_field(text, "status")
-    total, completed, failed, in_prog = count_phases(text)
-
-    state = {
-        "file": str(rel),
-        "status": status,
-        "schema_version": spec_version,
-    }
-    result = {
-        "valid": not bool(errors),
-        "phase_count": total,
-        "phase_counts": {
-            "total": total,
-            "completed": completed,
-            "failed": failed,
-            "in_progress": in_prog,
-            "pending": total - completed - failed - in_prog,
-        },
-        "errors": errors,
-    }
 
     if getattr(args, "json", False):
         emit_command_json(
@@ -493,10 +368,10 @@ def cmd_validate(args):
         sys.exit(1)
 
     print(f"{c(C_GREEN, 'PASS')}: {rel}")
-    print(f"  spec_version: {spec_version}")
+    print(f"  spec_version: {state['schema_version']}")
     print(f"  task_id: {task_id}")
-    print(f"  status: {status}")
-    print(f"  phases: {total}")
+    print(f"  status: {state['status']}")
+    print(f"  phases: {result['phase_count']}")
 
 
 def cmd_fail(args):
