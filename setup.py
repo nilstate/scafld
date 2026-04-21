@@ -1,7 +1,7 @@
 import re
 from pathlib import Path
 
-from setuptools import setup
+from setuptools import find_packages, setup
 
 
 ROOT = Path(__file__).resolve().parent
@@ -82,7 +82,7 @@ setup(
     keywords=["ai", "cli", "developer-tools", "planning", "spec-driven"],
     python_requires=">=3.9",
     install_requires=["PyYAML>=6.0,<7"],
-    packages=["scafld"],
+    packages=find_packages(include=["scafld", "scafld.*"]),
     entry_points={
         "console_scripts": [
             "scafld=scafld.__main__:main",
