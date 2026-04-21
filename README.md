@@ -172,7 +172,7 @@ scafld harden <task-id> [--mark-passed]                 # Optional: interrogate 
 scafld approve <task-id>                                # Validate + move to approved
 scafld start <task-id>                                  # Move to active
 scafld exec <task-id> [-p phase] [-r]                    # Run acceptance criteria (-r = resume)
-scafld audit <task-id> [-b base-ref]                    # Spec vs actual git diff
+scafld audit <task-id> [-b base-ref]                    # Spec vs current working tree (or a base ref with -b)
 scafld diff <task-id>                                   # Git history for a spec
 scafld review <task-id> [--json]                        # Run configured automated passes + scaffold Review Artifact v3
 scafld complete <task-id> [--json]                       # Read review, record verdict, archive (requires passing review)
@@ -194,6 +194,21 @@ Each workspace now carries a framework-managed runtime bundle under `.ai/scafld/
 - `.ai/scafld/manifest.json` records the scafld version, source commit, and bundle file hashes
 
 `scafld update` refreshes `.ai/scafld/` without overwriting repo-owned docs or project-specific config.
+
+### CLI Integrity
+
+The CLI now routes workspace discovery, spec lifecycle moves, and output
+rendering through shared internal modules instead of per-command copies of the
+same logic.
+
+- workspace discovery and scan-root traversal use one runtime surface
+- spec lookup, lifecycle transitions, archive moves, and planning-log appends
+  use one spec-store surface
+- human-facing errors and machine-facing output use one output surface
+
+That split is not internal ceremony. It is what keeps commands like `status`,
+`approve`, `start`, `complete`, and `update` aligned as scafld grows more
+machine-facing.
 
 ### Per-Criterion Working Directory
 
@@ -255,13 +270,14 @@ The agent enters read-only planning mode, explores your codebase, and produces a
 - **Harden (optional)** - Stress-test a draft before approval. Ask one question at a time, inspect code before asking when the repo already holds the answer, record why each question exists via `grounded_in`, and stop instead of padding the loop.
 - **Approval gate** - No code changes until a human reviews the plan. The agent thinks; you decide.
 - **Phase-by-phase execution** - Acceptance criteria at every checkpoint, not just at the end.
-- **Scope audit** - `scafld audit` compares what the spec declared against what actually changed in git. Undeclared changes get flagged.
+- **Scope audit** - `scafld audit` compares what the spec declared against the current workspace change set. Undeclared changes get flagged while scafld's own execution artifacts stay out of the way.
 - **Adversarial review** - Before archiving, `scafld review` runs the configured `spec_compliance` and `scope_drift` passes, scaffolds Review Artifact v3, and prepares the adversarial `regression_hunt`, `convention_check`, and `dark_patterns` sections. `scafld complete` requires a structurally valid latest review or an exceptional human-reviewed override with an audited reason.
 - **Self-evaluation** - Agents score their own work against a configurable rubric. Below 7/10 triggers a second pass.
 - **Rollback commands** - Per-phase rollback for safe failure recovery. Every phase declares how to undo itself.
 - **Resume protocol** - Interrupted executions pick up where they left off.
 - **Validation profiles** - Light, standard, or strict, configured per-task or derived from risk level.
 - **Reporting** - `scafld report` aggregates pass rates, self-eval scores, and scope drift across your entire spec history.
+- **Internally coherent** - Shared runtime, spec-store, and output layers keep lifecycle commands on the same workspace-discovery, transition, and error rules instead of drifting command-by-command.
 - **Agent-agnostic** - Works with Claude, Cursor, Copilot, Windsurf, or any AI coding agent.
 
 ## Review Pipeline

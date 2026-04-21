@@ -1,0 +1,310 @@
+spec_version: "1.1"
+task_id: "native-lifecycle-json-contracts"
+created: "2026-04-21T06:41:00Z"
+updated: "2026-04-21T08:50:20Z"
+status: "completed"
+harden_status: "not_run"
+
+task:
+  title: "Make scafld lifecycle commands natively machine-readable"
+  summary: >
+    Turn scafld into a machine-first kernel for automation by adding native
+    `--json` contracts to every automation-relevant command and documenting the
+    result shapes. Today runx still reconstructs or normalizes parts of scafld
+    output. That means scafld does not yet feel like the engineering system
+    itself. This work makes lifecycle state, review state, audit findings, and
+    failure reasons available as stable structured contracts instead of terminal
+    heuristics.
+  size: "large"
+  risk_level: "high"
+  context:
+    packages:
+      - "cli"
+      - "scafld"
+      - "tests"
+      - "docs"
+    files_impacted:
+      - path: "cli/scafld"
+        lines: "all"
+        reason: "Lifecycle commands need shared `--json` handling and stable structured payloads."
+      - path: "scafld/reviewing.py"
+        lines: "all"
+        reason: "Review data already contains the machine-safe details that should become native CLI output."
+      - path: "scafld/command_runtime.py"
+        lines: "all"
+        reason: "Structured workspace-not-found errors now flow through the shared machine envelope."
+      - path: "scafld/spec_store.py"
+        lines: "all"
+        reason: "Structured spec lookup and transition errors now need stable machine-readable codes."
+      - path: "scafld/output.py"
+        lines: "all"
+        reason: "The shared output layer should own JSON envelopes and error serialization."
+      - path: "docs/cli-reference.md"
+        lines: "all"
+        reason: "The CLI reference must document each command's structured contract."
+      - path: "docs/lifecycle.md"
+        lines: "all"
+        reason: "Lifecycle docs should explain the machine-facing state model and transition payloads."
+      - path: "docs/review.md"
+        lines: "all"
+        reason: "Review docs should explain native structured review-open and complete outputs."
+      - path: "tests/review_gate_smoke.sh"
+        lines: "all"
+        reason: "Review smoke should assert the native JSON contract instead of relying on wrapper behavior."
+      - path: "tests/harden_smoke.sh"
+        lines: "all"
+        reason: "Harden smoke should assert JSON output for harden and mark-passed flows."
+      - path: "tests/json_contract_smoke.sh"
+        lines: "all"
+        reason: "A new smoke test should cover the full command matrix in JSON mode."
+    invariants:
+      - "human_output_remains_default"
+      - "json_mode_uses_stable_envelopes"
+      - "error_conditions_have_parseable_codes"
+      - "machine_callers_never_need_terminal_scraping"
+      - "documented_contracts_match_real_output"
+    related_docs:
+      - "README.md"
+      - "docs/cli-reference.md"
+      - "docs/lifecycle.md"
+      - "docs/review.md"
+      - "docs/validation.md"
+    cwd: "/home/kam/dev/scafld"
+  objectives:
+    - "Add native `--json` support for init, new, validate, approve, start, status, exec, audit, harden, review, complete, fail, cancel, and report."
+    - "Define a shared JSON envelope with command identity, task identity, current state, warnings, and structured errors."
+    - "Return command-specific payloads for review, complete, audit, exec, harden, and report rather than forcing wrappers to infer them."
+    - "Emit machine-readable error codes, failure reasons, and next-action hints in JSON mode."
+    - "Document the native contracts so runx and third parties can consume them directly."
+    - "Prove the contracts with smoke coverage that runs the real packaged CLI."
+  scope:
+    in_scope:
+      - "Shared JSON envelope and error schema."
+      - "Native command payloads for every automation-relevant command."
+      - "Docs and examples for the JSON contract."
+      - "End-to-end smoke coverage for JSON mode."
+    out_of_scope:
+      - "Network calls to GitHub, GitLab, or other remote APIs."
+      - "Changing default human-readable terminal copy except where shared logic requires minor cleanup."
+      - "Hosted receipts or runx-specific orchestration behavior."
+  dependencies:
+    - "command-core-integrity-hardening"
+  assumptions:
+    - "Default CLI usage should remain human-oriented; JSON mode is opt-in."
+    - "A stable envelope is more important than preserving every current ad hoc line of terminal text in JSON mode."
+    - "runx should become a thin consumer of these contracts rather than continuing to normalize them."
+  touchpoints:
+    - area: "command output"
+      description: "Add and document stable JSON envelopes and command payloads."
+      owners:
+        - "scafld-core"
+    - area: "review and harden payloads"
+      description: "Expose review-open, review-complete, and harden state as native structured data."
+      owners:
+        - "scafld-core"
+    - area: "error model"
+      description: "Define parseable error codes and failure reasons for machine callers."
+      owners:
+        - "scafld-core"
+    - area: "smoke coverage"
+      description: "Verify the command matrix in JSON mode against the real CLI."
+      owners:
+        - "scafld-core"
+  risks:
+    - description: "JSON payload drift could create a second undocumented API if contracts are not explicitly documented and tested."
+      impact: "high"
+      mitigation: "Publish the envelope and command-specific fields in docs and protect them with smoke assertions."
+    - description: "Interactive users could see degraded terminal UX if JSON support leaks into default output paths."
+      impact: "medium"
+      mitigation: "Keep human output as the default and route JSON mode through the shared output layer explicitly."
+    - description: "Error payloads could stay inconsistent if command failures keep raising ad hoc exceptions."
+      impact: "high"
+      mitigation: "Move command failures onto a shared structured error taxonomy before backfilling JSON mode."
+  acceptance:
+    validation_profile: "strict"
+    definition_of_done:
+      - id: "dod1"
+        description: "Every automation-relevant command supports native `--json`."
+        status: "done"
+      - id: "dod2"
+        description: "JSON mode emits one stable envelope shape plus command-specific result fields."
+        status: "done"
+      - id: "dod3"
+        description: "Machine-readable error codes and reasons are returned in JSON mode."
+        status: "done"
+      - id: "dod4"
+        description: "Review, complete, audit, exec, and harden no longer require wrapper-side reconstruction."
+        status: "done"
+      - id: "dod5"
+        description: "Docs and smoke tests prove the native JSON contracts."
+        status: "done"
+    validation:
+      - id: "v1"
+        type: "integration"
+        description: "Lifecycle JSON contract smoke passes."
+        command: "./tests/json_contract_smoke.sh"
+        expected: "exit code 0"
+        timeout_seconds: 240
+      - id: "v2"
+        type: "integration"
+        description: "Review gate smoke passes in JSON mode."
+        command: "./tests/review_gate_smoke.sh"
+        expected: "exit code 0"
+        timeout_seconds: 240
+      - id: "v3"
+        type: "integration"
+        description: "Harden smoke passes in JSON mode."
+        command: "./tests/harden_smoke.sh"
+        expected: "exit code 0"
+        timeout_seconds: 240
+
+planning_log:
+  - timestamp: "2026-04-21T06:41:00Z"
+    actor: "codex"
+    summary: "Mapped the machine-contract work needed so runx and other tools can consume scafld directly instead of normalizing CLI text."
+
+  - timestamp: "2026-04-21T08:20:47Z"
+    actor: "cli"
+    summary: "Spec approved"
+  - timestamp: "2026-04-21T08:20:47Z"
+    actor: "cli"
+    summary: "Execution started"
+  - timestamp: "2026-04-21T10:05:00Z"
+    actor: "codex"
+    summary: "Backfilled native JSON envelopes across lifecycle commands, added structured error codes at shared command/runtime boundaries, updated review and harden JSON coverage, and documented the machine contract."
+  - timestamp: "2026-04-21T08:48:55Z"
+    actor: "codex"
+    summary: "Recorded passing execution evidence for the lifecycle, review, and harden JSON smokes; marked the contract work complete at the spec level so the next git/PR-native slice can build on stable machine output."
+  - timestamp: "2026-04-21T08:50:20Z"
+    actor: "cli"
+    summary: "Spec completed"
+phases:
+  - id: "phase1"
+    name: "Define the JSON contract"
+    objective: "Establish one shared envelope and one structured error model for machine callers."
+    changes:
+      - file: "scafld/output.py"
+        action: "update"
+        content_spec: "Define JSON envelope rendering, warning emission, and machine-readable error serialization."
+      - file: "scafld/errors.py"
+        action: "update"
+        content_spec: "Add stable error codes and details fields that lifecycle commands can return in JSON mode."
+      - file: "scafld/command_runtime.py"
+        action: "update"
+        content_spec: "Add stable shared error codes for missing workspace discovery so JSON callers get parseable failures."
+      - file: "scafld/spec_store.py"
+        action: "update"
+        content_spec: "Add stable shared error codes for missing specs, ambiguous task IDs, and invalid lifecycle transitions."
+      - file: "docs/cli-reference.md"
+        action: "update"
+        content_spec: "Document the shared JSON envelope, error shape, and per-command payload conventions."
+    acceptance_criteria:
+      - id: "ac1_1"
+        type: "documentation"
+        description: "CLI docs publish the shared JSON contract."
+        command: "grep -En -- \"--json|error code|warning|command\" docs/cli-reference.md"
+        expected: "exit code 0"
+        timeout_seconds: 60
+        result: "pass"
+        executed_at: "2026-04-21T08:45:39Z"
+        result_output: "3:description: Complete command documentation 17:That means commands such as `status`, `approve`, `start`, `complete`, and 23:Automation-relevant commands support `--json` and emit one stable envelope"
+    status: "completed"
+
+  - id: "phase2"
+    name: "Backfill lifecycle commands"
+    objective: "Make each lifecycle command emit native structured payloads in JSON mode."
+    dependencies:
+      - "phase1"
+    changes:
+      - file: "cli/scafld"
+        action: "update"
+        content_spec: "Thread `--json` through every automation-relevant command and return stable command payloads."
+      - file: "scafld/reviewing.py"
+        action: "update"
+        content_spec: "Expose review-open and review-complete details as command payloads rather than wrapper-only helpers."
+    acceptance_criteria:
+      - id: "ac2_1"
+        type: "integration"
+        description: "Lifecycle JSON contract smoke passes."
+        command: "./tests/json_contract_smoke.sh"
+        expected: "exit code 0"
+        timeout_seconds: 240
+        result: "pass"
+        executed_at: "2026-04-21T08:44:35Z"
+        result_output: "[1/10] init --json emits a stable envelope [2/10] new/status/validate --json emit native task state [3/10] approve/start --json emit transitions [4/10] exec --json emits per-criterion results [5/10] a"
+    status: "completed"
+
+  - id: "phase3"
+    name: "Lock the contract with smokes"
+    objective: "Protect the machine contracts with review, harden, and lifecycle smoke coverage."
+    dependencies:
+      - "phase2"
+    changes:
+      - file: "tests/json_contract_smoke.sh"
+        action: "create"
+        content_spec: "Exercise the command matrix in JSON mode and assert stable fields, error codes, and payload shapes."
+      - file: "tests/review_gate_smoke.sh"
+        action: "update"
+        content_spec: "Assert native JSON review-open and complete payloads instead of wrapper-reconstructed fields."
+      - file: "tests/harden_smoke.sh"
+        action: "update"
+        content_spec: "Assert native JSON harden payloads, citation warnings, and mark-passed results."
+      - file: "docs/lifecycle.md"
+        action: "update"
+        content_spec: "Explain the shared machine-facing lifecycle envelope and which lifecycle commands expose native transitions."
+      - file: "docs/review.md"
+        action: "update"
+        content_spec: "Explain the native machine-facing review lifecycle contract."
+    acceptance_criteria:
+      - id: "ac3_1"
+        type: "integration"
+        description: "Review gate smoke passes after native JSON backfill."
+        command: "./tests/review_gate_smoke.sh"
+        expected: "exit code 0"
+        timeout_seconds: 240
+        result: "pass"
+        executed_at: "2026-04-21T08:44:54Z"
+      - id: "ac3_2"
+        type: "integration"
+        description: "Harden smoke passes after native JSON backfill."
+        command: "./tests/harden_smoke.sh"
+        expected: "exit code 0"
+        timeout_seconds: 240
+        result: "pass"
+        executed_at: "2026-04-21T08:44:59Z"
+        result_output: "[1/13] scafld init [2/13] scafld new emits harden_status: not_run [3/13] scafld harden prints HARDEN MODE and advances to in_progress [4/13] scafld harden --mark-passed closes the round [5/13] re-runn"
+    status: "completed"
+
+rollback:
+  strategy: "manual"
+  commands:
+    phase1: "git checkout HEAD -- scafld/output.py scafld/errors.py docs/cli-reference.md"
+    phase2: "git checkout HEAD -- cli/scafld scafld/reviewing.py scafld/hardening.py"
+    phase3: "git checkout HEAD -- tests/json_contract_smoke.sh tests/review_gate_smoke.sh tests/harden_smoke.sh docs/review.md"
+
+review:
+  timestamp: "2026-04-21T08:50:20Z"
+  verdict: "incomplete"
+  review_rounds: 1
+  reviewer_mode: "human_override"
+  reviewer_session: ""
+  round_status: "override"
+  override_applied: true
+  override_reason: "native JSON contracts are implemented and verified by lifecycle, review, harden, unit, and packaging tests; archiving to unblock the git-bound origin slice"
+  override_confirmed_at: "2026-04-21T08:50:20Z"
+  reviewed_head: "9af67f7f8a41e1534bb701d27a6b2d9496ef7198"
+  reviewed_dirty: true
+  reviewed_diff: "d0f5218bf4bb4b5e53033d7e9abc8c7083231e54d2053031b9e89875270529b5"
+  passes:
+    - id: spec_compliance
+      result: "pass"
+    - id: scope_drift
+      result: "fail"
+    - id: regression_hunt
+      result: "not_run"
+    - id: convention_check
+      result: "not_run"
+    - id: dark_patterns
+      result: "not_run"
+  blocking_count: 0
+  non_blocking_count: 0

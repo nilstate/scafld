@@ -85,6 +85,19 @@ scafld status add-auth
 scafld status add-auth --json
 ```
 
+In JSON mode, lifecycle commands emit one shared envelope with `ok`,
+`command`, `task_id`, `warnings`, `state`, `result`, and `error`. That lets
+automation read lifecycle state, transitions, and acceptance results directly
+instead of scraping terminal output.
+
+Common machine-facing commands:
+
+- `scafld new --json` -- draft file path, task metadata, next commands
+- `scafld approve --json` / `scafld start --json` -- structured lifecycle transitions
+- `scafld exec --json` -- per-criterion pass/fail results and summary
+- `scafld audit --json` -- declared, matched, undeclared, and missing file sets
+- `scafld fail --json` / `scafld cancel --json` -- archived transition metadata
+
 ## Lifecycle discipline
 
 The lifecycle is intentionally rigid. You can't skip states. You can't move a draft directly to active. This friction is the point; it forces the planning-before-execution discipline that makes specs useful.

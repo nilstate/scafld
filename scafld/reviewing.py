@@ -17,8 +17,8 @@ REVIEW_PASS_REGISTRY = {
     "scope_drift": {
         "kind": "automated",
         "title": "Scope Drift",
-        "description": "Compare the declared spec scope with the current git diff.",
-        "prompt": "Compare the declared spec scope with the current git diff and flag undeclared work.",
+        "description": "Compare the declared spec scope with the current workspace change set.",
+        "prompt": "Compare the declared spec scope with the current workspace change set and flag undeclared work.",
     },
     "regression_hunt": {
         "kind": "adversarial",

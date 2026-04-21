@@ -22,8 +22,17 @@ from scafld.config import (
     parse_yaml_value,
     render_init_local_config,
 )
-from scafld.git_state import capture_review_git_state, run_git_capture, source_git_metadata
+from scafld.command_runtime import find_root, find_workspaces, require_root
+from scafld.errors import ScafldError
+from scafld.git_state import (
+    capture_review_git_state,
+    list_changed_files_against_ref,
+    list_working_tree_changed_files,
+    run_git_capture,
+    source_git_metadata,
+)
 from scafld.hardening import find_archived_spec, parse_code_grounded_in, verify_harden_round_citations
+from scafld.output import emit_cli_error, emit_command_json, emit_json, error_payload
 from scafld.reviewing import (
     REVIEWER_MODES,
     REVIEW_PASS_REGISTRY,
@@ -41,6 +50,16 @@ from scafld.reviewing import (
     review_pass_label,
     review_passes_by_kind,
     validate_review_metadata,
+)
+from scafld.spec_store import (
+    find_all_specs,
+    find_spec,
+    find_specs,
+    move_spec,
+    require_spec,
+    yaml_read_field,
+    yaml_read_nested,
+    yaml_set_field,
 )
 
 # ---------------------------------------------------------------------------
@@ -75,21 +94,12 @@ FRAMEWORK_BUNDLE_FILES = [
     (f"{SPECS_DIR}/README.md", f"{FRAMEWORK_DIR}/specs/README.md"),
     (f"{SPECS_DIR}/examples/add-error-codes.yaml", f"{FRAMEWORK_DIR}/specs/examples/add-error-codes.yaml"),
 ]
-SCAN_PRUNE_DIRS = {
-    ".git",
-    ".hg",
-    ".svn",
-    ".venv",
-    "__pycache__",
-    "node_modules",
-    "dist",
-    "build",
-    "coverage",
-    ".next",
-    ".turbo",
-}
-
-
+AUDIT_IGNORED_PREFIXES = (
+    f"{SPECS_DIR}/",
+    f"{REVIEWS_DIR}/",
+    f"{LOGS_DIR}/",
+)
+AUDIT_IGNORED_FILES = {CONFIG_LOCAL_PATH}
 def read_canonical_version(version_file):
     """Read the canonical scafld version from the tracked version module."""
     text = version_file.read_text(encoding="utf-8")
@@ -112,24 +122,6 @@ def require_pyyaml():
 
 
 VERSION = read_canonical_version(Path(__file__).resolve().parent.parent / "scafld" / "_version.py")
-
-STATUS_FOLDERS = {
-    "draft": DRAFTS_DIR,
-    "under_review": DRAFTS_DIR,
-    "approved": APPROVED_DIR,
-    "in_progress": ACTIVE_DIR,
-    "completed": ARCHIVE_DIR,
-    "failed": ARCHIVE_DIR,
-    "cancelled": ARCHIVE_DIR,
-}
-
-VALID_TRANSITIONS = {
-    "draft": ["under_review", "approved"],
-    "under_review": ["draft", "approved"],
-    "approved": ["in_progress"],
-    "in_progress": ["completed", "failed", "cancelled"],
-    "failed": ["cancelled"],
-}
 
 # ANSI colors
 C_RESET = "\033[0m"
@@ -173,11 +165,6 @@ def c(code, text):
     if not USE_COLOR:
         return text
     return f"{code}{text}{C_RESET}"
-
-
-def emit_json(payload):
-    """Emit machine-readable command output for agent/automation callers."""
-    print(json.dumps(payload, indent=2))
 
 
 # ---------------------------------------------------------------------------
@@ -285,94 +272,9 @@ def sync_framework_bundle(workspace_root, source_root=None):
     }
 
 
-def is_scafld_workspace(root):
-    """Detect a scafld workspace root."""
-    ai_root = root / AI_DIR
-    return ai_root.is_dir() and (
-        (root / SPECS_DIR).is_dir()
-        or (root / CONFIG_PATH).exists()
-        or (root / FRAMEWORK_MANIFEST_PATH).exists()
-    )
-
-
 def load_config(root):
     """Load config with local overlay support."""
     return load_workspace_config(root, FRAMEWORK_CONFIG_PATH, CONFIG_PATH, CONFIG_LOCAL_PATH)
-
-
-def find_root():
-    """Walk up from cwd to find the nearest scafld workspace root."""
-    d = Path.cwd()
-    while d != d.parent:
-        if is_scafld_workspace(d):
-            return d
-        d = d.parent
-    return None
-
-
-def find_workspaces(scan_root):
-    """Recursively discover scafld workspaces under a root path."""
-    scan_root = Path(scan_root).expanduser().resolve()
-    workspaces = []
-    seen = set()
-
-    for current, dirnames, _ in os.walk(scan_root):
-        current_path = Path(current)
-        next_dirs = []
-
-        for dirname in dirnames:
-            if dirname in SCAN_PRUNE_DIRS:
-                continue
-            if dirname == AI_DIR and is_scafld_workspace(current_path):
-                if current_path not in seen:
-                    workspaces.append(current_path)
-                    seen.add(current_path)
-                continue
-            next_dirs.append(dirname)
-
-        # No need to descend into .ai itself, but keep scanning siblings/nested repos.
-        dirnames[:] = next_dirs
-
-    workspaces.sort()
-    return workspaces
-
-
-def yaml_read_field(text, field):
-    """Read a top-level YAML scalar field (simple regex, no library needed)."""
-    m = re.search(rf'^{field}:\s*"?([^"\n]+)"?', text, re.MULTILINE)
-    if m:
-        return m.group(1).strip().strip('"').strip("'")
-    return None
-
-
-def yaml_set_field(text, field, value):
-    """Set a top-level YAML scalar field."""
-    quoted = f'"{value}"'
-    new_text, n = re.subn(
-        rf'^{field}:\s*.*$',
-        f'{field}: {quoted}',
-        text, count=1, flags=re.MULTILINE,
-    )
-    if n == 0:
-        # Field not found - add after spec_version or at top
-        new_text = f'{field}: {quoted}\n' + text
-    return new_text
-
-
-def yaml_read_nested(text, parent, field):
-    """Read a field nested one level under a parent block."""
-    in_parent = False
-    for line in text.splitlines():
-        if re.match(rf'^{parent}:', line):
-            in_parent = True
-            continue
-        if in_parent:
-            if line and not line[0].isspace():
-                break
-            m = re.match(rf'^\s+{field}:\s*"?([^"\n]+)"?', line)
-            if m:
-                return m.group(1).strip().strip('"').strip("'")
-    return None
 
 
 def parse_numeric_scalar(value):
@@ -467,151 +369,54 @@ def count_phases(text):
     return total, completed, failed, in_progress
 
 
-def find_specs(root, task_id):
-    """Find all spec files across all directories."""
-    specs = []
-    for folder in [DRAFTS_DIR, APPROVED_DIR, ACTIVE_DIR]:
-        p = root / folder / f"{task_id}.yaml"
-        if p.exists():
-            specs.append(p)
-    # Search archive
-    archive = root / ARCHIVE_DIR
-    if archive.is_dir():
-        for month_dir in sorted(archive.iterdir(), reverse=True):
-            if month_dir.is_dir():
-                p = month_dir / f"{task_id}.yaml"
-                if p.exists():
-                    specs.append(p)
-    return specs
+def print_move_result(root, move_result):
+    """Render a spec move/transition result for humans."""
+    rel_from = move_result.source.relative_to(root)
+    rel_to = move_result.dest.relative_to(root)
+    print(f"{c(C_GREEN, '  moved')}: {rel_from} -> {rel_to}")
+    print(f" {c(C_DIM, 'status')}: {c(STATUS_COLORS.get(move_result.new_status, ''), move_result.new_status)}")
 
 
-def find_spec(root, task_id):
-    """Find the first spec file across all directories. Returns Path or None."""
-    specs = find_specs(root, task_id)
-    return specs[0] if specs else None
-
-
-def find_all_specs(root):
-    """Find all spec files. Returns list of (Path, folder_type)."""
-    specs = []
-    for label, folder in [("drafts", DRAFTS_DIR), ("approved", APPROVED_DIR), ("active", ACTIVE_DIR)]:
-        d = root / folder
-        if d.is_dir():
-            for f in sorted(d.glob("*.yaml")):
-                specs.append((f, label))
-    archive = root / ARCHIVE_DIR
-    if archive.is_dir():
-        for month_dir in sorted(archive.iterdir(), reverse=True):
-            if month_dir.is_dir():
-                for f in sorted(month_dir.glob("*.yaml")):
-                    specs.append((f, f"archive/{month_dir.name}"))
-    return specs
-
-
-def append_planning_log(text, summary, actor="cli"):
-    """Append a planning_log entry to the spec text."""
-    entry = f'  - timestamp: "{now_iso()}"\n    actor: "{actor}"\n    summary: "{summary}"'
-    # Find planning_log section and append
-    if re.search(r'^planning_log:', text, re.MULTILINE):
-        # Find the last entry or the planning_log line itself
-        # Insert before the next top-level key after planning_log
-        lines = text.splitlines(True)
-        insert_idx = None
-        in_log = False
-        for i, line in enumerate(lines):
-            if re.match(r'^planning_log:', line):
-                in_log = True
-                continue
-            if in_log:
-                if line.strip() and not line[0].isspace():
-                    insert_idx = i
-                    break
-        if insert_idx is None:
-            # planning_log is at end of file
-            text = text.rstrip('\n') + '\n' + entry + '\n'
-        else:
-            lines.insert(insert_idx, entry + '\n')
-            text = ''.join(lines)
-    else:
-        text += f'\nplanning_log:\n{entry}\n'
-    return text
-
-
-def move_spec(root, spec_path, new_status, quiet=False):
-    """Move spec to the correct folder and update status + timestamp."""
-    text = spec_path.read_text()
-    current_status = yaml_read_field(text, "status")
-
-    # Validate transition
-    allowed = VALID_TRANSITIONS.get(current_status, [])
-    if new_status not in allowed:
-        print(f"{c(C_RED, 'error')}: cannot transition from '{current_status}' to '{new_status}'")
-        print(f"  allowed transitions: {', '.join(allowed) if allowed else 'none'}")
-        sys.exit(1)
-
-    # Update fields
-    text = yaml_set_field(text, "status", new_status)
-    text = yaml_set_field(text, "updated", now_iso())
-
-    # Auto-append planning_log entry
-    action_labels = {
-        "approved": "Spec approved",
-        "in_progress": "Execution started",
-        "completed": "Spec completed",
-        "failed": "Spec marked failed",
-        "cancelled": "Spec cancelled",
+def move_result_payload(root, move_result):
+    """Return a structured representation of a spec move/transition."""
+    return {
+        "from": str(move_result.source.relative_to(root)),
+        "to": str(move_result.dest.relative_to(root)),
+        "status": move_result.new_status,
     }
-    text = append_planning_log(text, action_labels.get(new_status, f"Status changed to {new_status}"))
-
-    # Determine destination
-    if new_status in ("completed", "failed", "cancelled"):
-        month = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m")
-        dest_dir = root / ARCHIVE_DIR / month
-    else:
-        dest_dir = root / STATUS_FOLDERS[new_status]
-
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    dest = dest_dir / spec_path.name
-
-    spec_path.write_text(text)
-    shutil.move(str(spec_path), str(dest))
-
-    rel_from = spec_path.relative_to(root)
-    rel_to = dest.relative_to(root)
-    if not quiet:
-        print(f"{c(C_GREEN, '  moved')}: {rel_from} -> {rel_to}")
-        print(f" {c(C_DIM, 'status')}: {c(STATUS_COLORS.get(new_status, ''), new_status)}")
-    return dest
-
-
-def require_root():
-    root = find_root()
-    if not root:
-        print(f"{c(C_RED, 'error')}: not in a scafld project (no .ai/ directory found)")
-        print(f"  run '{c(C_BOLD, 'scafld init')}' to set up a workspace")
-        sys.exit(1)
-    return root
-
-
-def require_spec(root, task_id):
-    specs = find_specs(root, task_id)
-    if not specs:
-        print(f"{c(C_RED, 'error')}: spec not found: {task_id}")
-        print(f"  searched: {DRAFTS_DIR}/, {APPROVED_DIR}/, {ACTIVE_DIR}/, {ARCHIVE_DIR}/")
-        sys.exit(1)
-    if len(specs) > 1:
-        print(f"{c(C_RED, 'error')}: ambiguous task-id: {task_id}")
-        print("  matching specs:")
-        for spec in specs:
-            print(f"    - {spec.relative_to(root)}")
-        print("  resolve the duplicate task-id before continuing")
-        sys.exit(1)
-    return specs[0]
 
 
 def collect_changed_files(text):
     """Collect unique changed files declared in spec phases."""
     return sorted(set(re.findall(r'^\s+-\s+file:\s*"?([^"\n]+)"?', text, re.MULTILINE)))
+
+
+def filter_audit_paths(paths):
+    """Drop scafld execution artifacts from scope auditing."""
+    return {
+        path
+        for path in paths
+        if path not in AUDIT_IGNORED_FILES
+        and not any(path == prefix[:-1] or path.startswith(prefix) for prefix in AUDIT_IGNORED_PREFIXES)
+    }
+
+
+def active_declared_files(root, exclude_task_id=None):
+    """Collect declared file sets for other active specs."""
+    active_dir = root / ACTIVE_DIR
+    declared = {}
+    if not active_dir.is_dir():
+        return declared
+
+    for spec_path in sorted(active_dir.glob("*.yaml")):
+        task_id = spec_path.stem
+        if task_id == exclude_task_id:
+            continue
+        text = spec_path.read_text()
+        files = sorted({path for path in collect_changed_files(text) if path != "TODO"})
+        if files:
+            declared[task_id] = files
+    return declared
 
 
 def load_review_topology(root):
@@ -739,53 +544,100 @@ def upsert_review_block(text, review_block):
 def cmd_init(args):
     """Bootstrap scafld workspace in the current directory."""
     project_root = Path.cwd()
+    json_mode = bool(getattr(args, "json", False))
 
     # Find scafld source (where this script lives)
     scafld_dir = scafld_source_root()
+    result = {
+        "project": str(project_root),
+        "templates": [],
+        "directories": [],
+        "bundle": {},
+        "framework_files": [],
+        "examples": None,
+        "config": {},
+        "gitignore": {},
+        "next_steps": [
+            "Edit AGENTS.md and add project invariants",
+            "Edit CONVENTIONS.md and add stack-specific rules",
+            "Edit CLAUDE.md and add project overview and commands",
+            "Edit .ai/config.local.yaml and review build/test/lint commands",
+            "Run scafld new my-feature",
+        ],
+    }
 
-    print(f"{c(C_BOLD, 'scafld init')}")
-    print(f"  project: {project_root}")
-    print()
+    if not json_mode:
+        print(f"{c(C_BOLD, 'scafld init')}")
+        print(f"  project: {project_root}")
+        print()
 
     # Copy template files (yours to customize)
-    print(f"{c(C_BOLD, 'Templates:')}")
+    if not json_mode:
+        print(f"{c(C_BOLD, 'Templates:')}")
     for fname in ["AGENTS.md", "CONVENTIONS.md", "CLAUDE.md"]:
         dest = project_root / fname
         src = scafld_dir / fname
         if dest.exists():
-            print(f"  {c(C_DIM, 'skip')}: {fname} (exists)")
+            action = "skip"
+            note = "exists"
+            if not json_mode:
+                print(f"  {c(C_DIM, 'skip')}: {fname} (exists)")
         elif src.exists():
             shutil.copy2(str(src), str(dest))
-            print(f"  {c(C_GREEN, 'created')}: {fname}")
+            action = "created"
+            note = None
+            if not json_mode:
+                print(f"  {c(C_GREEN, 'created')}: {fname}")
         else:
-            print(f"  {c(C_YELLOW, 'missing')}: {fname} (not in scafld source)")
-    print()
+            action = "missing"
+            note = "not in scafld source"
+            if not json_mode:
+                print(f"  {c(C_YELLOW, 'missing')}: {fname} (not in scafld source)")
+        result["templates"].append({"path": fname, "action": action, "note": note})
+    if not json_mode:
+        print()
 
     # Create directories
-    print(f"{c(C_BOLD, 'Directories:')}")
+    if not json_mode:
+        print(f"{c(C_BOLD, 'Directories:')}")
     for d in [DRAFTS_DIR, APPROVED_DIR, ACTIVE_DIR, ARCHIVE_DIR, LOGS_DIR,
               f"{AI_DIR}/schemas", f"{AI_DIR}/prompts", f"{AI_DIR}/reviews"]:
         p = project_root / d
         p.mkdir(parents=True, exist_ok=True)
-        print(f"  {c(C_GREEN, 'ok')}: {d}/")
-    print()
+        result["directories"].append({"path": f"{d}/", "action": "ok"})
+        if not json_mode:
+            print(f"  {c(C_GREEN, 'ok')}: {d}/")
+    if not json_mode:
+        print()
 
-    print(f"{c(C_BOLD, 'Managed bundle:')}")
+    if not json_mode:
+        print(f"{c(C_BOLD, 'Managed bundle:')}")
     bundle = sync_framework_bundle(project_root, scafld_dir)
+    result["bundle"] = {
+        "created": list(bundle["created"]),
+        "updated": list(bundle["updated"]),
+        "unchanged": list(bundle["unchanged"]),
+        "manifest_status": bundle["manifest_status"],
+        "manifest_path": str(bundle["manifest_path"].relative_to(project_root)),
+        "manifest": bundle["manifest"],
+    }
     if bundle["created"]:
         bundle_label = c(C_GREEN, "created")
     elif bundle["updated"]:
         bundle_label = c(C_YELLOW, "updated")
     else:
         bundle_label = c(C_DIM, "skip")
-    print(f"  {bundle_label}: {FRAMEWORK_DIR}/ ({len(bundle['created'])} files created, {len(bundle['updated'])} updated)")
+    if not json_mode:
+        print(f"  {bundle_label}: {FRAMEWORK_DIR}/ ({len(bundle['created'])} files created, {len(bundle['updated'])} updated)")
     manifest_rel = Path(FRAMEWORK_MANIFEST_PATH)
     manifest_color = C_GREEN if bundle["manifest_status"] == "created" else C_YELLOW if bundle["manifest_status"] == "updated" else C_DIM
-    print(f"  {c(manifest_color, bundle['manifest_status'])}: {manifest_rel}")
-    print()
+    if not json_mode:
+        print(f"  {c(manifest_color, bundle['manifest_status'])}: {manifest_rel}")
+        print()
 
     # Copy framework files (config, schemas, prompts, docs)
-    print(f"{c(C_BOLD, 'Framework files:')}")
+    if not json_mode:
+        print(f"{c(C_BOLD, 'Framework files:')}")
     copy_files = [
         (f"{AI_DIR}/config.yaml", f"{AI_DIR}/config.yaml"),
         (f"{AI_DIR}/schemas/spec.json", f"{AI_DIR}/schemas/spec.json"),
@@ -803,35 +655,66 @@ def cmd_init(args):
         if not src.exists():
             continue
         if dest.exists():
-            print(f"  {c(C_DIM, 'skip')}: {dest_rel} (exists)")
+            action = "skip"
+            note = "exists"
+            if not json_mode:
+                print(f"  {c(C_DIM, 'skip')}: {dest_rel} (exists)")
         else:
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(str(src), str(dest))
-            print(f"  {c(C_GREEN, 'created')}: {dest_rel}")
-    print()
+            action = "created"
+            note = None
+            if not json_mode:
+                print(f"  {c(C_GREEN, 'created')}: {dest_rel}")
+        result["framework_files"].append({"path": dest_rel, "action": action, "note": note})
+    if not json_mode:
+        print()
 
     # Copy example spec
     examples_src = scafld_dir / SPECS_DIR / "examples"
     examples_dest = project_root / SPECS_DIR / "examples"
     if examples_src.is_dir() and not examples_dest.exists():
         shutil.copytree(str(examples_src), str(examples_dest))
-        print(f"  {c(C_GREEN, 'created')}: {SPECS_DIR}/examples/")
-    print()
+        result["examples"] = {"path": f"{SPECS_DIR}/examples/", "action": "created"}
+        if not json_mode:
+            print(f"  {c(C_GREEN, 'created')}: {SPECS_DIR}/examples/")
+    else:
+        result["examples"] = {
+            "path": f"{SPECS_DIR}/examples/",
+            "action": "skip" if examples_dest.exists() else "missing",
+        }
+    if not json_mode:
+        print()
 
     # Create starter config.local.yaml
-    print(f"{c(C_BOLD, 'Config:')}")
+    if not json_mode:
+        print(f"{c(C_BOLD, 'Config:')}")
     init_detection = detect_init_config(project_root)
     local_config = project_root / CONFIG_LOCAL_PATH
     if local_config.exists():
-        print(f"  {c(C_DIM, 'skip')}: {CONFIG_LOCAL_PATH} (exists)")
+        result["config"] = {
+            "path": CONFIG_LOCAL_PATH,
+            "action": "skip",
+            "summary": init_detection["summary"],
+        }
+        if not json_mode:
+            print(f"  {c(C_DIM, 'skip')}: {CONFIG_LOCAL_PATH} (exists)")
     else:
         local_config.write_text(render_init_local_config(init_detection))
-        print(f"  {c(C_CYAN, 'detected')}: {init_detection['summary']}")
-        print(f"  {c(C_GREEN, 'created')}: {CONFIG_LOCAL_PATH}")
-    print()
+        result["config"] = {
+            "path": CONFIG_LOCAL_PATH,
+            "action": "created",
+            "summary": init_detection["summary"],
+        }
+        if not json_mode:
+            print(f"  {c(C_CYAN, 'detected')}: {init_detection['summary']}")
+            print(f"  {c(C_GREEN, 'created')}: {CONFIG_LOCAL_PATH}")
+    if not json_mode:
+        print()
 
     # Update .gitignore
-    print(f"{c(C_BOLD, 'Gitignore:')}")
+    if not json_mode:
+        print(f"{c(C_BOLD, 'Gitignore:')}")
     gitignore = project_root / ".gitignore"
     scafld_entries = [
         "# scafld",
@@ -841,15 +724,30 @@ def cmd_init(args):
     if gitignore.exists():
         existing = gitignore.read_text()
         if "# scafld" in existing:
-            print(f"  {c(C_DIM, 'skip')}: .gitignore (scafld entries exist)")
+            result["gitignore"] = {"path": ".gitignore", "action": "skip", "note": "scafld entries exist"}
+            if not json_mode:
+                print(f"  {c(C_DIM, 'skip')}: .gitignore (scafld entries exist)")
         else:
             with open(gitignore, "a") as f:
                 f.write("\n" + "\n".join(scafld_entries) + "\n")
-            print(f"  {c(C_GREEN, 'updated')}: .gitignore (added scafld entries)")
+            result["gitignore"] = {"path": ".gitignore", "action": "updated", "note": "added scafld entries"}
+            if not json_mode:
+                print(f"  {c(C_GREEN, 'updated')}: .gitignore (added scafld entries)")
     else:
         gitignore.write_text("\n".join(scafld_entries) + "\n")
-        print(f"  {c(C_GREEN, 'created')}: .gitignore")
-    print()
+        result["gitignore"] = {"path": ".gitignore", "action": "created", "note": None}
+        if not json_mode:
+            print(f"  {c(C_GREEN, 'created')}: .gitignore")
+    if not json_mode:
+        print()
+
+    if json_mode:
+        emit_command_json(
+            "init",
+            state={"workspace": str(project_root)},
+            result=result,
+        )
+        return
 
     agent_hint = "\"Let's plan [feature].\""
     print(f"""{c(C_BOLD, 'Done!')} Next steps:
@@ -865,7 +763,9 @@ def cmd_init(args):
 
 def cmd_new(args):
     """Create a new spec from template."""
+    json_mode = bool(getattr(args, "json", False))
     root = find_root()
+    auto_initialized = False
     if root is None:
         # Auto-init when no scafld workspace exists in cwd ancestry.
         # The caller explicitly asked to open a spec here; bootstrapping
@@ -877,19 +777,18 @@ def cmd_new(args):
                     f"{AI_DIR}/reviews"):
             (root / rel).mkdir(parents=True, exist_ok=True)
         sync_framework_bundle(root)
+        auto_initialized = True
     task_id = args.task_id
 
     # Validate task_id
     if not re.match(r'^[a-z0-9][a-z0-9-]*[a-z0-9]$', task_id) and not re.match(r'^[a-z0-9]$', task_id):
-        print(f"{c(C_RED, 'error')}: task-id must be kebab-case (a-z, 0-9, hyphens)")
-        sys.exit(1)
+        raise ScafldError("task-id must be kebab-case (a-z, 0-9, hyphens)", code="invalid_task_id")
 
     # Check for conflicts
     existing = find_spec(root, task_id)
     if existing:
         rel = existing.relative_to(root)
-        print(f"{c(C_RED, 'error')}: spec already exists: {rel}")
-        sys.exit(1)
+        raise ScafldError(f"spec already exists: {rel}", code="spec_exists")
 
     dest_dir = root / DRAFTS_DIR
     dest_dir.mkdir(parents=True, exist_ok=True)
@@ -964,6 +863,23 @@ rollback:
 
     dest.write_text(template)
     rel = dest.relative_to(root)
+    if json_mode:
+        emit_command_json(
+            "new",
+            task_id=task_id,
+            state={"status": "draft", "file": str(rel)},
+            result={
+                "title": args.title or task_id.replace('-', ' ').title(),
+                "size": size,
+                "risk": risk,
+                "auto_initialized": auto_initialized,
+                "next_commands": [
+                    f"scafld harden {task_id}",
+                    f"scafld approve {task_id}",
+                ],
+            },
+        )
+        return
     print(f"{c(C_GREEN, 'created')}: {rel}")
     print(f"  title: {args.title or task_id.replace('-', ' ').title()}")
     print(f"   size: {size}  risk: {risk}")
@@ -986,6 +902,25 @@ def cmd_status(args):
     updated = yaml_read_field(text, "updated") or ""
     total, completed, failed, in_prog = count_phases(text)
 
+    state = {
+        "file": str(rel),
+        "status": status,
+        "size": size,
+        "risk": risk,
+        "updated_at": updated,
+    }
+    result = {
+        "title": title,
+        "phase_statuses": parse_phase_status_entries(text),
+        "phase_counts": {
+            "total": total,
+            "completed": completed,
+            "failed": failed,
+            "in_progress": in_prog,
+            "pending": total - completed - failed - in_prog,
+        },
+    }
+
     if getattr(args, "json", False):
         review_state = {"exists": False, "errors": []}
         try:
@@ -994,24 +929,8 @@ def cmd_status(args):
             review_state = review_data_payload(review_data)
         except Exception as e:
             review_state = {"exists": False, "errors": [str(e)]}
-        emit_json({
-            "task_id": args.task_id,
-            "title": title,
-            "file": str(rel),
-            "status": status,
-            "size": size,
-            "risk": risk,
-            "updated_at": updated,
-            "phase_statuses": parse_phase_status_entries(text),
-            "phase_counts": {
-                "total": total,
-                "completed": completed,
-                "failed": failed,
-                "in_progress": in_prog,
-                "pending": total - completed - failed - in_prog,
-            },
-            "review_state": review_state,
-        })
+        result["review_state"] = review_state
+        emit_command_json("status", task_id=args.task_id, state=state, result=result)
         return
 
     color = STATUS_COLORS.get(status, "")
@@ -1097,21 +1016,39 @@ def cmd_approve(args):
 
     errors = validate_spec(root, spec)
     if errors:
-        rel = spec.relative_to(root)
-        print(f"{c(C_RED, 'error')}: spec has validation errors, cannot approve")
-        for e in errors:
-            print(f"  - {e}")
-        print(f"\n  fix the spec, then retry: {c(C_BOLD, f'scafld approve {args.task_id}')}")
-        sys.exit(1)
+        raise ScafldError(
+            "spec has validation errors, cannot approve",
+            [f"- {error}" for error in errors] + [f"fix the spec, then retry: scafld approve {args.task_id}"],
+            code="validation_failed",
+            next_action=f"scafld validate {args.task_id}",
+        )
 
-    move_spec(root, spec, "approved")
+    move_result = move_spec(root, spec, "approved")
+    if getattr(args, "json", False):
+        emit_command_json(
+            "approve",
+            task_id=args.task_id,
+            state={"status": move_result.new_status},
+            result={"transition": move_result_payload(root, move_result)},
+        )
+        return
+    print_move_result(root, move_result)
 
 
 def cmd_start(args):
     """Move spec from approved to active."""
     root = require_root()
     spec = require_spec(root, args.task_id)
-    move_spec(root, spec, "in_progress")
+    move_result = move_spec(root, spec, "in_progress")
+    if getattr(args, "json", False):
+        emit_command_json(
+            "start",
+            task_id=args.task_id,
+            state={"status": move_result.new_status},
+            result={"transition": move_result_payload(root, move_result)},
+        )
+        return
+    print_move_result(root, move_result)
 
 
 def check_self_eval(text, task_id):
@@ -1136,9 +1073,10 @@ def load_or_exit_review_topology(root):
     try:
         return load_review_topology(root)
     except ValueError as e:
-        print(f"{c(C_RED, 'error')}: invalid review topology in {CONFIG_PATH}")
-        print(f"  {e}")
-        sys.exit(1)
+        raise ScafldError(
+            f"invalid review topology in {CONFIG_PATH}",
+            [str(e)],
+        ) from e
 
 
 def review_passes_are_not_run(pass_results, pass_ids):
@@ -1165,15 +1103,35 @@ def cmd_complete(args):
 
     if override_reason and not human_reviewed:
         if json_mode:
-            emit_json({"task_id": args.task_id, "completed_state": "error", "error": "--reason requires --human-reviewed"})
+            emit_command_json(
+                "complete",
+                ok=False,
+                task_id=args.task_id,
+                state={"status": yaml_read_field(text, "status")},
+                error=error_payload(
+                    "--reason requires --human-reviewed",
+                    code="invalid_arguments",
+                    exit_code=1,
+                ),
+            )
         else:
-            print(f"  {c(C_RED, 'error')}: {c(C_BOLD, '--reason')} requires {c(C_BOLD, '--human-reviewed')}")
+            raise ScafldError("--reason requires --human-reviewed")
         sys.exit(1)
     if human_reviewed and not override_reason:
         if json_mode:
-            emit_json({"task_id": args.task_id, "completed_state": "error", "error": "--reason is required with --human-reviewed"})
+            emit_command_json(
+                "complete",
+                ok=False,
+                task_id=args.task_id,
+                state={"status": yaml_read_field(text, "status")},
+                error=error_payload(
+                    "--reason is required with --human-reviewed",
+                    code="invalid_arguments",
+                    exit_code=1,
+                ),
+            )
         else:
-            print(f"  {c(C_RED, 'error')}: {c(C_BOLD, '--reason')} is required with {c(C_BOLD, '--human-reviewed')}")
+            raise ScafldError("--reason is required with --human-reviewed")
         sys.exit(1)
 
     review_data = parse_review_file(review_file, topology)
@@ -1216,19 +1174,27 @@ def cmd_complete(args):
     if gate_reason:
         if not human_reviewed:
             if json_mode:
-                emit_json({
-                    "task_id": args.task_id,
-                    "completed_state": "blocked",
-                    "gate_reason": gate_reason,
-                    "review_file": str(review_file.relative_to(root)),
-                    "verdict": verdict,
-                    "blocking_count": len(blocking),
-                    "non_blocking_count": len(non_blocking),
-                    "pass_results": pass_results,
-                    "errors": gate_errors,
-                    "blocking": blocking,
-                    "next_command": f"scafld review {args.task_id}" if not review_data["exists"] else None,
-                })
+                emit_command_json(
+                    "complete",
+                    ok=False,
+                    task_id=args.task_id,
+                    state={"status": yaml_read_field(text, "status"), "review_verdict": verdict},
+                    result={
+                        "review_file": str(review_file.relative_to(root)),
+                        "blocking_count": len(blocking),
+                        "non_blocking_count": len(non_blocking),
+                        "pass_results": pass_results,
+                        "review_errors": gate_errors,
+                        "blocking": blocking,
+                    },
+                    error=error_payload(
+                        gate_reason,
+                        code="review_gate_blocked",
+                        details=gate_errors or blocking,
+                        next_action=f"scafld review {args.task_id}" if not review_data["exists"] else None,
+                        exit_code=1,
+                    ),
+                )
             else:
                 print(f"  {c(C_RED, 'error')}: {gate_reason}")
                 if not review_data["exists"]:
@@ -1246,20 +1212,27 @@ def cmd_complete(args):
             pass_results = collect_automated_review_passes(root, args.task_id, text, topology)
 
         if json_mode:
-            emit_json({
-                "task_id": args.task_id,
-                "completed_state": "blocked",
-                "gate_reason": "human-reviewed override requires interactive terminal output; rerun without --json",
-            })
+            emit_command_json(
+                "complete",
+                ok=False,
+                task_id=args.task_id,
+                state={"status": yaml_read_field(text, "status"), "review_verdict": verdict},
+                error=error_payload(
+                    "human-reviewed override requires interactive terminal output; rerun without --json",
+                    code="interactive_required",
+                    exit_code=1,
+                ),
+            )
             sys.exit(1)
 
         override_confirmed_at = confirm_human_override(args.task_id, gate_reason)
         if current_git_state is None:
             current_git_state, current_git_error = capture_review_git_state(root, review_file.relative_to(root))
             if current_git_error:
-                print(f"  {c(C_RED, 'error')}: current git state is unavailable for review binding")
-                print(f"         {c(C_DIM, current_git_error)}")
-                sys.exit(1)
+                raise ScafldError(
+                    "current git state is unavailable for review binding",
+                    [current_git_error],
+                )
         override_metadata = build_review_metadata(
             topology,
             reviewer_mode="human_override",
@@ -1290,9 +1263,19 @@ def cmd_complete(args):
         print(f"  {c(C_YELLOW, 'override')}: human-reviewed override applied")
     elif human_reviewed:
         if json_mode:
-            emit_json({"task_id": args.task_id, "completed_state": "error", "error": "--human-reviewed is only for blocked completion"})
+            emit_command_json(
+                "complete",
+                ok=False,
+                task_id=args.task_id,
+                state={"status": yaml_read_field(text, "status")},
+                error=error_payload(
+                    "--human-reviewed is only for blocked completion",
+                    code="invalid_arguments",
+                    exit_code=1,
+                ),
+            )
         else:
-            print(f"  {c(C_RED, 'error')}: review gate already passed; {c(C_BOLD, '--human-reviewed')} is only for blocked completion")
+            raise ScafldError("--human-reviewed is only for blocked completion")
         sys.exit(1)
 
     if not json_mode:
@@ -1323,34 +1306,58 @@ def cmd_complete(args):
     if not json_mode:
         check_self_eval(text, args.task_id)
 
-    dest = move_spec(root, spec, "completed", quiet=json_mode)
+    move_result = move_spec(root, spec, "completed")
+    dest = move_result.dest
     if json_mode:
-        emit_json({
-            "task_id": args.task_id,
-            "completed_state": "completed",
-            "archive_path": str(dest.relative_to(root)),
-            "verdict": verdict,
-            "blocking_count": len(blocking),
-            "non_blocking_count": len(non_blocking),
-            "pass_results": pass_results,
-            "override_applied": override_applied,
-            "review_round": review_data.get("review_count", 0),
-            "review_file": str(review_file.relative_to(root)),
-        })
+        emit_command_json(
+            "complete",
+            task_id=args.task_id,
+            state={"status": move_result.new_status, "review_verdict": verdict},
+            result={
+                "archive_path": str(dest.relative_to(root)),
+                "blocking_count": len(blocking),
+                "non_blocking_count": len(non_blocking),
+                "pass_results": pass_results,
+                "override_applied": override_applied,
+                "review_round": review_data.get("review_count", 0),
+                "review_file": str(review_file.relative_to(root)),
+                "transition": move_result_payload(root, move_result),
+            },
+        )
+    else:
+        print_move_result(root, move_result)
 
 
 def cmd_fail(args):
     """Move spec from active to archive (failed)."""
     root = require_root()
     spec = require_spec(root, args.task_id)
-    move_spec(root, spec, "failed")
+    move_result = move_spec(root, spec, "failed")
+    if getattr(args, "json", False):
+        emit_command_json(
+            "fail",
+            task_id=args.task_id,
+            state={"status": move_result.new_status},
+            result={"transition": move_result_payload(root, move_result)},
+        )
+        return
+    print_move_result(root, move_result)
 
 
 def cmd_cancel(args):
     """Move spec to archive (cancelled)."""
     root = require_root()
     spec = require_spec(root, args.task_id)
-    move_spec(root, spec, "cancelled")
+    move_result = move_spec(root, spec, "cancelled")
+    if getattr(args, "json", False):
+        emit_command_json(
+            "cancel",
+            task_id=args.task_id,
+            state={"status": move_result.new_status},
+            result={"transition": move_result_payload(root, move_result)},
+        )
+        return
+    print_move_result(root, move_result)
 
 
 def automated_pass_payload(definition, outcome):
@@ -1437,11 +1444,17 @@ def cmd_review(args):
     status = yaml_read_field(text, "status")
     if status != "in_progress":
         if json_mode:
-            emit_json({
-                "task_id": args.task_id,
-                "status": "error",
-                "error": f"spec must be in_progress to review (current: {status})",
-            })
+            emit_command_json(
+                "review",
+                ok=False,
+                task_id=args.task_id,
+                state={"status": status},
+                error=error_payload(
+                    f"spec must be in_progress to review (current: {status})",
+                    code="invalid_spec_status",
+                    exit_code=1,
+                ),
+            )
         else:
             print(f"{c(C_RED, 'error')}: spec must be in_progress to review (current: {status})")
         sys.exit(1)
@@ -1485,13 +1498,22 @@ def cmd_review(args):
 
     if failed:
         if json_mode:
-            emit_json({
-                "task_id": args.task_id,
-                "status": "automated_failed",
-                "automated_passes": automated_results,
-                "failed_count": failed,
-                "next_command": f"scafld review {args.task_id}",
-            })
+            emit_command_json(
+                "review",
+                ok=False,
+                task_id=args.task_id,
+                state={"status": status},
+                result={
+                    "automated_passes": automated_results,
+                    "failed_count": failed,
+                },
+                error=error_payload(
+                    f"{failed} automated pass(es) failed",
+                    code="automated_review_failed",
+                    next_action=f"scafld review {args.task_id}",
+                    exit_code=1,
+                ),
+            )
         else:
             print(f"  {c(C_RED, 'error')}: {failed} automated pass(es) failed — fix before reviewing")
             print(f"  resolve failures, then re-run: {c(C_BOLD, f'scafld review {args.task_id}')}")
@@ -1504,11 +1526,17 @@ def cmd_review(args):
     review_git_state, review_git_error = capture_review_git_state(root, review_file.relative_to(root))
     if review_git_error:
         if json_mode:
-            emit_json({
-                "task_id": args.task_id,
-                "status": "error",
-                "error": f"could not capture reviewed git state: {review_git_error}",
-            })
+            emit_command_json(
+                "review",
+                ok=False,
+                task_id=args.task_id,
+                state={"status": status},
+                error=error_payload(
+                    f"could not capture reviewed git state: {review_git_error}",
+                    code="review_git_state_unavailable",
+                    exit_code=1,
+                ),
+            )
         else:
             print(f"  {c(C_RED, 'error')}: could not capture reviewed git state")
             print(f"         {c(C_DIM, review_git_error)}")
@@ -1545,23 +1573,25 @@ def cmd_review(args):
         use_color=not json_mode,
     )
     if json_mode:
-        emit_json({
-            "task_id": args.task_id,
-            "status": "review_open",
-            "review_round": review_count,
-            "review_file": review_path_rel,
-            "review_prompt": review_prompt,
-            "automated_passes": automated_results,
-            "required_sections": [
-                "Metadata",
-                "Pass Results",
-                *[definition["title"] for definition in adversarial_passes],
-                "Blocking",
-                "Non-blocking",
-                "Verdict",
-            ],
-            "complete_command": f"scafld complete {args.task_id}",
-        })
+        emit_command_json(
+            "review",
+            task_id=args.task_id,
+            state={"status": status, "review_round": review_count},
+            result={
+                "review_file": review_path_rel,
+                "review_prompt": review_prompt,
+                "automated_passes": automated_results,
+                "required_sections": [
+                    "Metadata",
+                    "Pass Results",
+                    *[definition["title"] for definition in adversarial_passes],
+                    "Blocking",
+                    "Non-blocking",
+                    "Verdict",
+                ],
+                "complete_command": f"scafld complete {args.task_id}",
+            },
+        )
     else:
         print(review_prompt)
 
@@ -1825,8 +1855,7 @@ def run_scope_drift_check(root, task_id):
     """Run scope drift in read-only review mode."""
     try:
         result = subprocess.run(
-            f"scafld audit {task_id}",
-            shell=True,
+            [sys.executable, str(Path(__file__).resolve()), "audit", task_id],
             capture_output=True,
             text=True,
             timeout=60,
@@ -1939,23 +1968,38 @@ def cmd_validate(args):
     status = yaml_read_field(text, "status")
     total, completed, failed, in_prog = count_phases(text)
 
+    state = {
+        "file": str(rel),
+        "status": status,
+        "schema_version": sv,
+    }
+    result = {
+        "valid": not bool(errors),
+        "phase_count": total,
+        "phase_counts": {
+            "total": total,
+            "completed": completed,
+            "failed": failed,
+            "in_progress": in_prog,
+            "pending": total - completed - failed - in_prog,
+        },
+        "errors": errors,
+    }
+
     if getattr(args, "json", False):
-        emit_json({
-            "task_id": task_id,
-            "valid": not bool(errors),
-            "schema_version": sv,
-            "status": status,
-            "file": str(rel),
-            "phase_count": total,
-            "phase_counts": {
-                "total": total,
-                "completed": completed,
-                "failed": failed,
-                "in_progress": in_prog,
-                "pending": total - completed - failed - in_prog,
-            },
-            "errors": errors,
-        })
+        emit_command_json(
+            "validate",
+            ok=not bool(errors),
+            task_id=task_id,
+            state=state,
+            result=result,
+            error=error_payload(
+                "spec validation failed",
+                code="validation_failed",
+                details=errors,
+                exit_code=1,
+            ) if errors else None,
+        )
         if errors:
             sys.exit(1)
         return
@@ -2210,11 +2254,26 @@ def cmd_harden(args):
     _yaml = require_pyyaml()
     root = require_root()
     spec = require_spec(root, args.task_id)
+    json_mode = bool(getattr(args, "json", False))
 
     rel = spec.relative_to(root)
     if not str(rel).startswith(DRAFTS_DIR):
-        print(f"{c(C_RED, 'error')}: harden only operates on drafts (current: {rel.parent})")
-        print(f"  spec must live in {DRAFTS_DIR}/")
+        if json_mode:
+            emit_command_json(
+                "harden",
+                ok=False,
+                task_id=args.task_id,
+                state={"file": str(rel)},
+                error=error_payload(
+                    f"harden only operates on drafts (current: {rel.parent})",
+                    code="invalid_spec_location",
+                    details=[f"spec must live in {DRAFTS_DIR}/"],
+                    exit_code=1,
+                ),
+            )
+        else:
+            print(f"{c(C_RED, 'error')}: harden only operates on drafts (current: {rel.parent})")
+            print(f"  spec must live in {DRAFTS_DIR}/")
         sys.exit(1)
 
     data = _yaml.safe_load(spec.read_text()) or {}
@@ -2222,8 +2281,22 @@ def cmd_harden(args):
 
     if args.mark_passed:
         if not rounds:
-            print(f"{c(C_RED, 'error')}: no hardening round to mark passed")
-            print(f"  run {c(C_BOLD, f'scafld harden {args.task_id}')} first, then re-run with --mark-passed")
+            if json_mode:
+                emit_command_json(
+                    "harden",
+                    ok=False,
+                    task_id=args.task_id,
+                    state={"file": str(rel), "harden_status": data.get("harden_status")},
+                    error=error_payload(
+                        "no hardening round to mark passed",
+                        code="missing_harden_round",
+                        next_action=f"scafld harden {args.task_id}",
+                        exit_code=1,
+                    ),
+                )
+            else:
+                print(f"{c(C_RED, 'error')}: no hardening round to mark passed")
+                print(f"  run {c(C_BOLD, f'scafld harden {args.task_id}')} first, then re-run with --mark-passed")
             sys.exit(1)
         citation_warnings = verify_harden_round_citations(root, ARCHIVE_DIR, rounds[-1])
         data["harden_status"] = "passed"
@@ -2232,6 +2305,18 @@ def cmd_harden(args):
         data["harden_rounds"] = rounds
         data["updated"] = now_iso()
         spec.write_text(_yaml.safe_dump(data, sort_keys=False))
+        if json_mode:
+            emit_command_json(
+                "harden",
+                task_id=args.task_id,
+                state={"file": str(rel), "harden_status": "passed", "round": rounds[-1]["round"]},
+                result={
+                    "action": "round_passed",
+                    "citation_warnings": citation_warnings,
+                },
+                warnings=citation_warnings,
+            )
+            return
         if citation_warnings:
             print(f"{c(C_YELLOW, 'warn')}: {len(citation_warnings)} harden citation(s) could not be resolved")
             for warning in citation_warnings:
@@ -2242,7 +2327,20 @@ def cmd_harden(args):
 
     prompt_path = resolve_prompt_path(root, "harden.md")
     if not prompt_path.exists():
-        print(f"{c(C_RED, 'error')}: harden prompt missing at {prompt_path}")
+        if json_mode:
+            emit_command_json(
+                "harden",
+                ok=False,
+                task_id=args.task_id,
+                state={"file": str(rel)},
+                error=error_payload(
+                    f"harden prompt missing at {prompt_path}",
+                    code="prompt_missing",
+                    exit_code=1,
+                ),
+            )
+        else:
+            print(f"{c(C_RED, 'error')}: harden prompt missing at {prompt_path}")
         sys.exit(1)
 
     next_round = len(rounds) + 1
@@ -2257,7 +2355,21 @@ def cmd_harden(args):
     data["updated"] = now_iso()
     spec.write_text(_yaml.safe_dump(data, sort_keys=False))
 
-    print(prompt_path.read_text())
+    prompt_text = prompt_path.read_text()
+    if json_mode:
+        emit_command_json(
+            "harden",
+            task_id=args.task_id,
+            state={"file": str(rel), "harden_status": "in_progress", "round": next_round},
+            result={
+                "action": "round_opened",
+                "prompt": prompt_text,
+                "mark_passed_command": f"scafld harden {args.task_id} --mark-passed",
+            },
+        )
+        return
+
+    print(prompt_text)
     print()
     print(f"---")
     print(f"spec: {rel}")
@@ -2270,10 +2382,24 @@ def cmd_exec(args):
     root = require_root()
     spec = require_spec(root, args.task_id)
     text = spec.read_text()
+    json_mode = bool(getattr(args, "json", False))
 
     status = yaml_read_field(text, "status")
     if status not in ("in_progress", "approved"):
-        print(f"{c(C_RED, 'error')}: spec must be in_progress or approved to exec (current: {status})")
+        if json_mode:
+            emit_command_json(
+                "exec",
+                ok=False,
+                task_id=args.task_id,
+                state={"status": status},
+                error=error_payload(
+                    f"spec must be in_progress or approved to exec (current: {status})",
+                    code="invalid_spec_status",
+                    exit_code=1,
+                ),
+            )
+        else:
+            print(f"{c(C_RED, 'error')}: spec must be in_progress or approved to exec (current: {status})")
         sys.exit(1)
 
     # Spec-level default cwd (task.context.cwd) — used when criterion has no cwd
@@ -2284,14 +2410,34 @@ def cmd_exec(args):
 
     criteria = parse_acceptance_criteria(text)
     if not criteria:
-        print(f"{c(C_YELLOW, 'warn')}: no acceptance criteria found in spec")
+        warning = "no acceptance criteria found in spec"
+        if json_mode:
+            emit_command_json(
+                "exec",
+                task_id=args.task_id,
+                state={"status": status},
+                result={"criteria": [], "summary": {"passed": 0, "failed": 0, "manual": 0, "skipped_resume": 0}},
+                warnings=[warning],
+            )
+        else:
+            print(f"{c(C_YELLOW, 'warn')}: {warning}")
         return
 
     # Filter by phase if specified
     if args.phase:
         criteria = [ac for ac in criteria if ac.get("phase") == args.phase]
         if not criteria:
-            print(f"{c(C_YELLOW, 'warn')}: no criteria found for phase {args.phase}")
+            warning = f"no criteria found for phase {args.phase}"
+            if json_mode:
+                emit_command_json(
+                    "exec",
+                    task_id=args.task_id,
+                    state={"status": status},
+                    result={"criteria": [], "summary": {"passed": 0, "failed": 0, "manual": 0, "skipped_resume": 0}},
+                    warnings=[warning],
+                )
+            else:
+                print(f"{c(C_YELLOW, 'warn')}: {warning}")
             return
 
     # Resume mode: skip criteria that already passed
@@ -2306,19 +2452,31 @@ def cmd_exec(args):
     manual = [ac for ac in criteria if not ac.get("command") or ac["command"] == "TODO"]
 
     if not runnable and not manual and not skipped_resume:
-        print(f"{c(C_YELLOW, 'warn')}: no criteria found")
+        warning = "no criteria found"
+        if json_mode:
+            emit_command_json(
+                "exec",
+                task_id=args.task_id,
+                state={"status": status},
+                result={"criteria": [], "summary": {"passed": 0, "failed": 0, "manual": 0, "skipped_resume": 0}},
+                warnings=[warning],
+            )
+        else:
+            print(f"{c(C_YELLOW, 'warn')}: {warning}")
         return
 
-    print(f"{c(C_BOLD, f'Executing acceptance criteria for {args.task_id}')}")
-    if args.phase:
-        print(f"  phase: {args.phase}")
-    if skipped_resume:
-        print(f"  {c(C_DIM, f'resume: skipping {skipped_resume} already-passed criteria')}")
-    print()
+    if not json_mode:
+        print(f"{c(C_BOLD, f'Executing acceptance criteria for {args.task_id}')}")
+        if args.phase:
+            print(f"  phase: {args.phase}")
+        if skipped_resume:
+            print(f"  {c(C_DIM, f'resume: skipping {skipped_resume} already-passed criteria')}")
+        print()
 
     passed = 0
     failed = 0
     skipped = 0
+    criterion_results = []
 
     for ac in runnable:
         ac_id = ac["id"]
@@ -2326,33 +2484,71 @@ def cmd_exec(args):
         expected = ac.get("expected", "")
         desc = ac.get("description", ac_id)
 
-        print(f"  {c(C_CYAN, ac_id)}: {desc}")
-
         # Resolve working directory: criterion cwd > spec-level cwd > workspace root
         effective_cwd = ac.get("cwd") or spec_cwd
         ac_cwd = root
         if effective_cwd:
             ac_cwd = (root / effective_cwd).resolve()
             if not str(ac_cwd).startswith(str(root.resolve())):
-                print(f"    {c(C_RED, 'ERROR')}: cwd '{effective_cwd}' escapes workspace root")
+                if not json_mode:
+                    print(f"  {c(C_CYAN, ac_id)}: {desc}")
+                    print(f"    {c(C_RED, 'ERROR')}: cwd '{effective_cwd}' escapes workspace root")
                 text = record_exec_result(text, ac_id, False, f"cwd '{effective_cwd}' escapes workspace root")
+                criterion_results.append({
+                    "id": ac_id,
+                    "description": desc,
+                    "phase": ac.get("phase"),
+                    "command": cmd,
+                    "cwd": effective_cwd,
+                    "expected": expected,
+                    "status": "fail",
+                    "exit_code": None,
+                    "output": f"cwd '{effective_cwd}' escapes workspace root",
+                })
                 failed += 1
                 continue
             if not ac_cwd.is_dir():
-                print(f"    {c(C_RED, 'ERROR')}: cwd '{effective_cwd}' is not a directory")
+                if not json_mode:
+                    print(f"  {c(C_CYAN, ac_id)}: {desc}")
+                    print(f"    {c(C_RED, 'ERROR')}: cwd '{effective_cwd}' is not a directory")
                 text = record_exec_result(text, ac_id, False, f"cwd '{effective_cwd}' not found")
+                criterion_results.append({
+                    "id": ac_id,
+                    "description": desc,
+                    "phase": ac.get("phase"),
+                    "command": cmd,
+                    "cwd": effective_cwd,
+                    "expected": expected,
+                    "status": "fail",
+                    "exit_code": None,
+                    "output": f"cwd '{effective_cwd}' not found",
+                })
                 failed += 1
                 continue
             cwd_suffix = f"  {c(C_DIM, '(in ' + effective_cwd + '/)')}"
         else:
             cwd_suffix = ""
-        print(f"    $ {c(C_DIM, cmd)}{cwd_suffix}")
+        if not json_mode:
+            print(f"  {c(C_CYAN, ac_id)}: {desc}")
+            print(f"    $ {c(C_DIM, cmd)}{cwd_suffix}")
 
         try:
             timeout_seconds = criterion_timeout_seconds(ac)
         except ValueError as e:
-            print(f"    {c(C_RED, 'ERROR')}: {e}")
+            if not json_mode:
+                print(f"    {c(C_RED, 'ERROR')}: {e}")
             text = record_exec_result(text, ac_id, False, str(e))
+            criterion_results.append({
+                "id": ac_id,
+                "description": desc,
+                "phase": ac.get("phase"),
+                "command": cmd,
+                "cwd": effective_cwd,
+                "expected": expected,
+                "status": "fail",
+                "exit_code": None,
+                "output": str(e),
+            })
             failed += 1
             continue
 
@@ -2367,36 +2563,109 @@ def cmd_exec(args):
             ac_passed = check_expected(result.returncode, output, expected)
 
             if ac_passed:
-                print(f"    {c(C_GREEN, 'PASS')}")
+                if not json_mode:
+                    print(f"    {c(C_GREEN, 'PASS')}")
                 passed += 1
             else:
-                print(f"    {c(C_RED, 'FAIL')} (exit code {result.returncode})")
-                if expected:
-                    print(f"    expected: {c(C_DIM, expected)}")
-                if output:
-                    for line in output.splitlines()[:5]:
-                        print(f"    {c(C_DIM, line)}")
+                if not json_mode:
+                    print(f"    {c(C_RED, 'FAIL')} (exit code {result.returncode})")
+                    if expected:
+                        print(f"    expected: {c(C_DIM, expected)}")
+                    if output:
+                        for line in output.splitlines()[:5]:
+                            print(f"    {c(C_DIM, line)}")
                 failed += 1
 
             text = record_exec_result(text, ac_id, ac_passed, output[:200])
+            criterion_results.append({
+                "id": ac_id,
+                "description": desc,
+                "phase": ac.get("phase"),
+                "command": cmd,
+                "cwd": effective_cwd,
+                "expected": expected,
+                "status": "pass" if ac_passed else "fail",
+                "exit_code": result.returncode,
+                "output": output[:200],
+            })
 
         except subprocess.TimeoutExpired:
-            print(f"    {c(C_RED, 'TIMEOUT')} ({timeout_seconds}s)")
+            if not json_mode:
+                print(f"    {c(C_RED, 'TIMEOUT')} ({timeout_seconds}s)")
             text = record_exec_result(text, ac_id, False, f"Command timed out after {timeout_seconds}s")
+            criterion_results.append({
+                "id": ac_id,
+                "description": desc,
+                "phase": ac.get("phase"),
+                "command": cmd,
+                "cwd": effective_cwd,
+                "expected": expected,
+                "status": "fail",
+                "exit_code": None,
+                "output": f"Command timed out after {timeout_seconds}s",
+            })
             failed += 1
         except Exception as e:
-            print(f"    {c(C_RED, 'ERROR')}: {e}")
+            if not json_mode:
+                print(f"    {c(C_RED, 'ERROR')}: {e}")
             text = record_exec_result(text, ac_id, False, str(e))
+            criterion_results.append({
+                "id": ac_id,
+                "description": desc,
+                "phase": ac.get("phase"),
+                "command": cmd,
+                "cwd": effective_cwd,
+                "expected": expected,
+                "status": "fail",
+                "exit_code": None,
+                "output": str(e),
+            })
             failed += 1
 
     for ac in manual:
         ac_id = ac["id"]
         desc = ac.get("description", ac_id)
-        print(f"  {c(C_DIM, ac_id)}: {desc} (manual - skipped)")
+        if not json_mode:
+            print(f"  {c(C_DIM, ac_id)}: {desc} (manual - skipped)")
+        criterion_results.append({
+            "id": ac_id,
+            "description": desc,
+            "phase": ac.get("phase"),
+            "command": ac.get("command", ""),
+            "cwd": ac.get("cwd") or spec_cwd,
+            "expected": ac.get("expected", ""),
+            "status": "manual",
+            "exit_code": None,
+            "output": "",
+        })
         skipped += 1
 
     # Write results back
     spec.write_text(text)
+
+    summary = {
+        "passed": passed,
+        "failed": failed,
+        "manual": skipped,
+        "skipped_resume": skipped_resume,
+    }
+
+    if json_mode:
+        emit_command_json(
+            "exec",
+            ok=failed == 0,
+            task_id=args.task_id,
+            state={"status": status},
+            result={"criteria": criterion_results, "summary": summary},
+            error=error_payload(
+                f"{failed} acceptance criterion/criteria failed",
+                code="acceptance_failed",
+                exit_code=1,
+            ) if failed else None,
+        )
+        if failed:
+            sys.exit(1)
+        return
 
     print()
     summary_parts = []
@@ -2417,61 +2686,140 @@ def cmd_exec(args):
 
 
 def cmd_audit(args):
-    """Compare spec changes against actual git diff to detect scope creep."""
+    """Compare spec changes against actual git changes to detect scope creep."""
     root = require_root()
     spec = require_spec(root, args.task_id)
     text = spec.read_text()
+    json_mode = bool(getattr(args, "json", False))
 
     # Extract declared files from phases[*].changes[*].file
-    declared = set()
-    for m in re.finditer(r'^\s+file:\s*"?([^"\n]+)"?', text, re.MULTILINE):
-        f = m.group(1).strip()
-        if f != "TODO":
-            declared.add(f)
+    declared = {path for path in collect_changed_files(text) if path != "TODO"}
+    other_active_specs = active_declared_files(root, exclude_task_id=args.task_id)
+    other_active_declared = {
+        path
+        for files in other_active_specs.values()
+        for path in files
+    }
 
     if not declared:
-        print(f"{c(C_YELLOW, 'warn')}: no files declared in spec phases")
+        warning = "no files declared in spec phases"
+        if json_mode:
+            emit_command_json(
+                "audit",
+                task_id=args.task_id,
+                state={"mode": "working tree" if not args.base else f"vs {args.base}"},
+                result={
+                    "declared": [],
+                    "matched": [],
+                    "undeclared": [],
+                    "missing": [],
+                    "covered_by_other_active": [],
+                    "active_overlap": [],
+                    "other_active_specs": other_active_specs,
+                    "counts": {"declared": 0, "matched": 0, "undeclared": 0, "missing": 0, "covered_by_other_active": 0, "active_overlap": 0},
+                },
+                warnings=[warning],
+            )
+            return
+        print(f"{c(C_YELLOW, 'warn')}: {warning}")
         return
 
-    # Get actual changed files from git
-    base_ref = args.base or "HEAD~1"
-    try:
-        result = subprocess.run(
-            ["git", "diff", "--name-only", base_ref],
-            capture_output=True, text=True, cwd=str(root),
-        )
-        if result.returncode != 0:
-            # Try diffing against main/master
-            for branch in ("main", "master"):
-                result = subprocess.run(
-                    ["git", "diff", "--name-only", branch],
-                    capture_output=True, text=True, cwd=str(root),
-                )
-                if result.returncode == 0:
-                    base_ref = branch
-                    break
-            else:
-                print(f"{c(C_RED, 'error')}: git diff failed. Use --base to specify a ref.")
-                sys.exit(1)
+    # Get actual changed files from git.
+    mode_label = "working tree"
+    if args.base:
+        actual, error = list_changed_files_against_ref(root, args.base)
+        if actual is None:
+            raise ScafldError(
+                f"could not diff against base ref {args.base!r}",
+                [error] if error else [],
+            )
+        mode_label = f"vs {args.base}"
+    else:
+        actual, error = list_working_tree_changed_files(root)
+        if actual is None:
+            raise ScafldError(
+                "could not inspect current git working tree",
+                [error] if error else ["scope audit requires a git work tree"],
+            )
 
-        actual = set(line.strip() for line in result.stdout.splitlines() if line.strip())
-    except FileNotFoundError:
-        print(f"{c(C_RED, 'error')}: git not found")
-        sys.exit(1)
+    actual = filter_audit_paths(actual)
 
     if not actual:
-        print(f"{c(C_DIM, 'No files changed in git diff')}")
+        result = {
+            "declared": sorted(declared),
+            "matched": [],
+            "undeclared": [],
+            "missing": sorted(declared),
+            "counts": {
+                "declared": len(declared),
+                "matched": 0,
+                "undeclared": 0,
+                "missing": len(declared),
+            },
+        }
+        if json_mode:
+            emit_command_json(
+                "audit",
+                task_id=args.task_id,
+                state={"mode": mode_label},
+                result=result,
+            )
+            return
+        if args.base:
+            print(f"{c(C_DIM, f'No files changed vs {args.base}')}")
+        else:
+            print(f"{c(C_DIM, 'No files changed in working tree')}")
         return
 
-    print(f"{c(C_BOLD, f'Audit: {args.task_id}')} (vs {base_ref})")
-    print()
-
     # Scope creep: files changed but not in spec
-    undeclared = actual - declared
+    covered_by_other_active = (actual - declared) & other_active_declared
+    undeclared = actual - declared - covered_by_other_active
     # Missing: files in spec but not changed
     missing = declared - actual
     # Matched
     matched = declared & actual
+    active_overlap = declared & other_active_declared
+    result = {
+        "declared": sorted(declared),
+        "matched": sorted(matched),
+        "undeclared": sorted(undeclared),
+        "missing": sorted(missing),
+        "covered_by_other_active": sorted(covered_by_other_active),
+        "active_overlap": sorted(active_overlap),
+        "other_active_specs": other_active_specs,
+        "counts": {
+            "declared": len(declared),
+            "matched": len(matched),
+            "undeclared": len(undeclared),
+            "missing": len(missing),
+            "covered_by_other_active": len(covered_by_other_active),
+            "active_overlap": len(active_overlap),
+        },
+    }
+
+    if json_mode:
+        emit_command_json(
+            "audit",
+            ok=not bool(undeclared or active_overlap),
+            task_id=args.task_id,
+            state={"mode": mode_label},
+            result=result,
+            error=error_payload(
+                "scope drift or active-spec overlap detected",
+                code="scope_drift",
+                details=(
+                    [f"{path} changed but is not declared in the spec" for path in sorted(undeclared)]
+                    + [f"{path} is also declared by another active spec" for path in sorted(active_overlap)]
+                ),
+                exit_code=1,
+            ) if undeclared or active_overlap else None,
+        )
+        if undeclared or active_overlap:
+            sys.exit(1)
+        return
+
+    print(f"{c(C_BOLD, f'Audit: {args.task_id}')} ({mode_label})")
+    print()
 
     if matched:
         print(f"  {c(C_GREEN, 'Declared & changed')} ({len(matched)}):")
@@ -2483,6 +2831,16 @@ def cmd_audit(args):
         for f in sorted(undeclared):
             print(f"    {c(C_RED, '!')} {f}")
 
+    if covered_by_other_active:
+        print(f"\n  {c(C_CYAN, 'Covered by other active specs')} ({len(covered_by_other_active)}):")
+        for f in sorted(covered_by_other_active):
+            print(f"    {c(C_CYAN, '↷')} {f}")
+
+    if active_overlap:
+        print(f"\n  {c(C_RED, 'Conflict - also declared in other active specs')} ({len(active_overlap)}):")
+        for f in sorted(active_overlap):
+            print(f"    {c(C_RED, '×')} {f}")
+
     if missing:
         print(f"\n  {c(C_YELLOW, 'In spec but not changed')} ({len(missing)}):")
         for f in sorted(missing):
@@ -2492,6 +2850,9 @@ def cmd_audit(args):
     if undeclared:
         pct = len(undeclared) / len(actual) * 100
         print(f"  {c(C_RED, f'Scope drift: {pct:.0f}%')} ({len(undeclared)}/{len(actual)} files undeclared)")
+        sys.exit(1)
+    if active_overlap:
+        print(f"  {c(C_RED, 'Conflict')} - {len(active_overlap)} file(s) are claimed by multiple active specs")
         sys.exit(1)
     else:
         print(f"  {c(C_GREEN, 'Clean')} - all changes match spec")
@@ -2564,9 +2925,17 @@ def cmd_report(args):
     """Aggregate stats across archived specs."""
     root = require_root()
     specs = find_all_specs(root)
+    json_mode = bool(getattr(args, "json", False))
 
     if not specs:
-        print(f"{c(C_DIM, 'No specs found.')}")
+        if json_mode:
+            emit_command_json(
+                "report",
+                result={"total_specs": 0},
+                warnings=["no specs found"],
+            )
+        else:
+            print(f"{c(C_DIM, 'No specs found.')}")
         return
 
     # Collect stats
@@ -2666,6 +3035,46 @@ def cmd_report(args):
                             **triage_entry,
                             "reason": drift_reason,
                         })
+
+    if json_mode:
+        avg_self_eval = sum(self_eval_scores) / len(self_eval_scores) if self_eval_scores else None
+        avg_phases = sum(phase_counts) / len(phase_counts) if phase_counts else None
+        emit_command_json(
+            "report",
+            result={
+                "total_specs": total,
+                "by_status": by_status,
+                "by_month": by_month,
+                "sizes": sizes,
+                "risks": risks,
+                "self_eval": {
+                    "scores": self_eval_scores,
+                    "average": avg_self_eval,
+                },
+                "exec_results": {
+                    "passed": exec_pass,
+                    "failed": exec_fail,
+                    "total": exec_total,
+                    "specs_with_exec": specs_with_exec,
+                    "specs_without_exec": specs_without_exec,
+                },
+                "phase_stats": {
+                    "counts": phase_counts,
+                    "average": avg_phases,
+                },
+                "harden_adoption": {
+                    "counts": harden_status_counts,
+                    "specs_with_rounds": specs_with_rounds,
+                },
+                "triage": {
+                    "stale_drafts": stale_drafts,
+                    "approved_waiting": approved_waiting,
+                    "active_without_exec": active_without_exec,
+                    "review_drift": review_drift,
+                },
+            },
+        )
+        return
 
     # Print report
     print(f"{c(C_BOLD, 'scafld Report')}")
@@ -2767,8 +3176,7 @@ def cmd_update(args):
 
     if args.self:
         if not (source_root / ".git").exists():
-            print(f"{c(C_RED, 'error')}: self-update requires scafld to run from a git checkout")
-            sys.exit(1)
+            raise ScafldError("self-update requires scafld to run from a git checkout")
 
         print(f"{c(C_BOLD, 'Self update:')}")
         print(f"  source: {source_root}")
@@ -2779,11 +3187,10 @@ def cmd_update(args):
         )
         if result.returncode != 0:
             output = (result.stdout + result.stderr).strip()
-            print(f"  {c(C_RED, 'failed')}: git pull --ff-only")
+            details = ["git pull --ff-only failed"]
             if output:
-                for line in output.splitlines()[-5:]:
-                    print(f"    {line}")
-            sys.exit(1)
+                details.extend(output.splitlines()[-5:])
+            raise ScafldError("failed to refresh source checkout", details)
         print(f"  {c(C_GREEN, 'ok')}: source checkout refreshed")
         git_metadata = source_git_metadata(source_root)
         print()
@@ -2796,9 +3203,10 @@ def cmd_update(args):
         if root is None:
             if args.self:
                 return
-            print(f"{c(C_RED, 'error')}: not in a scafld project (no .ai/ directory found)")
-            print(f"  run '{c(C_BOLD, 'scafld init')}' first or pass {c(C_BOLD, '--scan-root /path')}")
-            sys.exit(1)
+            raise ScafldError(
+                "not in a scafld project (no .ai/ directory found)",
+                ["run 'scafld init' first or pass --scan-root /path"],
+            )
         workspaces = [root]
         mode_label = f"workspace={root}"
 
@@ -2858,6 +3266,7 @@ def main():
 
     # init
     p_init = sub.add_parser("init", help="Bootstrap scafld workspace")
+    p_init.add_argument("--json", action="store_true", help="Emit machine-readable initialization JSON")
 
     # new
     p_new = sub.add_parser("new", help="Create a new spec from template")
@@ -2865,6 +3274,7 @@ def main():
     p_new.add_argument("-t", "--title", help="Task title")
     p_new.add_argument("-s", "--size", choices=["micro", "small", "medium", "large"])
     p_new.add_argument("-r", "--risk", choices=["low", "medium", "high"])
+    p_new.add_argument("--json", action="store_true", help="Emit machine-readable spec creation JSON")
 
     # status
     p_status = sub.add_parser("status", help="Show spec status")
@@ -2878,10 +3288,12 @@ def main():
     # approve
     p_approve = sub.add_parser("approve", help="Approve a draft spec")
     p_approve.add_argument("task_id", help="Task ID")
+    p_approve.add_argument("--json", action="store_true", help="Emit machine-readable approval JSON")
 
     # start
     p_start = sub.add_parser("start", help="Start execution of approved spec")
     p_start.add_argument("task_id", help="Task ID")
+    p_start.add_argument("--json", action="store_true", help="Emit machine-readable start JSON")
 
     # review
     p_review = sub.add_parser("review", help="Run review passes and generate adversarial review prompt")
@@ -2898,10 +3310,12 @@ def main():
     # fail
     p_fail = sub.add_parser("fail", help="Mark spec as failed")
     p_fail.add_argument("task_id", help="Task ID")
+    p_fail.add_argument("--json", action="store_true", help="Emit machine-readable failure-archive JSON")
 
     # cancel
     p_cancel = sub.add_parser("cancel", help="Cancel a spec")
     p_cancel.add_argument("task_id", help="Task ID")
+    p_cancel.add_argument("--json", action="store_true", help="Emit machine-readable cancellation JSON")
 
     # validate
     p_validate = sub.add_parser("validate", help="Validate spec against schema")
@@ -2913,17 +3327,20 @@ def main():
     p_harden.add_argument("task_id", help="Task ID")
     p_harden.add_argument("--mark-passed", dest="mark_passed", action="store_true",
                           help="Mark the latest hardening round as passed")
+    p_harden.add_argument("--json", action="store_true", help="Emit machine-readable harden JSON")
 
     # exec
     p_exec = sub.add_parser("exec", help="Run acceptance criteria and record results")
     p_exec.add_argument("task_id", help="Task ID")
     p_exec.add_argument("-p", "--phase", help="Run only criteria for this phase (e.g. phase1)")
     p_exec.add_argument("-r", "--resume", action="store_true", help="Skip criteria that already passed")
+    p_exec.add_argument("--json", action="store_true", help="Emit machine-readable execution JSON")
 
     # audit
-    p_audit = sub.add_parser("audit", help="Check spec changes vs actual git diff")
+    p_audit = sub.add_parser("audit", help="Check spec changes vs current git changes")
     p_audit.add_argument("task_id", help="Task ID")
-    p_audit.add_argument("-b", "--base", help="Git base ref (default: HEAD~1)")
+    p_audit.add_argument("-b", "--base", help="Git base ref for historical comparison (default: current working tree)")
+    p_audit.add_argument("--json", action="store_true", help="Emit machine-readable audit JSON")
 
     # diff
     p_diff = sub.add_parser("diff", help="Show git history and changes for a spec")
@@ -2931,6 +3348,7 @@ def main():
 
     # report
     p_report = sub.add_parser("report", help="Aggregate stats across all specs")
+    p_report.add_argument("--json", action="store_true", help="Emit machine-readable report JSON")
 
     # update
     p_update = sub.add_parser("update", help="Refresh the managed scafld bundle")
@@ -2965,7 +3383,19 @@ def main():
     }
 
     if args.command in commands:
-        commands[args.command](args)
+        try:
+            commands[args.command](args)
+        except ScafldError as error:
+            if getattr(args, "json", False):
+                emit_command_json(
+                    args.command,
+                    ok=False,
+                    task_id=getattr(args, "task_id", None),
+                    error=error_payload(error),
+                )
+            else:
+                emit_cli_error(error, colorize=c, red_code=C_RED)
+            sys.exit(error.exit_code)
     else:
         parser.print_help()
         sys.exit(1)

@@ -198,7 +198,7 @@ review:
     scope_drift:
       order: 20
       title: "Scope Drift"
-      description: "Compare spec scope vs actual git diff and flag undeclared changes"
+      description: "Compare spec scope vs current workspace changes and flag undeclared changes"
 
   adversarial_passes:
     regression_hunt:

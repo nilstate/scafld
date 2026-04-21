@@ -1,8 +1,8 @@
 spec_version: '1.1'
 task_id: add-harden-phase
 created: '2026-04-20T14:00:00Z'
-updated: '2026-04-20T16:00:00Z'
-status: in_progress
+updated: "2026-04-21T08:51:08Z"
+status: "completed"
 harden_status: not_run
 task:
   title: Add optional harden phase between draft and approval
@@ -315,6 +315,9 @@ task:
 
     '
 planning_log:
+  - timestamp: "2026-04-21T08:51:08Z"
+    actor: "cli"
+    summary: "Spec completed"
 - timestamp: '2026-04-20T14:00:00Z'
   actor: user
   summary: Asked whether to add a grill-me-style optional pre-approval phase to scafld and how to make
@@ -872,6 +875,33 @@ rollback:
       .ai/README.md .ai/OPERATORS.md
     phase5: git checkout HEAD -- README.md AGENTS.md && (cd ../0state && git checkout HEAD -- src/content/code/scafld.md)
     phase6: git checkout HEAD -- .github/workflows/review-gate-smoke.yml && rm -f tests/harden_smoke.sh
+
+review:
+  timestamp: "2026-04-21T08:51:08Z"
+  verdict: "incomplete"
+  review_rounds: 1
+  reviewer_mode: "human_override"
+  reviewer_session: ""
+  round_status: "override"
+  override_applied: true
+  override_reason: "harden shipped earlier; the active spec file is stale and partially malformed, but the feature is present in tree and covered by harden and review-gate smokes, so archiving it removes false active overlap"
+  override_confirmed_at: "2026-04-21T08:51:08Z"
+  reviewed_head: "9af67f7f8a41e1534bb701d27a6b2d9496ef7198"
+  reviewed_dirty: true
+  reviewed_diff: "3b5b71c11b9aec329125d5e367b1db4afd80e1f65214ddd06def9e417e6d6ae2"
+  passes:
+    - id: spec_compliance
+      result: "pass"
+    - id: scope_drift
+      result: "fail"
+    - id: regression_hunt
+      result: "not_run"
+    - id: convention_check
+      result: "not_run"
+    - id: dark_patterns
+      result: "not_run"
+  blocking_count: 0
+  non_blocking_count: 0
 self_eval:
   completeness: 3
   architecture_fidelity: 3

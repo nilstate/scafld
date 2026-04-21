@@ -1040,16 +1040,16 @@ case_json_outputs() {
   write_active_spec "$repo" "$task_id" "grep -q '^changed$' app.txt" "exit code 0" "pass"
 
   capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld status '$task_id' --json"
-  assert_json "$output" "data['task_id'] == 'json-outputs' and data['status'] == 'in_progress'" "status --json should emit task identity and status"
-  assert_json "$output" "data['phase_statuses'][0]['id'] == 'phase1'" "status --json should emit phase statuses"
+  assert_json "$output" "data['command'] == 'status' and data['task_id'] == 'json-outputs' and data['state']['status'] == 'in_progress'" "status --json should emit task identity and status"
+  assert_json "$output" "data['result']['phase_statuses'][0]['id'] == 'phase1'" "status --json should emit phase statuses"
 
   capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld validate '$task_id' --json"
-  assert_json "$output" "data['valid'] is True and data['schema_version'] == '1.1'" "validate --json should emit valid=true"
+  assert_json "$output" "data['command'] == 'validate' and data['result']['valid'] is True and data['state']['schema_version'] == '1.1'" "validate --json should emit valid=true"
 
   capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld review '$task_id' --json"
-  assert_json "$output" "data['status'] == 'review_open' and data['review_round'] == 1" "review --json should open a structured review round"
-  assert_json "$output" "'ADVERSARIAL REVIEW' in data['review_prompt'] and data['review_file'].endswith('json-outputs.md')" "review --json should include prompt and review file"
-  assert_json "$output" "'Regression Hunt' in data['required_sections']" "review --json should list required adversarial sections"
+  assert_json "$output" "data['command'] == 'review' and data['ok'] is True and data['state']['review_round'] == 1" "review --json should open a structured review round"
+  assert_json "$output" "'ADVERSARIAL REVIEW' in data['result']['review_prompt'] and data['result']['review_file'].endswith('json-outputs.md')" "review --json should include prompt and review file"
+  assert_json "$output" "'Regression Hunt' in data['result']['required_sections']" "review --json should list required adversarial sections"
 
   write_review_v3 \
     "$repo" "$task_id" "pass" "executor" "completed" \
@@ -1060,8 +1060,8 @@ case_json_outputs() {
     "None." "None."
 
   capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld complete '$task_id' --json"
-  assert_json "$output" "data['completed_state'] == 'completed' and data['verdict'] == 'pass'" "complete --json should emit completion state and verdict"
-  assert_json "$output" "data['blocking_count'] == 0 and data['archive_path'].endswith('json-outputs.yaml')" "complete --json should emit gate counts and archive path"
+  assert_json "$output" "data['command'] == 'complete' and data['ok'] is True and data['state']['status'] == 'completed' and data['state']['review_verdict'] == 'pass'" "complete --json should emit completion state and verdict"
+  assert_json "$output" "data['result']['blocking_count'] == 0 and data['result']['archive_path'].endswith('json-outputs.yaml')" "complete --json should emit gate counts and archive path"
   archive_path="$(archive_spec_path "$repo" "$task_id")"
   [ -n "$archive_path" ] || fail "complete --json should archive the spec"
 }

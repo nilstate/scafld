@@ -1,0 +1,218 @@
+spec_version: "1.1"
+task_id: "projection-and-ci-surfaces"
+created: "2026-04-21T06:43:00Z"
+updated: "2026-04-21T06:43:00Z"
+status: "draft"
+harden_status: "not_run"
+
+task:
+  title: "Project scafld state onto PR, issue, and CI surfaces"
+  summary: >
+    Make scafld project its task state naturally onto the engineering surfaces
+    people already live in: branches, PR bodies, issue comments, and CI checks.
+    The goal is not to make scafld a hosted forge client. The goal is to make
+    scafld the authoritative workflow object and let GitHub or runx consume
+    projections without inventing a second source of truth. This work adds
+    projection commands and CI-friendly outputs so wrappers can render the same
+    state everywhere.
+  size: "large"
+  risk_level: "medium"
+  context:
+    packages:
+      - "cli"
+      - "scafld"
+      - "tests"
+      - "docs"
+      - ".github"
+    files_impacted:
+      - path: "cli/scafld"
+        lines: "all"
+        reason: "New projection commands and CI-friendly summary/check outputs belong in the CLI."
+      - path: "scafld/output.py"
+        lines: "all"
+        reason: "Projection rendering should reuse shared structured output and markdown rendering helpers."
+      - path: "docs/cli-reference.md"
+        lines: "all"
+        reason: "The CLI reference must describe summary/projection commands and their output contracts."
+      - path: "docs/review.md"
+        lines: "all"
+        reason: "Review docs should explain how review state projects into PR/check surfaces."
+      - path: "docs/quickstart.md"
+        lines: "all"
+        reason: "Quickstart should show a natural issue-to-branch-to-PR flow."
+      - path: "docs/github-flow.md"
+        lines: "all"
+        reason: "A new doc should explain how to use scafld projections from GitHub Actions or wrappers."
+      - path: ".github/workflows/review-gate-smoke.yml"
+        lines: "all"
+        reason: "CI should prove that scafld can emit check-friendly structured summaries."
+      - path: "tests/projection_surface_smoke.sh"
+        lines: "all"
+        reason: "A new smoke test should exercise summary, checks, and PR body rendering."
+    invariants:
+      - "spec_remains_the_single_source_of_truth"
+      - "projection_commands_do_not_require_network_access"
+      - "markdown_and_json_views_of_the_same_state_stay_aligned"
+      - "ci_outputs_are_machine_consumable"
+      - "projection_surfaces_do_not_reinvent_workflow_state"
+    related_docs:
+      - "docs/quickstart.md"
+      - "docs/review.md"
+      - "docs/cli-reference.md"
+      - "docs/lifecycle.md"
+    cwd: "/home/kam/dev/scafld"
+  objectives:
+    - "Add projection commands that render PR bodies, issue/PR comments, check summaries, and concise task summaries from the spec."
+    - "Expose CI-friendly structured status and check payloads so GitHub Actions or runx can publish the same truth."
+    - "Keep projections deterministic and derived from spec/origin/review state rather than ad hoc prompt output."
+    - "Document a natural engineering flow that uses projections without turning scafld into a forge SDK."
+    - "Prove the surfaces with smoke coverage and one repository-local CI example."
+  scope:
+    in_scope:
+      - "CLI projection commands such as summary, pr-body, comment, or checks."
+      - "Markdown and JSON renderers for the same projected state."
+      - "Repo-local CI examples or workflow steps that consume projection outputs."
+      - "Docs for wrapper authors and operators."
+    out_of_scope:
+      - "Opening or updating remote issues/PRs directly from scafld."
+      - "Hosted dashboards."
+      - "Changing review semantics beyond projecting the current truth."
+  dependencies:
+    - "command-core-integrity-hardening"
+    - "native-lifecycle-json-contracts"
+    - "git-bound-task-origins"
+  assumptions:
+    - "Projection commands should be deterministic views over task state, not another workflow authoring surface."
+    - "A GitHub-friendly flow can be documented and proven locally without hardcoding GitHub API behavior into scafld."
+    - "CI surfaces should prefer JSON payloads and concise markdown blocks over long prose."
+  touchpoints:
+    - area: "projection commands"
+      description: "Render task summaries, PR bodies, comment blocks, and checks from scafld state."
+      owners:
+        - "scafld-core"
+    - area: "CI integration"
+      description: "Provide structured check payloads and a repo-local proof path in CI."
+      owners:
+        - "scafld-core"
+    - area: "operator docs"
+      description: "Teach a natural engineering-system flow using projections."
+      owners:
+        - "scafld-core"
+  risks:
+    - description: "Projection commands could fork the truth if they accept too much manual customization."
+      impact: "high"
+      mitigation: "Keep projection inputs derived from the spec, review, and origin state; avoid freeform mutation flags."
+    - description: "Markdown and JSON projections could drift from each other."
+      impact: "medium"
+      mitigation: "Build both from one internal projection model and cover both in smoke tests."
+    - description: "CI docs could over-promise direct GitHub integration that scafld itself does not own."
+      impact: "medium"
+      mitigation: "Frame CI docs as projection/consumption examples, not forge mutation features."
+  acceptance:
+    validation_profile: "strict"
+    definition_of_done:
+      - id: "dod1"
+        description: "Projection commands exist for at least summary, checks, and PR body/comment output."
+        status: "pending"
+      - id: "dod2"
+        description: "Projection output can be rendered as both concise markdown and structured JSON."
+        status: "pending"
+      - id: "dod3"
+        description: "A repo-local CI proof consumes the structured outputs without scraping terminal text."
+        status: "pending"
+      - id: "dod4"
+        description: "Docs explain how projections make scafld feel native to Git/PR/issue flow."
+        status: "pending"
+    validation:
+      - id: "v1"
+        type: "integration"
+        description: "Projection surface smoke passes."
+        command: "./tests/projection_surface_smoke.sh"
+        expected: "exit code 0"
+        timeout_seconds: 240
+      - id: "v2"
+        type: "documentation"
+        description: "Docs include the GitHub/CI projection flow."
+        command: "rg -n \"pr-body|checks|summary|GitHub\" docs/cli-reference.md docs/quickstart.md docs/github-flow.md"
+        expected: "matches documenting the projection flow"
+        timeout_seconds: 60
+
+planning_log:
+  - timestamp: "2026-04-21T06:43:00Z"
+    actor: "codex"
+    summary: "Mapped the projection surfaces needed for scafld to sit naturally underneath PR, issue, and CI workflows."
+
+phases:
+  - id: "phase1"
+    name: "Build projection models"
+    objective: "Create a single internal projection model that can render markdown and JSON views over task state."
+    changes:
+      - file: "scafld/output.py"
+        action: "update"
+        content_spec: "Add projection-model helpers that render concise markdown and JSON from task, review, and origin state."
+      - file: "cli/scafld"
+        action: "update"
+        content_spec: "Add projection-oriented commands such as `summary`, `checks`, and `pr-body` with shared structured output."
+    acceptance_criteria:
+      - id: "ac1_1"
+        type: "integration"
+        description: "Projection smoke proves markdown and JSON rendering from the same task state."
+        command: "./tests/projection_surface_smoke.sh"
+        expected: "exit code 0"
+        timeout_seconds: 240
+    status: "pending"
+
+  - id: "phase2"
+    name: "Make CI consume projections"
+    objective: "Prove that repo-local CI can consume scafld projections without terminal scraping."
+    dependencies:
+      - "phase1"
+    changes:
+      - file: ".github/workflows/review-gate-smoke.yml"
+        action: "update"
+        content_spec: "Add a step or job that consumes scafld structured check/summary output as part of repo-local proof."
+      - file: "tests/projection_surface_smoke.sh"
+        action: "create"
+        content_spec: "Exercise summary, checks, and PR body projections from fixture specs and review state."
+    acceptance_criteria:
+      - id: "ac2_1"
+        type: "integration"
+        description: "Projection smoke passes with CI-oriented payload assertions."
+        command: "./tests/projection_surface_smoke.sh"
+        expected: "exit code 0"
+        timeout_seconds: 240
+    status: "pending"
+
+  - id: "phase3"
+    name: "Document the engineering flow"
+    objective: "Explain how projection surfaces map scafld naturally into issue, PR, and CI workflows."
+    dependencies:
+      - "phase2"
+    changes:
+      - file: "docs/github-flow.md"
+        action: "create"
+        content_spec: "Document the natural Git/issue/PR/CI flow that consumes scafld projections."
+      - file: "docs/quickstart.md"
+        action: "update"
+        content_spec: "Show an issue-to-branch-to-PR flow that uses summary/check/pr-body projections."
+      - file: "docs/cli-reference.md"
+        action: "update"
+        content_spec: "Document the new projection commands and their markdown/JSON outputs."
+      - file: "README.md"
+        action: "update"
+        content_spec: "Describe scafld as the workflow kernel behind normal engineering surfaces."
+    acceptance_criteria:
+      - id: "ac3_1"
+        type: "documentation"
+        description: "Projection docs describe the natural engineering-system flow."
+        command: "rg -n \"engineering system|pr-body|checks|summary|issue\" README.md docs/quickstart.md docs/github-flow.md docs/cli-reference.md"
+        expected: "matches documenting the workflow"
+        timeout_seconds: 60
+    status: "pending"
+
+rollback:
+  strategy: "manual"
+  commands:
+    phase1: "git checkout HEAD -- scafld/output.py cli/scafld"
+    phase2: "git checkout HEAD -- .github/workflows/review-gate-smoke.yml tests/projection_surface_smoke.sh"
+    phase3: "git checkout HEAD -- docs/github-flow.md docs/quickstart.md docs/cli-reference.md README.md"
