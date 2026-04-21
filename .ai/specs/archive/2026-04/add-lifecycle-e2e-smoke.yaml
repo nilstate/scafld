@@ -1,0 +1,133 @@
+spec_version: "1.1"
+task_id: "add-lifecycle-e2e-smoke"
+created: "2026-04-21T06:11:31Z"
+updated: "2026-04-21T06:56:32Z"
+status: "completed"
+harden_status: "not_run"
+
+task:
+  title: "Add lifecycle end-to-end smoke test"
+  summary: >
+    Add a true workflow smoke test that exercises the core lifecycle on a tiny
+    fixture repo: `init -> new -> validate -> approve -> start -> exec -> review
+    -> complete`. This should verify that the commands continue to compose after
+    recent changes to harden, review gating, and reporting.
+  size: "medium"
+  risk_level: "medium"
+  context:
+    packages:
+      - "tests"
+      - "cli"
+      - "docs"
+    invariants:
+      - "domain_boundaries"
+      - "no_legacy_code"
+      - "public_api_stable"
+  objectives:
+    - "Exercise the happy-path lifecycle end to end on a disposable git repo."
+    - "Verify that exec, review, and complete still compose cleanly."
+    - "Document the coverage so future changes treat it as a core workflow check."
+  touchpoints:
+    - area: "tests/lifecycle_smoke.sh"
+      description: "New end-to-end lifecycle smoke coverage."
+    - area: ".github/workflows/review-gate-smoke.yml"
+      description: "Run the new lifecycle smoke in CI."
+    - area: "docs/quickstart.md"
+      description: "Reference the lifecycle smoke as an integrity check."
+  acceptance:
+    definition_of_done:
+      - id: "dod1"
+        description: "A single smoke test covers the lifecycle from init to complete."
+        status: "pending"
+      - id: "dod2"
+        description: "CI runs the lifecycle smoke alongside existing smoke coverage."
+        status: "pending"
+      - id: "dod3"
+        description: "Docs mention the new end-to-end workflow check."
+        status: "pending"
+    validation:
+      - id: "v1"
+        type: "test"
+        description: "Lifecycle smoke passes locally."
+        command: "bash tests/lifecycle_smoke.sh"
+        expected: "exit code 0"
+
+planning_log:
+  - timestamp: "2026-04-21T06:11:31Z"
+    actor: "user"
+    summary: "Spec created via scafld new"
+  - timestamp: "2026-04-21T06:15:00Z"
+    actor: "assistant"
+    summary: "Expanded draft into an end-to-end lifecycle smoke test."
+
+  - timestamp: "2026-04-21T06:16:06Z"
+    actor: "cli"
+    summary: "Spec approved"
+  - timestamp: "2026-04-21T06:31:02Z"
+    actor: "cli"
+    summary: "Execution started"
+  - timestamp: "2026-04-21T06:56:32Z"
+    actor: "cli"
+    summary: "Spec completed"
+phases:
+  - id: "phase1"
+    name: "Exercise The Full Lifecycle In One Smoke Test"
+    objective: "Add a disposable repo smoke test that covers the core workflow."
+    changes:
+      - file: "tests/lifecycle_smoke.sh"
+        action: "create"
+        content_spec: |
+          Create a new smoke test that initializes a fixture repo, creates and
+          edits a valid spec, runs validate/approve/start/exec/review/complete,
+          and asserts the spec is archived successfully.
+      - file: ".github/workflows/review-gate-smoke.yml"
+        action: "update"
+        content_spec: |
+          Run the lifecycle smoke in the existing smoke workflow.
+      - file: "docs/quickstart.md"
+        action: "update"
+        content_spec: |
+          Mention the lifecycle smoke as part of the project's workflow
+          integrity checks.
+    acceptance_criteria:
+      - id: "ac1_1"
+        type: "test"
+        description: "Lifecycle smoke passes locally."
+        command: "bash tests/lifecycle_smoke.sh"
+        expected: "exit code 0"
+        result: "pass"
+        executed_at: "2026-04-21T06:54:15Z"
+        result_output: "[1/6] init a clean workspace and baseline commit [2/6] create a real draft, make it valid, and validate it [3/6] approve, start, and execute the spec [4/6] run review and complete the spec [5/6] creat"
+    status: "pending"
+
+rollback:
+  strategy: "per_phase"
+  commands:
+    phase1: "git checkout HEAD -- tests/lifecycle_smoke.sh .github/workflows/review-gate-smoke.yml docs/quickstart.md"
+
+review:
+  timestamp: "2026-04-21T06:56:32Z"
+  verdict: "pass"
+  review_rounds: 4
+  reviewer_mode: "fresh_agent"
+  reviewer_session: "session-1"
+  round_status: "completed"
+  override_applied: false
+  override_reason: null
+  override_confirmed_at: null
+  reviewed_head: "3a4b3c2f5d9280ceb7a0c7a1296ffacc5d44f657"
+  reviewed_dirty: true
+  reviewed_diff: "2f382302f5573c9edcd70b4531367dd95b4945ae685e391743a2404486125ea2"
+  passes:
+    - id: spec_compliance
+      result: "pass"
+    - id: scope_drift
+      result: "pass"
+    - id: regression_hunt
+      result: "pass"
+    - id: convention_check
+      result: "pass"
+    - id: dark_patterns
+      result: "pass"
+  blocking_count: 0
+  non_blocking_count: 0

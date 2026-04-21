@@ -1,0 +1,132 @@
+spec_version: "1.1"
+task_id: "improve-report-triage"
+created: "2026-04-21T06:11:31Z"
+updated: "2026-04-21T06:56:32Z"
+status: "completed"
+harden_status: "not_run"
+
+task:
+  title: "Improve report triage output"
+  summary: >
+    Extend `scafld report` from passive aggregate counts to actionable workflow
+    triage. Surface stale drafts, approved specs that never started, active specs
+    with no exec results, and review drift once review artifacts are bound to git
+    state.
+  size: "small"
+  risk_level: "low"
+  context:
+    packages:
+      - "cli"
+      - "tests"
+      - "docs"
+    invariants:
+      - "domain_boundaries"
+      - "no_legacy_code"
+      - "public_api_stable"
+  objectives:
+    - "Keep the aggregate report, but add actionable workflow triage."
+    - "Highlight stale and blocked specs without requiring manual digging."
+    - "Reflect review drift once commit binding exists."
+  touchpoints:
+    - area: "cli/scafld"
+      description: "Extend report output with workflow triage sections."
+    - area: "tests/lifecycle_smoke.sh"
+      description: "Optionally use lifecycle/report assertions for actionable output."
+    - area: "docs/cli-reference.md"
+      description: "Document the new report sections."
+  acceptance:
+    definition_of_done:
+      - id: "dod1"
+        description: "`scafld report` highlights stale drafts and inactive approved/active specs."
+        status: "pending"
+      - id: "dod2"
+        description: "Report can surface review drift once review binding exists."
+        status: "pending"
+      - id: "dod3"
+        description: "Docs describe the new triage sections."
+        status: "pending"
+    validation:
+      - id: "v1"
+        type: "test"
+        description: "Lifecycle smoke still passes after report changes."
+        command: "bash tests/lifecycle_smoke.sh"
+        expected: "exit code 0"
+
+planning_log:
+  - timestamp: "2026-04-21T06:11:31Z"
+    actor: "user"
+    summary: "Spec created via scafld new"
+  - timestamp: "2026-04-21T06:15:00Z"
+    actor: "assistant"
+    summary: "Expanded draft into actionable report triage improvements."
+
+  - timestamp: "2026-04-21T06:16:06Z"
+    actor: "cli"
+    summary: "Spec approved"
+  - timestamp: "2026-04-21T06:31:02Z"
+    actor: "cli"
+    summary: "Execution started"
+  - timestamp: "2026-04-21T06:56:32Z"
+    actor: "cli"
+    summary: "Spec completed"
+phases:
+  - id: "phase1"
+    name: "Add Actionable Report Triage"
+    objective: "Make `scafld report` point operators at specs that need attention."
+    changes:
+      - file: "cli/scafld"
+        action: "update"
+        content_spec: |
+          Add triage sections for stale drafts, approved-but-not-started specs,
+          active specs without exec evidence, and review drift where available.
+      - file: "docs/cli-reference.md"
+        action: "update"
+        content_spec: |
+          Document the new report triage output.
+      - file: "tests/lifecycle_smoke.sh"
+        action: "update"
+        content_spec: |
+          Add a light assertion that `scafld report` remains runnable and
+          includes the new triage sections on a fixture repo.
+    acceptance_criteria:
+      - id: "ac1_1"
+        type: "test"
+        description: "Lifecycle smoke passes with report assertions."
+        command: "bash tests/lifecycle_smoke.sh"
+        expected: "exit code 0"
+        result: "pass"
+        executed_at: "2026-04-21T06:54:20Z"
+        result_output: "[1/6] init a clean workspace and baseline commit [2/6] create a real draft, make it valid, and validate it [3/6] approve, start, and execute the spec [4/6] run review and complete the spec [5/6] creat"
+    status: "pending"
+
+rollback:
+  strategy: "per_phase"
+  commands:
+    phase1: "git checkout HEAD -- cli/scafld docs/cli-reference.md tests/lifecycle_smoke.sh"
+
+review:
+  timestamp: "2026-04-21T06:56:32Z"
+  verdict: "pass"
+  review_rounds: 4
+  reviewer_mode: "fresh_agent"
+  reviewer_session: "session-1"
+  round_status: "completed"
+  override_applied: false
+  override_reason: null
+  override_confirmed_at: null
+  reviewed_head: "3a4b3c2f5d9280ceb7a0c7a1296ffacc5d44f657"
+  reviewed_dirty: true
+  reviewed_diff: "8f50c4c290831c2f9a487dd5f90c6a2597d5eac61058d0f3052448d535dc7723"
+  passes:
+    - id: spec_compliance
+      result: "pass"
+    - id: scope_drift
+      result: "pass"
+    - id: regression_hunt
+      result: "pass"
+    - id: convention_check
+      result: "pass"
+    - id: dark_patterns
+      result: "pass"
+  blocking_count: 0
+  non_blocking_count: 0

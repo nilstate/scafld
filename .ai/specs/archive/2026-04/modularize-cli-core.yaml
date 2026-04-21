@@ -1,0 +1,142 @@
+spec_version: "1.1"
+task_id: "modularize-cli-core"
+created: "2026-04-21T06:11:31Z"
+updated: "2026-04-21T06:56:33Z"
+status: "completed"
+harden_status: "not_run"
+
+task:
+  title: "Modularize CLI core"
+  summary: >
+    Reduce change risk in the single-file CLI by extracting stable helper layers
+    into the importable `scafld` package. Focus on pure helpers and command-local
+    support code first: config loading, git-state helpers, harden citation
+    helpers, and review/report helpers. Keep CLI behavior unchanged.
+  size: "large"
+  risk_level: "medium"
+  context:
+    packages:
+      - "cli"
+      - "scafld"
+      - "tests"
+    invariants:
+      - "domain_boundaries"
+      - "no_legacy_code"
+      - "public_api_stable"
+  objectives:
+    - "Extract stable helper code from `cli/scafld` into importable modules."
+    - "Shrink the command file without changing CLI behavior."
+    - "Keep smoke coverage green after the extraction."
+  touchpoints:
+    - area: "cli/scafld"
+      description: "Retain argument parsing and command dispatch while importing extracted helpers."
+    - area: "scafld/"
+      description: "New helper modules for config, git state, harden verification, and review/report support."
+    - area: "tests/*.sh"
+      description: "Existing smoke tests guard behavior during extraction."
+  acceptance:
+    definition_of_done:
+      - id: "dod1"
+        description: "Helper code moves into package modules with no CLI behavior regressions."
+        status: "pending"
+      - id: "dod2"
+        description: "`cli/scafld` becomes materially smaller and more command-focused."
+        status: "pending"
+      - id: "dod3"
+        description: "Existing smoke tests remain green after the extraction."
+        status: "pending"
+    validation:
+      - id: "v1"
+        type: "test"
+        description: "Smoke suite passes after modularization."
+        command: "bash tests/harden_smoke.sh && bash tests/review_gate_smoke.sh && bash tests/update_smoke.sh && bash tests/package_smoke.sh"
+        expected: "exit code 0"
+
+planning_log:
+  - timestamp: "2026-04-21T06:11:31Z"
+    actor: "user"
+    summary: "Spec created via scafld new"
+  - timestamp: "2026-04-21T06:15:00Z"
+    actor: "assistant"
+    summary: "Expanded draft into a helper extraction plan that preserves current CLI behavior."
+
+  - timestamp: "2026-04-21T06:16:06Z"
+    actor: "cli"
+    summary: "Spec approved"
+  - timestamp: "2026-04-21T06:31:02Z"
+    actor: "cli"
+    summary: "Execution started"
+  - timestamp: "2026-04-21T06:56:33Z"
+    actor: "cli"
+    summary: "Spec completed"
+phases:
+  - id: "phase1"
+    name: "Extract Stable Helper Modules"
+    objective: "Move reusable helper layers into the package while keeping the CLI surface stable."
+    changes:
+      - file: "scafld/config.py"
+        action: "create"
+        content_spec: |
+          Move config parsing, merging, and overlay helpers into a dedicated
+          module used by the CLI.
+      - file: "scafld/git_state.py"
+        action: "create"
+        content_spec: |
+          Move reusable git-state inspection helpers into a shared module.
+      - file: "scafld/hardening.py"
+        action: "create"
+        content_spec: |
+          Move harden citation parsing and verification helpers into a shared
+          module.
+      - file: "scafld/reviewing.py"
+        action: "create"
+        content_spec: |
+          Move review topology, metadata, and rendering helpers into a shared
+          module.
+      - file: "cli/scafld"
+        action: "update"
+        content_spec: |
+          Replace extracted helper bodies with imports and keep command dispatch
+          behavior unchanged.
+    acceptance_criteria:
+      - id: "ac1_1"
+        type: "test"
+        description: "The smoke suite passes after helper extraction."
+        command: "bash tests/harden_smoke.sh && bash tests/review_gate_smoke.sh && bash tests/update_smoke.sh && bash tests/package_smoke.sh"
+        expected: "exit code 0"
+        result: "pass"
+        executed_at: "2026-04-21T06:55:19Z"
+        result_output: "[1/9] scafld init [2/9] scafld new emits harden_status: not_run [3/9] scafld harden prints HARDEN MODE and advances to in_progress [4/9] scafld harden --mark-passed closes the round [5/9] re-running h"
+    status: "pending"
+
+rollback:
+  strategy: "per_phase"
+  commands:
+    phase1: "git checkout HEAD -- scafld/config.py scafld/git_state.py scafld/hardening.py scafld/reviewing.py cli/scafld"
+
+review:
+  timestamp: "2026-04-21T06:56:33Z"
+  verdict: "pass"
+  review_rounds: 4
+  reviewer_mode: "fresh_agent"
+  reviewer_session: "session-1"
+  round_status: "completed"
+  override_applied: false
+  override_reason: null
+  override_confirmed_at: null
+  reviewed_head: "3a4b3c2f5d9280ceb7a0c7a1296ffacc5d44f657"
+  reviewed_dirty: true
+  reviewed_diff: "44e01a5885a1df3e2b9e5e19c5c84d067929cde366b221938e8f7abaa96a4dd7"
+  passes:
+    - id: spec_compliance
+      result: "pass"
+    - id: scope_drift
+      result: "pass"
+    - id: regression_hunt
+      result: "pass"
+    - id: convention_check
+      result: "pass"
+    - id: dark_patterns
+      result: "pass"
+  blocking_count: 0
+  non_blocking_count: 0
