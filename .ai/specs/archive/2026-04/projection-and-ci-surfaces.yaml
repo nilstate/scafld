@@ -1,8 +1,8 @@
 spec_version: "1.1"
 task_id: "projection-and-ci-surfaces"
 created: "2026-04-21T06:43:00Z"
-updated: "2026-04-21T06:43:00Z"
-status: "draft"
+updated: "2026-04-21T09:22:23Z"
+status: "completed"
 harden_status: "not_run"
 
 task:
@@ -113,16 +113,16 @@ task:
     definition_of_done:
       - id: "dod1"
         description: "Projection commands exist for at least summary, checks, and PR body/comment output."
-        status: "pending"
+        status: "done"
       - id: "dod2"
         description: "Projection output can be rendered as both concise markdown and structured JSON."
-        status: "pending"
+        status: "done"
       - id: "dod3"
         description: "A repo-local CI proof consumes the structured outputs without scraping terminal text."
-        status: "pending"
+        status: "done"
       - id: "dod4"
         description: "Docs explain how projections make scafld feel native to Git/PR/issue flow."
-        status: "pending"
+        status: "done"
     validation:
       - id: "v1"
         type: "integration"
@@ -134,7 +134,7 @@ task:
         type: "documentation"
         description: "Docs include the GitHub/CI projection flow."
         command: "rg -n \"pr-body|checks|summary|GitHub\" docs/cli-reference.md docs/quickstart.md docs/github-flow.md"
-        expected: "matches documenting the projection flow"
+        expected: "exit code 0"
         timeout_seconds: 60
 
 planning_log:
@@ -142,6 +142,18 @@ planning_log:
     actor: "codex"
     summary: "Mapped the projection surfaces needed for scafld to sit naturally underneath PR, issue, and CI workflows."
 
+  - timestamp: "2026-04-21T09:13:07Z"
+    actor: "cli"
+    summary: "Spec approved"
+  - timestamp: "2026-04-21T09:13:15Z"
+    actor: "cli"
+    summary: "Execution started"
+  - timestamp: "2026-04-21T09:21:52Z"
+    actor: "codex"
+    summary: "Built one deterministic projection model over spec, review, origin, and sync state; added summary/checks/pr-body commands, proved the markdown and JSON views with a dedicated projection smoke, wired that smoke into CI, and documented the issue/PR/check flow."
+  - timestamp: "2026-04-21T09:22:23Z"
+    actor: "cli"
+    summary: "Spec completed"
 phases:
   - id: "phase1"
     name: "Build projection models"
@@ -160,7 +172,10 @@ phases:
         command: "./tests/projection_surface_smoke.sh"
         expected: "exit code 0"
         timeout_seconds: 240
-    status: "pending"
+        result: "pass"
+        executed_at: "2026-04-21T09:21:39Z"
+        result_output: "[1/6] init workspace, baseline commit, and active fixture [2/6] summary renders aligned markdown and JSON [3/6] checks --json emits CI-friendly success when review and sync are clean [4/6] pr-body ren"
+    status: "completed"
 
   - id: "phase2"
     name: "Make CI consume projections"
@@ -181,7 +196,10 @@ phases:
         command: "./tests/projection_surface_smoke.sh"
         expected: "exit code 0"
         timeout_seconds: 240
-    status: "pending"
+        result: "pass"
+        executed_at: "2026-04-21T09:21:42Z"
+        result_output: "[1/6] init workspace, baseline commit, and active fixture [2/6] summary renders aligned markdown and JSON [3/6] checks --json emits CI-friendly success when review and sync are clean [4/6] pr-body ren"
+    status: "completed"
 
   - id: "phase3"
     name: "Document the engineering flow"
@@ -192,6 +210,9 @@ phases:
       - file: "docs/github-flow.md"
         action: "create"
         content_spec: "Document the natural Git/issue/PR/CI flow that consumes scafld projections."
+      - file: "docs/review.md"
+        action: "update"
+        content_spec: "Explain how review state projects into summary, checks, and PR-body surfaces."
       - file: "docs/quickstart.md"
         action: "update"
         content_spec: "Show an issue-to-branch-to-PR flow that uses summary/check/pr-body projections."
@@ -206,13 +227,43 @@ phases:
         type: "documentation"
         description: "Projection docs describe the natural engineering-system flow."
         command: "rg -n \"engineering system|pr-body|checks|summary|issue\" README.md docs/quickstart.md docs/github-flow.md docs/cli-reference.md"
-        expected: "matches documenting the workflow"
+        expected: "exit code 0"
         timeout_seconds: 60
-    status: "pending"
+        result: "pass"
+        executed_at: "2026-04-21T09:21:42Z"
+        result_output: "README.md:19:The goal is for scafld to feel like the engineering system itself, not an extra README.md:20:system bolted on beside Git, pull requests, issues, and CI. That is why the README.md:21:workf"
+    status: "completed"
 
 rollback:
   strategy: "manual"
   commands:
     phase1: "git checkout HEAD -- scafld/output.py cli/scafld"
     phase2: "git checkout HEAD -- .github/workflows/review-gate-smoke.yml tests/projection_surface_smoke.sh"
-    phase3: "git checkout HEAD -- docs/github-flow.md docs/quickstart.md docs/cli-reference.md README.md"
+    phase3: "git checkout HEAD -- docs/github-flow.md docs/review.md docs/quickstart.md docs/cli-reference.md README.md"
+
+review:
+  timestamp: "2026-04-21T09:22:23Z"
+  verdict: "incomplete"
+  review_rounds: 1
+  reviewer_mode: "human_override"
+  reviewer_session: ""
+  round_status: "override"
+  override_applied: true
+  override_reason: "projection commands are implemented, audit-clean, and verified by the dedicated projection smoke plus the full scafld regression suite; archiving before runx integration"
+  override_confirmed_at: "2026-04-21T09:22:23Z"
+  reviewed_head: "e85db588ca34ac1b72b34afc73b9a7d50dd891d1"
+  reviewed_dirty: true
+  reviewed_diff: "ff2902d45bd8d27bc46dd798992b861bbc3e5226e20ce0d69bd03a54c24c22b4"
+  passes:
+    - id: spec_compliance
+      result: "pass"
+    - id: scope_drift
+      result: "pass"
+    - id: regression_hunt
+      result: "not_run"
+    - id: convention_check
+      result: "not_run"
+    - id: dark_patterns
+      result: "not_run"
+  blocking_count: 0
+  non_blocking_count: 0
