@@ -3,13 +3,30 @@ import re
 import sys
 from pathlib import Path
 
+from scafld.audit_scope import git_sync_excluded_paths
 from scafld.command_runtime import find_root, require_root
 from scafld.error_codes import ErrorCode as EC
 from scafld.errors import ScafldError
 from scafld.git_state import bind_task_branch, build_origin_sync_payload, refresh_origin_sync
 from scafld.output import emit_command_json, error_payload
 from scafld.projections import humanize_binding_mode, origin_payload, phase_counts, summarize_origin_source
+from scafld.review_artifacts import load_review_topology
 from scafld.reviewing import load_review_state
+from scafld.runtime_bundle import (
+    ACTIVE_DIR,
+    APPROVED_DIR,
+    ARCHIVE_DIR,
+    CONFIG_LOCAL_PATH,
+    CONFIG_PATH,
+    DRAFTS_DIR,
+    FRAMEWORK_CONFIG_PATH,
+    LOGS_DIR,
+    REVIEWS_DIR,
+    resolve_schema_path,
+    sync_framework_bundle,
+)
+from scafld.spec_lifecycle import move_result_payload, validate_spec
+from scafld.spec_parsing import count_phases, now_iso, parse_phase_status_entries
 from scafld.spec_store import (
     find_all_specs,
     find_spec,
@@ -21,32 +38,13 @@ from scafld.spec_store import (
     yaml_read_nested,
 )
 from scafld.spec_templates import build_new_spec_scaffold
+from scafld.terminal import C_BOLD, C_CYAN, C_DIM, C_GREEN, C_RED, C_YELLOW, STATUS_COLORS, c
 
-from .shared import (
-    CHANGE_OWNERSHIP_VALUES,
-    CONFIG_LOCAL_PATH,
-    CONFIG_PATH,
-    DRAFTS_DIR,
-    FRAMEWORK_CONFIG_PATH,
-    REVIEWS_DIR,
-    STATUS_COLORS,
-    c,
-    count_phases,
-    git_sync_excluded_paths,
-    load_review_topology,
-    move_result_payload,
-    now_iso,
-    parse_phase_status_entries,
-    print_move_result,
-    resolve_schema_path,
-    sync_framework_bundle,
-    C_BOLD,
-    C_CYAN,
-    C_DIM,
-    C_GREEN,
-    C_RED,
-    C_YELLOW,
-)
+
+def print_move_result(root, move_result):
+    transition = move_result_payload(root, move_result)
+    print(f"{c(C_GREEN, '  moved')}: {transition['from']} -> {transition['to']}")
+    print(f" {c(C_DIM, 'status')}: {c(STATUS_COLORS.get(transition['status'], ''), transition['status'])}")
 
 
 def cmd_new(args):
@@ -56,7 +54,7 @@ def cmd_new(args):
     auto_initialized = False
     if root is None:
         root = Path.cwd()
-        for rel in (DRAFTS_DIR, ".ai/specs/approved", ".ai/specs/active", ".ai/specs/archive", ".ai/logs", ".ai/reviews"):
+        for rel in (DRAFTS_DIR, APPROVED_DIR, ACTIVE_DIR, ARCHIVE_DIR, LOGS_DIR, REVIEWS_DIR):
             (root / rel).mkdir(parents=True, exist_ok=True)
         sync_framework_bundle(root)
         auto_initialized = True
@@ -438,78 +436,6 @@ def cmd_sync(args):
         print(f"  - {reason}")
     if not ok:
         sys.exit(1)
-
-
-def validate_spec(root, spec):
-    """Validate a spec against the JSON schema. Returns list of errors (empty = valid)."""
-    schema_path = resolve_schema_path(root)
-    if not schema_path.exists():
-        return [f"schema not found at {schema_path.relative_to(root)}"]
-
-    try:
-        schema = json.loads(schema_path.read_text())
-    except json.JSONDecodeError as exc:
-        return [f"invalid schema JSON: {exc}"]
-
-    text = spec.read_text()
-    errors = []
-
-    required_top = schema.get("required", [])
-    for field in required_top:
-        if not yaml_read_field(text, field):
-            if not re.search(rf'^{field}:', text, re.MULTILINE):
-                errors.append(f"missing required field: {field}")
-
-    task_id = yaml_read_field(text, "task_id")
-    if task_id and not re.match(r'^[a-z0-9-]+$', task_id):
-        errors.append(f"task_id must be kebab-case: got '{task_id}'")
-
-    status = yaml_read_field(text, "status")
-    valid_statuses = ["draft", "blocked", "under_review", "approved", "in_progress", "completed", "failed", "cancelled"]
-    if status and status not in valid_statuses:
-        errors.append(f"invalid status: '{status}' (expected one of: {', '.join(valid_statuses)})")
-
-    spec_version = yaml_read_field(text, "spec_version")
-    if spec_version and not re.match(r'^\d+\.\d+$', spec_version):
-        errors.append(f"spec_version must be semver: got '{spec_version}'")
-
-    if not re.search(r'^phases:', text, re.MULTILINE):
-        errors.append("missing required field: phases")
-    else:
-        phase_ids = re.findall(r'^\s+-\s+id:\s*"?(phase\d+)"?', text, re.MULTILINE)
-        if not phase_ids:
-            errors.append("phases array is empty (at least 1 phase required)")
-
-    if not re.search(r'^planning_log:', text, re.MULTILINE):
-        errors.append("missing required field: planning_log")
-
-    if re.search(r'^task:', text, re.MULTILINE):
-        for field in ["title", "summary", "size", "risk_level"]:
-            if not yaml_read_nested(text, "task", field):
-                errors.append(f"missing required task field: task.{field}")
-    else:
-        errors.append("missing required field: task")
-
-    todo_patterns = [
-        (r'^\s+(?:command|content_spec|description|file):\s*"?TODO', "has TODO placeholder"),
-        (r'^\s+-\s+"?TODO', "has TODO list item"),
-    ]
-    for pattern, message in todo_patterns:
-        matches = re.findall(pattern, text, re.MULTILINE)
-        if matches:
-            count = len(matches)
-            errors.append(f"{message} ({count} occurrence{'s' if count > 1 else ''})")
-            break
-
-    ownership_values = re.findall(r'^\s+ownership:\s*"?([^"\n]+)"?', text, re.MULTILINE)
-    invalid_ownership = sorted({value for value in ownership_values if value not in CHANGE_OWNERSHIP_VALUES})
-    for value in invalid_ownership:
-        errors.append(
-            f"invalid change ownership: '{value}' (expected one of: {', '.join(sorted(CHANGE_OWNERSHIP_VALUES))})"
-        )
-
-    return errors
-
 
 def cmd_validate(args):
     """Validate a spec against the JSON schema."""

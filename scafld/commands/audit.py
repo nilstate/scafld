@@ -1,28 +1,21 @@
 import subprocess
 import sys
 
+from scafld.audit_scope import (
+    active_declared_changes,
+    build_audit_file_payloads,
+    classify_active_overlap,
+    collect_declared_change_map,
+    describe_other_active_specs,
+    filter_audit_paths,
+)
 from scafld.command_runtime import require_root
 from scafld.error_codes import ErrorCode as EC
 from scafld.errors import ScafldError
 from scafld.git_state import list_changed_files_against_ref, list_working_tree_changed_files
 from scafld.output import emit_command_json, error_payload
 from scafld.spec_store import require_spec
-
-from .shared import (
-    active_declared_changes,
-    build_audit_file_payloads,
-    c,
-    classify_active_overlap,
-    collect_declared_change_map,
-    describe_other_active_specs,
-    filter_audit_paths,
-    C_BOLD,
-    C_CYAN,
-    C_DIM,
-    C_GREEN,
-    C_RED,
-    C_YELLOW,
-)
+from scafld.terminal import C_BOLD, C_CYAN, C_DIM, C_GREEN, C_RED, C_YELLOW, c
 
 
 def cmd_audit(args):

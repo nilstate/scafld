@@ -1,37 +1,25 @@
-import re
-import subprocess
 import sys
 
+from scafld.acceptance import evaluate_acceptance_criterion, record_exec_result
 from scafld.command_runtime import require_root
 from scafld.error_codes import ErrorCode as EC
 from scafld.hardening import verify_harden_round_citations
 from scafld.output import emit_command_json, error_payload
-from scafld.spec_store import require_spec
-from scafld.spec_store import yaml_read_field
-
-from .shared import (
-    ARCHIVE_DIR,
-    DRAFTS_DIR,
-    c,
-    check_expected,
-    criterion_timeout_seconds,
-    now_iso,
-    parse_acceptance_criteria,
-    record_exec_result,
-    require_pyyaml,
-    resolve_prompt_path,
-    C_BOLD,
-    C_CYAN,
-    C_DIM,
-    C_GREEN,
-    C_RED,
-    C_YELLOW,
-)
+from scafld.runtime_bundle import ARCHIVE_DIR, DRAFTS_DIR, resolve_prompt_path
+from scafld.spec_parsing import extract_spec_cwd, now_iso, parse_acceptance_criteria, require_pyyaml
+from scafld.spec_store import require_spec, yaml_read_field
+from scafld.terminal import C_BOLD, C_CYAN, C_DIM, C_GREEN, C_RED, C_YELLOW, c
 
 
 def cmd_harden(args):
     """Scaffold HARDEN MODE prompt or mark a hardening round passed."""
-    yaml = require_pyyaml()
+    try:
+        yaml = require_pyyaml()
+    except RuntimeError:
+        print(f"{c(C_RED, 'error')}: scafld harden requires PyYAML")
+        print("  install it into the Python runtime that executes scafld:")
+        print(f"  {c(C_BOLD, 'python3 -m pip install PyYAML')}")
+        sys.exit(1)
     root = require_root()
     spec = require_spec(root, args.task_id)
     json_mode = bool(getattr(args, "json", False))
@@ -182,10 +170,7 @@ def cmd_exec(args):
             print(f"{c(C_RED, 'error')}: spec must be in_progress or approved to exec (current: {status})")
         sys.exit(1)
 
-    spec_cwd = None
-    match = re.search(r'^\s+context:.*?\n(?:\s+\S.*\n)*?\s+cwd:\s*"?([^"\n]+)"?', text, re.MULTILINE)
-    if match:
-        spec_cwd = match.group(1).strip().strip('"').strip("'")
+    spec_cwd = extract_spec_cwd(text)
 
     criteria = parse_acceptance_criteria(text)
     if not criteria:
@@ -261,145 +246,35 @@ def cmd_exec(args):
         description = criterion.get("description", ac_id)
 
         effective_cwd = criterion.get("cwd") or spec_cwd
-        ac_cwd = root
-        if effective_cwd:
-            ac_cwd = (root / effective_cwd).resolve()
-            if not str(ac_cwd).startswith(str(root.resolve())):
-                message = f"cwd '{effective_cwd}' escapes workspace root"
-                if not json_mode:
-                    print(f"  {c(C_CYAN, ac_id)}: {description}")
-                    print(f"    {c(C_RED, 'ERROR')}: {message}")
-                text = record_exec_result(text, ac_id, False, message)
-                criterion_results.append({
-                    "id": ac_id,
-                    "description": description,
-                    "phase": criterion.get("phase"),
-                    "command": cmd,
-                    "cwd": effective_cwd,
-                    "expected": expected,
-                    "status": "fail",
-                    "exit_code": None,
-                    "output": message,
-                })
-                failed += 1
-                continue
-            if not ac_cwd.is_dir():
-                message = f"cwd '{effective_cwd}' not found"
-                if not json_mode:
-                    print(f"  {c(C_CYAN, ac_id)}: {description}")
-                    print(f"    {c(C_RED, 'ERROR')}: cwd '{effective_cwd}' is not a directory")
-                text = record_exec_result(text, ac_id, False, message)
-                criterion_results.append({
-                    "id": ac_id,
-                    "description": description,
-                    "phase": criterion.get("phase"),
-                    "command": cmd,
-                    "cwd": effective_cwd,
-                    "expected": expected,
-                    "status": "fail",
-                    "exit_code": None,
-                    "output": message,
-                })
-                failed += 1
-                continue
-            cwd_suffix = f"  {c(C_DIM, '(in ' + effective_cwd + '/)')}"
-        else:
-            cwd_suffix = ""
+        cwd_suffix = f"  {c(C_DIM, '(in ' + effective_cwd + '/)')}" if effective_cwd else ""
         if not json_mode:
             print(f"  {c(C_CYAN, ac_id)}: {description}")
             print(f"    $ {c(C_DIM, cmd)}{cwd_suffix}")
 
-        try:
-            timeout_seconds = criterion_timeout_seconds(criterion)
-        except ValueError as exc:
-            if not json_mode:
-                print(f"    {c(C_RED, 'ERROR')}: {exc}")
-            text = record_exec_result(text, ac_id, False, str(exc))
-            criterion_results.append({
-                "id": ac_id,
-                "description": description,
-                "phase": criterion.get("phase"),
-                "command": cmd,
-                "cwd": effective_cwd,
-                "expected": expected,
-                "status": "fail",
-                "exit_code": None,
-                "output": str(exc),
-            })
-            failed += 1
-            continue
+        outcome = evaluate_acceptance_criterion(root, criterion, spec_cwd=spec_cwd)
+        ac_passed = outcome["status"] == "pass"
 
-        try:
-            result = subprocess.run(
-                cmd,
-                shell=True,
-                capture_output=True,
-                text=True,
-                timeout=timeout_seconds,
-                cwd=str(ac_cwd),
-            )
-            output = (result.stdout + result.stderr).strip()
-            ac_passed = check_expected(result.returncode, output, expected)
-
-            if ac_passed:
-                if not json_mode:
-                    print(f"    {c(C_GREEN, 'PASS')}")
-                passed += 1
-            else:
-                if not json_mode:
-                    print(f"    {c(C_RED, 'FAIL')} (exit code {result.returncode})")
-                    if expected:
-                        print(f"    expected: {c(C_DIM, expected)}")
-                    if output:
-                        for line in output.splitlines()[:5]:
-                            print(f"    {c(C_DIM, line)}")
-                failed += 1
-
-            text = record_exec_result(text, ac_id, ac_passed, output[:200])
-            criterion_results.append({
-                "id": ac_id,
-                "description": description,
-                "phase": criterion.get("phase"),
-                "command": cmd,
-                "cwd": effective_cwd,
-                "expected": expected,
-                "status": "pass" if ac_passed else "fail",
-                "exit_code": result.returncode,
-                "output": output[:200],
-            })
-        except subprocess.TimeoutExpired:
-            message = f"Command timed out after {timeout_seconds}s"
+        if ac_passed:
             if not json_mode:
-                print(f"    {c(C_RED, 'TIMEOUT')} ({timeout_seconds}s)")
-            text = record_exec_result(text, ac_id, False, message)
-            criterion_results.append({
-                "id": ac_id,
-                "description": description,
-                "phase": criterion.get("phase"),
-                "command": cmd,
-                "cwd": effective_cwd,
-                "expected": expected,
-                "status": "fail",
-                "exit_code": None,
-                "output": message,
-            })
-            failed += 1
-        except Exception as exc:
+                print(f"    {c(C_GREEN, 'PASS')}")
+            passed += 1
+        else:
             if not json_mode:
-                print(f"    {c(C_RED, 'ERROR')}: {exc}")
-            text = record_exec_result(text, ac_id, False, str(exc))
-            criterion_results.append({
-                "id": ac_id,
-                "description": description,
-                "phase": criterion.get("phase"),
-                "command": cmd,
-                "cwd": effective_cwd,
-                "expected": expected,
-                "status": "fail",
-                "exit_code": None,
-                "output": str(exc),
-            })
+                if outcome["exit_code"] is None and outcome["output"].startswith("Command timed out"):
+                    print(f"    {c(C_RED, 'TIMEOUT')} ({outcome['output'].split()[-1]})")
+                elif outcome["exit_code"] is None:
+                    print(f"    {c(C_RED, 'ERROR')}: {outcome['output']}")
+                else:
+                    print(f"    {c(C_RED, 'FAIL')} (exit code {outcome['exit_code']})")
+                if expected:
+                    print(f"    expected: {c(C_DIM, expected)}")
+                if outcome["output"]:
+                    for line in outcome["output"].splitlines()[:5]:
+                        print(f"    {c(C_DIM, line)}")
             failed += 1
+
+        text = record_exec_result(text, ac_id, ac_passed, outcome["output"])
+        criterion_results.append(outcome)
 
     for criterion in manual:
         ac_id = criterion["id"]

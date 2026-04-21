@@ -8,7 +8,7 @@ from scafld.output import emit_cli_error, emit_command_json, error_payload
 
 from .parser import build_parser
 from .registry import command_registry
-from .shared import C_RED, c
+from scafld.terminal import C_RED, c
 
 __all__ = ["main"]
 
