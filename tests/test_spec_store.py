@@ -4,8 +4,10 @@ import textwrap
 import unittest
 from pathlib import Path
 
+import yaml
+
 from scafld.errors import ScafldError
-from scafld.spec_store import ARCHIVE_DIR, APPROVED_DIR, DRAFTS_DIR, find_all_specs, find_specs, move_spec, require_spec
+from scafld.spec_store import ARCHIVE_DIR, APPROVED_DIR, DRAFTS_DIR, append_planning_log, find_all_specs, find_specs, move_spec, require_spec
 
 
 def write_spec(path, task_id, status="draft"):
@@ -122,6 +124,30 @@ class SpecStoreTest(unittest.TestCase):
             specs = [(path.relative_to(root).as_posix(), label) for path, label in find_all_specs(root)]
             self.assertIn((".ai/specs/drafts/draft.yaml", "drafts"), specs)
             self.assertIn((f".ai/specs/archive/{month}/done.yaml", f"archive/{month}"), specs)
+
+    def test_append_planning_log_preserves_flush_left_yaml_sequences(self):
+        text = yaml.safe_dump(
+            {
+                "spec_version": "1.1",
+                "task_id": "fixture",
+                "planning_log": [
+                    {
+                        "timestamp": "2026-04-21T00:00:00Z",
+                        "actor": "test",
+                        "summary": "Fixture created.",
+                    }
+                ],
+                "phases": [],
+            },
+            sort_keys=False,
+        )
+
+        updated = append_planning_log(text, "Spec completed")
+        data = yaml.safe_load(updated)
+
+        self.assertEqual(len(data["planning_log"]), 2)
+        self.assertEqual(data["planning_log"][0]["summary"], "Fixture created.")
+        self.assertEqual(data["planning_log"][1]["summary"], "Spec completed")
 
 
 if __name__ == "__main__":

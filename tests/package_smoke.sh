@@ -50,7 +50,7 @@ requires = md.get_all("Requires-Dist") or []
 assert any(req.startswith("PyYAML") for req in requires), requires
 PY
 
-echo "[4/5] installed wheel can init a workspace"
+echo "[4/6] installed wheel can init a workspace"
 WS="$(mktemp -d /tmp/scafld-wheel-workspace.XXXXXX)"
 TMP_DIRS+=("$WS")
 (cd "$WS" && scafld init >/dev/null) || fail "installed wheel could not init"
@@ -64,7 +64,13 @@ assert manifest["scafld_version"] == "$EXPECTED_VERSION", manifest["scafld_versi
 assert (workspace / ".ai" / "scafld" / "prompts" / "harden.md").exists()
 PY
 
-echo "[5/5] npm pack dry-run exposes the expected tarball"
+echo "[5/6] installed wheel init is idempotent for the managed manifest"
+before_manifest="$(cat "$WS/.ai/scafld/manifest.json")"
+(cd "$WS" && scafld init >/dev/null) || fail "installed wheel could not re-init an existing workspace"
+after_manifest="$(cat "$WS/.ai/scafld/manifest.json")"
+[[ "$before_manifest" == "$after_manifest" ]] || fail "re-running init rewrote the managed manifest"
+
+echo "[6/6] npm pack dry-run exposes the expected tarball"
 PACK_JSON="$(cd "$REPO_ROOT" && npm pack --json --dry-run --silent)"
 PACK_JSON="$PACK_JSON" python3 - <<PY || fail "npm pack output did not match expected contents"
 import json
