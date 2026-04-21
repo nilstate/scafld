@@ -4,7 +4,6 @@ from scafld.command_runtime import require_root
 from scafld.error_codes import ErrorCode as EC
 from scafld.errors import ScafldError
 from scafld.output import emit_command_json, error_payload
-from scafld.review_artifacts import upsert_review_block
 from scafld.reviewing import (
     build_spec_review_block,
     parse_review_file,
@@ -20,12 +19,20 @@ from scafld.review_workflow import (
     open_review_round,
     review_passes_are_not_run,
     run_automated_review_suite,
+    upsert_review_block,
 )
 from scafld.runtime_bundle import REVIEWS_DIR
-from scafld.spec_lifecycle import move_result_payload
 from scafld.spec_parsing import parse_acceptance_criteria
 from scafld.spec_store import move_spec, require_spec, yaml_read_field
 from scafld.terminal import C_BOLD, C_CYAN, C_DIM, C_GREEN, C_RED, C_YELLOW, STATUS_COLORS, c
+
+
+def move_result_payload(root, move_result):
+    return {
+        "from": str(move_result.source.relative_to(root)),
+        "to": str(move_result.dest.relative_to(root)),
+        "status": move_result.new_status,
+    }
 
 
 def print_move_result(root, move_result):

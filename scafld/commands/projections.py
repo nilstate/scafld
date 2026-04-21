@@ -13,8 +13,8 @@ from scafld.output import (
     render_projection_summary,
 )
 from scafld.projections import build_projection_model, origin_payload, phase_counts
-from scafld.review_artifacts import load_review_topology
 from scafld.reviewing import load_review_state
+from scafld.review_workflow import load_review_topology
 from scafld.runtime_bundle import REVIEWS_DIR
 from scafld.spec_parsing import count_phases, parse_acceptance_criteria, parse_phase_status_entries
 from scafld.spec_store import load_spec_document, require_spec

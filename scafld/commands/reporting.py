@@ -4,8 +4,8 @@ import re
 from scafld.command_runtime import require_root
 from scafld.git_state import capture_review_git_state
 from scafld.output import emit_command_json
-from scafld.review_artifacts import load_review_topology
 from scafld.reviewing import parse_review_file, review_git_gate_reason
+from scafld.review_workflow import load_review_topology
 from scafld.runtime_bundle import REVIEWS_DIR
 from scafld.spec_parsing import count_phases, extract_self_eval_score, parse_acceptance_criteria, parse_iso8601_timestamp
 from scafld.spec_store import find_all_specs, yaml_read_field, yaml_read_nested
