@@ -203,6 +203,53 @@ JSON mode returns the stored `origin` block, the live `sync` payload with
 expected-vs-actual git facts, and a structured `git_drift` or
 `git_state_unavailable` error when the workspace is out of sync.
 
+## scafld summary
+
+Render one concise deterministic summary from spec, review, and origin state.
+
+```bash
+scafld summary <task-id> [--json]
+```
+
+Default output is markdown suitable for issue comments, chat updates, or CI job
+summaries. JSON mode returns the same projection model plus the rendered
+markdown block so wrappers do not have to reformat task state themselves.
+
+## scafld checks
+
+Render a CI-friendly check payload from the same projection model.
+
+```bash
+scafld checks <task-id> [--json]
+```
+
+The check status is:
+
+- `failure` when review is failing, recorded acceptance criteria failed, or git
+  sync is drifted
+- `success` when review passed and the task is otherwise green
+- `pending` while work is still in flight without a passing review yet
+
+JSON mode returns:
+
+- the full projection model
+- `check.status`, `check.summary`, and `check.details`
+- a markdown summary derived from the same model
+
+Exit code 1 means the projected check state is `failure`.
+
+## scafld pr-body
+
+Render a deterministic markdown PR body from spec state.
+
+```bash
+scafld pr-body <task-id> [--json]
+```
+
+The body includes workflow state, current branch/sync details, review state,
+acceptance progress, objectives, and risk notes. JSON mode returns both the
+underlying model and the rendered markdown.
+
 ## scafld exec
 
 Run acceptance criteria and record results.

@@ -91,6 +91,9 @@ planning_log:
 ## Move through the lifecycle
 
 ```bash
+# Bind the task to a working branch
+scafld branch add-auth
+
 # Validate against the schema
 scafld validate add-auth
 
@@ -108,12 +111,22 @@ scafld exec add-auth
 # Check for scope drift against git
 scafld audit add-auth -b main
 
+# Render deterministic engineering surfaces
+scafld summary add-auth
+scafld checks add-auth --json
+scafld pr-body add-auth
+
 # Run the review (automated + adversarial scaffold)
 scafld review add-auth
 
 # Archive as completed (requires passing review)
 scafld complete add-auth
 ```
+
+That sequence is the intended issue-to-branch-to-PR flow: the spec stays the
+source of truth, `scafld branch` binds it to the working branch, and
+`summary`/`checks`/`pr-body` project the same task state into human and CI
+surfaces without wrappers reconstructing it.
 
 ## Check your history
 
@@ -138,3 +151,4 @@ This end-to-end smoke test exercises the happy path from `init` through `complet
 - [Lifecycle](lifecycle) -- understand each state transition
 - [Spec Schema](spec-schema) -- full reference for every field
 - [CLI Reference](cli-reference) -- complete command documentation
+- [GitHub Flow](github-flow) -- project task state onto PR, issue, and CI surfaces

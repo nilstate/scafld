@@ -104,6 +104,27 @@ findings or malformed review details. Successful completion returns the archive
 path, verdict, pass results, review round, and whether a human override was
 applied.
 
+## Projected review surfaces
+
+Review state is also consumable through the projection commands:
+
+```bash
+scafld summary add-auth
+scafld checks add-auth --json
+scafld pr-body add-auth
+```
+
+Those commands do not invent another review model. They project the same review
+artifact state already parsed by scafld:
+
+- `summary` renders the current verdict and finding counts into concise markdown
+- `checks --json` turns review/sync/acceptance state into a CI-friendly status
+- `pr-body` carries the review state into deterministic PR markdown
+
+That is the intended layering: review remains the source data, projection
+commands turn it into issue/PR/check surfaces, and wrappers such as runx
+consume those surfaces directly.
+
 ## Human override
 
 When the review gate is blocked and you need to proceed anyway:

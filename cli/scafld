@@ -38,7 +38,15 @@ from scafld.git_state import (
     source_git_metadata,
 )
 from scafld.hardening import find_archived_spec, parse_code_grounded_in, verify_harden_round_citations
-from scafld.output import emit_cli_error, emit_command_json, emit_json, error_payload
+from scafld.output import (
+    emit_cli_error,
+    emit_command_json,
+    emit_json,
+    error_payload,
+    projection_check,
+    render_projection_pr_body,
+    render_projection_summary,
+)
 from scafld.reviewing import (
     REVIEWER_MODES,
     REVIEW_PASS_REGISTRY,
@@ -962,6 +970,85 @@ def build_origin_binding(existing_origin, live_state, branch_name, base_ref, mod
     })
 
 
+def load_review_state(root, task_id):
+    """Load the current review state without mutating anything."""
+    review_state = {"exists": False, "errors": []}
+    try:
+        topology = load_review_topology(root)
+        review_data = parse_review_file(root / REVIEWS_DIR / f"{task_id}.md", topology)
+        review_state = review_data_payload(review_data)
+    except Exception as e:
+        review_state = {"exists": False, "errors": [str(e)]}
+    return review_state
+
+
+def acceptance_summary(criteria):
+    """Summarize acceptance results for projection surfaces."""
+    passed = sum(1 for criterion in criteria if criterion.get("result") == "pass")
+    failed = sum(1 for criterion in criteria if criterion.get("result") == "fail")
+    total = len(criteria)
+    pending = max(total - passed - failed, 0)
+    manual = sum(1 for criterion in criteria if criterion.get("type") in ("documentation", "custom"))
+    return {
+        "total": total,
+        "passed": passed,
+        "failed": failed,
+        "pending": pending,
+        "manual": manual,
+    }
+
+
+def build_projection_model(root, spec, task_id):
+    """Build one deterministic projection model from the current spec state."""
+    text = spec.read_text()
+    data = load_spec_document(spec)
+    rel = spec.relative_to(root)
+
+    status = yaml_read_field(text, "status") or "unknown"
+    title = yaml_read_nested(text, "task", "title") or task_id
+    summary = yaml_read_nested(text, "task", "summary") or ""
+    size = yaml_read_nested(text, "task", "size") or ""
+    risk = yaml_read_nested(text, "task", "risk_level") or ""
+    updated = yaml_read_field(text, "updated") or ""
+    total, completed, failed, in_prog = count_phases(text)
+    origin = origin_payload(data)
+    sync = build_origin_sync_payload(root, origin, excluded_rels=git_sync_excluded_paths())
+    review_state = load_review_state(root, task_id)
+    criteria = parse_acceptance_criteria(text)
+    task_block = data.get("task") if isinstance(data.get("task"), dict) else {}
+    risks = task_block.get("risks") or []
+    risk_descriptions = [
+        entry.get("description")
+        for entry in risks
+        if isinstance(entry, dict) and entry.get("description")
+    ]
+
+    return prune_empty({
+        "task_id": task_id,
+        "file": str(rel),
+        "title": title,
+        "summary": summary,
+        "status": status,
+        "size": size,
+        "risk": risk,
+        "updated_at": updated,
+        "objectives": list(task_block.get("objectives") or []),
+        "risks": risk_descriptions,
+        "phases": {
+            "entries": parse_phase_status_entries(text),
+            "total": total,
+            "completed": completed,
+            "failed": failed,
+            "in_progress": in_prog,
+            "pending": total - completed - failed - in_prog,
+        },
+        "acceptance": acceptance_summary(criteria),
+        "review": review_state,
+        "origin": origin,
+        "sync": sync,
+    })
+
+
 def cmd_status(args):
     """Show status of a spec."""
     root = require_root()
@@ -1352,6 +1439,77 @@ def cmd_sync(args):
         print(f"  - {reason}")
     if not ok:
         sys.exit(1)
+
+
+def cmd_summary(args):
+    """Render a concise deterministic task summary for chat, issues, or logs."""
+    root = require_root()
+    spec = require_spec(root, args.task_id)
+    model = build_projection_model(root, spec, args.task_id)
+    markdown = render_projection_summary(model)
+
+    if getattr(args, "json", False):
+        emit_command_json(
+            "summary",
+            task_id=args.task_id,
+            state={"status": model.get("status")},
+            result={"model": model, "markdown": markdown},
+        )
+        return
+
+    print(markdown, end="")
+
+
+def cmd_checks(args):
+    """Render CI-friendly task check state from the projection model."""
+    root = require_root()
+    spec = require_spec(root, args.task_id)
+    model = build_projection_model(root, spec, args.task_id)
+    check = projection_check(model)
+    markdown = render_projection_summary(model)
+
+    if getattr(args, "json", False):
+        emit_command_json(
+            "checks",
+            task_id=args.task_id,
+            ok=check["status"] != "failure",
+            state={"status": model.get("status"), "check_status": check["status"]},
+            result={"model": model, "check": check, "markdown": markdown},
+            error=error_payload(
+                check["summary"],
+                code="projection_check_failed",
+                details=check["details"],
+                exit_code=1,
+            ) if check["status"] == "failure" else None,
+        )
+        if check["status"] == "failure":
+            sys.exit(1)
+        return
+
+    print(markdown, end="")
+    print()
+    print(f"Check: {check['status']} - {check['summary']}")
+    if check["status"] == "failure":
+        sys.exit(1)
+
+
+def cmd_pr_body(args):
+    """Render a deterministic PR body from the current spec state."""
+    root = require_root()
+    spec = require_spec(root, args.task_id)
+    model = build_projection_model(root, spec, args.task_id)
+    markdown = render_projection_pr_body(model)
+
+    if getattr(args, "json", False):
+        emit_command_json(
+            "pr-body",
+            task_id=args.task_id,
+            state={"status": model.get("status")},
+            result={"model": model, "markdown": markdown},
+        )
+        return
+
+    print(markdown, end="")
 
 
 def check_self_eval(text, task_id):
@@ -3611,6 +3769,21 @@ def main():
     p_sync.add_argument("task_id", help="Task ID")
     p_sync.add_argument("--json", action="store_true", help="Emit machine-readable sync JSON")
 
+    # summary
+    p_summary = sub.add_parser("summary", help="Render a concise markdown or JSON summary from spec state")
+    p_summary.add_argument("task_id", help="Task ID")
+    p_summary.add_argument("--json", action="store_true", help="Emit machine-readable summary JSON")
+
+    # checks
+    p_checks = sub.add_parser("checks", help="Render CI-friendly check state from spec state")
+    p_checks.add_argument("task_id", help="Task ID")
+    p_checks.add_argument("--json", action="store_true", help="Emit machine-readable check JSON")
+
+    # pr-body
+    p_pr_body = sub.add_parser("pr-body", help="Render a deterministic PR body from spec state")
+    p_pr_body.add_argument("task_id", help="Task ID")
+    p_pr_body.add_argument("--json", action="store_true", help="Emit machine-readable PR-body JSON")
+
     # review
     p_review = sub.add_parser("review", help="Run review passes and generate adversarial review prompt")
     p_review.add_argument("task_id", help="Task ID")
@@ -3687,6 +3860,9 @@ def main():
         "start": cmd_start,
         "branch": cmd_branch,
         "sync": cmd_sync,
+        "summary": cmd_summary,
+        "checks": cmd_checks,
+        "pr-body": cmd_pr_body,
         "review": cmd_review,
         "complete": cmd_complete,
         "fail": cmd_fail,

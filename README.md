@@ -16,6 +16,11 @@ Every non-trivial task becomes a YAML specification before a single line of code
 
 This isn't a wrapper around a prompt. It's a development methodology - the same separation of planning from execution that every serious engineering discipline has always required, applied to the one context where people have decided to skip it entirely.
 
+The goal is for scafld to feel like the engineering system itself, not an extra
+system bolted on beside Git, pull requests, issues, and CI. That is why the
+workflow object stays in the spec while commands such as `summary`, `checks`,
+and `pr-body` project the same truth onto normal engineering surfaces.
+
 ```text
 User Request
     |
@@ -168,6 +173,11 @@ scafld new <task-id> [-t title] [-s size] [-r risk]     # Scaffold a new spec
 scafld list [filter]                                    # List all specs
 scafld status <task-id> [--json]                        # Show spec details
 scafld validate <task-id> [--json]                      # Validate against schema
+scafld branch <task-id> [--name branch]                 # Bind the task to a working branch
+scafld sync <task-id> [--json]                          # Compare the bound branch to live git state
+scafld summary <task-id> [--json]                       # Render a concise engineering summary
+scafld checks <task-id> [--json]                        # Render CI-friendly check status/details
+scafld pr-body <task-id> [--json]                       # Render a deterministic PR body
 scafld harden <task-id> [--mark-passed]                 # Optional: interrogate draft with grounded questions
 scafld approve <task-id>                                # Validate + move to approved
 scafld start <task-id>                                  # Move to active
