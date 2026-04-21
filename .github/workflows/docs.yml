@@ -30,10 +30,12 @@ jobs:
           npm ci
           npm run site:build
 
-      - name: Deploy to Cloudflare Pages
+      - name: Ensure Cloudflare Pages project and deploy
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           wranglerVersion: "4"
-          command: pages deploy dist --project-name=scafld-docs
+          command: |
+            pages project create scafld-docs --production-branch main || true
+            pages deploy dist --project-name=scafld-docs --commit-dirty=true
