@@ -1,5 +1,4 @@
 import os
-import runpy
 import sysconfig
 from pathlib import Path
 
@@ -23,7 +22,9 @@ def runtime_root():
 def main():
     root = runtime_root()
     os.environ.setdefault("SCAFLD_SOURCE_ROOT", str(root))
-    runpy.run_path(str(root / "cli" / "scafld"), run_name="__main__")
+    from scafld.commands.app import main as run_main
+
+    run_main()
 
 
 if __name__ == "__main__":

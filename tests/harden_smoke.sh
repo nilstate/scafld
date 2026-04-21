@@ -309,10 +309,12 @@ set -e
 echo "[13/13] cmd_approve body does not reference harden (anti-drift)"
 python3 - <<PY || fail "cmd_approve unexpectedly references harden"
 import inspect
-import runpy
+import sys
 
-namespace = runpy.run_path("$REPO_ROOT/cli/scafld")
-src = inspect.getsource(namespace["cmd_approve"])
+sys.path.insert(0, "$REPO_ROOT")
+from scafld.commands.lifecycle import cmd_approve
+
+src = inspect.getsource(cmd_approve)
 assert 'harden' not in src.lower(), "cmd_approve references harden - gate was added"
 PY
 
