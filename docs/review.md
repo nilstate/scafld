@@ -11,6 +11,7 @@ After execution, `scafld review` runs automated checks and scaffolds an adversar
 
 ```bash
 scafld review add-auth
+scafld review add-auth --json
 ```
 
 This does two things:
@@ -20,9 +21,18 @@ This does two things:
 Deterministic checks that run immediately:
 
 - **spec_compliance** -- re-runs all acceptance criteria to confirm the implementation still satisfies the spec
-- **scope_drift** -- runs `scafld audit` to compare declared files against actual git diff
+- **scope_drift** -- runs `scafld audit` to compare declared files against the current workspace change set
 
 If either automated pass fails, the review stops with an error.
+
+In JSON mode, the command still creates or appends the review artifact, but the
+CLI returns a machine-readable envelope containing:
+
+- automated pass results
+- the opened review round number
+- the review file path
+- the required adversarial section titles
+- the reviewer handoff prompt text
 
 ### 2. Adversarial scaffold
 
@@ -74,6 +84,7 @@ The reviewer sets a verdict based on findings:
 
 ```bash
 scafld complete add-auth
+scafld complete add-auth --json
 ```
 
 This reads the latest review round and gates on:
@@ -86,6 +97,12 @@ This reads the latest review round and gates on:
 - Verdict is `pass` or `pass_with_issues`
 
 If the verdict is `fail`, completion is blocked until the issues are fixed and a new review round passes.
+
+In JSON mode, blocked completion returns a structured `review_gate_blocked`
+error with the gate reason, review file, pass results, and any blocking
+findings or malformed review details. Successful completion returns the archive
+path, verdict, pass results, review round, and whether a human override was
+applied.
 
 ## Human override
 

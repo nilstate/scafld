@@ -5,7 +5,7 @@ description: Detecting scope drift with scafld audit
 
 # Scope Auditing
 
-`scafld audit` compares the files declared in the spec against the actual git diff. It catches scope creep -- changes the agent made that weren't in the plan.
+`scafld audit` compares the files declared in the spec against the current git change set. It catches scope creep -- changes the agent made that weren't in the plan.
 
 ## Usage
 
@@ -13,7 +13,7 @@ description: Detecting scope drift with scafld audit
 scafld audit add-auth -b main
 ```
 
-The `-b` flag sets the git reference to diff against. Defaults to `HEAD~1`, falls back to `main` or `master` if that fails.
+Without `-b`, `audit` inspects the live workspace: staged changes, unstaged changes, and untracked files. The `-b` flag switches to historical comparison against a git ref, while still including current untracked files.
 
 ## Output categories
 
@@ -30,7 +30,9 @@ The `-b` flag sets the git reference to diff against. Defaults to `HEAD~1`, fall
 
 ## How it works
 
-The audit collects every `file` path from all `phases[*].changes[*].file` entries in the spec, then diffs against the base ref. Any file in the git diff that doesn't appear in the spec's declared changes is flagged.
+The audit collects every `file` path from all `phases[*].changes[*].file` entries in the spec, then compares them against the current working-tree file set or an explicit base ref. Any changed file that doesn't appear in the spec's declared changes is flagged.
+
+scafld's own execution artifacts under `.ai/specs/`, `.ai/reviews/`, and `.ai/logs/`, plus the local override file `.ai/config.local.yaml`, are ignored so the planning and review ledger does not pollute task scope checks.
 
 ## Integration with review
 

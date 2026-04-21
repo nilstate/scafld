@@ -7,6 +7,15 @@ def sha256_bytes(payload):
     return hashlib.sha256(payload).hexdigest()
 
 
+def decode_path_list(payload):
+    """Decode a NUL-delimited git path list into sorted relative paths."""
+    return sorted(
+        raw_path.decode("utf-8", errors="surrogateescape")
+        for raw_path in payload.split(b"\0")
+        if raw_path
+    )
+
+
 def source_git_metadata(source_root):
     """Return source revision metadata when scafld is running from a git checkout."""
     metadata = {
@@ -63,13 +72,60 @@ def run_git_capture(root, args, timeout=10):
     return proc.stdout, None
 
 
+def git_pathspec(excluded_rels=None):
+    """Return a root-scoped pathspec that can exclude one or more relative paths."""
+    pathspec = ["--", "."]
+    for excluded_rel in excluded_rels or []:
+        if excluded_rel:
+            excluded = Path(excluded_rel).as_posix()
+            pathspec.append(f":(exclude){excluded}")
+    return pathspec
+
+
 def review_git_pathspec(excluded_rel=None):
     """Return a root-scoped pathspec that optionally excludes one relative path."""
-    pathspec = ["--", "."]
-    if excluded_rel:
-        excluded = Path(excluded_rel).as_posix()
-        pathspec.append(f":(exclude){excluded}")
-    return pathspec
+    return git_pathspec([excluded_rel] if excluded_rel else None)
+
+
+def list_working_tree_changed_files(root, excluded_rels=None):
+    """Return tracked and untracked file paths changed in the current workspace."""
+    pathspec = git_pathspec(excluded_rels)
+    changed = set()
+
+    commands = (
+        ["diff", "--name-only", "-z", "--no-ext-diff", *pathspec],
+        ["diff", "--cached", "--name-only", "-z", "--no-ext-diff", *pathspec],
+        ["ls-files", "--others", "--exclude-standard", "-z", *pathspec],
+    )
+    for args in commands:
+        payload, error = run_git_capture(root, args)
+        if payload is None:
+            return None, error
+        changed.update(decode_path_list(payload))
+
+    return sorted(changed), None
+
+
+def list_changed_files_against_ref(root, base_ref, excluded_rels=None):
+    """Return file paths changed relative to a git base ref plus current untracked files."""
+    pathspec = git_pathspec(excluded_rels)
+    diff_bytes, error = run_git_capture(
+        root,
+        ["diff", "--name-only", "-z", "--no-ext-diff", base_ref, *pathspec],
+    )
+    if diff_bytes is None:
+        return None, error
+
+    untracked_bytes, error = run_git_capture(
+        root,
+        ["ls-files", "--others", "--exclude-standard", "-z", *pathspec],
+    )
+    if untracked_bytes is None:
+        return None, error
+
+    changed = set(decode_path_list(diff_bytes))
+    changed.update(decode_path_list(untracked_bytes))
+    return sorted(changed), None
 
 
 def capture_review_git_state(root, excluded_rel=None):
