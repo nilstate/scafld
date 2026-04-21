@@ -281,7 +281,15 @@ scafld audit <task-id> [-b BASE] [--json]
 
 Reports three categories: declared and changed (green), changed but not in spec (scope creep, red), in spec but not changed (yellow). scafld-managed execution artifacts under `.ai/specs/`, `.ai/reviews/`, `.ai/logs/`, plus the local override file `.ai/config.local.yaml`, are ignored. Exit code 1 if scope creep detected.
 
-JSON mode returns explicit `declared`, `matched`, `undeclared`, `missing`, and count fields so callers do not have to reconstruct audit state.
+When active specs intentionally share a coordination file, mark that change with
+`ownership: shared` in every overlapping spec. Audit then reports the file as
+shared instead of conflicting. Mixed or exclusive overlap still fails.
+
+JSON mode returns explicit `declared`, `matched`, `undeclared`, `missing`,
+`shared_with_other_active`, `active_overlap`, and `files` fields so callers do
+not have to reconstruct audit state. Each `files[]` entry includes the file
+path, primary audit status, whether it was declared or changed, overlap state,
+and any overlapping active specs.
 
 ## scafld diff
 

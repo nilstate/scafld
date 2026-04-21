@@ -1,0 +1,155 @@
+spec_version: "1.1"
+task_id: "shared-change-overlap"
+created: "2026-04-21T10:39:01Z"
+updated: "2026-04-21T10:54:57Z"
+status: "completed"
+harden_status: "not_run"
+
+task:
+  title: "Classify shared coordination changes"
+  summary: >
+    Make active-spec overlap less brittle by letting specs declare intentionally
+    shared coordination surfaces without suppressing real ownership conflicts.
+    Today `scafld audit` fails any time two active specs declare the same file,
+    even when the file is an expected shared plan or workflow surface. This
+    round adds an explicit per-change ownership contract, teaches audit to
+    distinguish shared coordination files from exclusive conflicts, and exposes
+    that classification in the native JSON payload so wrappers do not need to
+    infer it.
+  size: "small"
+  risk_level: "medium"
+  context:
+    packages:
+      - "cli"
+      - "tests"
+      - "docs"
+      - "schemas"
+    invariants:
+      - "domain_boundaries"
+      - "machine_callers_never_need_terminal_scraping"
+      - "json_mode_uses_stable_envelopes"
+  objectives:
+    - "Allow overlapping active specs only when every overlapping declaration is explicitly shared."
+    - "Keep exclusive or mixed-ownership overlaps as hard audit failures."
+    - "Return file-level structured audit data so callers can consume overlap state directly."
+  touchpoints:
+    - area: "cli/scafld"
+      description: "Classify declared changes by ownership and report shared versus conflicting overlaps."
+    - area: ".ai/schemas/spec.json"
+      description: "Add the optional per-change ownership field to the schema."
+    - area: "tests/json_contract_smoke.sh"
+      description: "Prove file-level audit payloads and shared overlap behavior in the packaged CLI."
+    - area: "docs"
+      description: "Document ownership semantics and audit output categories."
+  acceptance:
+    definition_of_done:
+      - id: "dod1"
+        description: "Specs can mark a declared change as shared without weakening exclusive ownership by default."
+        status: "done"
+      - id: "dod2"
+        description: "Audit distinguishes shared active overlap from conflicting active overlap."
+        status: "done"
+      - id: "dod3"
+        description: "audit --json exposes file-level statuses and shared overlap details."
+        status: "done"
+    validation:
+      - id: "v1"
+        type: "integration"
+        description: "JSON contract smoke covers shared and conflicting overlap states."
+        command: "./tests/json_contract_smoke.sh"
+        expected: "exit code 0"
+        timeout_seconds: 240
+
+planning_log:
+  - timestamp: "2026-04-21T10:39:01Z"
+    actor: "user"
+    summary: "Spec created via scafld new"
+  - timestamp: "2026-04-21T10:45:00Z"
+    actor: "assistant"
+    summary: "Expanded the draft into an audit ergonomics change with shared ownership semantics and JSON payload backfill."
+  - timestamp: "2026-04-21T10:46:00Z"
+    actor: "cli"
+    summary: "Spec approved"
+  - timestamp: "2026-04-21T10:47:30Z"
+    actor: "cli"
+    summary: "Execution started"
+
+  - timestamp: "2026-04-21T10:54:57Z"
+    actor: "cli"
+    summary: "Spec completed"
+phases:
+  - id: "phase1"
+    name: "Teach Audit Shared Ownership"
+    objective: "Add explicit shared ownership semantics for declared changes and surface them in audit output."
+    changes:
+      - file: "cli/scafld"
+        action: "update"
+        content_spec: |
+          Parse declared changes with optional ownership metadata, classify shared
+          versus conflicting active overlap, and include file-level audit payloads
+          in both human and JSON output.
+      - file: ".ai/schemas/spec.json"
+        action: "update"
+        content_spec: |
+          Add an optional change ownership field so specs can explicitly declare
+          shared coordination surfaces.
+      - file: "docs/spec-schema.md"
+        action: "update"
+        content_spec: |
+          Document the new change ownership field and when to use shared overlap.
+      - file: "docs/cli-reference.md"
+        action: "update"
+        content_spec: |
+          Document the new audit output categories and file-level JSON payload.
+      - file: "docs/scope-auditing.md"
+        action: "update"
+        content_spec: |
+          Explain how shared coordination files differ from conflicting overlap.
+      - file: "tests/json_contract_smoke.sh"
+        action: "update"
+        content_spec: |
+          Add overlap fixtures that prove shared overlap passes and exclusive or
+          mixed overlap still fail with structured file-level audit records.
+    acceptance_criteria:
+      - id: "ac1_1"
+        type: "integration"
+        description: "JSON contract smoke passes with shared overlap coverage."
+        command: "./tests/json_contract_smoke.sh"
+        expected: "exit code 0"
+        timeout_seconds: 240
+        result: "pass"
+        executed_at: "2026-04-21T10:53:59Z"
+        result_output: "[1/12] init --json emits a stable envelope [2/12] new/status/validate --json emit native task state [3/12] approve/start --json emit transitions [4/12] exec --json emits per-criterion results [5/12] a"
+    status: "completed"
+
+rollback:
+  strategy: "per_phase"
+  commands:
+    phase1: "git checkout HEAD -- cli/scafld .ai/schemas/spec.json docs/spec-schema.md docs/cli-reference.md docs/scope-auditing.md tests/json_contract_smoke.sh"
+
+review:
+  timestamp: "2026-04-21T10:54:26Z"
+  verdict: "pass"
+  review_rounds: 1
+  reviewer_mode: "executor"
+  reviewer_session: ""
+  round_status: "completed"
+  override_applied: false
+  override_reason: null
+  override_confirmed_at: null
+  reviewed_head: "823bd120f27331dd6c00606888b47f9df0bf3ac3"
+  reviewed_dirty: true
+  reviewed_diff: "3e163cb8cf34cf1c724b70e99ab883a1d882c7cb0bbd4f596abf877ea37ffb5a"
+  passes:
+    - id: spec_compliance
+      result: "pass"
+    - id: scope_drift
+      result: "pass"
+    - id: regression_hunt
+      result: "pass"
+    - id: convention_check
+      result: "pass"
+    - id: dark_patterns
+      result: "pass"
+  blocking_count: 0
+  non_blocking_count: 0
