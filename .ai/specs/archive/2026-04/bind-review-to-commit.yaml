@@ -1,0 +1,141 @@
+spec_version: "1.1"
+task_id: "bind-review-to-commit"
+created: "2026-04-21T06:11:31Z"
+updated: "2026-04-21T06:56:32Z"
+status: "completed"
+harden_status: "not_run"
+
+task:
+  title: "Bind review artifacts to commits"
+  summary: >
+    Strengthen the review gate by recording git state in Review Artifact v3 and
+    refusing normal completion when the current workspace no longer matches what
+    was reviewed. The latest review round should capture the reviewed `HEAD`,
+    whether the tree was dirty, and enough information for `scafld complete` to
+    detect drift. Human override remains the escape hatch.
+  size: "medium"
+  risk_level: "medium"
+  context:
+    packages:
+      - "cli"
+      - "tests"
+      - "docs"
+    invariants:
+      - "domain_boundaries"
+      - "no_legacy_code"
+      - "public_api_stable"
+  objectives:
+    - "Record reviewed git state in review metadata."
+    - "Block `scafld complete` when the current repo no longer matches the reviewed state."
+    - "Preserve the existing human-reviewed override path."
+  touchpoints:
+    - area: "cli/scafld"
+      description: "Capture git state during review, validate metadata, and enforce commit binding during completion."
+    - area: "tests/review_gate_smoke.sh"
+      description: "Exercise matched and mismatched review state scenarios."
+    - area: "docs/review.md"
+      description: "Document reviewed commit binding and override semantics."
+    - area: "docs/cli-reference.md"
+      description: "Document completion blocking when review and HEAD diverge."
+  acceptance:
+    definition_of_done:
+      - id: "dod1"
+        description: "Review metadata records reviewed git state."
+        status: "pending"
+      - id: "dod2"
+        description: "`scafld complete` blocks if the current git state no longer matches the review."
+        status: "pending"
+      - id: "dod3"
+        description: "The human override path still works and is auditable."
+        status: "pending"
+    validation:
+      - id: "v1"
+        type: "test"
+        description: "Review gate smoke covers commit binding."
+        command: "bash tests/review_gate_smoke.sh"
+        expected: "exit code 0"
+
+planning_log:
+  - timestamp: "2026-04-21T06:11:31Z"
+    actor: "user"
+    summary: "Spec created via scafld new"
+  - timestamp: "2026-04-21T06:15:00Z"
+    actor: "assistant"
+    summary: "Expanded draft into review metadata binding and completion drift enforcement."
+
+  - timestamp: "2026-04-21T06:16:06Z"
+    actor: "cli"
+    summary: "Spec approved"
+  - timestamp: "2026-04-21T06:18:22Z"
+    actor: "cli"
+    summary: "Execution started"
+  - timestamp: "2026-04-21T06:56:32Z"
+    actor: "cli"
+    summary: "Spec completed"
+phases:
+  - id: "phase1"
+    name: "Capture And Enforce Reviewed Git State"
+    objective: "Bind review artifacts to a concrete git state and enforce it at completion."
+    changes:
+      - file: "cli/scafld"
+        action: "update"
+        content_spec: |
+          Extend review metadata with reviewed git state, validate the new fields,
+          and block completion when the current repo no longer matches the latest
+          reviewed state unless the human override path is used.
+      - file: "tests/review_gate_smoke.sh"
+        action: "update"
+        content_spec: |
+          Add fixtures that mutate the repo after review and assert that
+          completion is blocked with a clear reason until overridden.
+      - file: "docs/review.md"
+        action: "update"
+        content_spec: |
+          Explain reviewed git state capture, mismatch blocking, and the audited
+          override path.
+      - file: "docs/cli-reference.md"
+        action: "update"
+        content_spec: |
+          Mention that `scafld complete` checks review binding against the
+          current git state.
+    acceptance_criteria:
+      - id: "ac1_1"
+        type: "test"
+        description: "Review gate smoke passes with commit binding enabled."
+        command: "bash tests/review_gate_smoke.sh"
+        expected: "exit code 0"
+        result: "pass"
+        executed_at: "2026-04-21T06:54:04Z"
+    status: "pending"
+
+rollback:
+  strategy: "per_phase"
+  commands:
+    phase1: "git checkout HEAD -- cli/scafld tests/review_gate_smoke.sh docs/review.md docs/cli-reference.md"
+
+review:
+  timestamp: "2026-04-21T06:56:32Z"
+  verdict: "pass"
+  review_rounds: 5
+  reviewer_mode: "fresh_agent"
+  reviewer_session: "session-1"
+  round_status: "completed"
+  override_applied: false
+  override_reason: null
+  override_confirmed_at: null
+  reviewed_head: "3a4b3c2f5d9280ceb7a0c7a1296ffacc5d44f657"
+  reviewed_dirty: true
+  reviewed_diff: "6db22582a9dead931e4c7fde38482bdc11e660712eac9e91651c806a0bea38c4"
+  passes:
+    - id: spec_compliance
+      result: "pass"
+    - id: scope_drift
+      result: "pass"
+    - id: regression_hunt
+      result: "pass"
+    - id: convention_check
+      result: "pass"
+    - id: dark_patterns
+      result: "pass"
+  blocking_count: 0
+  non_blocking_count: 0
