@@ -5,25 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 CLI="$REPO_ROOT/cli/scafld"
 TMP_DIRS=()
-
-cleanup() {
-  if [ "${#TMP_DIRS[@]}" -gt 0 ]; then
-    rm -rf "${TMP_DIRS[@]}"
-  fi
-}
-trap cleanup EXIT
-
-fail() {
-  echo "FAIL: $*" >&2
-  exit 1
-}
-
-assert_contains_file() {
-  local file="$1"
-  local needle="$2"
-  local message="$3"
-  grep -Fq -- "$needle" "$file" || fail "$message"
-}
+source "$SCRIPT_DIR/smoke_lib.sh"
 
 run_scafld() {
   local repo="$1"

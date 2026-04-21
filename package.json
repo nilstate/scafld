@@ -30,7 +30,7 @@
     ".ai/schemas",
     ".ai/specs/README.md",
     ".ai/specs/examples",
-    "scafld/_version.py",
+    "scafld/*.py",
     "AGENTS.md",
     "CLAUDE.md",
     "CONVENTIONS.md",

@@ -1,6 +1,7 @@
 import json
 import sys
 
+from scafld.error_codes import ErrorCode
 from scafld.errors import ScafldError
 
 
@@ -23,7 +24,7 @@ def error_payload(error, *, code=None, message=None, details=None, next_action=N
         }
 
     return {
-        "code": code or "command_failed",
+        "code": code or ErrorCode.COMMAND_FAILED,
         "message": message or str(error),
         "details": details if details is not None else [],
         "next_action": next_action,

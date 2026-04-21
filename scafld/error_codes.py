@@ -1,0 +1,40 @@
+class ErrorCode:
+    """Shared structured error codes for human and machine-facing command flows."""
+
+    COMMAND_FAILED = "command_failed"
+
+    WORKSPACE_NOT_FOUND = "workspace_not_found"
+    MISSING_DEPENDENCY = "missing_dependency"
+    INVALID_SPEC_DOCUMENT = "invalid_spec_document"
+    INVALID_SPEC_LOCATION = "invalid_spec_location"
+    INVALID_TRANSITION = "invalid_transition"
+    SPEC_NOT_FOUND = "spec_not_found"
+    SPEC_EXISTS = "spec_exists"
+    AMBIGUOUS_TASK_ID = "ambiguous_task_id"
+    INVALID_TASK_ID = "invalid_task_id"
+    INVALID_SPEC_STATUS = "invalid_spec_status"
+    INVALID_ARGUMENTS = "invalid_arguments"
+    VALIDATION_FAILED = "validation_failed"
+
+    GIT_REPOSITORY_REQUIRED = "git_repository_required"
+    DETACHED_HEAD = "detached_head"
+    DIRTY_WORKTREE = "dirty_worktree"
+    GIT_CHECKOUT_FAILED = "git_checkout_failed"
+    BASE_REF_REQUIRED = "base_ref_required"
+    BASE_REF_NOT_FOUND = "base_ref_not_found"
+    GIT_BRANCH_CREATE_FAILED = "git_branch_create_failed"
+    GIT_STATE_UNAVAILABLE = "git_state_unavailable"
+    ORIGIN_UNBOUND = "origin_unbound"
+    GIT_DRIFT = "git_drift"
+    SCOPE_DRIFT = "scope_drift"
+
+    REVIEW_GATE_BLOCKED = "review_gate_blocked"
+    AUTOMATED_REVIEW_FAILED = "automated_review_failed"
+    REVIEW_GIT_STATE_UNAVAILABLE = "review_git_state_unavailable"
+    INTERACTIVE_REQUIRED = "interactive_required"
+
+    MISSING_HARDEN_ROUND = "missing_harden_round"
+    PROMPT_MISSING = "prompt_missing"
+
+    PROJECTION_CHECK_FAILED = "projection_check_failed"
+    ACCEPTANCE_FAILED = "acceptance_failed"

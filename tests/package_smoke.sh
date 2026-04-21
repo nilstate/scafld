@@ -6,18 +6,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 CLI="$REPO_ROOT/cli/scafld"
 SYNC_VERSION="$REPO_ROOT/scripts/sync_version.py"
 TMP_DIRS=()
-
-cleanup() {
-  if [ "${#TMP_DIRS[@]}" -gt 0 ]; then
-    rm -rf "${TMP_DIRS[@]}"
-  fi
-}
-trap cleanup EXIT
-
-fail() {
-  echo "FAIL: $*" >&2
-  exit 1
-}
+source "$SCRIPT_DIR/smoke_lib.sh"
 
 EXPECTED_VERSION="$(python3 "$CLI" --version | awk '{print $2}')"
 DIST_DIR="$(mktemp -d /tmp/scafld-package-smoke.XXXXXX)"
@@ -87,6 +76,16 @@ required = {
     ".ai/prompts/harden.md",
     ".ai/schemas/spec.json",
     ".ai/specs/examples/add-error-codes.yaml",
+    "scafld/__main__.py",
+    "scafld/command_runtime.py",
+    "scafld/config.py",
+    "scafld/error_codes.py",
+    "scafld/errors.py",
+    "scafld/output.py",
+    "scafld/projections.py",
+    "scafld/reviewing.py",
+    "scafld/spec_store.py",
+    "scafld/spec_templates.py",
     "scafld/_version.py",
     "AGENTS.md",
     "CLAUDE.md",
