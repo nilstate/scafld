@@ -473,6 +473,77 @@
       }
     },
 
+    "origin": {
+      "type": "object",
+      "description": "Optional. Provider-neutral task origin and git binding metadata.",
+      "additionalProperties": false,
+      "properties": {
+        "source": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "system": {"type": "string"},
+            "kind": {"type": "string"},
+            "id": {"type": "string"},
+            "url": {"type": "string"},
+            "title": {"type": "string"}
+          }
+        },
+        "repo": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "root": {"type": "string"},
+            "remote": {"type": "string"},
+            "remote_url": {"type": "string"}
+          }
+        },
+        "git": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "branch": {"type": "string"},
+            "base_ref": {"type": "string"},
+            "upstream": {"type": "string"},
+            "mode": {
+              "type": "string",
+              "enum": ["created_branch", "checked_out_existing", "bound_current"]
+            },
+            "bound_at": {"type": "string", "format": "date-time"}
+          }
+        },
+        "sync": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "status": {
+              "type": "string",
+              "enum": ["unbound", "in_sync", "drift", "unavailable"]
+            },
+            "last_checked_at": {"type": "string", "format": "date-time"},
+            "reasons": {
+              "type": "array",
+              "items": {"type": "string"}
+            },
+            "actual": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "branch": {"type": "string"},
+                "head_sha": {"type": "string"},
+                "upstream": {"type": "string"},
+                "remote": {"type": "string"},
+                "remote_url": {"type": "string"},
+                "default_base_ref": {"type": "string"},
+                "dirty": {"type": "boolean"},
+                "detached": {"type": "boolean"}
+              }
+            }
+          }
+        }
+      }
+    },
+
     "harden_status": {
       "type": "string",
       "enum": ["not_run", "in_progress", "passed"],

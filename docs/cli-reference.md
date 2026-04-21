@@ -98,6 +98,9 @@ scafld status <task-id> [--json]
 
 Displays title, location, current status, phase progress, and last updated timestamp.
 
+JSON mode also exposes the spec's stored `origin` block plus a live `sync`
+payload showing current branch, head SHA, and any git drift reasons.
+
 ## scafld validate
 
 Check a spec against the JSON schema.
@@ -150,6 +153,55 @@ scafld start <task-id> [--json]
 Sets status to `in_progress`.
 
 JSON mode returns the lifecycle transition from approved to active.
+
+## scafld branch
+
+Create or bind a working branch for a spec and record the binding in the spec's
+`origin` metadata.
+
+```bash
+scafld branch <task-id> [--name BRANCH] [--base REF] [--bind-current] [--json]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--name` | Branch name to create or bind. Defaults to the task-id. |
+| `--base` | Base ref for branch creation. Defaults to the repo's default branch when scafld can resolve one. |
+| `--bind-current` | Record the already-checked-out branch without creating or switching. |
+
+Default behavior is explicit and safe: if the target branch already exists,
+scafld checks it out; otherwise it creates it from the resolved base ref.
+Switching with engineering changes is refused. Detached HEAD mutation is also
+refused unless you bind the current branch explicitly after checking out a real
+branch yourself.
+
+JSON mode returns the binding action (`created_branch`, `checked_out_existing`,
+or `bound_current`), the stored `origin` metadata, and the immediate post-bind
+`sync` state.
+
+## scafld sync
+
+Compare a spec's recorded `origin` binding against the live git workspace.
+
+```bash
+scafld sync <task-id> [--json]
+```
+
+`sync` is diagnostic. It does not try to repair drift. It reports:
+
+- branch mismatch
+- detached HEAD
+- engineering changes outside scafld control-plane files
+- remote or upstream mismatch when the spec recorded those facts
+
+When computing drift, scafld ignores its own control-plane artifacts under
+`.ai/specs/`, `.ai/reviews/`, `.ai/logs/`, plus `.ai/config.local.yaml`.
+
+Exit code 0 means `in_sync`. Exit code 1 means drift or unavailable git state.
+
+JSON mode returns the stored `origin` block, the live `sync` payload with
+expected-vs-actual git facts, and a structured `git_drift` or
+`git_state_unavailable` error when the workspace is out of sync.
 
 ## scafld exec
 

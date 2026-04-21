@@ -93,10 +93,37 @@ instead of scraping terminal output.
 Common machine-facing commands:
 
 - `scafld new --json` -- draft file path, task metadata, next commands
+- `scafld status --json` -- lifecycle state plus stored origin metadata and live sync state
 - `scafld approve --json` / `scafld start --json` -- structured lifecycle transitions
+- `scafld branch --json` -- recorded repo/branch binding and post-bind sync state
+- `scafld sync --json` -- explicit current-vs-expected git drift report
 - `scafld exec --json` -- per-criterion pass/fail results and summary
 - `scafld audit --json` -- declared, matched, undeclared, and missing file sets
 - `scafld fail --json` / `scafld cancel --json` -- archived transition metadata
+
+## Git-bound task origins
+
+Lifecycle state answers "where is this spec in the workflow?" The optional
+`origin` block answers "what branch/repo/source does this workflow object
+belong to?"
+
+Use the explicit git-binding commands:
+
+```bash
+scafld branch add-auth
+scafld branch add-auth --bind-current
+scafld sync add-auth
+```
+
+- `scafld branch` records the repo remote, branch, base ref, and upstream in
+  the spec's `origin` block.
+- `scafld sync` compares that recorded binding to the live workspace and reports
+  drift such as branch mismatch, detached HEAD, or engineering changes.
+- `scafld status --json` includes both the stored `origin` metadata and the live
+  `sync` view so higher-level tools can consume it directly.
+
+This keeps scafld as the workflow source of truth while still letting branch,
+issue, PR, and CI tooling project off the same object.
 
 ## Lifecycle discipline
 

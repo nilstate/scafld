@@ -1,0 +1,316 @@
+spec_version: '1.1'
+task_id: git-bound-task-origins
+created: '2026-04-21T06:42:00Z'
+updated: "2026-04-21T09:12:29Z"
+status: "completed"
+harden_status: passed
+task:
+  title: Bind scafld specs to Git branches and work origins
+  summary: 'Make Git state and engineering origins first-class in scafld. A task should
+    be able to say where it came from, which branch it owns, which base ref it targets,
+    what repo/remote it belongs to, and whether the live workspace has drifted away
+    from the spec. This is the load-bearing bridge between scafld as an internal workflow
+    file and scafld as the kernel underneath everyday Git, issue, and PR flow.
+
+    '
+  size: large
+  risk_level: high
+  context:
+    packages:
+    - cli
+    - scafld
+    - tests
+    - docs
+    - .ai
+    files_impacted:
+    - path: .ai/schemas/spec.json
+      lines: all
+      reason: The spec schema needs a first-class origin and git-binding model.
+    - path: cli/scafld
+      lines: all
+      reason: New branch and sync commands plus origin-aware status/start flows belong
+        in the CLI.
+    - path: scafld/git_state.py
+      lines: all
+      reason: Git helpers need to capture branch, base-ref, remote, and worktree drift
+        details.
+    - path: scafld/spec_store.py
+      lines: all
+      reason: Origin metadata should live beside spec state and move with the spec.
+    - path: docs/lifecycle.md
+      lines: all
+      reason: Lifecycle docs should explain how branch/origin binding relates to task
+        state.
+    - path: docs/cli-reference.md
+      lines: all
+      reason: The CLI reference should describe the new branch and sync commands and
+        their structured outputs.
+    - path: docs/workspaces.md
+      lines: all
+      reason: Workspace docs should explain branch creation, repo assumptions, and
+        sync semantics.
+    - path: docs/spec-schema.md
+      lines: all
+      reason: The new origin model should be documented explicitly.
+    - path: tests/git_origin_smoke.sh
+      lines: all
+      reason: A new smoke test should prove branch creation and sync drift detection.
+    - path: tests/test_git_state.py
+      lines: all
+      reason: Unit coverage should lock down the live Git-state helpers that power
+        branch binding and sync drift detection.
+    invariants:
+    - origin_metadata_is_provider_neutral
+    - git_mutation_stays_explicit_and_safe
+    - spec_and_branch_relationship_is_first_class
+    - sync_reports_drift_instead_of_hiding_it
+    - status_can_surface_origin_without_network_access
+    related_docs:
+    - docs/lifecycle.md
+    - docs/workspaces.md
+    - docs/spec-schema.md
+    - README.md
+    cwd: /home/kam/dev/scafld
+  objectives:
+  - Add a first-class spec metadata block for origin, repo, branch, base-ref, and
+    sync state.
+  - Introduce `scafld branch <task-id>` to create or bind a working branch safely.
+  - Introduce `scafld sync <task-id>` to compare spec metadata with live Git state
+    and report drift.
+  - Make `status --json` surface origin and sync details without requiring wrapper
+    inference.
+  - Keep the model provider-neutral so GitHub, GitLab, and repo-local callers can
+    all project onto it.
+  scope:
+    in_scope:
+    - Schema additions for origin and Git binding.
+    - CLI branch and sync commands.
+    - Status/report visibility for origin and sync state.
+    - Docs and smoke coverage for branch binding and drift reporting.
+    out_of_scope:
+    - Calling remote forge APIs directly from scafld.
+    - Automatically opening pull requests.
+    - Auto-merging or auto-closing issues.
+    - Hosted approval or receipt logic.
+  dependencies:
+  - command-core-integrity-hardening
+  - native-lifecycle-json-contracts
+  assumptions:
+  - The origin model should store remote-facing identifiers and URLs, but remote mutation
+    remains outside scafld.
+  - The branch command should prefer safety over convenience and refuse surprising
+    mutations.
+  - Sync is diagnostic first; it should report drift before any tool tries to repair
+    it.
+  touchpoints:
+  - area: spec schema
+    description: Add first-class origin and Git binding fields to the task spec.
+    owners:
+    - scafld-core
+  - area: git runtime
+    description: Capture branch, remote, base-ref, head SHA, dirty state, and sync
+      drift.
+    owners:
+    - scafld-core
+  - area: CLI workflow
+    description: Add branch and sync commands and expose origin-aware status.
+    owners:
+    - scafld-core
+  - area: docs and smoke
+    description: Explain and verify the new Git-bound workflow.
+    owners:
+    - scafld-core
+  risks:
+  - description: Branch creation could mutate the wrong branch or dirty workspace
+      if safety checks are too loose.
+    impact: high
+    mitigation: Require explicit task binding, validate the current repo state, and
+      refuse dirty/detached mutations unless a clear override exists.
+  - description: Origin metadata could become GitHub-shaped and leak provider assumptions
+      into the kernel.
+    impact: medium
+    mitigation: 'Keep the schema neutral: source system, source id/url, repo, branch,
+      refs, and sync facts rather than forge-specific policy.'
+  - description: Sync output could become prose-only and repeat today's brittleness.
+    impact: high
+    mitigation: Make sync output a native JSON payload with explicit drift reasons
+      and current/expected state fields.
+  acceptance:
+    validation_profile: strict
+    definition_of_done:
+    - id: dod1
+      description: Specs can store origin, repo, branch, base-ref, and sync metadata
+        natively.
+      status: done
+    - id: dod2
+      description: '`scafld branch` safely creates or binds a task branch and records
+        it in the spec.'
+      status: done
+    - id: dod3
+      description: '`scafld sync` reports current-vs-expected drift in structured
+        form.'
+      status: done
+    - id: dod4
+      description: '`status --json` exposes origin and sync state directly.'
+      status: done
+    - id: dod5
+      description: Docs and smoke coverage explain and prove the Git-bound task model.
+      status: done
+    validation:
+    - id: v1
+      type: integration
+      description: Git origin smoke passes.
+      command: ./tests/git_origin_smoke.sh
+      expected: exit code 0
+      timeout_seconds: 240
+    - id: v2
+      type: documentation
+      description: Spec schema docs include the origin model.
+      command: rg -n "origin|branch|base_ref|sync" docs/spec-schema.md docs/workspaces.md
+        docs/lifecycle.md
+      expected: exit code 0
+      timeout_seconds: 60
+planning_log:
+  - timestamp: '2026-04-21T06:42:00Z'
+    actor: codex
+    summary: Mapped the Git/origin model needed for scafld to feel like a natural part
+      of branch and issue flow instead of a parallel system.
+  - timestamp: "2026-04-21T08:53:55Z"
+    actor: "cli"
+    summary: "Spec approved"
+  - timestamp: "2026-04-21T08:54:02Z"
+    actor: "cli"
+    summary: "Execution started"
+  - timestamp: "2026-04-21T09:11:50Z"
+    actor: "codex"
+    summary: "Added provider-neutral origin metadata and git sync snapshots to the spec schema, implemented explicit branch/sync commands with safe branch mutation rules, surfaced origin and sync state in status JSON, and proved the flow with dedicated git-origin smoke plus focused git_state unit coverage."
+  - timestamp: "2026-04-21T09:12:29Z"
+    actor: "cli"
+    summary: "Spec completed"
+phases:
+  - id: phase1
+    name: Define origin and git schema
+    objective: Extend the spec schema so branch and origin metadata are first-class
+      and portable.
+    changes:
+      - file: .ai/schemas/spec.json
+        action: update
+        content_spec: Add a top-level origin/git binding block that captures source system,
+          source id/url, repo, remote, branch, base_ref, head_sha, and sync facts.
+      - file: docs/spec-schema.md
+        action: update
+        content_spec: Document the origin/git binding model with one concise example spec.
+    acceptance_criteria:
+      - id: ac1_1
+        type: documentation
+        description: Schema docs publish the new origin and binding fields.
+        command: rg -n "origin|branch|base_ref|head_sha" docs/spec-schema.md
+        expected: exit code 0
+        timeout_seconds: 60
+        result: "pass"
+        executed_at: "2026-04-21T09:11:24Z"
+        result_output: "21:origin: {}                       # optional, provider-neutral source + git binding metadata 121:### origin 123:`origin` is optional. It records where the task came from and how it binds to 125:GitH"
+    status: completed
+  - id: phase2
+    name: Add branch and sync commands
+    objective: Create explicit commands to bind a task to a branch and report live Git
+      drift.
+    dependencies:
+      - phase1
+    changes:
+      - file: cli/scafld
+        action: update
+        content_spec: Add `branch` and `sync` commands plus origin-aware status reporting.
+      - file: scafld/git_state.py
+        action: update
+        content_spec: Capture branch, upstream/base refs, head SHA, dirty state, and diff
+          fingerprints for sync.
+      - file: scafld/spec_store.py
+        action: update
+        content_spec: Persist origin and branch binding changes safely inside the spec.
+      - file: tests/test_git_state.py
+        action: update
+        content_spec: Add focused unit coverage for branch/base detection and sync facts.
+    acceptance_criteria:
+      - id: ac2_1
+        type: integration
+        description: Git origin smoke proves branch creation and drift reporting.
+        command: ./tests/git_origin_smoke.sh
+        expected: exit code 0
+        timeout_seconds: 240
+        result: "pass"
+        executed_at: "2026-04-21T09:10:53Z"
+        result_output: "[1/7] init workspace and baseline commit [2/7] branch --json creates a task branch and records origin metadata [3/7] status --json surfaces origin and sync directly [4/7] branch refuses to switch when"
+    status: completed
+  - id: phase3
+    name: Document the git-bound flow
+    objective: Explain how origin, branch, sync, and status fit into the scafld lifecycle.
+    dependencies:
+      - phase2
+    changes:
+      - file: docs/lifecycle.md
+        action: update
+        content_spec: Describe how lifecycle state and Git binding relate, including when
+          sync warnings appear.
+      - file: docs/cli-reference.md
+        action: update
+        content_spec: Document `scafld branch`, `scafld sync`, and the origin-aware
+          status JSON contract.
+      - file: docs/workspaces.md
+        action: update
+        content_spec: Document branch creation, repo assumptions, detached-head/dirty-worktree
+          behavior, and sync usage.
+      - file: tests/git_origin_smoke.sh
+        action: create
+        content_spec: Create fixture repos, bind branches, induce drift, and assert structured
+          sync/status output.
+    acceptance_criteria:
+      - id: ac3_1
+        type: documentation
+        description: Workspace and lifecycle docs explain the Git-bound workflow.
+        command: rg -n "scafld branch|scafld sync|origin" docs/lifecycle.md docs/workspaces.md
+        expected: exit code 0
+        timeout_seconds: 60
+        result: "pass"
+        executed_at: "2026-04-21T09:11:24Z"
+        result_output: "docs/lifecycle.md:96:- `scafld status --json` -- lifecycle state plus stored origin metadata and live sync state docs/lifecycle.md:98:- `scafld branch --json` -- recorded repo/branch binding and post-"
+    status: completed
+rollback:
+  strategy: manual
+  commands:
+    phase1: git checkout HEAD -- .ai/schemas/spec.json docs/spec-schema.md
+    phase2: git checkout HEAD -- cli/scafld scafld/git_state.py scafld/spec_store.py tests/test_git_state.py
+    phase3: git checkout HEAD -- docs/cli-reference.md docs/lifecycle.md docs/workspaces.md tests/git_origin_smoke.sh
+harden_rounds:
+  - round: 1
+    started_at: '2026-04-21T08:32:01Z'
+    outcome: passed
+    questions: []
+    ended_at: '2026-04-21T08:32:02Z'
+
+review:
+  timestamp: "2026-04-21T09:12:29Z"
+  verdict: "incomplete"
+  review_rounds: 1
+  reviewer_mode: "human_override"
+  reviewer_session: ""
+  round_status: "override"
+  override_applied: true
+  override_reason: "git-bound origin support is implemented, audit-clean, and verified by git-origin smoke plus the full scafld regression suite; archiving this slice before the projection and runx integration work"
+  override_confirmed_at: "2026-04-21T09:12:29Z"
+  reviewed_head: "53ccec7a2a50c341ec250d804850e4a96c134970"
+  reviewed_dirty: true
+  reviewed_diff: "47134f22bf0de9eebab4089c6384572a736733651af4ed0cf0abffe452719f6a"
+  passes:
+    - id: spec_compliance
+      result: "pass"
+    - id: scope_drift
+      result: "pass"
+    - id: regression_hunt
+      result: "not_run"
+    - id: convention_check
+      result: "not_run"
+    - id: dark_patterns
+      result: "not_run"
+  blocking_count: 0
+  non_blocking_count: 0

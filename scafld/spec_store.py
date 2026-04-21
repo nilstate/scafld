@@ -43,6 +43,56 @@ def now_iso():
     return datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def require_pyyaml():
+    """Import PyYAML for structured spec mutations."""
+    try:
+        import yaml
+    except ModuleNotFoundError as exc:
+        raise ScafldError(
+            "PyYAML is required for structured spec metadata updates",
+            ["install it with: python3 -m pip install PyYAML"],
+            code="missing_dependency",
+        ) from exc
+    return yaml
+
+
+def load_spec_document(spec_path):
+    """Load a full spec document for structured edits."""
+    yaml = require_pyyaml()
+    data = yaml.safe_load(spec_path.read_text(encoding="utf-8")) or {}
+    if not isinstance(data, dict):
+        raise ScafldError(
+            f"invalid spec document: {spec_path.name}",
+            ["spec root must be a YAML mapping"],
+            code="invalid_spec_document",
+        )
+    return data
+
+
+def write_spec_document(spec_path, data):
+    """Write a full spec document after structured edits."""
+    yaml = require_pyyaml()
+    spec_path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+
+
+def prune_empty(value):
+    """Drop empty strings/nulls/empty containers while preserving False/0."""
+    if isinstance(value, dict):
+        pruned = {
+            key: prune_empty(item)
+            for key, item in value.items()
+        }
+        return {
+            key: item
+            for key, item in pruned.items()
+            if item not in (None, "", [], {})
+        }
+    if isinstance(value, list):
+        pruned = [prune_empty(item) for item in value]
+        return [item for item in pruned if item not in (None, "", [], {})]
+    return value
+
+
 def yaml_read_field(text, field):
     """Read a top-level YAML scalar field (simple regex, no library needed)."""
     match = re.search(rf'^{field}:\s*"?([^"\n]+)"?', text, re.MULTILINE)

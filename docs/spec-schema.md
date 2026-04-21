@@ -18,6 +18,7 @@ status: "draft"                  # required, see lifecycle
 task: {}                         # required
 phases: []                       # required, min 1
 planning_log: []                 # required, min 1
+origin: {}                       # optional, provider-neutral source + git binding metadata
 ```
 
 ## Status values
@@ -116,6 +117,53 @@ phases:
 ```
 
 ## Optional blocks
+
+### origin
+
+`origin` is optional. It records where the task came from and how it binds to
+the local git workspace. The shape stays provider-neutral: a wrapper can record
+GitHub issue metadata in `origin.source`, but scafld itself only owns the repo,
+branch, and sync facts.
+
+```yaml
+origin:
+  source:                                # optional
+    system: "github"                     # github | gitlab | linear | local | ...
+    kind: "issue"                        # issue | pr | task | branch | ...
+    id: "123"
+    url: "https://github.com/org/repo/issues/123"
+    title: "Bind scafld specs to git"
+
+  repo:
+    root: "."                            # workspace-relative repo root
+    remote: "origin"
+    remote_url: "git@github.com:org/repo.git"
+
+  git:
+    branch: "git-bound-task-origins"
+    base_ref: "origin/main"
+    upstream: "origin/git-bound-task-origins"
+    mode: "created_branch"               # created_branch | checked_out_existing | bound_current
+    bound_at: "2026-04-21T09:00:00Z"
+
+  sync:
+    status: "in_sync"                    # unbound | in_sync | drift | unavailable
+    last_checked_at: "2026-04-21T09:03:00Z"
+    reasons: []
+    actual:
+      branch: "git-bound-task-origins"
+      head_sha: "abc123..."
+      upstream: "origin/git-bound-task-origins"
+      remote: "origin"
+      remote_url: "git@github.com:org/repo.git"
+      default_base_ref: "origin/main"
+      dirty: false
+      detached: false
+```
+
+`scafld branch` writes the `repo` and `git` binding. `scafld sync` refreshes the
+`sync` snapshot. `scafld status --json` computes the live sync view directly so
+wrappers do not need to infer branch drift themselves.
 
 ### rollback
 

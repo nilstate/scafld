@@ -3,7 +3,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from scafld.git_state import list_changed_files_against_ref, list_working_tree_changed_files
+from scafld.git_state import (
+    build_origin_sync_payload,
+    capture_workspace_git_state,
+    list_changed_files_against_ref,
+    list_working_tree_changed_files,
+)
 
 
 def git(root, *args):
@@ -19,7 +24,7 @@ def git(root, *args):
 
 
 def init_repo(root):
-    git(root, "init")
+    git(root, "init", "-b", "main")
     git(root, "config", "user.name", "Scafld Tests")
     git(root, "config", "user.email", "tests@example.com")
     (root / "tracked.txt").write_text("seed\n", encoding="utf-8")
@@ -70,6 +75,49 @@ class GitStateTest(unittest.TestCase):
 
             self.assertIsNone(error)
             self.assertEqual(set(changed), {"tracked.txt"})
+
+    def test_capture_workspace_git_state_reports_branch_and_default_base(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            init_repo(root)
+
+            state, error = capture_workspace_git_state(root)
+
+            self.assertIsNone(error)
+            self.assertEqual(state["branch"], "main")
+            self.assertEqual(state["default_base_ref"], "main")
+            self.assertFalse(state["dirty"])
+            self.assertFalse(state["detached"])
+
+    def test_build_origin_sync_payload_ignores_scafld_control_plane_files(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            init_repo(root)
+
+            spec_file = root / ".ai" / "specs" / "active" / "fixture.yaml"
+            spec_file.parent.mkdir(parents=True, exist_ok=True)
+            spec_file.write_text("status: in_progress\n", encoding="utf-8")
+
+            sync = build_origin_sync_payload(
+                root,
+                {"git": {"branch": "main"}},
+                excluded_rels=[".ai/specs/", ".ai/reviews/", ".ai/logs/", ".ai/config.local.yaml"],
+            )
+
+            self.assertEqual(sync["status"], "in_sync")
+            self.assertEqual(sync["reasons"], [])
+
+    def test_build_origin_sync_payload_detects_branch_mismatch_and_dirty_workspace(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            init_repo(root)
+            (root / "tracked.txt").write_text("updated\n", encoding="utf-8")
+
+            sync = build_origin_sync_payload(root, {"git": {"branch": "feature-task"}})
+
+            self.assertEqual(sync["status"], "drift")
+            self.assertIn("workspace has uncommitted changes", sync["reasons"])
+            self.assertTrue(any("expected feature-task" in reason for reason in sync["reasons"]))
 
 
 if __name__ == "__main__":
