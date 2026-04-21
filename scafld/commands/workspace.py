@@ -7,8 +7,7 @@ from scafld.config import detect_init_config, render_init_local_config
 from scafld.errors import ScafldError
 from scafld.git_state import source_git_metadata
 from scafld.output import emit_command_json
-
-from .shared import (
+from scafld.runtime_bundle import (
     AI_DIR,
     ACTIVE_DIR,
     APPROVED_DIR,
@@ -20,15 +19,10 @@ from .shared import (
     LOGS_DIR,
     SPECS_DIR,
     VERSION,
-    c,
     scafld_source_root,
     sync_framework_bundle,
-    C_BOLD,
-    C_CYAN,
-    C_DIM,
-    C_GREEN,
-    C_YELLOW,
 )
+from scafld.terminal import C_BOLD, C_CYAN, C_DIM, C_GREEN, C_YELLOW, c
 
 
 def cmd_init(args):

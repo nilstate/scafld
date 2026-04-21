@@ -4,24 +4,12 @@ import re
 from scafld.command_runtime import require_root
 from scafld.git_state import capture_review_git_state
 from scafld.output import emit_command_json
+from scafld.review_artifacts import load_review_topology
 from scafld.reviewing import parse_review_file, review_git_gate_reason
+from scafld.runtime_bundle import REVIEWS_DIR
+from scafld.spec_parsing import count_phases, extract_self_eval_score, parse_acceptance_criteria, parse_iso8601_timestamp
 from scafld.spec_store import find_all_specs, yaml_read_field, yaml_read_nested
-
-from .shared import (
-    REVIEWS_DIR,
-    STATUS_COLORS,
-    c,
-    count_phases,
-    extract_self_eval_score,
-    load_review_topology,
-    parse_acceptance_criteria,
-    parse_iso8601_timestamp,
-    C_BOLD,
-    C_DIM,
-    C_GREEN,
-    C_RED,
-    C_YELLOW,
-)
+from scafld.terminal import C_BOLD, C_DIM, C_GREEN, C_RED, C_YELLOW, STATUS_COLORS, c
 
 
 def report_triage_entry(root, spec_path, text):

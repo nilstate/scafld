@@ -1,5 +1,6 @@
 import sys
 
+from scafld.audit_scope import git_sync_excluded_paths
 from scafld.command_runtime import require_root
 from scafld.error_codes import ErrorCode as EC
 from scafld.git_state import build_origin_sync_payload
@@ -12,11 +13,11 @@ from scafld.output import (
     render_projection_summary,
 )
 from scafld.projections import build_projection_model, origin_payload, phase_counts
+from scafld.review_artifacts import load_review_topology
 from scafld.reviewing import load_review_state
+from scafld.runtime_bundle import REVIEWS_DIR
+from scafld.spec_parsing import count_phases, parse_acceptance_criteria, parse_phase_status_entries
 from scafld.spec_store import load_spec_document, require_spec
-
-from .shared import REVIEWS_DIR, count_phases, git_sync_excluded_paths, parse_acceptance_criteria, parse_phase_status_entries
-from .shared import load_review_topology
 
 
 def projection_model_for_task(root, spec, task_id):
