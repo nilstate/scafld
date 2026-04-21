@@ -76,7 +76,13 @@ scafld new <task-id> [-t TITLE] [-s SIZE] [-r RISK] [--json]
 
 Task IDs must be kebab-case (alphanumeric + hyphens, 1-64 chars). Creates the spec in `.ai/specs/drafts/`.
 
-JSON mode returns the created spec path, draft state, task metadata, and next recommended commands.
+When scafld can detect the repo shape, the generated draft carries forward the
+repo-context summary and suggested validation commands. Task-specific fields
+such as summary, packages, touchpoints, and phase scope stay as explicit TODO
+prompts so the draft still requires human review.
+
+JSON mode returns the created spec path, draft state, task metadata, detected
+repo context, and next recommended commands.
 
 ## scafld list
 
