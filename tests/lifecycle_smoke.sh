@@ -27,17 +27,19 @@ new_repo() {
 inject_review_git_state() {
   local repo="$1"
   local task_id="$2"
-  REVIEW_REPO="$repo" REVIEW_TASK_ID="$task_id" CLI_SCRIPT="$REPO_ROOT/cli/scafld" python3 - <<'PY'
+  REVIEW_REPO="$repo" REVIEW_TASK_ID="$task_id" REPO_ROOT="$REPO_ROOT" python3 - <<'PY'
 import json
 import os
 import pathlib
 import re
-import runpy
+import sys
 
 repo = pathlib.Path(os.environ["REVIEW_REPO"])
 task_id = os.environ["REVIEW_TASK_ID"]
-namespace = runpy.run_path(os.environ["CLI_SCRIPT"])
-state, error = namespace["capture_review_git_state"](repo, f".ai/reviews/{task_id}.md")
+sys.path.insert(0, os.environ["REPO_ROOT"])
+from scafld.git_state import capture_review_git_state
+
+state, error = capture_review_git_state(repo, f".ai/reviews/{task_id}.md")
 if error:
     raise SystemExit(error)
 
