@@ -287,7 +287,7 @@ def validate_spec(root, spec):
     if not re.search(r"^phases:", text, re.MULTILINE):
         errors.append("missing required field: phases")
     else:
-        phase_ids = re.findall(r'^\s+-\s+id:\s*"?(phase\d+)"?', text, re.MULTILINE)
+        phase_ids = re.findall(r'^\s*-\s+id:\s*"?(phase\d+)"?', text, re.MULTILINE)
         if not phase_ids:
             errors.append("phases array is empty (at least 1 phase required)")
 
@@ -303,7 +303,7 @@ def validate_spec(root, spec):
 
     todo_patterns = [
         (r'^\s+(?:command|content_spec|description|file):\s*"?TODO', "has TODO placeholder"),
-        (r'^\s+-\s+"?TODO', "has TODO list item"),
+        (r'^\s*-\s+"?TODO', "has TODO list item"),
     ]
     for pattern, message in todo_patterns:
         matches = re.findall(pattern, text, re.MULTILINE)

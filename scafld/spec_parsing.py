@@ -62,7 +62,7 @@ def parse_phase_status_entries(text):
         if stripped and indent == 0:
             break
 
-        match = re.match(r'^\s+-\s+id:\s*"?(phase\d+)"?', line)
+        match = re.match(r'^\s*-\s+id:\s*"?(phase\d+)"?', line)
         if not match:
             i += 1
             continue

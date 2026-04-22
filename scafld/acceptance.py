@@ -17,7 +17,7 @@ def record_exec_result(text, ac_id, passed, output_snippet=""):
         line = lines[i]
         if re.search(rf'(?:id|dod_id):\s*"?{re.escape(ac_id)}"?\s*$', line):
             result.append(line)
-            item_match = re.match(r"^(\s+)-\s+", line)
+            item_match = re.match(r"^(\s*)-\s+", line)
             if item_match:
                 field_indent = " " * (len(item_match.group(1)) + 2)
             else:
