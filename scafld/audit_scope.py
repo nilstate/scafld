@@ -20,7 +20,7 @@ def git_sync_excluded_paths():
 
 def collect_changed_files_regex(text):
     """Collect declared files with a lightweight regex fallback."""
-    return sorted(set(re.findall(r'^\s+-\s+file:\s*"?([^"\n]+)"?', text, re.MULTILINE)))
+    return sorted(set(re.findall(r'^\s*-\s+file:\s*"?([^"\n]+)"?', text, re.MULTILINE)))
 
 
 def normalize_change_ownership(value):

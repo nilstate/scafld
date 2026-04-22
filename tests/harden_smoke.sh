@@ -144,7 +144,7 @@ d['status'] = 'draft'
 d.pop('harden_status', None)
 open(p, 'w').write(yaml.safe_dump(d, sort_keys=False, default_flow_style=False))
 "
-# scafld uses a regex that requires indented block style for phases - rewrite using raw YAML
+# pin the exact YAML shape so this fixture doesn't drift with dumper defaults
 cat > "$WS/.ai/specs/drafts/t3.yaml" <<'YAML'
 spec_version: "1.1"
 task_id: "t3"
