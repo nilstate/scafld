@@ -86,16 +86,15 @@ PY
 repo="$(new_repo)"
 write_approved_spec "$repo"
 
-echo "[1/4] execute a task in a dirty repo with a legacy-style session"
+echo "[1/4] build a task in a dirty repo with a legacy-style session"
 (
   cd "$repo"
   printf 'pre-existing dirty file\n' > legacy.txt
-  scafld_cmd start baseline-task >/dev/null
-  strip_workspace_baseline "$repo"
   printf 'changed\n' > app.txt
 )
-capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld exec baseline-task --json"
-assert_json "$output" "data['ok'] is True" "exec should pass before review"
+capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld build baseline-task --json"
+assert_json "$output" "data['ok'] is True" "build should pass before review"
+strip_workspace_baseline "$repo"
 
 echo "[2/4] audit bootstraps a legacy baseline and filters unrelated dirty files"
 capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld audit baseline-task --json"

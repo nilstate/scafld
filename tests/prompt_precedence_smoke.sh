@@ -75,9 +75,6 @@ cat > "$repo/.ai/prompts/exec.md" <<'EOF'
 This prompt proves the workspace-owned template is active.
 EOF
 
-capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld start agent-task --json"
-assert_json "$output" "data['ok'] is True" "start should activate the approved spec"
-
 echo "[2/2] rendered handoff cites and contains the workspace prompt"
 capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld handoff agent-task --phase phase1 --json"
 assert_json "$output" "data['result']['template'] == '.ai/prompts/exec.md'" "handoff should read the workspace prompt source"

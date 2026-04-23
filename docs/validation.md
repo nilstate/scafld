@@ -33,7 +33,7 @@ The profile is set explicitly in `task.acceptance.validation_profile` or derived
 | `documentation` | Docs updated | Manual |
 | `custom` | Anything else | Depends on `command` |
 
-Automated types require a `command` field. Types without a command are marked as skipped by `scafld exec` and must be checked manually.
+Automated types require a `command` field. Types without a command are marked as skipped during execution and must be checked manually.
 
 ## Timeout
 

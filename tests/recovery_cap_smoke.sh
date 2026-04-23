@@ -76,19 +76,18 @@ write_approved_spec "$repo"
 echo "[1/3] first failure emits one recovery handoff"
 (
   cd "$repo"
-  scafld_cmd start cap-task >/dev/null
   printf 'red\n' > cap.txt
 )
-if capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld exec cap-task --json"; then
-  fail "first exec should fail"
+if capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld build cap-task --json"; then
+  fail "first build should fail"
 fi
 assert_json "$output" "data['error']['code'] == 'acceptance_failed'" "first failure should be a normal acceptance failure"
-assert_json "$output" "data['result']['next_action']['type'] == 'recovery_handoff'" "first failure should point to a recovery handoff"
-assert_json "$output" "len(data['result']['recovery_handoffs']) == 1" "first failure should emit one recovery handoff"
+assert_json "$output" "data['result']['exec']['next_action']['type'] == 'recovery_handoff'" "first failure should point to a recovery handoff"
+assert_json "$output" "len(data['result']['exec']['recovery_handoffs']) == 1" "first failure should emit one recovery handoff"
 
 echo "[2/3] second failure exhausts recovery and requires a human"
-if capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld exec cap-task --resume --json"; then
-  fail "second exec should still fail"
+if capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld build cap-task --json"; then
+  fail "second build should still fail"
 fi
 assert_json "$output" "data['error']['code'] == 'recovery_exhausted'" "second failure should exhaust recovery"
 assert_json "$output" "data['result']['summary']['failed_exhausted'] == 1" "summary should count exhausted criteria"

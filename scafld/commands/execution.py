@@ -522,7 +522,6 @@ def cmd_exec(args):
                 next_handoff = {
                     "role": rendered_phase["role"],
                     "gate": rendered_phase["gate"],
-                    "kind": rendered_phase["kind"],
                     "selector": rendered_phase["selector"],
                     "handoff_file": rendered_phase["path_rel"],
                     "handoff_json_file": rendered_phase["json_path_rel"],

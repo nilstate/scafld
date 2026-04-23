@@ -8,7 +8,7 @@ description: Executor handoffs, recovery, and session-led execution
 The lifecycle is unchanged:
 
 ```text
-new -> harden -> approve -> start -> exec -> review -> complete
+draft -> harden -> approve -> build -> review -> complete
 ```
 
 The runtime model underneath it is:
@@ -22,32 +22,27 @@ Execution uses two handoff shapes:
 - `executor × phase`
 - `executor × recovery`
 
-## Start
+## Build
 
 ```bash
-scafld start <task-id>
 scafld build <task-id>
 ```
 
-`start` moves an approved spec to active, initializes `session.json`, and emits
-the first executor handoff.
+`build` is the agent-facing executor wrapper:
 
-`build` is the agent-facing wrapper:
-
-- approved spec: starts the task and immediately runs `exec --resume`
-- active spec: runs `exec --resume`
+- approved spec: initializes `session.json`, emits the first phase handoff, and runs execution
+- active spec: runs the next execution pass
 
 That means a fresh `build` call from `approved` advances work to the next
 handoff or block in one invocation instead of requiring a second `build`.
 
-## Exec
+## Execution Passes
 
 ```bash
-scafld exec <task-id>
-scafld exec <task-id> --resume
+scafld build <task-id>
 ```
 
-For each runnable criterion, `exec`:
+For each runnable criterion, execution:
 
 1. runs the command
 2. records a short audit-friendly result snippet back into the spec
@@ -91,7 +86,7 @@ output. That is how long runs avoid linear context growth.
 
 `llm.recovery.max_attempts` is hard.
 
-When the next failure would exceed the cap, `exec`:
+When the next failure would exceed the cap, execution:
 
 - stops emitting recovery handoffs
 - records `failed_exhausted` in session

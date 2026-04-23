@@ -110,9 +110,9 @@ phases:
         expected: "exit code 0"
         cwd: "submodule"                     # optional
         timeout_seconds: 600                 # optional
-        result: pass                         # filled by scafld exec
-        executed_at: "2026-04-16T..."        # filled by scafld exec
-        result_output: "3 passing"           # filled by scafld exec
+        result: pass                         # filled during execution
+        executed_at: "2026-04-16T..."        # filled during execution
+        result_output: "3 passing"           # filled during execution
 
     status: pending                          # pending | in_progress | completed | failed | skipped
 ```

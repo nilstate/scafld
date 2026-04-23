@@ -34,7 +34,7 @@ Each transition is triggered by a CLI command:
 
 ```bash
 scafld approve add-auth    # drafts/ → approved/
-scafld start add-auth      # approved/ → active/
+scafld build add-auth      # approved/ → active/ and execution
 scafld complete add-auth   # active/ → archive/YYYY-MM/
 scafld fail add-auth       # active/ → archive/YYYY-MM/
 scafld cancel add-auth     # any → archive/YYYY-MM/
@@ -42,7 +42,9 @@ scafld cancel add-auth     # any → archive/YYYY-MM/
 
 ## Filesystem as state machine
 
-The directory structure enforces the lifecycle mechanically. A spec in `approved/` cannot be executed until `scafld start` moves it to `active/`. A spec in `active/` cannot be archived until it passes review or is explicitly failed.
+The directory structure enforces the lifecycle mechanically. A spec in
+`approved/` cannot be executed until `scafld build` activates it. A spec in
+`active/` cannot be archived until it passes review or is explicitly failed.
 
 This design is deliberate. The filesystem is auditable, diffable, and requires no runtime process. You can inspect the state of every spec with `ls`:
 
@@ -92,12 +94,11 @@ instead of scraping terminal output.
 
 Common machine-facing commands:
 
-- `scafld new --json` -- draft file path, task metadata, next commands
+- `scafld plan --json` -- draft file path, task metadata, repo context, and harden commands
 - `scafld status --json` -- lifecycle state plus stored origin metadata and live sync state
-- `scafld approve --json` / `scafld start --json` -- structured lifecycle transitions
+- `scafld approve --json` / `scafld build --json` -- structured lifecycle transitions and execution state
 - `scafld branch --json` -- recorded repo/branch binding and post-bind sync state
 - `scafld sync --json` -- explicit current-vs-expected git drift report
-- `scafld exec --json` -- per-criterion pass/fail results and summary
 - `scafld audit --json` -- declared, matched, undeclared, and missing file sets
 - `scafld fail --json` / `scafld cancel --json` -- archived transition metadata
 

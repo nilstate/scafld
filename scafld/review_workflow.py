@@ -179,7 +179,7 @@ def automated_pass_payload(definition, outcome):
 
 
 def render_adversarial_review_prompt(task_id, spec_path_rel, review_path_rel, review_count, adversarial_passes, use_color=True):
-    """Render the reviewer handoff prompt. JSON mode uses this as plain text."""
+    """Render the challenger handoff prompt. JSON mode uses this as plain text."""
 
     def cc(code, text):
         return c(code, text) if use_color else text

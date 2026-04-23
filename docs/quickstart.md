@@ -17,13 +17,13 @@ scafld init
 ## Create a spec
 
 ```bash
-scafld new add-auth -t "Add JWT authentication" -s medium -r high
+scafld plan add-auth -t "Add JWT authentication" -s medium -r high
 ```
 
-This generates `.ai/specs/drafts/add-auth.yaml` from the default template. When
-scafld already knows the repo shape, the draft also inherits the suggested
-compile and test commands plus a short repo-context header. Open it and fill in
-the task-specific fields:
+This generates `.ai/specs/drafts/add-auth.yaml` from the default template and
+immediately opens a harden round. When scafld already knows the repo shape, the
+draft also inherits the suggested compile and test commands plus a short
+repo-context header. Open it and fill in the task-specific fields:
 
 ```yaml
 spec_version: "1.1"
@@ -103,13 +103,10 @@ scafld validate add-auth
 # Approve (moves drafts/ → approved/)
 scafld approve add-auth
 
-# Start execution (moves approved/ → active/)
-scafld start add-auth
-
 # Hand the spec to your agent...
 
-# Run acceptance criteria
-scafld exec add-auth
+# Start approved work and run acceptance criteria
+scafld build add-auth
 
 # Check for scope drift against git
 scafld audit add-auth -b main
@@ -137,9 +134,11 @@ surfaces without wrappers reconstructing it.
 scafld report
 ```
 
-Prints aggregate statistics: pass rates, self-eval scores, size/risk distributions, monthly activity.
+Prints aggregate statistics: pass rates, review outcomes, size/risk
+distributions, monthly activity, and the session-derived runtime metrics.
 
-The report now also includes triage sections for stale drafts, approved specs waiting to start, active specs with no exec evidence, and review drift.
+The report also includes triage sections for stale drafts, approved specs
+waiting to start, active specs with no exec evidence, and review drift.
 
 ## Verify the workflow
 

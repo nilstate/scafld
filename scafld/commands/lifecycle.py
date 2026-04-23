@@ -570,7 +570,6 @@ def cmd_start(args):
                 "handoff_json_file": rendered["json_path_rel"],
                 "handoff_role": rendered["role"],
                 "handoff_gate": rendered["gate"],
-                "handoff_kind": rendered["kind"],
                 "selector": rendered["selector"],
             },
         )

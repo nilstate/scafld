@@ -121,7 +121,6 @@ def cmd_handoff(args):
                 "status": status,
                 "role": rendered["role"],
                 "gate": rendered["gate"],
-                "kind": rendered["kind"],
                 "selector": rendered["selector"],
             },
             result={

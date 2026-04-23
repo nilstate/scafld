@@ -706,7 +706,7 @@ planning_log:
     summary: "Bootstrap smoke fixture"
 EOF
 
-  capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld exec '$task_id' --resume"
+  capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld build '$task_id'"
   assert_contains "$output" "resume: skipping 1 already-passed criteria" "--resume should skip nested pass results"
   assert_contains "$output" "ac1_2" "exec should still run the pending criterion"
   assert_not_contains "$output" "ac1_1: Already passed criterion" "skipped criterion should not be re-executed"
@@ -756,7 +756,7 @@ planning_log:
     summary: "Bootstrap smoke fixture"
 EOF
 
-  if capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld exec '$task_id'"; then
+  if capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld build '$task_id'"; then
     fail "timeout override should fail when the command exceeds timeout_seconds"
   fi
   assert_contains "$output" "TIMEOUT (1s)" "exec should report the configured timeout"

@@ -25,17 +25,14 @@ close the task unchallenged. The review gate is the quality boundary.
 plan -> approve -> build -> review -> complete
 ```
 
-Those commands sit on top of the stable internal lifecycle:
-
-```text
-new -> harden -> approve -> start -> exec -> review -> complete
-```
+`init` stays public because seeding a repo is part of the core workflow.
 
 ## Agent-Facing Commands
 
 Use these by default:
 
 ```bash
+scafld init
 scafld plan <task-id> [-t title] [-s size] [-r risk]
 scafld approve <task-id>
 scafld build <task-id>
@@ -81,7 +78,7 @@ Defaults:
 `build` has two modes:
 
 - approved spec: starts the task and immediately runs validation to the next handoff or block
-- active spec: runs `exec --resume` and emits the next executor or recovery handoff
+- active spec: runs the next execution pass and emits the next executor or recovery handoff
 
 During execution:
 

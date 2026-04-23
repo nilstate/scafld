@@ -196,7 +196,6 @@ def cmd_build(args):
             "handoff_json_file": start_result.get("handoff_json_file"),
             "role": start_result.get("handoff_role"),
             "gate": start_result.get("handoff_gate"),
-            "kind": start_result.get("handoff_kind"),
             "selector": start_result.get("selector"),
         }
         emit_command_json(

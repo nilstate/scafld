@@ -153,7 +153,7 @@ capture output bash -lc "cd '$WS' && PATH='$CLI_ROOT':\"\$PATH\" scafld init >/d
 printf 'seed\n' > "$WS/tracked.txt"
 (cd "$WS" && git init -b main >/dev/null 2>&1 && git config user.email smoke@example.com && git config user.name "Smoke Test" && git add . && git commit -m "chore: seed workspace" >/dev/null 2>&1)
 write_spec "$WS/.ai/specs/drafts/projection-flow.yaml"
-capture output bash -lc "cd '$WS' && PATH='$CLI_ROOT':\"\$PATH\" scafld approve projection-flow >/dev/null && PATH='$CLI_ROOT':\"\$PATH\" scafld start projection-flow >/dev/null && PATH='$CLI_ROOT':\"\$PATH\" scafld branch projection-flow >/dev/null"
+capture output bash -lc "cd '$WS' && PATH='$CLI_ROOT':\"\$PATH\" scafld approve projection-flow >/dev/null && PATH='$CLI_ROOT':\"\$PATH\" scafld build projection-flow >/dev/null && PATH='$CLI_ROOT':\"\$PATH\" scafld branch projection-flow >/dev/null"
 write_review "$WS/.ai/reviews/projection-flow.md" "$(git -C "$WS" rev-parse HEAD)"
 
 echo "[2/6] summary renders aligned markdown and JSON"

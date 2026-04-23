@@ -68,31 +68,32 @@ EOF
 repo="$(new_repo)"
 write_approved_spec "$repo"
 
-echo "[1/4] start initializes session and phase handoff"
-capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld start recovery-task --json"
-assert_json "$output" "data['result']['session_file'] == '.ai/runs/recovery-task/session.json'" "start should report the session file"
-assert_json "$output" "data['result']['handoff_file'].endswith('executor-phase-phase1.md')" "start should report the first phase handoff"
-assert_json "$output" "data['result']['handoff_role'] == 'executor'" "start should report the handoff role"
-assert_json "$output" "data['result']['handoff_gate'] == 'phase'" "start should report the handoff gate"
-[ -f "$repo/.ai/runs/recovery-task/handoffs/executor-phase-phase1.json" ] || fail "phase handoff json should exist after start"
-
-echo "[2/4] failing exec writes diagnostics and a recovery handoff"
+echo "[1/4] build initializes session, phase handoff, and the first recovery"
 printf 'red\n' > "$repo/demo.txt"
-if capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld exec recovery-task --json"; then
-  fail "exec should fail before the file is fixed"
+if capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld build recovery-task --json"; then
+  fail "first build should fail before the file is fixed"
 fi
-assert_json "$output" "data['error']['code'] == 'acceptance_failed'" "failing exec should return acceptance_failed"
-assert_json "$output" "len(data['result']['recovery_handoffs']) == 1" "failing exec should emit one recovery handoff"
+assert_json "$output" "data['state']['action'] == 'start_exec'" "build should start and execute in one call"
+assert_json "$output" "data['result']['start']['session_file'] == '.ai/runs/recovery-task/session.json'" "build should report the session file"
+assert_json "$output" "data['result']['initial_handoff']['handoff_file'].endswith('executor-phase-phase1.md')" "build should report the first phase handoff"
+assert_json "$output" "data['result']['initial_handoff']['role'] == 'executor'" "build should report the handoff role"
+assert_json "$output" "data['result']['initial_handoff']['gate'] == 'phase'" "build should report the handoff gate"
+[ -f "$repo/.ai/runs/recovery-task/handoffs/executor-phase-phase1.json" ] || fail "phase handoff json should exist after build"
+
+echo "[2/4] failing build writes diagnostics and a recovery handoff"
+assert_json "$output" "data['error']['code'] == 'acceptance_failed'" "failing build should return acceptance_failed"
+assert_json "$output" "len(data['result']['exec']['recovery_handoffs']) == 1" "failing build should emit one recovery handoff"
 [ -f "$repo/.ai/runs/recovery-task/session.json" ] || fail "session file should exist after exec"
 [ -f "$repo/.ai/runs/recovery-task/diagnostics/ac1_1-attempt1.txt" ] || fail "diagnostic file should exist after failure"
 [ -f "$repo/.ai/runs/recovery-task/handoffs/executor-recovery-ac1_1-1.md" ] || fail "recovery handoff should exist after failure"
 [ -f "$repo/.ai/runs/recovery-task/handoffs/executor-recovery-ac1_1-1.json" ] || fail "recovery handoff json should exist after failure"
 
-echo "[3/4] passing exec records a phase summary"
+echo "[3/4] passing build records a phase summary"
 printf 'green\n' > "$repo/demo.txt"
-capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld exec recovery-task --resume --json"
-assert_json "$output" "data['ok'] is True" "second exec should pass"
-assert_json "$output" "'phase1' in data['result']['summary']['completed_phases']" "passing exec should record a completed phase"
+capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld build recovery-task --json"
+assert_json "$output" "data['ok'] is True" "second build should pass"
+assert_json "$output" "data['state']['action'] == 'exec'" "second build should resume execution"
+assert_json "$output" "'phase1' in data['result']['summary']['completed_phases']" "passing build should record a completed phase"
 
 echo "[4/4] session ledger reflects failure then recovery"
 REPO="$repo" REPO_ROOT="$REPO_ROOT" python3 - <<'PY'

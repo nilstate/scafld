@@ -21,7 +21,7 @@ scafld is a scaffold in the literal sense: temporary structure that shapes the b
 The lifecycle stays familiar:
 
 ```text
-new -> harden -> approve -> start -> exec -> review -> complete
+draft -> harden -> approve -> build -> review -> complete
 ```
 
 What changed is the core model underneath it.
@@ -94,9 +94,10 @@ Hard rules:
 
 ## Agent Surface
 
-Default help teaches the slim workflow surface:
+Default help teaches the slim workflow surface, including repo seeding:
 
 ```bash
+scafld init
 scafld plan <task-id>
 scafld approve <task-id>
 scafld build <task-id>
@@ -109,9 +110,9 @@ scafld handoff <task-id>
 scafld update
 ```
 
-Legacy commands such as `new`, `start`, `exec`, `validate`, `audit`, and `diff`
-still work for scripts and operators. They are simply hidden from default help.
-Use `scafld --help --advanced` to show the full surface.
+Use `scafld --help --advanced` to show the remaining operator tools such as
+`harden`, `validate`, `branch`, `sync`, `audit`, `diff`, `summary`, `checks`,
+and `pr-body`.
 
 Wrapper intent:
 
