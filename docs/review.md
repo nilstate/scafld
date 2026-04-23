@@ -1,149 +1,74 @@
 ---
 title: Review
-description: Automated and adversarial review
+description: Challenger review gate behavior
 ---
 
 # Review
 
-After execution, `scafld review` runs automated checks and scaffolds an adversarial review artifact. The review gate is what prevents `scafld complete` from archiving work that hasn't been properly examined.
+`review` is the load-bearing gate in scafld.
 
-## Running a review
+Execution tries to finish the job. Review tries to break confidence in the job.
 
-```bash
-scafld review add-auth
-scafld review add-auth --json
-```
+That split is explicit in v1:
 
-This does two things:
+- one challenger handoff per task
+- one gate that determines whether `complete` can close
+- one honest attribution metric: `challenge_override_rate`
 
-### 1. Automated passes
-
-Deterministic checks that run immediately:
-
-- **spec_compliance** -- re-runs all acceptance criteria to confirm the implementation still satisfies the spec
-- **scope_drift** -- runs `scafld audit` to compare declared files against the current workspace change set
-
-If either automated pass fails, the review stops with an error.
-
-In JSON mode, the command still creates or appends the review artifact, but the
-CLI returns a machine-readable envelope containing:
-
-- automated pass results
-- the opened review round number
-- the review file path
-- the required adversarial section titles
-- the reviewer handoff prompt text
-
-### 2. Adversarial scaffold
-
-Creates `.ai/reviews/{task-id}.md` with a Review Artifact v3 structure. This scaffolds sections for three adversarial passes:
-
-- **regression_hunt** -- for each modified file, find every caller and importer. What assumptions do they make that this change violates?
-- **convention_check** -- read CONVENTIONS.md and AGENTS.md. Does the new code violate any documented rule?
-- **dark_patterns** -- hunt for hardcoded values, off-by-one errors, missing null checks, race conditions, copy-paste errors, security issues
-
-A reviewer (ideally a fresh agent session) fills in these sections with findings, each citing a specific file and line.
-
-The scaffolded metadata also binds the review to the git state that was actually reviewed: current `HEAD`, whether the workspace was dirty, and a fingerprint of staged, unstaged, and untracked changes. The review file itself is excluded from that fingerprint so writing findings does not invalidate the review.
-
-## Review artifact format
-
-The review file at `.ai/reviews/{task-id}.md` contains metadata and findings:
-
-```json
-{
-  "schema_version": 3,
-  "round_status": "completed",
-  "reviewer_mode": "fresh_agent",
-  "reviewer_session": "",
-  "reviewed_at": "2026-04-16T12:00:00Z",
-  "reviewed_head": "0123456789abcdef0123456789abcdef01234567",
-  "reviewed_dirty": true,
-  "reviewed_diff": "8e2e0f2d5fe2a5e6db5a5f9e4d63ed1f4996f2d2cdece9d89a43be9b6f21a1a3",
-  "pass_results": {
-    "spec_compliance": "pass",
-    "scope_drift": "pass",
-    "regression_hunt": "pass",
-    "convention_check": "pass_with_issues",
-    "dark_patterns": "pass"
-  }
-}
-```
-
-## Verdict
-
-The reviewer sets a verdict based on findings:
-
-| Verdict | Meaning |
-|---------|---------|
-| `pass` | Zero findings. All passes clean. |
-| `pass_with_issues` | Non-blocking findings only. Noted but doesn't block completion. |
-| `fail` | One or more blocking findings. Must be fixed before completion. |
-
-## Completing work
+## Run Review
 
 ```bash
-scafld complete add-auth
-scafld complete add-auth --json
+scafld review <task-id>
 ```
 
-This reads the latest review round and gates on:
+The command:
 
-- Review file exists
-- Latest round has `round_status: completed`
-- Review metadata includes the reviewed git state
-- Current `HEAD` and workspace fingerprint still match what was reviewed
-- All adversarial sections have content
-- Verdict is `pass` or `pass_with_issues`
+1. runs automated passes
+2. appends a new round to `.ai/reviews/{task-id}.md`
+3. emits a `challenger × review` handoff
 
-If the verdict is `fail`, completion is blocked until the issues are fixed and a new review round passes.
+The handoff lives at:
 
-In JSON mode, blocked completion returns a structured `review_gate_blocked`
-error with the gate reason, review file, pass results, and any blocking
-findings or malformed review details. Successful completion returns the archive
-path, verdict, pass results, review round, and whether a human override was
-applied.
+- `.ai/runs/{task-id}/handoffs/challenger-review.md`
+- `.ai/runs/{task-id}/handoffs/challenger-review.json`
 
-## Projected review surfaces
+## Challenger Stance
 
-Review state is also consumable through the projection commands:
+The challenger is not another executor pass.
+
+Its job is to:
+
+- attack the diff
+- attack the contract
+- cite exact file and line
+- separate blocking vs non-blocking findings
+
+The challenger does not edit code.
+
+## Complete
 
 ```bash
-scafld summary add-auth
-scafld checks add-auth --json
-scafld pr-body add-auth
+scafld complete <task-id>
+scafld complete <task-id> --human-reviewed --reason "manual audit"
 ```
 
-Those commands do not invent another review model. They project the same review
-artifact state already parsed by scafld:
+`complete` checks:
 
-- `summary` renders the current verdict and finding counts into concise markdown
-- `checks --json` turns review/sync/acceptance state into a CI-friendly status
-- `pr-body` carries the review state into deterministic PR markdown
+- review exists
+- latest round is structurally valid
+- configured adversarial sections are filled
+- verdict is not blocking
+- reviewed git state still matches the workspace
 
-That is the intended layering: review remains the source data, projection
-commands turn it into issue/PR/check surfaces, and wrappers such as runx
-consume those surfaces directly.
+If the challenger blocks completion, a human may apply the audited override
+path. That override is recorded in both the review artifact and the session
+ledger.
 
-## Human override
+## Session Entries
 
-When the review gate is blocked and you need to proceed anyway:
+The review gate writes typed session entries such as:
 
-```bash
-scafld complete add-auth --human-reviewed --reason "manual audit completed"
-```
+- `challenge_verdict`
+- `human_override`
 
-This requires:
-- Interactive terminal (TTY check)
-- Explicit confirmation (you type the task-id to confirm)
-- Re-runs automated passes if not already passed
-- Creates an override review round with `reviewer_mode: human_override`
-- Records the current reviewed git state in the override round as audit evidence
-
-The override is audited -- the reason and timestamp are recorded in the review file.
-
-## Why adversarial review works
-
-Ask an AI "how did you do?" and it says great. Ask it "what's wrong with this?" and it finds real things -- a missing null check on line 47, a caller that assumes a parameter that just changed shape. The same model that rubber-stamps its own work will tear it apart when the task is framed as critique.
-
-scafld structures this separation. Execution optimises for completion. Review optimises for finding flaws. The honesty is structural, not a prompt trick.
+`report` derives `challenge_override_rate` from those entries.

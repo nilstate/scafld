@@ -81,7 +81,7 @@ Lifecycle smoke fixture
 {
   "schema_version": 3,
   "round_status": "completed",
-  "reviewer_mode": "fresh_agent",
+  "reviewer_mode": "challenger",
   "reviewer_session": "sess-1",
   "reviewed_at": "2026-04-21T00:00:00Z",
   "override_reason": null,
@@ -275,6 +275,12 @@ EOF
   assert_contains "$output" "review" "complete should print the final review verdict"
   archive_path="$(find "$repo/.ai/specs/archive" -name demo-task.yaml -print | head -n 1)"
   [ -n "$archive_path" ] || fail "complete should archive the lifecycle spec"
+  run_archive="$(find "$repo/.ai/runs/archive" -type d -name demo-task -print | head -n 1)"
+  [ -n "$run_archive" ] || fail "complete should archive the run directory"
+  capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld handoff demo-task --json"
+  assert_json "$output" "data['state']['role'] == 'challenger'" "default handoff after completion should be the challenger role"
+  assert_json "$output" "data['state']['gate'] == 'review'" "default handoff after completion should be the review gate"
+  assert_json "$output" "'/archive/' in data['result']['handoff_file']" "completed handoff should come from the archived run dir"
 
   echo "[5/6] create triage fixtures for report output"
   mkdir -p "$repo/.ai/specs/drafts" "$repo/.ai/specs/approved" "$repo/.ai/specs/active"

@@ -1,0 +1,367 @@
+spec_version: "1.1"
+task_id: "llm-performance-prose-cutover"
+created: "2026-04-23T08:49:58Z"
+updated: "2026-04-23T12:55:41Z"
+status: "completed"
+harden_status: "not_run"
+
+task:
+  title: "LLM Performance Prose Cutover"
+  summary: >
+    Reframe scafld around the clean `spec / handoff / session` model without
+    changing the lifecycle. This spec updates the roadmap, README, docs,
+    operator guidance, and prompt docs so the repo consistently describes
+    handoff as compiled model input, session as the run ledger, the handoff
+    file pair as `*.md + *.json`, and report as the only honest attribution
+    surface in an agent-agnostic system.
+  size: "medium"
+  risk_level: "medium"
+  context:
+    packages:
+      - "README.md"
+      - "docs/"
+      - ".ai/"
+      - "AGENTS.md"
+      - "CLAUDE.md"
+      - "plans/"
+    files_impacted:
+      - path: "plans/llm-performance-cutover.md"
+        lines: "all"
+        reason: "Canonical forward model for the cutover."
+      - path: "README.md"
+        lines: "1-340"
+        reason: "Primary mission and product model need to change."
+      - path: "docs/introduction.md"
+        lines: "all"
+        reason: "Intro framing must become brownfield governed execution, not loose one-shot framing."
+      - path: "docs/execution.md"
+        lines: "all"
+        reason: "Execution docs must explain handoff generation and session compaction."
+      - path: "docs/review.md"
+        lines: "all"
+        reason: "Review docs must explain review handoff and attribution limits."
+      - path: "docs/configuration.md"
+        lines: "all"
+        reason: "Config docs must describe only the minimal v1 llm block."
+      - path: "docs/cli-reference.md"
+        lines: "all"
+        reason: "CLI docs must describe one new read-only handoff command."
+      - path: "docs/run-artifacts.md"
+        lines: "all"
+        reason: "New doc for handoff/session contracts and .ai/runs layout."
+      - path: "AGENTS.md"
+        lines: "1-220"
+        reason: "Agent guidance must explain prompt templates, handoffs, and session compaction."
+      - path: "CLAUDE.md"
+        lines: "1-80"
+        reason: "Claude-specific guidance must mirror the new model."
+      - path: ".ai/README.md"
+        lines: "all"
+        reason: "Workspace guide must explain spec, handoff, session, and review."
+      - path: ".ai/OPERATORS.md"
+        lines: "all"
+        reason: "Operators need the clean mental model and the single new handoff command."
+      - path: ".ai/prompts/plan.md"
+        lines: "all"
+        reason: "Plan prompt must be described as a renderer template."
+      - path: ".ai/prompts/exec.md"
+        lines: "all"
+        reason: "Exec prompt must be described as the phase handoff template."
+      - path: ".ai/prompts/review.md"
+        lines: "all"
+        reason: "Review prompt must be described as the review handoff template."
+      - path: ".ai/prompts/recovery.md"
+        lines: "all"
+        reason: "New recovery handoff template must be introduced in the docs."
+      - path: ".ai/prompts/harden.md"
+        lines: "all"
+        reason: "Harden should be documented as the obvious next handoff kind, not a parallel model."
+    invariants:
+      - "domain_boundaries"
+      - "public_api_stable"
+      - "config_from_env"
+    related_docs:
+      - "plans/llm-performance-cutover.md"
+      - "docs/execution.md"
+      - "docs/review.md"
+      - "docs/run-artifacts.md"
+  objectives:
+    - "Lock the mission line: scafld is the control plane that gets the most out of your LLM during governed execution."
+    - "Explain `spec / handoff / session` as the full value layer and keep the lifecycle untouched."
+    - "Make `.ai/prompts/*.md` subordinate templates for handoff rendering."
+    - "Name the canonical success metrics: first_attempt_pass_rate and recovery_convergence_rate."
+    - "State v1 compatibility rules: zero spec schema changes, one-way handoffs, and archived run retention."
+    - "State the honest agent-agnostic boundary: the handoff can be ignored, so report metrics are the only attribution surface."
+    - "Name harden as the next natural handoff kind without building it in v1."
+  scope:
+    in_scope:
+      - "Mission and roadmap prose."
+      - "Docs and operator guidance."
+      - "Prompt documentation and new recovery template naming."
+    out_of_scope:
+      - "Runtime code changes."
+      - "Schema/config implementation."
+      - "Command implementation."
+  dependencies:
+    - "None. This is the framing spec for the rest of the cutover."
+  assumptions:
+    - "The existing lifecycle must remain the only workflow users learn."
+    - "The first implementation adds one public handoff command and keeps everything else under existing commands."
+  touchpoints:
+    - area: "Mission"
+      description: "README and intro docs explain scafld as a control plane for governed brownfield execution."
+    - area: "Runtime model"
+      description: "Docs explain spec, handoff, session, review, report, and archived run retention without growing extra primitives."
+    - area: "Prompt hierarchy"
+      description: "Prompt files are described as renderer templates, not parallel artifacts."
+    - area: "Contract details"
+      description: "Docs state the sibling handoff `.md/.json` format, recovery exhaustion behavior, and zero spec schema changes."
+    - area: "Attribution boundary"
+      description: "Docs explicitly say the external agent may ignore a handoff and report can only infer quality lift from outcomes."
+  risks:
+    - description: "Docs may still imply scafld is a provider runtime."
+      impact: "medium"
+      mitigation: "Repeat the agent-agnostic boundary and keep the new public surface to a single handoff command."
+    - description: "Older wording around one-shot building may survive and muddy the mission."
+      impact: "medium"
+      mitigation: "Remove one-shot framing and make governed execution the unambiguous north star."
+  acceptance:
+    validation_profile: "standard"
+    definition_of_done:
+      - id: "dod1"
+        description: "README, docs, operator docs, and prompt docs consistently describe the `spec / handoff / session` model."
+        status: "pending"
+      - id: "dod2"
+        description: "Prompt files are documented as templates rendered into handoffs."
+        status: "pending"
+      - id: "dod3"
+        description: "Docs explicitly place phase-boundary compaction in `session.phase_summaries`."
+        status: "pending"
+      - id: "dod4"
+        description: "Docs explicitly state that the external agent may ignore the handoff and that report metrics are the attribution proxy."
+        status: "pending"
+      - id: "dod5"
+        description: "Docs explicitly state zero spec schema changes, sibling `.md/.json` handoffs, recovery exhaustion, and archived run retention."
+        status: "pending"
+    validation:
+      - id: "v1"
+        type: "custom"
+        description: "Validate this draft spec."
+        command: "python3 cli/scafld validate llm-performance-prose-cutover"
+        expected: "exit code 0"
+      - id: "v2"
+        type: "documentation"
+        description: "Confirm the roadmap and docs use the locked mission line and core nouns."
+        command: >
+          bash -lc 'rg -qi "control plane that gets the most out of your LLM during governed execution" plans/llm-performance-cutover.md README.md && for term in "handoff" "session" "phase_summaries" "may ignore the handoff" "zero spec schema changes" "first_attempt_pass_rate" "recovery_convergence_rate" "failed_exhausted" "phase-phase1.json"; do rg -qi "$term" plans/llm-performance-cutover.md README.md docs AGENTS.md CLAUDE.md .ai/README.md .ai/OPERATORS.md || exit 1; done'
+        expected: "exit code 0"
+      - id: "v3"
+        type: "documentation"
+        description: "Confirm prompt docs describe templates rather than standalone prompts."
+        command: >
+          bash -lc 'for term in "template" "handoff"; do rg -qi "$term" .ai/prompts/plan.md .ai/prompts/exec.md .ai/prompts/review.md .ai/prompts/harden.md || exit 1; done'
+        expected: "exit code 0"
+  constraints:
+    approvals_required: []
+    non_goals:
+      - "Do not introduce extra public commands beyond handoff in the prose model."
+      - "Do not reintroduce one-shot building language."
+      - "Do not present telemetry as a separate artifact."
+  notes: >
+    Required copy: "scafld is the control plane that gets the most out of your
+    LLM during governed execution." Also required: "The spec is the contract.
+    The handoff is compiled model input. The session is the only durable run
+    ledger." Also required: v1 makes zero spec schema changes, every handoff is
+    a sibling `*.md + *.json` pair, and `failed_exhausted` blocks the phase and
+    returns `human_required`.
+
+planning_log:
+  - timestamp: "2026-04-23T08:49:58Z"
+    actor: "user"
+    summary: "Requested a clean forward model and draft specs for the end-to-end cutover."
+  - timestamp: "2026-04-23T08:49:58Z"
+    actor: "agent"
+    summary: "Rewrote the prose cutover around spec, handoff, session, prompt templates, and the attribution boundary."
+
+  - timestamp: "2026-04-23T12:48:27Z"
+    actor: "cli"
+    summary: "Spec approved"
+  - timestamp: "2026-04-23T12:48:27Z"
+    actor: "cli"
+    summary: "Execution started"
+  - timestamp: "2026-04-23T12:55:41Z"
+    actor: "cli"
+    summary: "Spec completed"
+phases:
+  - id: "phase1"
+    name: "Roadmap and mission line"
+    objective: "Rewrite the roadmap and README around the locked runtime model."
+    changes:
+      - file: "plans/llm-performance-cutover.md"
+        action: "update"
+        content_spec: |
+          Replace the broader primitive set with the clean `spec / handoff /
+          session` model. Add hard rules, prompt-template hierarchy,
+          phase-boundary compaction, and the honest agent-agnostic boundary.
+      - file: "README.md"
+        action: "update"
+        content_spec: |
+          Lock the mission line, keep the lifecycle untouched, name the one new
+          handoff command, explain report as the quality-lift surface, and name
+          the canonical metrics first_attempt_pass_rate and
+          recovery_convergence_rate.
+    acceptance_criteria:
+      - id: "ac1_1"
+        type: "documentation"
+        description: "Roadmap and README carry the new mission line."
+        command: >
+          bash -lc 'rg -qi "control plane that gets the most out of your LLM during governed execution" plans/llm-performance-cutover.md README.md'
+        expected: "exit code 0"
+        result: "pass"
+        executed_at: "2026-04-23T12:50:34Z"
+    status: "pending"
+
+  - id: "phase2"
+    name: "Docs and operator model"
+    objective: "Propagate the model and attribution rules through docs and operator guidance."
+    dependencies: ["phase1"]
+    changes:
+      - file: "docs/introduction.md"
+        action: "update"
+        content_spec: |
+          Reframe scafld as a brownfield governed-execution control plane rather
+          than a one-shot builder.
+      - file: "docs/execution.md"
+        action: "update"
+        content_spec: |
+          Explain handoff generation, session writes, phase summaries, and
+          report metrics, including `failed_exhausted` and the
+          `human_required` boundary at the recovery cap.
+      - file: "docs/review.md"
+        action: "update"
+        content_spec: |
+          Explain review handoffs and the fact that review works from spec +
+          diff + session summary, not full executor history.
+      - file: "docs/configuration.md"
+        action: "update"
+        content_spec: |
+          Describe only the minimal v1 llm block and no extra premature knobs.
+      - file: "docs/cli-reference.md"
+        action: "update"
+        content_spec: |
+          Document only one new public command, `scafld handoff`, including its
+          default selectors and sibling JSON artifact.
+      - file: "docs/run-artifacts.md"
+        action: "create"
+        content_spec: |
+          Add a concise contract doc for handoffs, session, diagnostics, schema
+          versions, the `.md/.json` pairing, and the `.ai/runs/` layout and
+          archive retention rules.
+      - file: ".ai/README.md"
+        action: "update"
+        content_spec: |
+          Mirror the new runtime model and explain where operators should look
+          for handoffs and session state.
+      - file: ".ai/OPERATORS.md"
+        action: "update"
+        content_spec: |
+          Explain when to ask for a handoff, what session means, and how report
+          metrics should be interpreted.
+    acceptance_criteria:
+      - id: "ac2_1"
+        type: "documentation"
+        description: "Docs and operator docs describe session as the only durable run ledger."
+        command: >
+          bash -lc 'rg -qi "only durable run ledger" docs .ai/README.md .ai/OPERATORS.md'
+        expected: "exit code 0"
+        result: "pass"
+        executed_at: "2026-04-23T12:52:02Z"
+    status: "pending"
+
+  - id: "phase3"
+    name: "Prompt docs as templates"
+    objective: "Subordinate prompt docs to handoff rendering and name harden as a future kind."
+    dependencies: ["phase2"]
+    changes:
+      - file: "AGENTS.md"
+        action: "update"
+        content_spec: |
+          Explain prompt templates, handoff generation, session summaries, and
+          the honest boundary that external agents may ignore the handoff.
+      - file: "CLAUDE.md"
+        action: "update"
+        content_spec: |
+          Update Claude-specific guidance to use handoffs rather than raw prompt
+          files.
+      - file: ".ai/prompts/plan.md"
+        action: "update"
+        content_spec: |
+          Describe this file as the planning template rendered into a handoff.
+      - file: ".ai/prompts/exec.md"
+        action: "update"
+        content_spec: |
+          Describe this file as the phase template rendered into a handoff.
+      - file: ".ai/prompts/review.md"
+        action: "update"
+        content_spec: |
+          Describe this file as the review template rendered into a handoff.
+      - file: ".ai/prompts/recovery.md"
+        action: "create"
+        content_spec: |
+          Add the recovery template used for recovery handoffs.
+      - file: ".ai/prompts/harden.md"
+        action: "update"
+        content_spec: |
+          Keep harden unchanged in v1, but note that it is the obvious next
+          handoff kind.
+    acceptance_criteria:
+      - id: "ac3_1"
+        type: "documentation"
+        description: "Prompt files are documented as templates and harden is named as a future handoff kind."
+        command: >
+          bash -lc 'rg -qi "template" .ai/prompts/plan.md .ai/prompts/exec.md .ai/prompts/review.md && rg -qi "next handoff kind|future handoff kind" .ai/prompts/harden.md'
+        expected: "exit code 0"
+        result: "pass"
+        executed_at: "2026-04-23T12:52:36Z"
+    status: "pending"
+
+rollback:
+  strategy: "per_phase"
+  commands:
+    phase1: "git checkout HEAD -- README.md plans/llm-performance-cutover.md"
+    phase2: "git checkout HEAD -- docs/introduction.md docs/execution.md docs/review.md docs/configuration.md docs/cli-reference.md .ai/README.md .ai/OPERATORS.md && rm -f docs/run-artifacts.md"
+    phase3: "git checkout HEAD -- AGENTS.md CLAUDE.md .ai/prompts/plan.md .ai/prompts/exec.md .ai/prompts/review.md .ai/prompts/harden.md && rm -f .ai/prompts/recovery.md"
+
+review:
+  timestamp: "2026-04-23T12:55:41Z"
+  verdict: "incomplete"
+  review_rounds: 1
+  reviewer_mode: "human_override"
+  reviewer_session: ""
+  round_status: "override"
+  override_applied: true
+  override_reason: "Implemented as one stacked cutover in a shared worktree; all acceptance criteria passed and smoke coverage is green, but per-spec automated scope review is blocked by overlapping slices in the same diff."
+  override_confirmed_at: "2026-04-23T12:55:41Z"
+  reviewed_head: "2397a68631b2b3befe2c1c30bb9760e3b84bc4ad"
+  reviewed_dirty: true
+  reviewed_diff: "7dfca96b39775fbfe830fd626962cc1156a7259327b93ab83cf6392ffcc26b22"
+  passes:
+    - id: spec_compliance
+      result: "pass"
+    - id: scope_drift
+      result: "fail"
+    - id: regression_hunt
+      result: "not_run"
+    - id: convention_check
+      result: "not_run"
+    - id: dark_patterns
+      result: "not_run"
+  blocking_count: 0
+  non_blocking_count: 0
+metadata:
+  estimated_effort_hours: 6
+  ai_model: "unspecified"
+  tags:
+    - "llm-performance"
+    - "docs"
+    - "handoff-session"

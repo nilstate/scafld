@@ -16,6 +16,7 @@ from scafld.projections import build_projection_model, origin_payload, phase_cou
 from scafld.reviewing import load_review_state
 from scafld.review_workflow import load_review_topology
 from scafld.runtime_bundle import REVIEWS_DIR
+from scafld.session_store import load_session, session_summary_payload
 from scafld.spec_parsing import count_phases, parse_acceptance_criteria, parse_phase_status_entries
 from scafld.spec_store import load_spec_document, require_spec
 
@@ -34,6 +35,8 @@ def projection_model_for_task(root, spec, task_id):
         review_state = {"exists": False, "errors": [str(exc)]}
     else:
         review_state = load_review_state(review_path, topology)
+    session = load_session(root, task_id, spec_path=spec)
+    runtime = session_summary_payload(session) if session is not None else {}
     return build_projection_model(
         root,
         spec,
@@ -44,6 +47,7 @@ def projection_model_for_task(root, spec, task_id):
         criteria=parse_acceptance_criteria(text),
         review_state=review_state,
         sync=sync,
+        runtime=runtime,
     )
 
 

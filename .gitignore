@@ -18,8 +18,9 @@ Thumbs.db
 
 # Logs
 .ai/logs/
+.ai/runs/
 .ai/reviews/
 .ai/scafld/
 docs/node_modules/
-
+plans/
 .runx

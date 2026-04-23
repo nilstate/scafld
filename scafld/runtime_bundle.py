@@ -18,6 +18,7 @@ ACTIVE_DIR = f"{SPECS_DIR}/active"
 ARCHIVE_DIR = f"{SPECS_DIR}/archive"
 LOGS_DIR = f"{AI_DIR}/logs"
 REVIEWS_DIR = f"{AI_DIR}/reviews"
+RUNS_DIR = f"{AI_DIR}/runs"
 SCHEMA_PATH = f"{AI_DIR}/schemas/spec.json"
 CONFIG_PATH = f"{AI_DIR}/config.yaml"
 CONFIG_LOCAL_PATH = f"{AI_DIR}/config.local.yaml"
@@ -32,6 +33,7 @@ FRAMEWORK_BUNDLE_FILES = [
     (f"{AI_DIR}/prompts/harden.md", f"{FRAMEWORK_DIR}/prompts/harden.md"),
     (f"{AI_DIR}/prompts/exec.md", f"{FRAMEWORK_DIR}/prompts/exec.md"),
     (f"{AI_DIR}/prompts/review.md", f"{FRAMEWORK_DIR}/prompts/review.md"),
+    (f"{AI_DIR}/prompts/recovery.md", f"{FRAMEWORK_DIR}/prompts/recovery.md"),
     (f"{AI_DIR}/README.md", f"{FRAMEWORK_DIR}/README.md"),
     (f"{AI_DIR}/OPERATORS.md", f"{FRAMEWORK_DIR}/OPERATORS.md"),
     (f"{SPECS_DIR}/README.md", f"{FRAMEWORK_DIR}/specs/README.md"),
@@ -85,7 +87,11 @@ def resolve_schema_path(root):
 
 
 def resolve_prompt_path(root, name):
-    return resolve_framework_asset(root, f"{AI_DIR}/prompts/{name}", f"prompts/{name}")
+    """Resolve prompt templates from the workspace first, then the managed reset copy."""
+    workspace_prompt = root / AI_DIR / "prompts" / name
+    if workspace_prompt.exists():
+        return workspace_prompt
+    return root / FRAMEWORK_DIR / "prompts" / name
 
 
 def build_framework_manifest(workspace_root, source_root, managed_assets):

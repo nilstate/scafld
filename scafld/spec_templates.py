@@ -1,6 +1,6 @@
 import json
 
-from scafld.config import detect_init_config, load_config
+from scafld.config import command_is_placeholder, detect_init_config, load_config
 
 
 def config_string(config, *keys):
@@ -26,7 +26,7 @@ def resolved_validation_commands(config, detection):
         ("typecheck", ("validation", "pre_commit", "typecheck")),
     ):
         override = config_string(config, *path)
-        if override:
+        if override and not (command_is_placeholder(override) and not command_is_placeholder(commands[key])):
             commands[key] = override
     return commands
 
@@ -71,7 +71,8 @@ def build_new_spec_scaffold(
 
     template = f'''# Repo context: {detection["summary"]}
 # Repo markers: {marker_text}
-# Suggested validation commands come from repo detection and .ai/config.local.yaml when available.
+# Suggested validation commands come from repo detection (including mixed Python+Node repos)
+# and .ai/config.local.yaml when available.
 spec_version: "1.1"
 task_id: {json.dumps(task_id)}
 created: {json.dumps(timestamp)}

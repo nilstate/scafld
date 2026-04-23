@@ -149,6 +149,7 @@ def evaluate_acceptance_criterion(root, criterion, spec_cwd=None):
                 "status": "fail",
                 "exit_code": None,
                 "output": f"cwd '{effective_cwd}' escapes workspace root",
+                "full_output": f"cwd '{effective_cwd}' escapes workspace root",
             }
         if not ac_cwd.is_dir():
             return {
@@ -156,6 +157,7 @@ def evaluate_acceptance_criterion(root, criterion, spec_cwd=None):
                 "status": "fail",
                 "exit_code": None,
                 "output": f"cwd '{effective_cwd}' not found",
+                "full_output": f"cwd '{effective_cwd}' not found",
             }
 
     try:
@@ -166,6 +168,7 @@ def evaluate_acceptance_criterion(root, criterion, spec_cwd=None):
             "status": "fail",
             "exit_code": None,
             "output": str(exc),
+            "full_output": str(exc),
         }
 
     try:
@@ -183,6 +186,7 @@ def evaluate_acceptance_criterion(root, criterion, spec_cwd=None):
             "status": "fail",
             "exit_code": None,
             "output": f"Command timed out after {timeout_seconds}s",
+            "full_output": f"Command timed out after {timeout_seconds}s",
         }
     except Exception as exc:
         return {
@@ -190,6 +194,7 @@ def evaluate_acceptance_criterion(root, criterion, spec_cwd=None):
             "status": "fail",
             "exit_code": None,
             "output": str(exc),
+            "full_output": str(exc),
         }
 
     output = (result.stdout + result.stderr).strip()
@@ -198,4 +203,5 @@ def evaluate_acceptance_criterion(root, criterion, spec_cwd=None):
         "status": "pass" if check_expected(result.returncode, output, expected) else "fail",
         "exit_code": result.returncode,
         "output": output[:200],
+        "full_output": output,
     }

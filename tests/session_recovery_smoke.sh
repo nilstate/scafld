@@ -1,0 +1,119 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+CLI_ROOT="${CLI_ROOT:-$REPO_ROOT/cli}"
+TMP_DIRS=()
+source "$SCRIPT_DIR/smoke_lib.sh"
+
+scafld_cmd() {
+  PATH="$CLI_ROOT:$PATH" scafld "$@"
+}
+
+new_repo() {
+  local repo
+  repo="$(mktemp -d /tmp/scafld-session-recovery.XXXXXX)"
+  TMP_DIRS+=("$repo")
+  (
+    cd "$repo"
+    git init -b main >/dev/null 2>&1
+    git config user.email smoke@example.com
+    git config user.name "Smoke Test"
+    scafld_cmd init >/dev/null
+  )
+  printf '%s\n' "$repo"
+}
+
+write_approved_spec() {
+  local repo="$1"
+  cat > "$repo/.ai/specs/approved/recovery-task.yaml" <<'EOF'
+spec_version: "1.1"
+task_id: "recovery-task"
+created: "2026-04-23T00:00:00Z"
+updated: "2026-04-23T00:00:00Z"
+status: "approved"
+harden_status: "not_run"
+
+task:
+  title: "Recovery smoke"
+  summary: "Exercise session and recovery handoffs"
+  size: "small"
+  risk_level: "low"
+
+planning_log:
+  - timestamp: "2026-04-23T00:00:00Z"
+    actor: "user"
+    summary: "Bootstrap recovery smoke fixture"
+
+phases:
+  - id: "phase1"
+    name: "Write the marker"
+    objective: "demo.txt should end up green"
+    changes:
+      - file: "demo.txt"
+        action: "update"
+        lines: "1"
+        content_spec: "replace red with green"
+    acceptance_criteria:
+      - id: "ac1_1"
+        type: "custom"
+        description: "demo.txt contains green"
+        command: "grep -q '^green$' demo.txt"
+        expected: "exit code 0"
+    status: "pending"
+EOF
+}
+
+repo="$(new_repo)"
+write_approved_spec "$repo"
+
+echo "[1/4] start initializes session and phase handoff"
+capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld start recovery-task --json"
+assert_json "$output" "data['result']['session_file'] == '.ai/runs/recovery-task/session.json'" "start should report the session file"
+assert_json "$output" "data['result']['handoff_file'].endswith('executor-phase-phase1.md')" "start should report the first phase handoff"
+assert_json "$output" "data['result']['handoff_role'] == 'executor'" "start should report the handoff role"
+assert_json "$output" "data['result']['handoff_gate'] == 'phase'" "start should report the handoff gate"
+[ -f "$repo/.ai/runs/recovery-task/handoffs/executor-phase-phase1.json" ] || fail "phase handoff json should exist after start"
+
+echo "[2/4] failing exec writes diagnostics and a recovery handoff"
+printf 'red\n' > "$repo/demo.txt"
+if capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld exec recovery-task --json"; then
+  fail "exec should fail before the file is fixed"
+fi
+assert_json "$output" "data['error']['code'] == 'acceptance_failed'" "failing exec should return acceptance_failed"
+assert_json "$output" "len(data['result']['recovery_handoffs']) == 1" "failing exec should emit one recovery handoff"
+[ -f "$repo/.ai/runs/recovery-task/session.json" ] || fail "session file should exist after exec"
+[ -f "$repo/.ai/runs/recovery-task/diagnostics/ac1_1-attempt1.txt" ] || fail "diagnostic file should exist after failure"
+[ -f "$repo/.ai/runs/recovery-task/handoffs/executor-recovery-ac1_1-1.md" ] || fail "recovery handoff should exist after failure"
+[ -f "$repo/.ai/runs/recovery-task/handoffs/executor-recovery-ac1_1-1.json" ] || fail "recovery handoff json should exist after failure"
+
+echo "[3/4] passing exec records a phase summary"
+printf 'green\n' > "$repo/demo.txt"
+capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld exec recovery-task --resume --json"
+assert_json "$output" "data['ok'] is True" "second exec should pass"
+assert_json "$output" "'phase1' in data['result']['summary']['completed_phases']" "passing exec should record a completed phase"
+
+echo "[4/4] session ledger reflects failure then recovery"
+REPO="$repo" REPO_ROOT="$REPO_ROOT" python3 - <<'PY'
+import json
+import os
+import pathlib
+import sys
+
+repo = pathlib.Path(os.environ["REPO"])
+sys.path.insert(0, os.environ["REPO_ROOT"])
+
+session = json.loads((repo / ".ai" / "runs" / "recovery-task" / "session.json").read_text())
+assert session["recovery_attempts"]["ac1_1"] == 1, session
+assert len(session["attempts"]) == 2, session
+assert session["attempts"][0]["status"] == "fail", session
+assert session["attempts"][1]["status"] == "pass", session
+assert session["phase_summaries"][0]["phase_id"] == "phase1", session
+assert session["workspace_baseline"]["source"] == "start", session
+assert session["entries"][0]["type"] == "workspace_baseline", session
+assert any(entry["type"] == "attempt" for entry in session["entries"]), session
+assert any(entry["type"] == "phase_summary" for entry in session["entries"]), session
+PY
+
+echo "PASS: session recovery smoke"

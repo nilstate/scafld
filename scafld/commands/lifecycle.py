@@ -3,11 +3,12 @@ import re
 import sys
 from pathlib import Path
 
-from scafld.audit_scope import CHANGE_OWNERSHIP_VALUES, git_sync_excluded_paths
+from scafld.audit_scope import CHANGE_OWNERSHIP_VALUES, filter_audit_paths, git_sync_excluded_paths
 from scafld.command_runtime import find_root, require_root
 from scafld.error_codes import ErrorCode as EC
 from scafld.errors import ScafldError
-from scafld.git_state import bind_task_branch, build_origin_sync_payload, refresh_origin_sync
+from scafld.git_state import bind_task_branch, build_origin_sync_payload, list_working_tree_changed_files, refresh_origin_sync
+from scafld.handoff_renderer import render_handoff
 from scafld.output import emit_command_json, error_payload
 from scafld.projections import humanize_binding_mode, origin_payload, phase_counts, summarize_origin_source
 from scafld.review_workflow import load_review_topology
@@ -25,6 +26,7 @@ from scafld.runtime_bundle import (
     resolve_schema_path,
     sync_framework_bundle,
 )
+from scafld.runtime_contracts import archive_run_artifacts
 from scafld.spec_parsing import count_phases, now_iso, parse_phase_status_entries
 from scafld.spec_store import (
     find_all_specs,
@@ -36,6 +38,7 @@ from scafld.spec_store import (
     yaml_read_field,
     yaml_read_nested,
 )
+from scafld.session_store import ensure_session, ensure_workspace_baseline, load_session, record_approval, session_summary_payload
 from scafld.spec_templates import build_new_spec_scaffold
 from scafld.terminal import C_BOLD, C_CYAN, C_DIM, C_GREEN, C_RED, C_YELLOW, STATUS_COLORS, c
 
@@ -85,6 +88,8 @@ def status_snapshot(root, spec, task_id):
     else:
         review_state = load_review_state(root / REVIEWS_DIR / f"{task_id}.md", topology)
     result["review_state"] = review_state
+    session = load_session(root, task_id, spec_path=spec)
+    result["runtime"] = session_summary_payload(session) if session is not None else {}
 
     return {
         "text": text,
@@ -478,7 +483,7 @@ def cmd_list(args):
             print(f"{c(C_DIM, 'No matching specs.')}")
         else:
             print(f"{c(C_DIM, 'No specs found.')}")
-            print(f"  Create one: {c(C_BOLD, 'scafld new my-feature')}")
+            print(f"  Create one: {c(C_BOLD, 'scafld plan my-feature -t \"My feature\" -s small -r low')}")
         return
 
     for label, group_specs in listing_groups(specs).items():
@@ -512,15 +517,22 @@ def cmd_approve(args):
         )
 
     move_result = move_spec(root, spec, "approved")
+    session = ensure_session(root, args.task_id, spec_path=move_result.dest)
+    session = record_approval(root, args.task_id, gate="approve", note="spec approved", spec_path=move_result.dest)
     if getattr(args, "json", False):
         emit_command_json(
             "approve",
             task_id=args.task_id,
             state={"status": move_result.new_status},
-            result={"transition": move_result_payload(root, move_result)},
+            result={
+                "transition": move_result_payload(root, move_result),
+                "session_file": f".ai/runs/{args.task_id}/session.json",
+                "entry_count": session_summary_payload(session).get("entry_count", 0),
+            },
         )
         return
     print_move_result(root, move_result)
+    print(f"  session: .ai/runs/{args.task_id}/session.json")
 
 
 def cmd_start(args):
@@ -528,15 +540,45 @@ def cmd_start(args):
     root = require_root()
     spec = require_spec(root, args.task_id)
     move_result = move_spec(root, spec, "in_progress")
+    active_spec = move_result.dest
+    session = ensure_session(root, args.task_id, spec_path=active_spec)
+    changed_files, _error = list_working_tree_changed_files(root, excluded_rels=git_sync_excluded_paths())
+    if changed_files is not None:
+        session = ensure_workspace_baseline(
+            root,
+            args.task_id,
+            paths=filter_audit_paths(changed_files),
+            source="start",
+            spec_path=active_spec,
+        )
+    rendered = render_handoff(
+        root,
+        args.task_id,
+        active_spec,
+        role="executor",
+        gate="phase",
+        session=session,
+    )
     if getattr(args, "json", False):
         emit_command_json(
             "start",
             task_id=args.task_id,
             state={"status": move_result.new_status},
-            result={"transition": move_result_payload(root, move_result)},
+            result={
+                "transition": move_result_payload(root, move_result),
+                "session_file": f".ai/runs/{args.task_id}/session.json",
+                "handoff_file": rendered["path_rel"],
+                "handoff_json_file": rendered["json_path_rel"],
+                "handoff_role": rendered["role"],
+                "handoff_gate": rendered["gate"],
+                "handoff_kind": rendered["kind"],
+                "selector": rendered["selector"],
+            },
         )
         return
     print_move_result(root, move_result)
+    print(f"  session: .ai/runs/{args.task_id}/session.json")
+    print(f"  handoff: {rendered['path_rel']}")
 
 
 def cmd_branch(args):
@@ -653,15 +695,22 @@ def cmd_fail(args):
     root = require_root()
     spec = require_spec(root, args.task_id)
     move_result = move_spec(root, spec, "failed")
+    archive_month = move_result.dest.parent.name
+    archived_run_dir = archive_run_artifacts(root, args.task_id, archive_month)
     if getattr(args, "json", False):
         emit_command_json(
             "fail",
             task_id=args.task_id,
             state={"status": move_result.new_status},
-            result={"transition": move_result_payload(root, move_result)},
+            result={
+                "transition": move_result_payload(root, move_result),
+                "run_archive_dir": str(archived_run_dir.relative_to(root)) if archived_run_dir else None,
+            },
         )
         return
     print_move_result(root, move_result)
+    if archived_run_dir:
+        print(f"  run archive: {c(C_DIM, str(archived_run_dir.relative_to(root)))}")
 
 
 def cmd_cancel(args):
@@ -669,12 +718,19 @@ def cmd_cancel(args):
     root = require_root()
     spec = require_spec(root, args.task_id)
     move_result = move_spec(root, spec, "cancelled")
+    archive_month = move_result.dest.parent.name
+    archived_run_dir = archive_run_artifacts(root, args.task_id, archive_month)
     if getattr(args, "json", False):
         emit_command_json(
             "cancel",
             task_id=args.task_id,
             state={"status": move_result.new_status},
-            result={"transition": move_result_payload(root, move_result)},
+            result={
+                "transition": move_result_payload(root, move_result),
+                "run_archive_dir": str(archived_run_dir.relative_to(root)) if archived_run_dir else None,
+            },
         )
         return
     print_move_result(root, move_result)
+    if archived_run_dir:
+        print(f"  run archive: {c(C_DIM, str(archived_run_dir.relative_to(root)))}")

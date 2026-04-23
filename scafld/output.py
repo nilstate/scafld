@@ -141,6 +141,7 @@ def render_projection_summary(model):
     review = model.get("review") or {}
     acceptance = model.get("acceptance") or {}
     phases = model.get("phases") or {}
+    runtime = model.get("runtime") or {}
 
     lines = [
         f"## scafld: {model.get('title', model.get('task_id', 'task'))}",
@@ -168,6 +169,11 @@ def render_projection_summary(model):
         elif review.get("non_blocking_count"):
             review_line += f" with {review['non_blocking_count']} non-blocking finding(s)"
     lines.append(review_line)
+    if runtime.get("first_attempt_total"):
+        lines.append(
+            "- Runtime: "
+            f"{runtime.get('first_attempt_passed', 0)}/{runtime.get('first_attempt_total', 0)} first-attempt pass"
+        )
     lines.extend(
         [
             (
@@ -198,6 +204,7 @@ def render_projection_pr_body(model):
     review = model.get("review") or {}
     acceptance = model.get("acceptance") or {}
     phases = model.get("phases") or {}
+    runtime = model.get("runtime") or {}
 
     lines = [
         f"# {model.get('title', model.get('task_id', 'Task'))}",
@@ -243,6 +250,12 @@ def render_projection_pr_body(model):
                 f"{acceptance.get('passed', 0)} passed, "
                 f"{acceptance.get('failed', 0)} failed, "
                 f"{acceptance.get('pending', 0)} pending"
+            ),
+            (
+                "- Runtime: "
+                f"{runtime.get('first_attempt_passed', 0)}/{runtime.get('first_attempt_total', 0)} first-attempt pass"
+                if runtime.get("first_attempt_total")
+                else "- Runtime: no session attempts recorded"
             ),
             (
                 "- Phases: "

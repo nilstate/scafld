@@ -17,6 +17,7 @@ from scafld.runtime_bundle import (
     FRAMEWORK_DIR,
     FRAMEWORK_MANIFEST_PATH,
     LOGS_DIR,
+    RUNS_DIR,
     SPECS_DIR,
     VERSION,
     scafld_source_root,
@@ -44,7 +45,7 @@ def cmd_init(args):
             "Edit CONVENTIONS.md and add stack-specific rules",
             "Edit CLAUDE.md and add project overview and commands",
             "Edit .ai/config.local.yaml and review build/test/lint commands",
-            "Run scafld new my-feature",
+            "Run scafld plan my-feature -t \"My feature\" -s small -r low",
         ],
     }
 
@@ -80,7 +81,7 @@ def cmd_init(args):
 
     if not json_mode:
         print(f"{c(C_BOLD, 'Directories:')}")
-    for directory in [DRAFTS_DIR, APPROVED_DIR, ACTIVE_DIR, ARCHIVE_DIR, LOGS_DIR, f"{AI_DIR}/schemas", f"{AI_DIR}/prompts", f"{AI_DIR}/reviews"]:
+    for directory in [DRAFTS_DIR, APPROVED_DIR, ACTIVE_DIR, ARCHIVE_DIR, LOGS_DIR, RUNS_DIR, f"{AI_DIR}/schemas", f"{AI_DIR}/prompts", f"{AI_DIR}/reviews"]:
         path = project_root / directory
         path.mkdir(parents=True, exist_ok=True)
         result["directories"].append({"path": f"{directory}/", "action": "ok"})
@@ -98,6 +99,7 @@ def cmd_init(args):
         (f"{AI_DIR}/prompts/harden.md", f"{AI_DIR}/prompts/harden.md"),
         (f"{AI_DIR}/prompts/exec.md", f"{AI_DIR}/prompts/exec.md"),
         (f"{AI_DIR}/prompts/review.md", f"{AI_DIR}/prompts/review.md"),
+        (f"{AI_DIR}/prompts/recovery.md", f"{AI_DIR}/prompts/recovery.md"),
         (f"{AI_DIR}/README.md", f"{AI_DIR}/README.md"),
         (f"{AI_DIR}/OPERATORS.md", f"{AI_DIR}/OPERATORS.md"),
         (f"{SPECS_DIR}/README.md", f"{SPECS_DIR}/README.md"),
@@ -226,7 +228,7 @@ def cmd_init(args):
   3. Edit {c(C_CYAN, 'CLAUDE.md')} - add project overview and commands
   4. Edit {c(C_CYAN, '.ai/config.local.yaml')} - set your build/test/lint commands
 
-  Then: {c(C_BOLD, 'scafld new my-feature')} or tell your agent {c(C_BOLD, agent_hint)}
+  Then: {c(C_BOLD, 'scafld plan my-feature -t \"My feature\" -s small -r low')} or tell your agent {c(C_BOLD, agent_hint)}
 """)
 
 

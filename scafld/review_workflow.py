@@ -7,6 +7,7 @@ from scafld.audit_scope import collect_changed_files
 from scafld.acceptance import evaluate_acceptance_criterion
 from scafld.errors import ScafldError
 from scafld.git_state import capture_review_git_state
+from scafld.handoff_renderer import render_handoff
 from scafld.reviewing import (
     build_review_topology,
     build_review_metadata,
@@ -18,6 +19,7 @@ from scafld.reviewing import (
     review_passes_by_kind,
 )
 from scafld.runtime_bundle import CONFIG_PATH, REVIEWS_DIR, load_runtime_config, scafld_source_root
+from scafld.session_store import load_session
 from scafld.spec_parsing import extract_self_eval_score, extract_spec_cwd, now_iso, parse_acceptance_criteria
 from scafld.spec_store import yaml_read_nested
 from scafld.terminal import C_BOLD, C_CYAN, C_DIM, C_RED, C_YELLOW, c
@@ -197,8 +199,9 @@ def render_adversarial_review_prompt(task_id, spec_path_rel, review_path_rel, re
 
     return f"""{cc(C_BOLD, 'ADVERSARIAL REVIEW')}
 
-  Your job is to find problems in the changes made for this spec. Not confirm
-  success — find what's wrong. A review that finds zero issues is suspicious.
+  Your job is to challenge the implementation for this spec. Do not confirm
+  success — attack the work until you either find defects or can explain why
+  each attack vector did not land. A review that finds zero issues is suspicious.
 
   {cc(C_BOLD, 'Read:')}
     - Spec: {cc(C_CYAN, spec_path_rel)}
@@ -226,7 +229,7 @@ def render_adversarial_review_prompt(task_id, spec_path_rel, review_path_rel, re
 
     1. Update {cc(C_BOLD, '### Metadata')} JSON with reviewer provenance:
        - round_status: completed
-       - reviewer_mode: fresh_agent | auto | executor
+       - reviewer_mode: challenger | fresh_agent | auto | executor
        - reviewer_session: session identifier or empty string
        - keep reviewed_head / reviewed_dirty / reviewed_diff unchanged
        - pass_results: keep automated results, and set each adversarial pass to pass | pass_with_issues | fail
@@ -380,7 +383,7 @@ def run_automated_review_suite(root, task_id, text, topology):
     }
 
 
-def open_review_round(root, task_id, spec, text, topology, normalized_passes, *, use_color=True):
+def open_review_round(root, task_id, spec, text, topology, normalized_passes, automated_results=None, *, use_color=True):
     reviews_dir = root / REVIEWS_DIR
     reviews_dir.mkdir(parents=True, exist_ok=True)
     review_file = reviews_dir / f"{task_id}.md"
@@ -393,12 +396,14 @@ def open_review_round(root, task_id, spec, text, topology, normalized_passes, *,
 
     review_metadata = build_review_metadata(
         topology,
-        reviewer_mode="executor",
+        reviewer_mode="challenger",
         round_status="in_progress",
         pass_results=normalized_passes,
         reviewed_at=now_iso(),
         reviewer_session="",
         review_git_state=review_git_state,
+        review_handoff=f".ai/runs/{task_id}/handoffs/challenger-review.md",
+        reviewer_isolation="fresh_context_handoff",
     )
     review_count = append_review_round(
         review_file,
@@ -411,22 +416,40 @@ def open_review_round(root, task_id, spec, text, topology, normalized_passes, *,
         non_blocking=[],
     )
 
-    review_path_rel = str(review_file.relative_to(root))
-    spec_path_rel = str(spec.relative_to(root))
     adversarial_passes = review_passes_by_kind(topology, "adversarial")
-    review_prompt = render_adversarial_review_prompt(
+    session = load_session(root, task_id, spec_path=spec)
+    rendered = render_handoff(
+        root,
         task_id,
-        spec_path_rel,
-        review_path_rel,
-        review_count,
-        adversarial_passes,
-        use_color=use_color,
+        spec,
+        role="challenger",
+        gate="review",
+        selector="review",
+        session=session,
+        context={
+            "review_file_rel": str(review_file.relative_to(root)),
+            "review_count": review_count,
+            "required_sections": [
+                "Metadata",
+                "Pass Results",
+                *[definition["title"] for definition in adversarial_passes],
+                "Blocking",
+                "Non-blocking",
+                "Verdict",
+            ],
+            "automated_results": automated_results or [],
+            "reviewer_isolation": "fresh_context_handoff",
+        },
     )
     return {
         "review_file": review_file,
-        "review_path_rel": review_path_rel,
+        "review_path_rel": str(review_file.relative_to(root)),
         "review_count": review_count,
-        "review_prompt": review_prompt,
+        "review_prompt": rendered["content"],
+        "review_handoff_rel": rendered["path_rel"],
+        "review_handoff_json_rel": rendered["json_path_rel"],
+        "handoff_role": rendered["role"],
+        "handoff_gate": rendered["gate"],
         "required_sections": [
             "Metadata",
             "Pass Results",

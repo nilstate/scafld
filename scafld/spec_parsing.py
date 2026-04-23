@@ -59,7 +59,7 @@ def parse_phase_status_entries(text):
             i += 1
             continue
 
-        if stripped and indent == 0:
+        if stripped and indent == 0 and not stripped.startswith("- "):
             break
 
         match = re.match(r'^\s*-\s+id:\s*"?(phase\d+)"?', line)
@@ -110,6 +110,54 @@ def count_phases(text):
 
 
 def parse_acceptance_criteria(text):
+    """Extract acceptance criteria from all phases.
+
+    Prefer real YAML loading when available so folded/literal block scalars are
+    preserved correctly. Fall back to the historical indent-aware parser when
+    PyYAML is unavailable.
+    """
+    try:
+        yaml = require_pyyaml()
+        data = yaml.safe_load(text) or {}
+    except Exception:
+        data = None
+
+    if isinstance(data, dict):
+        phases = data.get("phases")
+        if isinstance(phases, list):
+            criteria = []
+            for phase in phases:
+                if not isinstance(phase, dict):
+                    continue
+                phase_id = phase.get("id")
+                blocks = []
+                acceptance = phase.get("acceptance_criteria")
+                if isinstance(acceptance, list):
+                    blocks.append(acceptance)
+                validation = phase.get("validation")
+                if isinstance(validation, list):
+                    blocks.append(validation)
+
+                for block in blocks:
+                    for entry in block:
+                        if not isinstance(entry, dict):
+                            continue
+                        criterion_id = entry.get("id") or entry.get("dod_id")
+                        if not criterion_id:
+                            continue
+                        criterion = {"id": criterion_id, "phase": phase_id}
+                        for key in ("type", "description", "command", "expected", "cwd", "timeout_seconds"):
+                            if key in entry:
+                                criterion[key] = entry.get(key)
+                        result = entry.get("result")
+                        if isinstance(result, dict):
+                            if "status" in result:
+                                criterion["result"] = result.get("status")
+                        elif result not in (None, ""):
+                            criterion["result"] = result
+                        criteria.append(criterion)
+            return criteria
+
     """Extract acceptance criteria from all phases using indent-aware parsing."""
     criteria = []
     lines = text.splitlines()

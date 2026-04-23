@@ -1,0 +1,317 @@
+spec_version: "1.1"
+task_id: "llm-context-pack-prompt-compiler"
+created: "2026-04-23T08:49:58Z"
+updated: "2026-04-23T12:56:07Z"
+status: "completed"
+harden_status: "not_run"
+
+task:
+  title: "Handoff Renderer And Templates"
+  summary: >
+    Build one handoff renderer with a kind enum and make the existing prompt
+    files renderer templates instead of standalone artifacts. Add the single new
+    read-only command, `scafld handoff`, so external harnesses can ask for the
+    current phase, recovery, or review handoff without driving lifecycle moves.
+    Every handoff should render as a sibling `*.md + *.json` pair from one
+    renderer.
+  size: "large"
+  risk_level: "high"
+  context:
+    packages:
+      - "scafld/"
+      - "scafld/commands/"
+      - ".ai/prompts/"
+      - "docs/"
+      - "tests/"
+    files_impacted:
+      - path: "scafld/handoff_renderer.py"
+        lines: "all"
+        reason: "New module for rendering all handoff kinds from one code path."
+      - path: "scafld/commands/handoff.py"
+        lines: "all"
+        reason: "New read-only command for emitting handoffs."
+      - path: "scafld/commands/surface.py"
+        lines: "1-260"
+        reason: "Register the new handoff command."
+      - path: ".ai/prompts/plan.md"
+        lines: "all"
+        reason: "Planning template source of truth."
+      - path: ".ai/prompts/exec.md"
+        lines: "all"
+        reason: "Phase template source of truth."
+      - path: ".ai/prompts/review.md"
+        lines: "all"
+        reason: "Review template source of truth."
+      - path: ".ai/prompts/recovery.md"
+        lines: "all"
+        reason: "Recovery template source of truth."
+      - path: "docs/cli-reference.md"
+        lines: "all"
+        reason: "Document `scafld handoff`."
+      - path: "docs/execution.md"
+        lines: "all"
+        reason: "Document phase and recovery handoffs."
+      - path: "docs/review.md"
+        lines: "all"
+        reason: "Document review handoffs."
+      - path: "tests/run_contracts_smoke.sh"
+        lines: "all"
+        reason: "Smoke test for runtime contracts and phase handoff generation."
+      - path: "tests/review_handoff_smoke.sh"
+        lines: "all"
+        reason: "Smoke test for review handoff generation."
+      - path: "tests/lifecycle_smoke.sh"
+        lines: "all"
+        reason: "Smoke test for default review-handoff selection after completion."
+    invariants:
+      - "domain_boundaries"
+      - "public_api_stable"
+      - "config_from_env"
+    related_docs:
+      - "plans/llm-performance-cutover.md"
+      - "docs/execution.md"
+      - "docs/review.md"
+      - "docs/run-artifacts.md"
+  objectives:
+    - "Use one renderer for phase, recovery, and review handoffs."
+    - "Make `.ai/prompts/*.md` the source templates for handoff rendering."
+    - "Render every handoff as a sibling `.md/.json` pair with stable metadata."
+    - "Expose a single read-only `scafld handoff` command."
+    - "Define default selector behavior for active phase, fallback phase1, and review-after-complete."
+    - "Keep the handoff immutable and never use it as run state."
+  scope:
+    in_scope:
+      - "Renderer templates and rendering."
+      - "One new read-only command."
+      - "Docs and smoke tests."
+    out_of_scope:
+      - "Execution-session writes."
+      - "Recovery attempt accounting."
+      - "Report metrics."
+  dependencies:
+    - "llm-run-schema-and-config should land first so handoff/session contracts are stable."
+  assumptions:
+    - "Session-dependent recovery details can be partially scaffolded here and completed in the session/recovery spec."
+    - "Planning templates can be subordinated now even if planning handoffs are not publicly surfaced in v1."
+  touchpoints:
+    - area: "Renderer"
+      description: "One renderer code path accepts kind and selector and emits a handoff."
+    - area: "Templates"
+      description: "Prompt files become the one source of truth for rendered handoff prose."
+    - area: "CLI"
+      description: "External harnesses can retrieve a handoff without lifecycle mutation."
+    - area: "Docs"
+      description: "Execution and review docs explain how handoffs are obtained."
+  risks:
+    - description: "Templates and rendered handoffs can drift."
+      impact: "high"
+      mitigation: "Keep templates as the sole prose source and render all handoffs from them."
+    - description: "The command surface can regrow."
+      impact: "medium"
+      mitigation: "Add only `scafld handoff` in v1."
+  acceptance:
+    validation_profile: "strict"
+    definition_of_done:
+      - id: "dod1"
+        description: "One renderer can emit sibling `.md/.json` handoffs of kind phase, review, and recovery."
+        status: "pending"
+      - id: "dod2"
+        description: "Prompt files are consumed as templates, not parallel artifacts."
+        status: "pending"
+      - id: "dod3"
+        description: "scafld handoff returns phase and review handoffs in human and JSON forms with the correct defaults."
+        status: "pending"
+      - id: "dod4"
+        description: "Recovery template exists and is wired into the renderer contract."
+        status: "pending"
+    validation:
+      - id: "v1"
+        type: "custom"
+        description: "Validate this draft spec."
+        command: "python3 cli/scafld validate llm-context-pack-prompt-compiler"
+        expected: "exit code 0"
+      - id: "v2"
+        type: "test"
+        description: "Run runtime contract smoke test."
+        command: "bash tests/run_contracts_smoke.sh"
+        expected: "exit code 0"
+      - id: "v3"
+        type: "test"
+        description: "Run review handoff and lifecycle smoke tests."
+        command: "bash tests/review_handoff_smoke.sh && bash tests/lifecycle_smoke.sh"
+        expected: "exit code 0"
+  constraints:
+    approvals_required: []
+    non_goals:
+      - "Do not add multiple new read-only commands."
+      - "Do not store handoff state back into session."
+      - "Do not add provider-specific model calls."
+  notes: >
+    The renderer should support a `kind` enum now. Recovery can remain partially
+    populated until the session spec adds attempts and diagnostics. The JSON
+    sibling should expose the same structured payload the markdown was rendered
+    from so external harnesses can inspect the handoff without scraping prose.
+
+planning_log:
+  - timestamp: "2026-04-23T08:49:58Z"
+    actor: "agent"
+    summary: "Rewrote the handoff compiler slice around one renderer, template subordination, and one new command."
+
+  - timestamp: "2026-04-23T12:53:04Z"
+    actor: "cli"
+    summary: "Spec approved"
+  - timestamp: "2026-04-23T12:53:05Z"
+    actor: "cli"
+    summary: "Execution started"
+  - timestamp: "2026-04-23T12:56:07Z"
+    actor: "cli"
+    summary: "Spec completed"
+phases:
+  - id: "phase1"
+    name: "Template hierarchy"
+    objective: "Make prompt files the single prose source for handoff rendering."
+    changes:
+      - file: ".ai/prompts/plan.md"
+        action: "update"
+        content_spec: |
+          Convert the file to explicit template language for planning handoffs.
+      - file: ".ai/prompts/exec.md"
+        action: "update"
+        content_spec: |
+          Convert the file to explicit template language for phase handoffs.
+      - file: ".ai/prompts/review.md"
+        action: "update"
+        content_spec: |
+          Convert the file to explicit template language for review handoffs.
+      - file: ".ai/prompts/recovery.md"
+        action: "create"
+        content_spec: |
+          Add the recovery handoff template used when a criterion fails.
+    acceptance_criteria:
+      - id: "ac1_1"
+        type: "documentation"
+        description: "Template docs mention handoff rendering."
+        command: >
+          bash -lc 'for f in .ai/prompts/plan.md .ai/prompts/exec.md .ai/prompts/review.md .ai/prompts/recovery.md; do rg -qi "template|handoff" "$f" || exit 1; done'
+        expected: "exit code 0"
+        result: "pass"
+        executed_at: "2026-04-23T12:53:07Z"
+    status: "pending"
+
+  - id: "phase2"
+    name: "Unified handoff renderer"
+    objective: "Render all handoff kinds from one code path."
+    dependencies: ["phase1"]
+    changes:
+      - file: "scafld/handoff_renderer.py"
+        action: "create"
+        content_spec: |
+          Implement one renderer that accepts kind, selector, spec, session
+          summary, template path, and model profile. Emit a stable sibling
+          `.md/.json` handoff pair with schema_version and immutable output.
+    acceptance_criteria:
+      - id: "ac2_1"
+        type: "test"
+        description: "Handoff smoke test covers phase and review handoffs."
+        command: "bash tests/run_contracts_smoke.sh && bash tests/review_handoff_smoke.sh"
+        expected: "exit code 0"
+        result: "pass"
+        executed_at: "2026-04-23T12:53:13Z"
+        result_output: "PASS: run contracts smoke [1/3] execute a passing phase [2/3] review emits a fresh review handoff [3/3] review metadata records the handoff reference PASS: review handoff smoke"
+    status: "pending"
+
+  - id: "phase3"
+    name: "Read-only handoff command"
+    objective: "Expose handoff retrieval without lifecycle mutation."
+    dependencies: ["phase2"]
+    changes:
+      - file: "scafld/commands/handoff.py"
+        action: "create"
+        content_spec: |
+          Add `scafld handoff <task-id> [--phase phase1 | --recovery ac1_1 |
+          --review] [--json]`. With no flags, default to the active phase,
+          `phase1` before execution, or the review handoff after completion.
+          Human mode prints path and summary; JSON mode returns envelope
+          metadata, the sibling JSON path, and the structured payload.
+      - file: "scafld/commands/surface.py"
+        action: "update"
+        content_spec: |
+          Register the handoff command with mutually exclusive selectors.
+      - file: "docs/cli-reference.md"
+        action: "update"
+        content_spec: |
+          Document the single new command and its selectors.
+      - file: "docs/execution.md"
+        action: "update"
+        content_spec: |
+          Explain how phase and recovery handoffs are obtained.
+      - file: "docs/review.md"
+        action: "update"
+        content_spec: |
+          Explain how a review handoff is obtained.
+      - file: "tests/run_contracts_smoke.sh"
+        action: "update"
+        content_spec: |
+          Create a temporary workspace/spec, render a phase handoff, and assert
+          the sibling `.md/.json` artifacts plus envelope metadata.
+      - file: "tests/review_handoff_smoke.sh"
+        action: "update"
+        content_spec: |
+          Open a review round and assert the review handoff plus sibling JSON
+          artifact are generated.
+      - file: "tests/lifecycle_smoke.sh"
+        action: "update"
+        content_spec: |
+          Complete a task and assert `scafld handoff <task-id>` defaults to the
+          archived review handoff.
+    acceptance_criteria:
+      - id: "ac3_1"
+        type: "test"
+        description: "Handoff smoke passes."
+        command: "bash tests/run_contracts_smoke.sh && bash tests/review_handoff_smoke.sh && bash tests/lifecycle_smoke.sh"
+        expected: "exit code 0"
+        result: "pass"
+        executed_at: "2026-04-23T12:53:50Z"
+        result_output: "PASS: run contracts smoke [1/3] execute a passing phase [2/3] review emits a fresh review handoff [3/3] review metadata records the handoff reference PASS: review handoff smoke [1/6] init a clean work"
+    status: "pending"
+
+rollback:
+  strategy: "per_phase"
+  commands:
+    phase1: "git checkout HEAD -- .ai/prompts/plan.md .ai/prompts/exec.md .ai/prompts/review.md && rm -f .ai/prompts/recovery.md"
+    phase2: "rm -f scafld/handoff_renderer.py"
+    phase3: "git checkout HEAD -- scafld/commands/surface.py docs/cli-reference.md docs/execution.md docs/review.md tests/run_contracts_smoke.sh tests/review_handoff_smoke.sh tests/lifecycle_smoke.sh && rm -f scafld/commands/handoff.py"
+
+review:
+  timestamp: "2026-04-23T12:56:07Z"
+  verdict: "incomplete"
+  review_rounds: 1
+  reviewer_mode: "human_override"
+  reviewer_session: ""
+  round_status: "override"
+  override_applied: true
+  override_reason: "Implemented as one stacked cutover in a shared worktree; all acceptance criteria passed and smoke coverage is green, but per-spec automated scope review is blocked by overlapping slices in the same diff."
+  override_confirmed_at: "2026-04-23T12:56:07Z"
+  reviewed_head: "2397a68631b2b3befe2c1c30bb9760e3b84bc4ad"
+  reviewed_dirty: true
+  reviewed_diff: "05658a3240d1eb5ce5f66124b8ae30fef39f5cc05005b1d23b1748cf70af35ea"
+  passes:
+    - id: spec_compliance
+      result: "pass"
+    - id: scope_drift
+      result: "fail"
+    - id: regression_hunt
+      result: "not_run"
+    - id: convention_check
+      result: "not_run"
+    - id: dark_patterns
+      result: "not_run"
+  blocking_count: 0
+  non_blocking_count: 0
+metadata:
+  estimated_effort_hours: 10
+  ai_model: "unspecified"
+  tags:
+    - "llm-performance"
+    - "handoff"
+    - "templates"

@@ -16,29 +16,60 @@ class CommandSpec:
     help: str
     handler_path: str
     args: tuple[ArgumentSpec, ...] = ()
+    public: bool = True
 
 
 VERSION_HANDLER_PATH = "scafld.commands.workspace:cmd_version"
 
 COMMAND_SPECS = (
     CommandSpec(
-        "init",
-        "Bootstrap scafld workspace",
-        "scafld.commands.workspace:cmd_init",
-        (
-            ArgumentSpec(("--json",), {"action": "store_true", "help": "Emit machine-readable initialization JSON"}),
-        ),
-    ),
-    CommandSpec(
-        "new",
-        "Create a new spec from template",
-        "scafld.commands.lifecycle:cmd_new",
+        "plan",
+        "Create a draft spec or reopen an existing draft harden round",
+        "scafld.commands.workflow:cmd_plan",
         (
             ArgumentSpec(("task_id",), {"help": "Task ID (kebab-case)"}),
             ArgumentSpec(("-t", "--title"), {"help": "Task title"}),
             ArgumentSpec(("-s", "--size"), {"choices": ["micro", "small", "medium", "large"]}),
             ArgumentSpec(("-r", "--risk"), {"choices": ["low", "medium", "high"]}),
-            ArgumentSpec(("--json",), {"action": "store_true", "help": "Emit machine-readable spec creation JSON"}),
+            ArgumentSpec(("--json",), {"action": "store_true", "help": "Emit machine-readable JSON"}),
+        ),
+    ),
+    CommandSpec(
+        "approve",
+        "Approve a draft spec",
+        "scafld.commands.lifecycle:cmd_approve",
+        (
+            ArgumentSpec(("task_id",), {"help": "Task ID"}),
+            ArgumentSpec(("--json",), {"action": "store_true", "help": "Emit machine-readable approval JSON"}),
+        ),
+    ),
+    CommandSpec(
+        "build",
+        "Start approved work and run validation until blocked or complete",
+        "scafld.commands.workflow:cmd_build",
+        (
+            ArgumentSpec(("task_id",), {"help": "Task ID"}),
+            ArgumentSpec(("--json",), {"action": "store_true", "help": "Emit machine-readable JSON"}),
+        ),
+    ),
+    CommandSpec(
+        "review",
+        "Run the adversarial review gate and emit a challenger handoff",
+        "scafld.commands.review:cmd_review",
+        (
+            ArgumentSpec(("task_id",), {"help": "Task ID"}),
+            ArgumentSpec(("--json",), {"action": "store_true", "help": "Emit machine-readable review handoff JSON"}),
+        ),
+    ),
+    CommandSpec(
+        "complete",
+        "Archive a reviewed task",
+        "scafld.commands.review:cmd_complete",
+        (
+            ArgumentSpec(("task_id",), {"help": "Task ID"}),
+            ArgumentSpec(("--human-reviewed",), {"action": "store_true", "help": "Allow a human-confirmed override when the review gate is blocked"}),
+            ArgumentSpec(("--reason",), {"help": "Required with --human-reviewed; records why the override was applied"}),
+            ArgumentSpec(("--json",), {"action": "store_true", "help": "Emit machine-readable completion JSON"}),
         ),
     ),
     CommandSpec(
@@ -59,13 +90,56 @@ COMMAND_SPECS = (
         ),
     ),
     CommandSpec(
-        "approve",
-        "Approve a draft spec",
-        "scafld.commands.lifecycle:cmd_approve",
+        "report",
+        "Aggregate stats across all specs",
+        "scafld.commands.reporting:cmd_report",
+        (
+            ArgumentSpec(("--json",), {"action": "store_true", "help": "Emit machine-readable report JSON"}),
+        ),
+    ),
+    CommandSpec(
+        "handoff",
+        "Render the current handoff for a task without moving the lifecycle",
+        "scafld.commands.handoff:cmd_handoff",
         (
             ArgumentSpec(("task_id",), {"help": "Task ID"}),
-            ArgumentSpec(("--json",), {"action": "store_true", "help": "Emit machine-readable approval JSON"}),
+            ArgumentSpec(("--phase",), {"help": "Render a phase handoff for this phase id"}),
+            ArgumentSpec(("--recovery",), {"help": "Render a recovery handoff for this failed acceptance criterion"}),
+            ArgumentSpec(("--review",), {"action": "store_true", "help": "Render the current review handoff"}),
+            ArgumentSpec(("--json",), {"action": "store_true", "help": "Emit machine-readable handoff JSON"}),
         ),
+    ),
+    CommandSpec(
+        "update",
+        "Refresh the managed scafld bundle",
+        "scafld.commands.workspace:cmd_update",
+        (
+            ArgumentSpec(("--scan-root",), {"help": "Recursively update all scafld workspaces under this path"}),
+            ArgumentSpec(("--self",), {"action": "store_true", "help": "git pull --ff-only the current scafld checkout before syncing workspaces"}),
+            ArgumentSpec(("--verbose",), {"action": "store_true", "help": "Show created/updated bundle files for each workspace"}),
+        ),
+    ),
+    CommandSpec(
+        "init",
+        "Bootstrap scafld workspace",
+        "scafld.commands.workspace:cmd_init",
+        (
+            ArgumentSpec(("--json",), {"action": "store_true", "help": "Emit machine-readable initialization JSON"}),
+        ),
+        public=False,
+    ),
+    CommandSpec(
+        "new",
+        "Create a new spec from template",
+        "scafld.commands.lifecycle:cmd_new",
+        (
+            ArgumentSpec(("task_id",), {"help": "Task ID (kebab-case)"}),
+            ArgumentSpec(("-t", "--title"), {"help": "Task title"}),
+            ArgumentSpec(("-s", "--size"), {"choices": ["micro", "small", "medium", "large"]}),
+            ArgumentSpec(("-r", "--risk"), {"choices": ["low", "medium", "high"]}),
+            ArgumentSpec(("--json",), {"action": "store_true", "help": "Emit machine-readable spec creation JSON"}),
+        ),
+        public=False,
     ),
     CommandSpec(
         "start",
@@ -75,6 +149,7 @@ COMMAND_SPECS = (
             ArgumentSpec(("task_id",), {"help": "Task ID"}),
             ArgumentSpec(("--json",), {"action": "store_true", "help": "Emit machine-readable start JSON"}),
         ),
+        public=False,
     ),
     CommandSpec(
         "branch",
@@ -87,6 +162,7 @@ COMMAND_SPECS = (
             ArgumentSpec(("--bind-current",), {"action": "store_true", "help": "Record the current branch without creating or switching"}),
             ArgumentSpec(("--json",), {"action": "store_true", "help": "Emit machine-readable branch-binding JSON"}),
         ),
+        public=False,
     ),
     CommandSpec(
         "sync",
@@ -96,6 +172,7 @@ COMMAND_SPECS = (
             ArgumentSpec(("task_id",), {"help": "Task ID"}),
             ArgumentSpec(("--json",), {"action": "store_true", "help": "Emit machine-readable sync JSON"}),
         ),
+        public=False,
     ),
     CommandSpec(
         "summary",
@@ -105,6 +182,7 @@ COMMAND_SPECS = (
             ArgumentSpec(("task_id",), {"help": "Task ID"}),
             ArgumentSpec(("--json",), {"action": "store_true", "help": "Emit machine-readable summary JSON"}),
         ),
+        public=False,
     ),
     CommandSpec(
         "checks",
@@ -114,6 +192,7 @@ COMMAND_SPECS = (
             ArgumentSpec(("task_id",), {"help": "Task ID"}),
             ArgumentSpec(("--json",), {"action": "store_true", "help": "Emit machine-readable check JSON"}),
         ),
+        public=False,
     ),
     CommandSpec(
         "pr-body",
@@ -123,26 +202,7 @@ COMMAND_SPECS = (
             ArgumentSpec(("task_id",), {"help": "Task ID"}),
             ArgumentSpec(("--json",), {"action": "store_true", "help": "Emit machine-readable PR-body JSON"}),
         ),
-    ),
-    CommandSpec(
-        "review",
-        "Run review passes and generate adversarial review prompt",
-        "scafld.commands.review:cmd_review",
-        (
-            ArgumentSpec(("task_id",), {"help": "Task ID"}),
-            ArgumentSpec(("--json",), {"action": "store_true", "help": "Emit machine-readable review handoff JSON"}),
-        ),
-    ),
-    CommandSpec(
-        "complete",
-        "Mark spec as completed",
-        "scafld.commands.review:cmd_complete",
-        (
-            ArgumentSpec(("task_id",), {"help": "Task ID"}),
-            ArgumentSpec(("--human-reviewed",), {"action": "store_true", "help": "Allow a human-confirmed override when the review gate is blocked"}),
-            ArgumentSpec(("--reason",), {"help": "Required with --human-reviewed; records why the override was applied"}),
-            ArgumentSpec(("--json",), {"action": "store_true", "help": "Emit machine-readable completion JSON"}),
-        ),
+        public=False,
     ),
     CommandSpec(
         "fail",
@@ -152,6 +212,7 @@ COMMAND_SPECS = (
             ArgumentSpec(("task_id",), {"help": "Task ID"}),
             ArgumentSpec(("--json",), {"action": "store_true", "help": "Emit machine-readable failure-archive JSON"}),
         ),
+        public=False,
     ),
     CommandSpec(
         "cancel",
@@ -161,6 +222,7 @@ COMMAND_SPECS = (
             ArgumentSpec(("task_id",), {"help": "Task ID"}),
             ArgumentSpec(("--json",), {"action": "store_true", "help": "Emit machine-readable cancellation JSON"}),
         ),
+        public=False,
     ),
     CommandSpec(
         "validate",
@@ -170,6 +232,7 @@ COMMAND_SPECS = (
             ArgumentSpec(("task_id",), {"help": "Task ID"}),
             ArgumentSpec(("--json",), {"action": "store_true", "help": "Emit machine-readable validation JSON"}),
         ),
+        public=False,
     ),
     CommandSpec(
         "harden",
@@ -180,6 +243,7 @@ COMMAND_SPECS = (
             ArgumentSpec(("--mark-passed",), {"dest": "mark_passed", "action": "store_true", "help": "Mark the latest hardening round as passed"}),
             ArgumentSpec(("--json",), {"action": "store_true", "help": "Emit machine-readable harden JSON"}),
         ),
+        public=False,
     ),
     CommandSpec(
         "exec",
@@ -191,6 +255,7 @@ COMMAND_SPECS = (
             ArgumentSpec(("-r", "--resume"), {"action": "store_true", "help": "Skip criteria that already passed"}),
             ArgumentSpec(("--json",), {"action": "store_true", "help": "Emit machine-readable execution JSON"}),
         ),
+        public=False,
     ),
     CommandSpec(
         "audit",
@@ -201,6 +266,7 @@ COMMAND_SPECS = (
             ArgumentSpec(("-b", "--base"), {"help": "Git base ref for historical comparison (default: current working tree)"}),
             ArgumentSpec(("--json",), {"action": "store_true", "help": "Emit machine-readable audit JSON"}),
         ),
+        public=False,
     ),
     CommandSpec(
         "diff",
@@ -209,24 +275,7 @@ COMMAND_SPECS = (
         (
             ArgumentSpec(("task_id",), {"help": "Task ID"}),
         ),
-    ),
-    CommandSpec(
-        "report",
-        "Aggregate stats across all specs",
-        "scafld.commands.reporting:cmd_report",
-        (
-            ArgumentSpec(("--json",), {"action": "store_true", "help": "Emit machine-readable report JSON"}),
-        ),
-    ),
-    CommandSpec(
-        "update",
-        "Refresh the managed scafld bundle",
-        "scafld.commands.workspace:cmd_update",
-        (
-            ArgumentSpec(("--scan-root",), {"help": "Recursively update all scafld workspaces under this path"}),
-            ArgumentSpec(("--self",), {"action": "store_true", "help": "git pull --ff-only the current scafld checkout before syncing workspaces"}),
-            ArgumentSpec(("--verbose",), {"action": "store_true", "help": "Show created/updated bundle files for each workspace"}),
-        ),
+        public=False,
     ),
 )
 
@@ -250,16 +299,30 @@ def resolve_command(name):
     return load_handler(spec.handler_path)
 
 
-def build_parser():
+def command_spec(name):
+    return COMMAND_SPECS_BY_NAME.get(name)
+
+
+def build_parser(*, include_advanced=False):
     parser = argparse.ArgumentParser(
         prog="scafld",
-        description="Spec-driven development framework for AI coding agents",
+        description=(
+            "Build long-running AI coding work under adversarial review.\n"
+            "Use --advanced with --help to show the full legacy command surface."
+        ),
     )
     parser.add_argument("--version", action="store_true", help="Show version")
+    parser.add_argument(
+        "--advanced",
+        action="store_true",
+        help=argparse.SUPPRESS if not include_advanced else "Show advanced and legacy commands in help",
+    )
     sub = parser.add_subparsers(dest="command")
 
     for spec in COMMAND_SPECS:
-        command_parser = sub.add_parser(spec.name, help=spec.help)
+        if not include_advanced and not spec.public:
+            continue
+        command_parser = sub.add_parser(spec.name, help=spec.help, description=spec.help)
         for argument in spec.args:
             command_parser.add_argument(*argument.flags, **argument.kwargs)
 

@@ -6,7 +6,7 @@ REVIEW_SCHEMA_VERSION = 3
 REVIEW_PASS_VALUES = {"pass", "fail", "pass_with_issues", "not_run"}
 REVIEW_VERDICTS = {"pass", "fail", "pass_with_issues", "incomplete"}
 REVIEW_ROUND_STATUSES = {"in_progress", "completed", "override"}
-REVIEWER_MODES = {"fresh_agent", "auto", "executor", "human_override"}
+REVIEWER_MODES = {"challenger", "fresh_agent", "auto", "executor", "human_override"}
 REVIEW_PASS_REGISTRY = {
     "spec_compliance": {
         "kind": "automated",
@@ -141,6 +141,8 @@ def build_review_metadata(
     reviewer_session="",
     override_reason=None,
     review_git_state=None,
+    review_handoff=None,
+    reviewer_isolation=None,
 ):
     """Build Review Artifact v3 metadata."""
     metadata = {
@@ -152,6 +154,10 @@ def build_review_metadata(
         "override_reason": override_reason,
         "pass_results": normalize_review_pass_results(topology, pass_results),
     }
+    if review_handoff is not None:
+        metadata["review_handoff"] = review_handoff
+    if reviewer_isolation is not None:
+        metadata["reviewer_isolation"] = reviewer_isolation
     metadata.update(review_git_state or {
         "reviewed_head": None,
         "reviewed_dirty": None,
@@ -489,6 +495,8 @@ def review_data_payload(review_data):
         "verdict": review_data.get("verdict"),
         "round_status": review_data.get("round_status"),
         "reviewer_mode": review_data.get("reviewer_mode"),
+        "review_handoff": metadata.get("review_handoff"),
+        "reviewer_isolation": metadata.get("reviewer_isolation"),
         "reviewed_head": metadata.get("reviewed_head"),
         "reviewed_dirty": metadata.get("reviewed_dirty"),
         "reviewed_diff": metadata.get("reviewed_diff"),

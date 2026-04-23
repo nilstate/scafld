@@ -38,3 +38,4 @@ class ErrorCode:
 
     PROJECTION_CHECK_FAILED = "projection_check_failed"
     ACCEPTANCE_FAILED = "acceptance_failed"
+    RECOVERY_EXHAUSTED = "recovery_exhausted"
