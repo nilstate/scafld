@@ -33,12 +33,11 @@ objects.
 The happy path looks like this:
 
 ```bash
-scafld new add-auth -t "Add auth middleware"
+scafld plan add-auth -t "Add auth middleware"
 scafld approve add-auth
-scafld start add-auth
+scafld build add-auth
 scafld branch add-auth
 scafld status add-auth
-scafld exec add-auth
 scafld review add-auth
 scafld summary add-auth
 scafld checks add-auth --json
@@ -110,7 +109,7 @@ The branch is not the workflow object. The spec is. Keep driving the task
 through the spec lifecycle:
 
 ```bash
-scafld exec add-auth
+scafld build add-auth
 scafld review add-auth
 ```
 

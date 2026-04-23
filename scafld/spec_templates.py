@@ -116,7 +116,7 @@ task:
 planning_log:
   - timestamp: {json.dumps(timestamp)}
     actor: "user"
-    summary: "Spec created via scafld new"
+    summary: "Spec created via scafld plan"
 
 phases:
   - id: "phase1"

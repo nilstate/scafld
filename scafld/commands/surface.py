@@ -23,6 +23,14 @@ VERSION_HANDLER_PATH = "scafld.commands.workspace:cmd_version"
 
 COMMAND_SPECS = (
     CommandSpec(
+        "init",
+        "Bootstrap scafld workspace",
+        "scafld.commands.workspace:cmd_init",
+        (
+            ArgumentSpec(("--json",), {"action": "store_true", "help": "Emit machine-readable initialization JSON"}),
+        ),
+    ),
+    CommandSpec(
         "plan",
         "Create a draft spec or reopen an existing draft harden round",
         "scafld.commands.workflow:cmd_plan",
@@ -120,38 +128,6 @@ COMMAND_SPECS = (
         ),
     ),
     CommandSpec(
-        "init",
-        "Bootstrap scafld workspace",
-        "scafld.commands.workspace:cmd_init",
-        (
-            ArgumentSpec(("--json",), {"action": "store_true", "help": "Emit machine-readable initialization JSON"}),
-        ),
-        public=False,
-    ),
-    CommandSpec(
-        "new",
-        "Create a new spec from template",
-        "scafld.commands.lifecycle:cmd_new",
-        (
-            ArgumentSpec(("task_id",), {"help": "Task ID (kebab-case)"}),
-            ArgumentSpec(("-t", "--title"), {"help": "Task title"}),
-            ArgumentSpec(("-s", "--size"), {"choices": ["micro", "small", "medium", "large"]}),
-            ArgumentSpec(("-r", "--risk"), {"choices": ["low", "medium", "high"]}),
-            ArgumentSpec(("--json",), {"action": "store_true", "help": "Emit machine-readable spec creation JSON"}),
-        ),
-        public=False,
-    ),
-    CommandSpec(
-        "start",
-        "Start execution of approved spec",
-        "scafld.commands.lifecycle:cmd_start",
-        (
-            ArgumentSpec(("task_id",), {"help": "Task ID"}),
-            ArgumentSpec(("--json",), {"action": "store_true", "help": "Emit machine-readable start JSON"}),
-        ),
-        public=False,
-    ),
-    CommandSpec(
         "branch",
         "Create or bind a working branch for a spec",
         "scafld.commands.lifecycle:cmd_branch",
@@ -246,18 +222,6 @@ COMMAND_SPECS = (
         public=False,
     ),
     CommandSpec(
-        "exec",
-        "Run acceptance criteria and record results",
-        "scafld.commands.execution:cmd_exec",
-        (
-            ArgumentSpec(("task_id",), {"help": "Task ID"}),
-            ArgumentSpec(("-p", "--phase"), {"help": "Run only criteria for this phase (e.g. phase1)"}),
-            ArgumentSpec(("-r", "--resume"), {"action": "store_true", "help": "Skip criteria that already passed"}),
-            ArgumentSpec(("--json",), {"action": "store_true", "help": "Emit machine-readable execution JSON"}),
-        ),
-        public=False,
-    ),
-    CommandSpec(
         "audit",
         "Check spec changes vs current git changes",
         "scafld.commands.audit:cmd_audit",
@@ -308,7 +272,7 @@ def build_parser(*, include_advanced=False):
         prog="scafld",
         description=(
             "Build long-running AI coding work under adversarial review.\n"
-            "Use --advanced with --help to show the full legacy command surface."
+            "Use --advanced with --help to show the full operator command surface."
         ),
     )
     parser.add_argument("--version", action="store_true", help="Show version")

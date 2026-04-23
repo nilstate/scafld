@@ -53,7 +53,7 @@ def cmd_complete(args):
 
     has_results = any(ac.get("result") in ("pass", "fail") for ac in parse_acceptance_criteria(text))
     if not has_results and not json_mode:
-        print(f"  {c(C_YELLOW, 'warn')}: no exec results recorded. Run '{c(C_BOLD, f'scafld exec {args.task_id}')}' first")
+        print(f"  {c(C_YELLOW, 'warn')}: no build results recorded. Run '{c(C_BOLD, f'scafld build {args.task_id}')}' first")
 
     review_file = root / REVIEWS_DIR / f"{args.task_id}.md"
     human_reviewed = bool(getattr(args, "human_reviewed", False))

@@ -5,21 +5,14 @@ from pathlib import Path
 from scafld.runtime_bundle import ARCHIVE_DIR, RUNS_DIR, load_runtime_config
 
 
-HANDOFF_SCHEMA_VERSION = 2
+HANDOFF_SCHEMA_VERSION = 3
 SESSION_SCHEMA_VERSION = 3
 HANDOFFS_DIRNAME = "handoffs"
 DIAGNOSTICS_DIRNAME = "diagnostics"
 RUNS_ARCHIVE_DIRNAME = "archive"
 
-HANDOFF_ROLE_VALUES = ("executor", "challenger", "reviewer", "human")
+HANDOFF_ROLE_VALUES = ("executor", "challenger", "human")
 HANDOFF_GATE_VALUES = ("harden", "phase", "recovery", "review")
-LEGACY_HANDOFF_KINDS = {
-    ("executor", "phase"): "phase",
-    ("executor", "recovery"): "recovery",
-    ("challenger", "review"): "review",
-    ("human", "harden"): "harden",
-}
-LEGACY_KIND_TO_IDENTITY = {value: key for key, value in LEGACY_HANDOFF_KINDS.items()}
 
 DEFAULT_MODEL_PROFILE = "default"
 DEFAULT_CONTEXT_BUDGET_TOKENS = 12000
@@ -58,21 +51,14 @@ def normalize_selector(value, fallback="current"):
     return selector or fallback
 
 
-def normalize_handoff_identity(*, role=None, gate=None, kind=None):
+def normalize_handoff_identity(*, role=None, gate=None):
     if role is None or gate is None:
-        resolved = LEGACY_KIND_TO_IDENTITY.get(kind)
-        if resolved is None:
-            raise ValueError("handoff identity requires role+gate or a supported legacy kind")
-        role, gate = resolved
+        raise ValueError("handoff identity requires role+gate")
     if role not in HANDOFF_ROLE_VALUES:
         raise ValueError(f"invalid handoff role: {role}")
     if gate not in HANDOFF_GATE_VALUES:
         raise ValueError(f"invalid handoff gate: {gate}")
     return role, gate
-
-
-def handoff_kind(role, gate):
-    return LEGACY_HANDOFF_KINDS.get((role, gate), f"{role}:{gate}")
 
 
 def archive_month_for_spec(root, spec_path):
@@ -156,8 +142,8 @@ def ensure_run_dirs(root, task_id, *, spec_path=None):
     }
 
 
-def handoff_filename(*, role=None, gate=None, kind=None, selector=None, attempt=None):
-    role, gate = normalize_handoff_identity(role=role, gate=gate, kind=kind)
+def handoff_filename(*, role=None, gate=None, selector=None, attempt=None):
+    role, gate = normalize_handoff_identity(role=role, gate=gate)
     safe_selector = normalize_selector(selector, fallback="current")
     stem = f"{role}-{gate}"
     if gate not in {"review", "harden"}:
@@ -167,23 +153,21 @@ def handoff_filename(*, role=None, gate=None, kind=None, selector=None, attempt=
     return f"{stem}.md"
 
 
-def handoff_path(root, task_id, *, role=None, gate=None, kind=None, selector=None, attempt=None, spec_path=None):
+def handoff_path(root, task_id, *, role=None, gate=None, selector=None, attempt=None, spec_path=None):
     return handoffs_dir(root, task_id, spec_path=spec_path) / handoff_filename(
         role=role,
         gate=gate,
-        kind=kind,
         selector=selector,
         attempt=attempt,
     )
 
 
-def handoff_json_path(root, task_id, *, role=None, gate=None, kind=None, selector=None, attempt=None, spec_path=None):
+def handoff_json_path(root, task_id, *, role=None, gate=None, selector=None, attempt=None, spec_path=None):
     return handoff_path(
         root,
         task_id,
         role=role,
         gate=gate,
-        kind=kind,
         selector=selector,
         attempt=attempt,
         spec_path=spec_path,

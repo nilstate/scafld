@@ -93,7 +93,7 @@ capture output bash -lc "cd '$WS' && PATH='$CLI_ROOT':\"\$PATH\" scafld init >/d
 printf 'seed\n' > "$WS/tracked.txt"
 (cd "$WS" && git init -b main >/dev/null 2>&1 && git config user.email smoke@example.com && git config user.name "Smoke Test" && git add . && git commit -m "chore: seed workspace" >/dev/null 2>&1)
 write_spec "$WS/.ai/specs/drafts/origin-flow.yaml"
-capture output bash -lc "cd '$WS' && PATH='$CLI_ROOT':\"\$PATH\" scafld approve origin-flow >/dev/null && PATH='$CLI_ROOT':\"\$PATH\" scafld start origin-flow >/dev/null"
+capture output bash -lc "cd '$WS' && PATH='$CLI_ROOT':\"\$PATH\" scafld approve origin-flow >/dev/null && PATH='$CLI_ROOT':\"\$PATH\" scafld build origin-flow >/dev/null"
 
 echo "[2/8] branch --json creates a task branch and records origin metadata"
 capture output bash -lc "cd '$WS' && PATH='$CLI_ROOT':\"\$PATH\" scafld branch origin-flow --json"

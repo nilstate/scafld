@@ -1,6 +1,6 @@
 ---
 title: CLI Reference
-description: Default agent surface plus advanced compatibility commands
+description: Default agent surface plus advanced operator tools
 ---
 
 # CLI Reference
@@ -8,6 +8,7 @@ description: Default agent surface plus advanced compatibility commands
 Default help teaches the agent-facing surface:
 
 ```bash
+scafld init
 scafld plan <task-id>
 scafld approve <task-id>
 scafld build <task-id>
@@ -20,7 +21,7 @@ scafld handoff <task-id>
 scafld update
 ```
 
-Use `scafld --help --advanced` for the full compatibility surface.
+Use `scafld --help --advanced` for the full operator surface.
 
 ## JSON Mode
 
@@ -64,8 +65,8 @@ scafld build <task-id> [--json]
 
 Wrapper behavior:
 
-- approved spec: runs `start`, then immediately runs `exec --resume`
-- active spec: runs `exec --resume`
+- approved spec: activates the task and immediately runs execution
+- active spec: runs the next execution pass
 
 When JSON mode starts approved work, inspect:
 
@@ -114,7 +115,6 @@ Important JSON fields:
 
 - `role`
 - `gate`
-- `kind`
 - `handoff_file`
 - `handoff_json_file`
 
@@ -132,14 +132,10 @@ Headlines:
 
 ## Advanced Commands
 
-The legacy surface remains available for scripts and operators:
+The operator surface remains available behind `--help --advanced`:
 
 ```bash
-scafld init
-scafld new
-scafld start
 scafld harden
-scafld exec
 scafld validate
 scafld branch
 scafld sync

@@ -70,14 +70,14 @@ EOF
 repo="$(new_repo)"
 write_approved_spec "$repo"
 
-echo "[1/3] execute a passing phase"
+echo "[1/3] build runs a passing phase"
 (
   cd "$repo"
-  scafld_cmd start review-task >/dev/null
   printf 'changed\n' > app.txt
 )
-capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld exec review-task --json"
-assert_json "$output" "data['ok'] is True" "exec should pass before review"
+capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld build review-task --json"
+assert_json "$output" "data['ok'] is True" "build should pass before review"
+assert_json "$output" "data['state']['action'] == 'start_exec'" "build should activate approved work in one call"
 
 echo "[2/3] review emits a fresh review handoff"
 capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld review review-task --json"

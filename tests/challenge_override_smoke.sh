@@ -164,14 +164,13 @@ EOF
 repo="$(new_repo)"
 write_approved_spec "$repo"
 
-echo "[1/4] execute a passing task and render the challenger handoff"
+echo "[1/4] build a passing task and render the challenger handoff"
 (
   cd "$repo"
-  scafld_cmd start override-task >/dev/null
   printf 'changed\n' > app.txt
 )
-capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld exec override-task --json"
-assert_json "$output" "data['ok'] is True" "exec should pass before review"
+capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld build override-task --json"
+assert_json "$output" "data['ok'] is True" "build should pass before review"
 capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld handoff override-task --review --json"
 assert_json "$output" "data['state']['role'] == 'challenger'" "review handoff should use the challenger role"
 [ -f "$repo/.ai/runs/override-task/handoffs/challenger-review.md" ] || fail "challenger review handoff should exist"

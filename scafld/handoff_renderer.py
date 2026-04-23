@@ -8,7 +8,6 @@ from scafld.runtime_contracts import (
     archive_month_for_spec,
     ensure_run_dirs,
     expected_session_ref,
-    handoff_kind,
     handoff_json_path,
     handoff_path,
     load_llm_settings,
@@ -189,13 +188,11 @@ def load_template(root, role, gate):
 
 
 def front_matter(role, gate, task_id, selector, generated_at, model_profile, template_rel, session_rel):
-    legacy_kind = handoff_kind(role, gate)
     lines = [
         "---",
         f"schema_version: {HANDOFF_SCHEMA_VERSION}",
         f"role: {json.dumps(role)}",
         f"gate: {json.dumps(gate)}",
-        f"kind: {json.dumps(legacy_kind)}",
         f"task_id: {json.dumps(task_id)}",
         f"selector: {json.dumps(selector)}",
         f"generated_at: {json.dumps(generated_at)}",
@@ -381,14 +378,13 @@ def render_handoff(
     *,
     role=None,
     gate=None,
-    kind=None,
     selector=None,
     session=None,
     context=None,
 ):
     spec_data = load_spec_document(spec_path)
     settings = load_llm_settings(root)
-    role, gate = normalize_handoff_identity(role=role, gate=gate, kind=kind)
+    role, gate = normalize_handoff_identity(role=role, gate=gate)
     template_path, template_text = load_template(root, role, gate)
     generated_at = now_iso()
     selector = selector or ("review" if gate == "review" else current_phase_id(spec_data) or "current")
@@ -447,12 +443,10 @@ def render_handoff(
         + "\n"
     )
     handoff_file.write_text(content, encoding="utf-8")
-    legacy_kind = handoff_kind(role, gate)
     payload = {
         "schema_version": HANDOFF_SCHEMA_VERSION,
         "role": role,
         "gate": gate,
-        "kind": legacy_kind,
         "task_id": task_id,
         "selector": selector,
         "generated_at": generated_at,
@@ -473,7 +467,6 @@ def render_handoff(
         "payload": payload,
         "role": role,
         "gate": gate,
-        "kind": legacy_kind,
         "selector": selector,
         "generated_at": generated_at,
         "template": template_rel,

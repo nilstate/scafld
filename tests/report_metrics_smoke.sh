@@ -71,18 +71,17 @@ write_approved_spec "$repo"
 echo "[1/3] create one failure followed by one recovery"
 (
   cd "$repo"
-  scafld_cmd start report-task >/dev/null
   printf 'red\n' > metric.txt
 )
-if capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld exec report-task --json"; then
-  fail "first exec should fail"
+if capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld build report-task --json"; then
+  fail "first build should fail"
 fi
 (
   cd "$repo"
   printf 'green\n' > metric.txt
 )
-capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld exec report-task --resume --json"
-assert_json "$output" "data['ok'] is True" "second exec should pass"
+capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld build report-task --json"
+assert_json "$output" "data['ok'] is True" "second build should pass"
 
 echo "[2/3] human report shows the LLM execution signals section"
 capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld report"

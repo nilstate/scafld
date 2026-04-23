@@ -51,7 +51,6 @@ Stable payload fields include:
 - `schema_version`
 - `role`
 - `gate`
-- `kind`
 - `task_id`
 - `selector`
 - `generated_at`

@@ -186,10 +186,10 @@ main() {
     git commit -m "bootstrap" >/dev/null 2>&1
   )
 
-  echo "[2/6] create a real draft, make it valid, and validate it"
+  echo "[2/6] create a real draft through plan, make it valid, and validate it"
   (
     cd "$repo"
-    scafld_cmd new demo-task -t "Lifecycle smoke" -s small -r low >/dev/null
+    scafld_cmd plan demo-task -t "Lifecycle smoke" -s small -r low >/dev/null
   )
   draft_path="$repo/.ai/specs/drafts/demo-task.yaml"
   cat > "$draft_path" <<'EOF'
@@ -257,15 +257,14 @@ EOF
   capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld validate demo-task"
   assert_contains "$output" "PASS:" "validate should accept the lifecycle spec"
 
-  echo "[3/6] approve, start, and execute the spec"
+  echo "[3/6] approve and build the spec"
   (
     cd "$repo"
     scafld_cmd approve demo-task >/dev/null
-    scafld_cmd start demo-task >/dev/null
     printf 'done\n' > demo.txt
   )
-  capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld exec demo-task"
-  assert_contains "$output" "1 passed" "exec should record the passing acceptance criterion"
+  capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld build demo-task"
+  assert_contains "$output" "1 passed" "build should record the passing acceptance criterion"
 
   echo "[4/6] run review and complete the spec"
   capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld review demo-task"
