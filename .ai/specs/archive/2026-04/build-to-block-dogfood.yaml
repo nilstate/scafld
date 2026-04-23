@@ -1,0 +1,234 @@
+spec_version: '1.1'
+task_id: build-to-block-dogfood
+created: '2026-04-23T14:52:22Z'
+updated: "2026-04-23T15:15:23Z"
+status: "completed"
+harden_status: passed
+task:
+  title: Dogfood mixed repo detection through the new surface
+  summary: 'Dogfood scafld on scafld itself by fixing the repo-context detector used
+    by `plan` and `new`. In the current repo, the detector sees `package.json` first,
+    classifies the workspace as Node-only, and emits useless placeholder commands
+    in the draft even though the Python toolchain has real compile and test commands.
+    The cut should make mixed Python+Node repos first-class, prefer concrete commands
+    over placeholders, and prove the new behavior through the agent-facing flow and
+    smoke coverage.
+
+    '
+  size: medium
+  risk_level: medium
+  context:
+    packages:
+    - scafld/config.py
+    - scafld/spec_templates.py
+    - tests/update_smoke.sh
+    - tests/agent_surface_smoke.sh
+    - README.md
+    - docs/configuration.md
+    invariants:
+    - domain_boundaries
+    - config_from_env
+  objectives:
+  - Detect mixed Python+Node repos instead of short-circuiting at the first stack
+    marker.
+  - Prefer concrete compile/test/lint/typecheck commands from the richer stack when
+    the other side only has placeholders.
+  - Keep node-only, python-only, and fallback detection behavior stable.
+  - Prove the fix by dogfooding `plan` on a mixed fixture and by keeping the compatibility/update
+    smokes green.
+  touchpoints:
+  - area: repo detection
+    description: Stack detection and command selection in scafld/config.py.
+  - area: spec scaffolding
+    description: Draft generation and surfaced repo context in scafld/spec_templates.py.
+  - area: dogfood tests
+    description: Smoke coverage for mixed repo detection and agent-surface planning
+      output.
+  acceptance:
+    definition_of_done:
+    - id: dod1
+      description: Mixed repos surface a mixed summary and concrete commands instead
+        of fallback placeholders when one stack provides them.
+      status: pending
+    - id: dod2
+      description: Node-only, Python-only, and fallback fixtures still produce stable
+        suggested commands.
+      status: pending
+    - id: dod3
+      description: The documented operator surface matches the new mixed-detection
+        behavior.
+      status: pending
+    validation:
+    - id: v1
+      type: compile
+      description: Compile the scafld package after the detection changes.
+      command: python3 -m compileall scafld
+      expected: exit code 0
+    - id: v2
+      type: test
+      description: Run the mixed repo detection smoke.
+      command: bash tests/mixed_repo_detection_smoke.sh
+      expected: exit code 0
+    - id: v3
+      type: test
+      description: Run the broader update smoke to protect existing detection behavior.
+      command: bash tests/update_smoke.sh
+      expected: exit code 0
+planning_log:
+- timestamp: '2026-04-23T14:52:22Z'
+  actor: user
+  summary: Spec created via scafld plan.
+- timestamp: '2026-04-24T05:10:00Z'
+  actor: assistant
+  summary: Re-scoped the dogfood task around the real mixed Python+Node detection
+    failure observed in scafld plan.
+- timestamp: '2026-04-23T14:55:13Z'
+  actor: cli
+  summary: Spec approved
+- timestamp: '2026-04-23T14:55:19Z'
+  actor: cli
+  summary: Execution started
+- timestamp: "2026-04-23T15:15:23Z"
+  actor: "cli"
+  summary: "Spec completed"
+phases:
+- id: phase1
+  name: Make mixed repo detection first-class
+  objective: 'Update repo detection so a workspace can be recognized as mixed Python+Node
+    and command selection prefers concrete values over fallback placeholders.
+
+    '
+  changes:
+  - file: scafld/config.py
+    action: update
+    content_spec: 'Add mixed-stack detection helpers, merge markers and summaries,
+      and
+
+      select concrete commands from either stack rather than returning the
+
+      first detector result unmodified.
+
+      '
+  - file: scafld/spec_templates.py
+    action: update
+    content_spec: 'Keep draft scaffolding aligned with the richer mixed repo summary
+      and
+
+      suggested commands.
+
+      '
+  acceptance_criteria:
+  - id: ac1_1
+    type: test
+    description: Mixed repo fixtures resolve to concrete commands and a mixed summary.
+    command: bash tests/mixed_repo_detection_smoke.sh
+    expected: exit code 0
+    result: pass
+    executed_at: '2026-04-23T15:04:09Z'
+    result_output: '[1/3] init merges mixed repo signals into one concrete config
+      overlay [2/3] plan surfaces the same mixed context through the taught agent
+      workflow [3/3] draft scaffolding carries the mixed summary and'
+  status: completed
+- id: phase2
+  name: Protect and document the dogfood path
+  objective: 'Extend the existing smoke and operator documentation so the new detection
+    model is exercised through the taught surface and stays understandable.
+
+    '
+  changes:
+  - file: tests/update_smoke.sh
+    action: update
+    content_spec: 'Add or tighten coverage so mixed repo detection stays stable beside
+      the
+
+      node-only, python-only, and fallback fixtures.
+
+      '
+  - file: tests/agent_surface_smoke.sh
+    action: update
+    content_spec: 'Dogfood plan output on a mixed fixture so the taught surface proves
+      the
+
+      improved draft commands.
+
+      '
+  - file: README.md
+    action: update
+    content_spec: 'Mention that repo-aware planning handles mixed Python+Node repos
+      and
+
+      prefers concrete commands when one side has real signals.
+
+      '
+  - file: docs/configuration.md
+    action: update
+    content_spec: 'Explain how minimal runtime config interacts with repo-aware detected
+
+      commands in mixed repos.
+
+      '
+  acceptance_criteria:
+  - id: ac2_1
+    type: compile
+    description: scafld still compiles after the documentation and smoke updates.
+    command: python3 -m compileall scafld
+    expected: exit code 0
+    result: pass
+    executed_at: '2026-04-23T14:59:34Z'
+    result_output: Listing 'scafld'... Listing 'scafld/commands'...
+  - id: ac2_2
+    type: test
+    description: The broader detection/update regressions stay green.
+    command: bash tests/update_smoke.sh && bash tests/agent_surface_smoke.sh
+    expected: exit code 0
+    result: pass
+    executed_at: '2026-04-23T15:04:20Z'
+    result_output: '[1/12] create workspaces and init-detection fixtures [2/12] init
+      detects a Node toolchain and writes concrete commands [3/12] new reuses Node
+      repo defaults while keeping task prompts editable [4/12] i'
+  status: completed
+rollback:
+  strategy: per_phase
+  commands:
+    phase1: git checkout HEAD -- scafld/config.py scafld/spec_templates.py
+    phase2: git checkout HEAD -- tests/update_smoke.sh tests/agent_surface_smoke.sh
+      README.md docs/configuration.md
+harden_rounds:
+- round: 1
+  started_at: '2026-04-23T14:52:22Z'
+  outcome: passed
+  questions:
+  - asked_at: '2026-04-24T05:10:00Z'
+    question: Should mixed repos be represented explicitly instead of letting the
+      first detector win, since scafld itself is a Python CLI with npm packaging metadata?
+    grounded_in: code:scafld/config.py:295
+    recommended_answer: Yes. Mixed detection should merge both stacks, then prefer
+      concrete commands over placeholders.
+  ended_at: '2026-04-23T14:55:09Z'
+
+review:
+  timestamp: "2026-04-23T15:14:05Z"
+  verdict: "pass"
+  review_rounds: 1
+  reviewer_mode: "challenger"
+  reviewer_session: ""
+  round_status: "completed"
+  override_applied: false
+  override_reason: null
+  override_confirmed_at: null
+  reviewed_head: "2397a68631b2b3befe2c1c30bb9760e3b84bc4ad"
+  reviewed_dirty: true
+  reviewed_diff: "64aa9bd174a52d16599488b289c05a0295f97ca60c86e8629debb386eebc9e37"
+  passes:
+    - id: spec_compliance
+      result: "pass"
+    - id: scope_drift
+      result: "pass"
+    - id: regression_hunt
+      result: "pass"
+    - id: convention_check
+      result: "pass"
+    - id: dark_patterns
+      result: "pass"
+  blocking_count: 0
+  non_blocking_count: 0

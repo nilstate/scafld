@@ -67,6 +67,16 @@ modes:
     show_reasoning: true
 
 # =============================================================================
+# LLM RUNTIME
+# =============================================================================
+llm:
+  model_profile: "default"
+  context:
+    budget_tokens: 12000
+  recovery:
+    max_attempts: 1
+
+# =============================================================================
 # HARDEN
 # =============================================================================
 # Optional pre-approval interrogation phase. Operator-driven: `scafld approve`

@@ -1,32 +1,43 @@
 # Claude Code Integration Notes
 
-> **Template file.** Add your project overview, essential commands (build, test, dev server), and any Claude-specific tips here.
+Read `AGENTS.md` first.
 
-Claude-specific tips for working with scafld.
+The short version:
 
-**MUST READ:** `AGENTS.md` - the canonical agent guide covering invariants, modes, validation, and conventions. Read it before doing any work.
+- `spec` is the contract
+- `session` is the durable run ledger
+- `review` is the adversarial gate
 
-## Tool Usage
+## Default Command Surface
 
-- Always use `Read` before `Edit` to understand existing code and ensure correct string matching.
-- Use `Grep` and `Glob` for codebase exploration instead of bash `find`/`grep`.
-- Prefer `Edit` (targeted replacement) over `Write` (full file overwrite) for existing files.
+Prefer these commands in prompts and automation:
 
-## Spec Management
+```bash
+scafld plan <task-id>
+scafld approve <task-id>
+scafld build <task-id>
+scafld review <task-id>
+scafld complete <task-id>
+scafld status <task-id>
+scafld handoff <task-id>
+scafld report
+```
 
-**Always use the `scafld` CLI for spec lifecycle management.** Never manually move, copy, or rename spec files. Never manually change the `status` field.
-
-## Entering scafld Modes
-
-- **Plan mode:** Read `.ai/prompts/plan.md`, then explore and generate a spec.
-- **Exec mode:** Read `.ai/prompts/exec.md`, then load the approved spec and execute.
-- **Review mode:** Run `scafld review <task-id>`, then read `.ai/prompts/review.md` and the review file. Fill in findings.
+Legacy commands still work, but they are not the taught surface.
 
 ## Prompting Patterns
 
+```text
+Plan the task as a scafld spec.
+Approve is done; build the task.
+Run the adversarial review gate.
+Show the current handoff.
+Show the current task status.
 ```
-"Let's plan [feature]. Create a task spec."
-"Execute the [task-id] spec."
-"Review the [task-id] spec."
-"Show me the current phase status."
-```
+
+## Tooling Notes
+
+- Read the generated handoff before editing code.
+- Use `scafld handoff <task-id>` when you need the current executor or challenger brief without moving lifecycle state.
+- `build` starts approved work, then advances active work through validation on later calls.
+- `complete` is expected to fail when the challenger blocks. That is normal; fix the issues or use the audited human override path only when justified.

@@ -14,6 +14,7 @@ from scafld.error_codes import ErrorCode as EC
 from scafld.errors import ScafldError
 from scafld.git_state import list_changed_files_against_ref, list_working_tree_changed_files
 from scafld.output import emit_command_json, error_payload
+from scafld.session_store import effective_changed_paths, ensure_workspace_baseline, load_session
 from scafld.spec_store import require_spec
 from scafld.terminal import C_BOLD, C_CYAN, C_DIM, C_GREEN, C_RED, C_YELLOW, c
 
@@ -94,6 +95,31 @@ def cmd_audit(args):
             )
 
     actual = filter_audit_paths(actual)
+    baseline_info = None
+    if not args.base:
+        session = load_session(root, args.task_id, spec_path=spec)
+        if session is not None:
+            baseline = session.get("workspace_baseline")
+            if not isinstance(baseline, dict) or not isinstance(baseline.get("paths"), dict):
+                session = ensure_workspace_baseline(
+                    root,
+                    args.task_id,
+                    paths=sorted(set(actual) - declared),
+                    source="legacy_bootstrap",
+                    spec_path=spec,
+                )
+                baseline = session.get("workspace_baseline")
+            actual = set(effective_changed_paths(root, actual, session))
+            if isinstance(baseline, dict):
+                baseline_info = {
+                    "source": baseline.get("source"),
+                    "captured_at": baseline.get("captured_at"),
+                    "tracked_paths": len(baseline.get("paths") or {}),
+                }
+        else:
+            actual = set(actual)
+    else:
+        actual = set(actual)
     covered_by_other_active = (actual - declared) & other_active_declared
     undeclared = actual - declared - covered_by_other_active
     missing = declared - actual
@@ -127,6 +153,7 @@ def cmd_audit(args):
         "active_overlap_details": conflict_details,
         "other_active_specs": other_active_specs,
         "files": files,
+        "baseline": baseline_info,
         "counts": {
             "declared": len(declared),
             "matched": len(matched),
@@ -164,6 +191,12 @@ def cmd_audit(args):
 
     print(f"{c(C_BOLD, f'Audit: {args.task_id}')} ({mode_label})")
     print()
+    if baseline_info:
+        print(
+            f"  {c(C_DIM, 'baseline')}: {baseline_info['source']} "
+            f"({baseline_info['tracked_paths']} tracked path(s) at {baseline_info['captured_at']})"
+        )
+        print()
 
     if not actual:
         if args.base:

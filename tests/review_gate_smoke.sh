@@ -711,7 +711,7 @@ EOF
   assert_contains "$output" "ac1_2" "exec should still run the pending criterion"
   assert_not_contains "$output" "ac1_1: Already passed criterion" "skipped criterion should not be re-executed"
   spec_text="$(cat "$repo/.ai/specs/active/$task_id.yaml")"
-  assert_contains "$spec_text" 'result: "pass"' "executed criterion should record a passing result"
+  assert_contains "$spec_text" 'result: pass' "executed criterion should record a passing result"
 }
 
 case_exec_timeout_override() {

@@ -86,7 +86,7 @@ def acceptance_summary(criteria):
     }
 
 
-def build_projection_model(root, spec_path, task_id, *, data, phase_entries, phase_counts_payload, criteria, review_state, sync):
+def build_projection_model(root, spec_path, task_id, *, data, phase_entries, phase_counts_payload, criteria, review_state, sync, runtime=None):
     """Build one deterministic projection model from the current spec state."""
     rel = spec_path.relative_to(root)
     task_block = data.get("task") if isinstance(data.get("task"), dict) else {}
@@ -116,6 +116,7 @@ def build_projection_model(root, spec_path, task_id, *, data, phase_entries, pha
         "review": review_state,
         "origin": origin_payload(data),
         "sync": sync,
+        "runtime": runtime or {},
     })
 
 

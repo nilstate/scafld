@@ -1,5 +1,6 @@
 import datetime
 import re
+from collections import defaultdict
 
 from scafld.command_runtime import require_root
 from scafld.git_state import capture_review_git_state
@@ -7,6 +8,7 @@ from scafld.output import emit_command_json
 from scafld.reviewing import parse_review_file, review_git_gate_reason
 from scafld.review_workflow import load_review_topology
 from scafld.runtime_bundle import REVIEWS_DIR
+from scafld.session_store import load_session, session_summary_payload
 from scafld.spec_parsing import count_phases, extract_self_eval_score, parse_acceptance_criteria, parse_iso8601_timestamp
 from scafld.spec_store import find_all_specs, yaml_read_field, yaml_read_nested
 from scafld.terminal import C_BOLD, C_DIM, C_GREEN, C_RED, C_YELLOW, STATUS_COLORS, c
@@ -71,6 +73,16 @@ def cmd_report(args):
     approved_waiting = []
     active_without_exec = []
     review_drift = []
+    runtime_sessions = 0
+    first_attempt_passed = 0
+    first_attempt_total = 0
+    recovered_pass = 0
+    recovered_total = 0
+    challenge_overrides = 0
+    challenge_blocked = 0
+    attempts_per_phase = defaultdict(int)
+    usage_totals = defaultdict(float)
+    per_task_runtime = {}
     review_topology = None
     try:
         review_topology = load_review_topology(root)
@@ -146,6 +158,54 @@ def cmd_report(args):
                             "reason": drift_reason,
                         })
 
+        session = load_session(root, triage_entry["task_id"], spec_path=spec_path)
+        if session is not None:
+            runtime_sessions += 1
+            runtime = session_summary_payload(session)
+            per_task_runtime[triage_entry["task_id"]] = {
+                "status": status,
+                "spec_path": triage_entry["path"],
+                "first_attempt_pass_rate": {
+                    "passed": runtime["first_attempt_passed"],
+                    "total": runtime["first_attempt_total"],
+                    "rate": (
+                        runtime["first_attempt_passed"] / runtime["first_attempt_total"]
+                        if runtime["first_attempt_total"]
+                        else None
+                    ),
+                },
+                "recovery_convergence_rate": {
+                    "recovered": runtime["recovered_pass"],
+                    "total": runtime["recovered_total"],
+                    "rate": (
+                        runtime["recovered_pass"] / runtime["recovered_total"]
+                        if runtime["recovered_total"]
+                        else None
+                    ),
+                },
+                "challenge_override_rate": {
+                    "overrides": runtime["challenge_overrides"],
+                    "total": runtime["challenge_blocked"],
+                    "rate": runtime["challenge_override_rate"],
+                },
+                "attempts_per_phase": runtime["attempts_per_phase"],
+                "failed_exhausted": runtime["failed_exhausted"],
+            }
+            first_attempt_passed += runtime["first_attempt_passed"]
+            first_attempt_total += runtime["first_attempt_total"]
+            recovered_pass += runtime["recovered_pass"]
+            recovered_total += runtime["recovered_total"]
+            challenge_overrides += runtime["challenge_overrides"]
+            challenge_blocked += runtime["challenge_blocked"]
+            for phase_id, count in runtime["attempts_per_phase"].items():
+                attempts_per_phase[phase_id] += count
+            usage = runtime.get("usage") if isinstance(runtime.get("usage"), dict) else {}
+            for key, value in usage.items():
+                try:
+                    usage_totals[key] += float(value)
+                except (TypeError, ValueError):
+                    continue
+
     if json_mode:
         avg_self_eval = sum(self_eval_scores) / len(self_eval_scores) if self_eval_scores else None
         avg_phases = sum(phase_counts) / len(phase_counts) if phase_counts else None
@@ -175,6 +235,28 @@ def cmd_report(args):
                 "harden_adoption": {
                     "counts": harden_status_counts,
                     "specs_with_rounds": specs_with_rounds,
+                },
+                "llm_runtime": {
+                    "sessions_found": runtime_sessions,
+                    "first_attempt_pass_rate": {
+                        "passed": first_attempt_passed,
+                        "total": first_attempt_total,
+                        "rate": (first_attempt_passed / first_attempt_total) if first_attempt_total else None,
+                    },
+                    "recovery_convergence_rate": {
+                        "recovered": recovered_pass,
+                        "total": recovered_total,
+                        "rate": (recovered_pass / recovered_total) if recovered_total else None,
+                    },
+                    "challenge_override_rate": {
+                        "overrides": challenge_overrides,
+                        "total": challenge_blocked,
+                        "rate": (challenge_overrides / challenge_blocked) if challenge_blocked else None,
+                    },
+                    "attempts_per_phase": dict(sorted(attempts_per_phase.items())),
+                    "usage_totals": dict(sorted(usage_totals.items())),
+                    "per_task": dict(sorted(per_task_runtime.items())),
+                    "attribution_note": "Session metrics show outcomes only; external agents may ignore generated handoffs.",
                 },
                 "triage": {
                     "stale_drafts": stale_drafts,
@@ -246,6 +328,57 @@ def cmd_report(args):
             print(f"  {harden_status:14s} {count:4d}")
     print(f"  {'with rounds':14s} {specs_with_rounds:4d}")
     print()
+
+    if runtime_sessions:
+        print(f"{c(C_BOLD, 'LLM execution signals:')}")
+        print(f"  {c(C_DIM, 'Session outcomes only; external agents may ignore handoffs.')}")
+        if first_attempt_total:
+            print(
+                f"  first-attempt pass: {first_attempt_passed}/{first_attempt_total} "
+                f"({first_attempt_passed / first_attempt_total * 100:.0f}%)"
+            )
+        else:
+            print("  first-attempt pass: none recorded")
+        if recovered_total:
+            print(
+                f"  recovery convergence: {recovered_pass}/{recovered_total} "
+                f"({recovered_pass / recovered_total * 100:.0f}%)"
+            )
+        else:
+            print("  recovery convergence: none recorded")
+        if challenge_blocked:
+            print(
+                f"  challenge override: {challenge_overrides}/{challenge_blocked} "
+                f"({challenge_overrides / challenge_blocked * 100:.0f}%)"
+            )
+        else:
+            print("  challenge override: none recorded")
+        if attempts_per_phase:
+            rendered = ", ".join(f"{phase_id}={count}" for phase_id, count in sorted(attempts_per_phase.items()))
+            print(f"  attempts per phase: {rendered}")
+        if usage_totals:
+            rendered_usage = ", ".join(f"{key}={value:g}" for key, value in sorted(usage_totals.items()))
+            print(f"  usage totals: {rendered_usage}")
+        print()
+
+        print(f"  {c(C_BOLD, 'Per-task metrics')}")
+        for task_id, runtime in sorted(per_task_runtime.items())[:5]:
+            first = runtime["first_attempt_pass_rate"]
+            recovery = runtime["recovery_convergence_rate"]
+            challenge = runtime["challenge_override_rate"]
+            rendered = (
+                f"    - {task_id}: first_attempt_pass_rate "
+                f"{first['passed']}/{first['total'] or 0}"
+                f", recovery_convergence_rate {recovery['recovered']}/{recovery['total'] or 0}"
+            )
+            if challenge["total"]:
+                rendered += f", challenge_override_rate {challenge['overrides']}/{challenge['total']}"
+            if runtime["failed_exhausted"]:
+                rendered += f", exhausted {runtime['failed_exhausted']}"
+            print(rendered)
+        if len(per_task_runtime) > 5:
+            print(f"    {c(C_DIM, f'+ {len(per_task_runtime) - 5} more')}")
+        print()
 
     print(f"{c(C_BOLD, 'Triage:')}")
     print_report_triage_section(

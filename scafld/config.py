@@ -1,6 +1,16 @@
 import json
 
 
+DEFAULT_INIT_COMMANDS = {
+    "compile_check": "echo 'Replace: your build command'",
+    "targeted_tests": "echo 'Replace: your test command'",
+    "full_test_suite": "echo 'Replace: your full test suite'",
+    "linter_suite": "echo 'Replace: your linter'",
+    "typecheck": "echo 'Replace: your typecheck'",
+}
+INIT_COMMAND_KEYS = tuple(DEFAULT_INIT_COMMANDS.keys())
+
+
 def parse_yaml_value(raw):
     """Parse a YAML scalar value, handling quotes and escapes."""
     value = raw.strip()
@@ -78,13 +88,7 @@ def default_init_detection():
     return {
         "summary": "no known Node or Python repo markers found",
         "markers": [],
-        "commands": {
-            "compile_check": "echo 'Replace: your build command'",
-            "targeted_tests": "echo 'Replace: your test command'",
-            "full_test_suite": "echo 'Replace: your full test suite'",
-            "linter_suite": "echo 'Replace: your linter'",
-            "typecheck": "echo 'Replace: your typecheck'",
-        },
+        "commands": DEFAULT_INIT_COMMANDS.copy(),
     }
 
 
@@ -292,12 +296,83 @@ def detect_python_init_commands(project_root):
     }
 
 
+def command_is_placeholder(command):
+    return not isinstance(command, str) or command.strip() in DEFAULT_INIT_COMMANDS.values()
+
+
+def detection_signal_score(detection):
+    commands = detection.get("commands") if isinstance(detection, dict) else {}
+    if not isinstance(commands, dict):
+        return 0
+    return sum(1 for key in INIT_COMMAND_KEYS if not command_is_placeholder(commands.get(key)))
+
+
+def merge_markers(*marker_lists):
+    merged = []
+    seen = set()
+    for marker_list in marker_lists:
+        for marker in marker_list or []:
+            if marker in seen:
+                continue
+            seen.add(marker)
+            merged.append(marker)
+    return merged
+
+
+def relabel_detection_summary(summary, stack_name):
+    prefix = f"{stack_name} repo detected"
+    if summary.startswith(prefix):
+        return f"{stack_name}{summary[len(prefix):]}"
+    return summary
+
+
+def merge_command_value(primary_command, secondary_command, *, default_key):
+    concrete = []
+    for command in (primary_command, secondary_command):
+        if command_is_placeholder(command):
+            continue
+        if command not in concrete:
+            concrete.append(command)
+    if concrete:
+        return " && ".join(concrete)
+    for command in (primary_command, secondary_command):
+        if isinstance(command, str) and command.strip():
+            return command.strip()
+    return DEFAULT_INIT_COMMANDS[default_key]
+
+
+def merge_stack_detections(primary, secondary):
+    primary_commands = primary.get("commands") if isinstance(primary.get("commands"), dict) else {}
+    secondary_commands = secondary.get("commands") if isinstance(secondary.get("commands"), dict) else {}
+    commands = {
+        key: merge_command_value(
+            primary_commands.get(key),
+            secondary_commands.get(key),
+            default_key=key,
+        )
+        for key in INIT_COMMAND_KEYS
+    }
+    primary_label = relabel_detection_summary(primary.get("summary", "primary"), "Python" if "Python" in primary.get("summary", "") else "Node")
+    secondary_label = relabel_detection_summary(secondary.get("summary", "secondary"), "Python" if "Python" in secondary.get("summary", "") else "Node")
+    return {
+        "summary": f"Mixed repo detected: {primary_label} + {secondary_label}",
+        "markers": merge_markers(primary.get("markers"), secondary.get("markers")),
+        "commands": commands,
+    }
+
+
 def detect_init_config(project_root):
     node = detect_node_init_commands(project_root)
+    python_detection = detect_python_init_commands(project_root)
+    if node and python_detection:
+        ordered = sorted(
+            (python_detection, node),
+            key=lambda item: (detection_signal_score(item), item.get("summary", "").startswith("Python")),
+            reverse=True,
+        )
+        return merge_stack_detections(ordered[0], ordered[1])
     if node:
         return node
-
-    python_detection = detect_python_init_commands(project_root)
     if python_detection:
         return python_detection
 

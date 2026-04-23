@@ -1,72 +1,77 @@
-# scafld - Planning & Execution Framework
+# scafld Runtime
 
-**Version:** 1.0
+scafld builds long-running AI coding work under adversarial review.
 
-scafld is a spec-driven framework for AI agent task planning and execution. Every task becomes a machine-readable YAML specification that flows through a defined lifecycle: plan, approve, execute, archive.
+## Core Model
 
----
+- `spec`: reviewed contract
+- `session`: durable run ledger
+- `handoff`: generated transport for the next voice
 
-## How It Works
+The lifecycle stays the same internally, but the taught surface is smaller:
 
-1. **Plan:** AI generates a task spec in `.ai/specs/drafts/` via conversational ReAct loop
-2. **Harden (optional):** `scafld harden <task-id>` interrogates the draft one question at a time. If the answer is already in the codebase, inspect the code instead of asking. Each recorded question carries a `grounded_in` value for the spec gap, verified code location, or archived precedent that made it worth asking. Run on high-risk or ambiguous specs; skip on trivial ones.
-3. **Approve:** Developer reviews and moves spec to `.ai/specs/approved/`. Approve does NOT consult harden status.
-4. **Execute:** AI picks up the approved spec, executes phases, validates at each checkpoint
-5. **Review:** Adversarial review finds what execution missed — `scafld review` runs the configured `spec_compliance` and `scope_drift` checks, scaffolds Review Artifact v3, and prepares the adversarial `regression_hunt`, `convention_check`, and `dark_patterns` passes in the latest round
-6. **Archive:** Completed specs move to `.ai/specs/archive/YYYY-MM/` with truthful review results recorded, or a human-reviewed override audited explicitly when the gate is blocked
-
-The approval gate is the human oversight boundary. The review gate is the quality boundary. During execution, the agent operates autonomously through all phases, pausing only when blocked or deviating from the spec. A normal completion path still stays agent-driven; the human-reviewed override is an exceptional audited escape hatch, not the default workflow.
-
-The default review topology lives in `config.yaml` and uses five ordered built-in passes: `spec_compliance`, `scope_drift`, `regression_hunt`, `convention_check`, and `dark_patterns`. Review Artifact v3 stores per-pass `pass_results`, reviewer provenance, and round status for that configured topology.
-
----
-
-## Directory Structure
-
+```text
+plan -> approve -> build -> review -> complete
 ```
+
+## Directory Layout
+
+```text
 .ai/
-├── README.md              # This file
-├── config.yaml            # Global configuration (invariants, validation, rubric)
-├── prompts/
-│   ├── plan.md            # Planning mode instructions
-│   ├── exec.md            # Execution mode instructions
-│   └── review.md          # Adversarial review mode instructions
-├── reviews/               # Review findings per spec (gitignored)
-├── schemas/
-│   └── spec.json          # JSON schema for task specifications
-├── specs/                 # Task specs organized by lifecycle status
-│   ├── README.md          # Spec workflow and naming conventions
-│   ├── drafts/            # status: draft | under_review
-│   ├── approved/          # status: approved
-│   ├── active/            # status: in_progress
-│   └── archive/YYYY-MM/   # status: completed | failed | cancelled
-├── playbooks/             # Reusable workflow templates (optional)
-└── logs/                  # Execution logs (optional, supplementary)
+  config.yaml
+  config.local.yaml
+  prompts/
+    plan.md
+    exec.md
+    recovery.md
+    review.md
+    harden.md
+  runs/
+    {task-id}/
+      handoffs/
+      diagnostics/
+      session.json
+    archive/{YYYY-MM}/{task-id}/
+  reviews/
+  schemas/
+  specs/
 ```
 
----
+Prompt ownership:
 
-## Key Files
+- `.ai/prompts/*` is the active template layer
+- `.ai/scafld/prompts/*` is the managed reset copy
 
-| File | Purpose |
-|------|---------|
-| `config.yaml` | Invariants, validation profiles, rubric weights, safety rules |
-| `prompts/plan.md` | System prompt for planning mode agents |
-| `prompts/exec.md` | System prompt for execution mode agents |
-| `prompts/review.md` | System prompt for adversarial review mode |
-| `schemas/spec.json` | JSON schema for spec validation |
-| `specs/README.md` | Spec directory structure, naming, and workflow |
+## Handoffs
 
----
+Each handoff is a sibling pair:
 
-## Related Docs
+- `*.md` for the model
+- `*.json` for the harness
 
-- [AGENTS.md](../AGENTS.md) - High-level AI agent policies
-- [OPERATORS.md](OPERATORS.md) - Human-facing cheat sheet for working with specs
-- [CONVENTIONS.md](../CONVENTIONS.md) - Coding standards and patterns
+Current runtime handoffs:
 
----
+- `executor-phase-*`
+- `executor-recovery-*`
+- `challenger-review`
 
-## License
+The handoff is one-way. scafld emits it; the system observes outcomes through
+the filesystem and criteria runs.
 
-MIT License - Free to use, modify, and distribute.
+## Review
+
+Challenge fires at `review` only in v1.
+
+That means:
+
+- one challenger handoff per task
+- one completion gate that matters
+- one attribution metric that stays honest: `challenge_override_rate`
+
+## Metrics
+
+`report` surfaces:
+
+- `first_attempt_pass_rate`
+- `recovery_convergence_rate`
+- `challenge_override_rate`

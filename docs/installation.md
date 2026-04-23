@@ -81,14 +81,16 @@ scafld init
 This scaffolds the full `.ai/` structure:
 
 ```
-.ai/
-  scafld/               # Managed runtime bundle refreshed by `scafld update`
+  .ai/
+  scafld/               # Managed reset copy refreshed by `scafld update`
   config.yaml            # Validation rules, rubric, safety controls
   config.local.yaml      # Your overrides (build/test/lint commands)
-  prompts/               # Plan + exec mode instructions
+  prompts/               # Active project-owned handoff template sources
     plan.md
     exec.md
+    recovery.md
     review.md
+    harden.md
   schemas/               # Spec validation schema
     spec.json
   specs/
@@ -106,6 +108,11 @@ CONVENTIONS.md           # Coding standards
 The `.ai/specs/` directory and `AGENTS.md` should be committed to version control. Specs are project artifacts, not personal notes.
 
 When `scafld init` sees common repo markers such as `package.json`, lockfiles, `pyproject.toml`, or `requirements.txt`, it now seeds `.ai/config.local.yaml` with suggested build, test, lint, and typecheck commands. Unknown repo shapes keep the existing safe placeholder commands.
+
+Prompt precedence is intentional:
+
+- `.ai/prompts/*` is the active layer
+- `.ai/scafld/prompts/*` is the managed reset source
 
 ## Configuration
 

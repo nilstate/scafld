@@ -1,0 +1,541 @@
+import hashlib
+import json
+import os
+from collections import defaultdict
+from copy import deepcopy
+
+from scafld.runtime_contracts import (
+    SESSION_SCHEMA_VERSION,
+    ensure_run_dirs,
+    locate_session_path,
+    load_llm_settings,
+    relative_path,
+    session_path,
+)
+from scafld.spec_parsing import now_iso
+
+
+def default_session(task_id, *, model_profile):
+    timestamp = now_iso()
+    return {
+        "schema_version": SESSION_SCHEMA_VERSION,
+        "task_id": task_id,
+        "created_at": timestamp,
+        "updated_at": timestamp,
+        "model_profile": model_profile,
+        "entries": [],
+        "recovery_attempts": {},
+        "criterion_states": {},
+        "phases": [],
+        "attempts": [],
+        "phase_summaries": [],
+        "workspace_baseline": None,
+        "usage": {},
+    }
+
+
+def normalize_session(session):
+    session["schema_version"] = SESSION_SCHEMA_VERSION
+    session.setdefault("entries", [])
+    session.setdefault("recovery_attempts", {})
+    session.setdefault("criterion_states", {})
+    session.setdefault("phases", [])
+    session.setdefault("attempts", [])
+    session.setdefault("phase_summaries", [])
+    session.setdefault("workspace_baseline", None)
+    session.setdefault("usage", {})
+    return session
+
+
+def snapshot_workspace_path(root, relative_path):
+    path = root / relative_path
+    try:
+        if path.is_symlink():
+            target = os.readlink(path)
+            return {
+                "kind": "symlink",
+                "sha256": hashlib.sha256(target.encode("utf-8", errors="surrogateescape")).hexdigest(),
+            }
+        if not path.exists():
+            return {"kind": "missing"}
+        if path.is_dir():
+            return {"kind": "directory"}
+        payload = path.read_bytes()
+        return {
+            "kind": "file",
+            "sha256": hashlib.sha256(payload).hexdigest(),
+            "size": len(payload),
+        }
+    except OSError as exc:
+        return {
+            "kind": "unreadable",
+            "error": str(exc),
+        }
+
+
+def snapshot_workspace_paths(root, paths):
+    return {
+        path: snapshot_workspace_path(root, path)
+        for path in sorted({path for path in paths if isinstance(path, str) and path.strip()})
+    }
+
+
+def workspace_baseline_payload(root, paths, *, source):
+    captured_at = now_iso()
+    path_states = snapshot_workspace_paths(root, paths)
+    return {
+        "captured_at": captured_at,
+        "source": source,
+        "paths": path_states,
+    }
+
+
+def load_session(root, task_id, *, spec_path=None):
+    path = locate_session_path(root, task_id, spec_path=spec_path)
+    if not path.exists():
+        return None
+    return normalize_session(json.loads(path.read_text(encoding="utf-8")))
+
+
+def write_session(root, task_id, session, *, spec_path=None):
+    ensure_run_dirs(root, task_id, spec_path=spec_path)
+    session["updated_at"] = now_iso()
+    path = session_path(root, task_id, spec_path=spec_path)
+    path.write_text(json.dumps(session, indent=2, sort_keys=False) + "\n", encoding="utf-8")
+    return path
+
+
+def ensure_session(root, task_id, *, model_profile=None, spec_path=None):
+    session = load_session(root, task_id, spec_path=spec_path)
+    if session is not None:
+        return session
+    settings = load_llm_settings(root)
+    session = default_session(task_id, model_profile=model_profile or settings["model_profile"])
+    write_session(root, task_id, session, spec_path=spec_path)
+    return session
+
+
+def record_workspace_baseline(root, task_id, *, paths, source, spec_path=None):
+    baseline = workspace_baseline_payload(root, paths, source=source)
+
+    def apply(session):
+        session["workspace_baseline"] = baseline
+        append_entry(
+            session,
+            "workspace_baseline",
+            source=source,
+            path_count=len(baseline["paths"]),
+            recorded_at=baseline["captured_at"],
+        )
+
+    return mutate_session(root, task_id, apply, spec_path=spec_path)
+
+
+def ensure_workspace_baseline(root, task_id, *, paths, source, spec_path=None):
+    session = ensure_session(root, task_id, spec_path=spec_path)
+    baseline = session.get("workspace_baseline")
+    if isinstance(baseline, dict) and isinstance(baseline.get("paths"), dict):
+        return session
+    return record_workspace_baseline(root, task_id, paths=paths, source=source, spec_path=spec_path)
+
+
+def effective_changed_paths(root, actual_paths, session):
+    baseline = session.get("workspace_baseline") if isinstance(session, dict) else None
+    baseline_paths = baseline.get("paths") if isinstance(baseline, dict) else None
+    if not isinstance(baseline_paths, dict):
+        return sorted({path for path in actual_paths if isinstance(path, str) and path.strip()})
+
+    effective = []
+    for path in sorted({path for path in actual_paths if isinstance(path, str) and path.strip()}):
+        baseline_state = baseline_paths.get(path)
+        if baseline_state is None:
+            effective.append(path)
+            continue
+        current_state = snapshot_workspace_path(root, path)
+        if current_state != baseline_state:
+            effective.append(path)
+    return effective
+
+
+def mutate_session(root, task_id, mutator, *, model_profile=None, spec_path=None):
+    session = ensure_session(root, task_id, model_profile=model_profile, spec_path=spec_path)
+    mutable = deepcopy(session)
+    mutator(mutable)
+    write_session(root, task_id, mutable, spec_path=spec_path)
+    return mutable
+
+
+def phase_entry(session, phase_id):
+    phases = session.setdefault("phases", [])
+    for entry in phases:
+        if entry.get("phase_id") == phase_id:
+            return entry
+
+    entry = {
+        "phase_id": phase_id,
+        "attempt_count": 0,
+        "criterion_ids": [],
+        "completed_at": None,
+        "blocked_at": None,
+        "blocked_reason": None,
+    }
+    phases.append(entry)
+    return entry
+
+
+def append_entry(
+    session,
+    entry_type,
+    *,
+    replace_keys=None,
+    recorded_at=None,
+    **fields,
+):
+    entry = {
+        "type": entry_type,
+        "recorded_at": recorded_at or now_iso(),
+        **fields,
+    }
+    entries = session.setdefault("entries", [])
+    if replace_keys:
+        for index, existing in enumerate(entries):
+            if existing.get("type") != entry_type:
+                continue
+            if all(existing.get(key) == value for key, value in replace_keys.items()):
+                merged = dict(existing)
+                merged.update(entry)
+                entries[index] = merged
+                return merged
+    entries.append(entry)
+    return entry
+
+
+def append_attempt(
+    root,
+    task_id,
+    *,
+    criterion_id,
+    phase_id,
+    status,
+    command,
+    expected,
+    cwd,
+    exit_code,
+    output_snippet,
+    diagnostic_path=None,
+    spec_path=None,
+):
+    def apply(session):
+        attempts = session.setdefault("attempts", [])
+        criterion_attempts = sum(1 for item in attempts if item.get("criterion_id") == criterion_id)
+        attempt = {
+            "attempt_index": len(attempts) + 1,
+            "criterion_id": criterion_id,
+            "phase_id": phase_id,
+            "criterion_attempt": criterion_attempts + 1,
+            "status": status,
+            "command": command,
+            "expected": expected,
+            "cwd": cwd,
+            "exit_code": exit_code,
+            "output_snippet": output_snippet,
+            "diagnostic_path": relative_path(root, diagnostic_path) if diagnostic_path else None,
+            "recorded_at": now_iso(),
+        }
+        attempts.append(attempt)
+        append_entry(
+            session,
+            "attempt",
+            criterion_id=criterion_id,
+            phase_id=phase_id,
+            attempt_index=attempt["attempt_index"],
+            criterion_attempt=attempt["criterion_attempt"],
+            status=status,
+            command=command,
+            expected=expected,
+            cwd=cwd,
+            exit_code=exit_code,
+            output_snippet=output_snippet,
+            diagnostic_path=attempt["diagnostic_path"],
+        )
+
+        phase = phase_entry(session, phase_id)
+        phase["attempt_count"] = phase.get("attempt_count", 0) + 1
+        criterion_ids = phase.setdefault("criterion_ids", [])
+        if criterion_id not in criterion_ids:
+            criterion_ids.append(criterion_id)
+
+    session = mutate_session(root, task_id, apply, spec_path=spec_path)
+    return session.get("attempts", [])[-1], session
+
+
+def set_recovery_attempt(root, task_id, criterion_id, count, *, spec_path=None):
+    def apply(session):
+        session.setdefault("recovery_attempts", {})[criterion_id] = count
+
+    return mutate_session(root, task_id, apply, spec_path=spec_path)
+
+
+def increment_recovery_attempt(root, task_id, criterion_id, *, spec_path=None):
+    counts = ensure_session(root, task_id, spec_path=spec_path).setdefault("recovery_attempts", {})
+    next_count = int(counts.get(criterion_id, 0)) + 1
+    session = set_recovery_attempt(root, task_id, criterion_id, next_count, spec_path=spec_path)
+    return next_count, session
+
+
+def record_phase_summary(root, task_id, phase_id, summary, *, spec_path=None):
+    def apply(session):
+        summaries = session.setdefault("phase_summaries", [])
+        timestamp = now_iso()
+        for entry in summaries:
+            if entry.get("phase_id") == phase_id:
+                entry["summary"] = summary
+                entry["created_at"] = timestamp
+                break
+        else:
+            summaries.append({
+                "phase_id": phase_id,
+                "summary": summary,
+                "created_at": timestamp,
+            })
+
+        phase = phase_entry(session, phase_id)
+        phase["completed_at"] = timestamp
+        phase["blocked_at"] = None
+        phase["blocked_reason"] = None
+        append_entry(
+            session,
+            "phase_summary",
+            replace_keys={"phase_id": phase_id},
+            phase_id=phase_id,
+            summary=summary,
+            recorded_at=timestamp,
+        )
+
+    return mutate_session(root, task_id, apply, spec_path=spec_path)
+
+
+def set_criterion_state(root, task_id, criterion_id, *, status, phase_id=None, reason=None, spec_path=None):
+    def apply(session):
+        session.setdefault("criterion_states", {})[criterion_id] = {
+            "status": status,
+            "phase_id": phase_id,
+            "reason": reason,
+            "updated_at": now_iso(),
+        }
+
+    return mutate_session(root, task_id, apply, spec_path=spec_path)
+
+
+def set_phase_block(root, task_id, phase_id, *, reason, spec_path=None):
+    def apply(session):
+        phase = phase_entry(session, phase_id)
+        blocked_at = now_iso()
+        phase["blocked_at"] = blocked_at
+        phase["blocked_reason"] = reason
+        append_entry(
+            session,
+            "phase_block",
+            phase_id=phase_id,
+            reason=reason,
+            recorded_at=blocked_at,
+        )
+
+    return mutate_session(root, task_id, apply, spec_path=spec_path)
+
+
+def update_latest_attempt_status(root, task_id, criterion_id, *, status, spec_path=None):
+    def apply(session):
+        for attempt in reversed(session.setdefault("attempts", [])):
+            if attempt.get("criterion_id") == criterion_id:
+                attempt["status"] = status
+                break
+        for entry in reversed(session.setdefault("entries", [])):
+            if entry.get("type") == "attempt" and entry.get("criterion_id") == criterion_id:
+                entry["status"] = status
+                break
+
+    return mutate_session(root, task_id, apply, spec_path=spec_path)
+
+
+def record_approval(root, task_id, *, gate, actor="human", note=None, spec_path=None):
+    def apply(session):
+        append_entry(
+            session,
+            "approval",
+            gate=gate,
+            actor=actor,
+            note=note,
+        )
+
+    return mutate_session(root, task_id, apply, spec_path=spec_path)
+
+
+def record_challenge_verdict(
+    root,
+    task_id,
+    *,
+    gate,
+    review_round,
+    verdict,
+    blocked,
+    blocking_count,
+    non_blocking_count,
+    reviewer_mode,
+    review_file,
+    handoff_file=None,
+    spec_path=None,
+):
+    def apply(session):
+        append_entry(
+            session,
+            "challenge_verdict",
+            replace_keys={"gate": gate, "review_round": review_round},
+            gate=gate,
+            review_round=review_round,
+            verdict=verdict,
+            blocked=bool(blocked),
+            blocking_count=blocking_count,
+            non_blocking_count=non_blocking_count,
+            reviewer_mode=reviewer_mode,
+            review_file=review_file,
+            handoff_file=handoff_file,
+        )
+
+    return mutate_session(root, task_id, apply, spec_path=spec_path)
+
+
+def record_human_override(
+    root,
+    task_id,
+    *,
+    gate,
+    review_round,
+    reason,
+    confirmed_at,
+    review_file,
+    spec_path=None,
+):
+    def apply(session):
+        append_entry(
+            session,
+            "human_override",
+            gate=gate,
+            review_round=review_round,
+            reason=reason,
+            review_file=review_file,
+            recorded_at=confirmed_at,
+        )
+
+    return mutate_session(root, task_id, apply, spec_path=spec_path)
+
+
+def attempts_for_criterion(session, criterion_id):
+    return [attempt for attempt in session.get("attempts", []) if attempt.get("criterion_id") == criterion_id]
+
+
+def latest_failed_attempt(session, criterion_id=None):
+    attempts = session.get("attempts", [])
+    for attempt in reversed(attempts):
+        if attempt.get("status") not in {"fail", "failed_exhausted"}:
+            continue
+        if criterion_id and attempt.get("criterion_id") != criterion_id:
+            continue
+        return attempt
+    return None
+
+
+def failed_attempts_for_criterion(session, criterion_id):
+    return [
+        attempt
+        for attempt in attempts_for_criterion(session, criterion_id)
+        if attempt.get("status") in {"fail", "failed_exhausted"}
+    ]
+
+
+def phase_summary_map(session):
+    return {
+        entry.get("phase_id"): entry
+        for entry in session.get("phase_summaries", [])
+        if entry.get("phase_id")
+    }
+
+
+def prior_phase_summary(session, ordered_phase_ids, current_phase_id):
+    if current_phase_id not in ordered_phase_ids:
+        return None
+    summaries = phase_summary_map(session)
+    current_index = ordered_phase_ids.index(current_phase_id)
+    for phase_id in reversed(ordered_phase_ids[:current_index]):
+        summary = summaries.get(phase_id)
+        if summary:
+            return summary
+    return None
+
+
+def session_summary_payload(session):
+    attempts = session.get("attempts", [])
+    entries = session.get("entries", []) if isinstance(session.get("entries"), list) else []
+    first_attempts = {}
+    recovered_total = 0
+    recovered_pass = 0
+    phase_attempts = defaultdict(int)
+
+    for attempt in attempts:
+        criterion_id = attempt.get("criterion_id")
+        phase_id = attempt.get("phase_id") or "unknown"
+        phase_attempts[phase_id] += 1
+        first_attempts.setdefault(criterion_id, []).append(attempt)
+
+    first_attempt_passed = 0
+    first_attempt_total = 0
+    for criterion_id, criterion_attempts in first_attempts.items():
+        if not criterion_attempts:
+            continue
+        ordered = sorted(criterion_attempts, key=lambda item: item.get("criterion_attempt", 0))
+        first_attempt_total += 1
+        if ordered[0].get("status") == "pass":
+            first_attempt_passed += 1
+            continue
+
+        recovered_total += 1
+        if any(item.get("status") == "pass" for item in ordered[1:]):
+            recovered_pass += 1
+
+    usage = session.get("usage") if isinstance(session.get("usage"), dict) else {}
+    criterion_states = session.get("criterion_states") if isinstance(session.get("criterion_states"), dict) else {}
+    failed_exhausted = sum(
+        1
+        for entry in criterion_states.values()
+        if isinstance(entry, dict) and entry.get("status") == "failed_exhausted"
+    )
+    latest_challenges = {}
+    for entry in entries:
+        if entry.get("type") != "challenge_verdict":
+            continue
+        key = (entry.get("gate"), entry.get("review_round"))
+        latest_challenges[key] = entry
+    challenge_verdicts = list(latest_challenges.values())
+    challenge_blocked = sum(1 for entry in challenge_verdicts if entry.get("blocked"))
+    challenge_overrides = sum(1 for entry in entries if entry.get("type") == "human_override")
+    return {
+        "attempt_count": len(attempts),
+        "entry_count": len(entries),
+        "phase_count": len(session.get("phases", [])),
+        "first_attempt_passed": first_attempt_passed,
+        "first_attempt_total": first_attempt_total,
+        "recovered_pass": recovered_pass,
+        "recovered_total": recovered_total,
+        "failed_exhausted": failed_exhausted,
+        "attempts_per_phase": dict(sorted(phase_attempts.items())),
+        "phase_summaries": len(session.get("phase_summaries", [])),
+        "challenge_verdicts": len(challenge_verdicts),
+        "challenge_blocked": challenge_blocked,
+        "challenge_overrides": challenge_overrides,
+        "challenge_override_rate": (
+            challenge_overrides / challenge_blocked
+            if challenge_blocked
+            else None
+        ),
+        "usage": usage,
+    }

@@ -1,116 +1,109 @@
 ---
 title: Execution
-description: Running specs and validating results
+description: Executor handoffs, recovery, and session-led execution
 ---
 
 # Execution
 
-Execution is what happens after planning. The spec is approved, moved to active, and an agent works against it. scafld's role during execution is validation and auditing.
+The lifecycle is unchanged:
 
-## Starting work
+```text
+new -> harden -> approve -> start -> exec -> review -> complete
+```
+
+The runtime model underneath it is:
+
+- `spec`: reviewed contract
+- `session`: durable run ledger
+- `handoff`: generated transport for the next voice
+
+Execution uses two handoff shapes:
+
+- `executor × phase`
+- `executor × recovery`
+
+## Start
 
 ```bash
-scafld start add-auth
+scafld start <task-id>
+scafld build <task-id>
 ```
 
-Moves the spec from `approved/` to `active/` and sets the status to `in_progress`. Hand the spec to your agent -- the spec file itself is the prompt.
+`start` moves an approved spec to active, initializes `session.json`, and emits
+the first executor handoff.
 
-## Running acceptance criteria
+`build` is the agent-facing wrapper:
+
+- approved spec: starts the task and immediately runs `exec --resume`
+- active spec: runs `exec --resume`
+
+That means a fresh `build` call from `approved` advances work to the next
+handoff or block in one invocation instead of requiring a second `build`.
+
+## Exec
 
 ```bash
-# Run all acceptance criteria
-scafld exec add-auth
-
-# Run a specific phase only
-scafld exec add-auth -p phase1
-
-# Resume from where you left off (skip already-passed criteria)
-scafld exec add-auth --resume
+scafld exec <task-id>
+scafld exec <task-id> --resume
 ```
 
-For each criterion, scafld:
+For each runnable criterion, `exec`:
 
-1. Resolves the working directory (criterion `cwd`, or `task.context.cwd`, or project root)
-2. Runs the `command` with the configured timeout (default 600 seconds)
-3. Compares the result against `expected`
-4. Records pass/fail with timestamp and output snippet directly in the spec
+1. runs the command
+2. records a short audit-friendly result snippet back into the spec
+3. appends the full attempt to `session.json`
+4. writes full diagnostics into `.ai/runs/{task-id}/diagnostics/`
 
-```yaml
-acceptance_criteria:
-  - id: ac1_1
-    type: test
-    description: "Middleware rejects missing tokens"
-    command: "npm test -- --grep 'auth middleware'"
-    expected: "exit code 0"
-    timeout_seconds: 30
-    result: pass              # filled in by scafld exec
-    executed_at: "2026-04-16T10:05:00Z"
-    result_output: "3 passing"
-```
+The spec stays concise. Session carries the real run history.
 
-## Expected value matching
+## Recovery
 
-The `expected` field supports several patterns:
+Recovery is not a subsystem.
 
-| Pattern | Meaning |
-|---------|---------|
-| `exit code 0` | Command exits with code 0 |
-| `0 failures` | Exit 0 and no "N failures" in output |
-| `All pass` | Exit 0, no failures reported |
-| `no matches` | Pass if exit != 0 or output is empty |
-| Any other string | Substring match (case-insensitive) + exit 0 |
+It is:
 
-## Working directory
+- a `recovery` gate on the handoff
+- a counter in session
+- a max-attempt policy in config
 
-Commands execute relative to the project root by default. Override per-criterion or per-spec:
+When a criterion fails inside the configured budget, scafld emits:
 
-```yaml
-task:
-  context:
-    cwd: "api"              # default for all criteria
+- `executor-recovery-{criterion}-{attempt}.md`
+- `executor-recovery-{criterion}-{attempt}.json`
 
-phases:
-  - acceptance_criteria:
-      - id: ac1_1
-        command: "cargo test"
-        cwd: "crates/auth"  # overrides task-level cwd
-```
+That handoff includes:
 
-Paths must be relative and cannot escape the workspace root.
+- failed criterion
+- expected result
+- diagnostic reference
+- prior attempts for the same criterion
+- current phase slice
+- prior phase summary
 
-## Phase ordering
+## Phase Summaries
 
-Phases execute in order. If phase 2 depends on phase 1, phase 1's criteria must all pass first. To run a specific phase regardless:
+At phase boundaries, scafld writes compact `phase_summary` entries into session.
 
-```bash
-scafld exec add-auth -p phase2
-```
+Later executor handoffs read those summaries instead of replaying old tool
+output. That is how long runs avoid linear context growth.
 
-## Handling failures
+## Recovery Cap
 
-When a criterion fails, fix the issue and resume:
+`llm.recovery.max_attempts` is hard.
 
-```bash
-scafld exec add-auth --resume
-```
+When the next failure would exceed the cap, `exec`:
 
-The `--resume` flag skips criteria already recorded as pass, resuming from the first pending or failed criterion.
+- stops emitting recovery handoffs
+- records `failed_exhausted` in session
+- blocks the phase
+- returns `human_required` in JSON output
 
-## Watching progress
+## Honest Boundary
 
-```bash
-scafld status add-auth
-scafld status add-auth --json
-```
+scafld can generate a better executor handoff. It cannot force an external
+harness to use it. Session metrics measure outcomes, not handoff consumption.
 
-Shows phase progress, criteria results, and current status.
+Prompt ownership is also explicit:
 
-## After execution
-
-Once all criteria pass, run the review:
-
-```bash
-scafld review add-auth
-```
-
-See [Review](review) for the automated and adversarial review process.
+- `.ai/prompts/exec.md` and `.ai/prompts/recovery.md` are the active template sources
+- `.ai/scafld/prompts/*.md` is the managed reset copy that `scafld update` refreshes

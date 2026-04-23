@@ -1,4 +1,7 @@
-# AI AGENT — HARDEN MODE
+# HARDEN MODE TEMPLATE
+
+This file remains operator-facing in v1. It is not compiled into a handoff yet,
+but it is the future template source for a `human × harden` handoff.
 
 **Status:** ACTIVE
 **Mode:** HARDEN

@@ -21,7 +21,7 @@ If any of these are vague, the spec isn't ready.
 
 ## The planning loop
 
-In planning mode, the agent reads `.ai/prompts/plan.md` and runs a structured exploration cycle:
+In planning mode, the agent reads the project-owned `.ai/prompts/plan.md` template and runs a structured exploration cycle:
 
 1. **THOUGHT** -- interpret the request in repo terms, identify unknowns
 2. **ACTION** -- search the codebase, read files, check diffs
@@ -30,6 +30,8 @@ In planning mode, the agent reads `.ai/prompts/plan.md` and runs a structured ex
 5. **REPEAT** until all required fields are filled
 
 The agent is in read-only mode during planning. It can explore anything but change nothing outside `.ai/specs/`. Max 20 cycles. If blocked by uncertainty, it saves with `status: under_review` and documents what it needs.
+
+`scafld plan <task-id>` is idempotent for drafts: rerunning it on an existing draft reopens harden instead of erroring. That gives agents a clean retry path without forcing them down to `scafld harden`.
 
 ## Task sizing
 

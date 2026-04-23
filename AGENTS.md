@@ -1,218 +1,146 @@
 # scafld - Agent Guide
 
-Canonical reference for AI coding agents working with this codebase. Agent-agnostic.
+Canonical guide for agents working in a scafld-managed repo.
 
-> **Template file.** When setting up scafld in your project, customize the invariants, forbidden actions, and domain rules below to match your architecture. The generic defaults are a solid starting point.
+Read this before doing work.
 
-**Key files:**
+## Core Model
 
-- `.ai/config.yaml` - Validation rules, rubric weights, safety controls, profiles
-- `.ai/prompts/plan.md` - Planning mode prompt
-- `.ai/prompts/exec.md` - Execution mode prompt
-- `.ai/schemas/spec.json` - Spec validation schema
-- `CONVENTIONS.md` - Coding standards and patterns
+- `spec` is the reviewed contract
+- `session` is the durable run ledger
+- `handoff` is transport: immutable `*.md + *.json`, tagged by `role × gate`
 
----
+Do not treat the raw spec as the prompt.
 
-## How scafld Works
+## Identity
 
-Spec-driven development: every non-trivial task becomes a machine-readable YAML specification before any code changes happen.
+scafld builds long-running AI coding work under adversarial review.
 
-1. **Plan** - Analyze task, explore codebase, generate spec in `.ai/specs/drafts/`
-2. **Review** - Human reviews and approves the spec
-3. **Execute** - Agent executes approved spec phase-by-phase with validation
-4. **Archive** - Completed specs move to `.ai/specs/archive/YYYY-MM/`
+The agent may execute autonomously inside the contract, but it does not get to
+close the task unchallenged. The review gate is the quality boundary.
 
-The spec is the contract. Operate autonomously within its bounds; pause for approval on deviations.
-
-For detailed planning instructions, read `.ai/prompts/plan.md`. For execution, read `.ai/prompts/exec.md`.
-
----
-
-## Spec Status Lifecycle
+## Lifecycle
 
 ```text
-draft → under_review → approved → in_progress → review → completed
-  ↓                                    ↓           ↓
-(edit)                             (blocked)     failed
-                                      ↓           ↑
-                                  (resume)    fix + re-review
+plan -> approve -> build -> review -> complete
 ```
 
-Valid transitions:
+Those commands sit on top of the stable internal lifecycle:
 
-- `draft` → `under_review` → `approved` → `in_progress` → `completed`
-- `in_progress` → `failed` → `cancelled`
-- `in_progress` can stay `in_progress` if blocked (explain in logs)
-- `under_review` → `draft` (changes requested)
+```text
+new -> harden -> approve -> start -> exec -> review -> complete
+```
 
----
+## Agent-Facing Commands
 
-## Architectural Invariants
+Use these by default:
 
-These rules must not be violated. See `config.yaml` for the canonical invariant list.
+```bash
+scafld plan <task-id> [-t title] [-s size] [-r risk]
+scafld approve <task-id>
+scafld build <task-id>
+scafld review <task-id>
+scafld complete <task-id>
+scafld status <task-id>
+scafld list
+scafld report
+scafld handoff <task-id>
+scafld update
+```
 
-### Layer Separation
+Use `scafld handoff` when an external harness needs the current handoff without
+moving the lifecycle.
 
-Domain logic stays in domain modules. HTTP/transport concerns stay in handlers. External integrations go through ports/adapters. No circular dependencies between layers.
+Prompt ownership is simple:
 
-### Stable Public APIs
+- `.ai/prompts/*.md` is the active template layer
+- `.ai/scafld/prompts/*.md` is the managed reset copy
 
-Public API changes (HTTP endpoints, event schemas, public interfaces) require explicit approval. Breaking changes require migration plans.
+## Handoffs
 
-### No Legacy Fallbacks
+Current role×gate handoffs:
 
-No dual-reads, dual-writes, or runtime fallbacks. When changing schemas or identifiers, adopt the new scheme immediately. Use one-off migration scripts, not runtime code.
+- `executor × phase`
+- `executor × recovery`
+- `challenger × review`
 
-### No Hardcoded Secrets
+Hard rules:
 
-Configuration from environment or secrets management, never hardcoded. No secrets in code, logs, or diffs.
+- read the generated handoff before acting
+- never read a handoff back to compute state
+- read `session.json` when you need durable state
 
-### Test-Logic Separation
+Defaults:
 
-No test fixtures, mocks, or conditional test-only logic in production code. Test utilities stay in dedicated test helper modules.
+- `scafld handoff <task-id>` returns the active phase handoff
+- if no phase is active yet, it returns `phase1`
+- after completion, it returns the archived review handoff
 
----
+## Execution
+
+`build` has two modes:
+
+- approved spec: starts the task and immediately runs validation to the next handoff or block
+- active spec: runs `exec --resume` and emits the next executor or recovery handoff
+
+During execution:
+
+- stay inside the declared files, invariants, and acceptance criteria
+- use recovery handoffs when validation fails
+- let phase summaries replace old chatter
+
+## Review
+
+`review` is the hero gate.
+
+- it runs automated checks first
+- it emits a `challenger × review` handoff
+- the challenger writes findings into `.ai/reviews/{task-id}.md`
+- `complete` closes only if the gate passes, or a human uses the audited override path
+
+The review stance is adversarial:
+
+- find defects
+- cite file and line
+- separate blocking and non-blocking findings
+- do not rewrite code from the review handoff
+
+## Metrics
+
+The report surface that matters:
+
+- `first_attempt_pass_rate`
+- `recovery_convergence_rate`
+- `challenge_override_rate`
+
+These measure session outcomes. They do not prove an external harness actually
+consumed the handoff.
+
+## Invariants
+
+Project-specific invariants live in:
+
+- `CONVENTIONS.md`
+- `.ai/config.yaml`
+
+Typical examples:
+
+- preserve layer boundaries
+- do not introduce hardcoded secrets
+- do not add runtime fallbacks without approval
+- keep public APIs stable unless the spec explicitly allows breakage
 
 ## Spec Management
 
-**Always use the `scafld` CLI for spec lifecycle management.** Never manually move, copy, or rename spec files between directories. Never manually change the `status` field. The CLI enforces validation, state transitions, and the review gate — bypassing it breaks the audit trail.
+Always use the CLI for lifecycle moves. Never hand-edit spec status or move spec
+files between directories manually.
 
----
+## Review Override
 
-## Operating Modes
-
-### Planning Mode
-
-- **When:** Starting a new task, exploring requirements
-- **Actions:** Search, read, analyze (NO code changes outside `.ai/specs/`)
-- **Output:** YAML spec in `.ai/specs/drafts/` with status `draft`
-- **Prompt:** Read `.ai/prompts/plan.md` before entering this mode
-
-### Harden Mode (optional)
-
-- **When:** The operator runs `scafld harden <task-id>` on a draft. You MAY suggest running it for high-risk or ambiguous specs, but MUST NOT block planning or approval on it. `scafld approve` does NOT consult `harden_status`.
-- **Actions:** Interrogate the draft one question at a time. Resolve upstream decisions before downstream ones. If a question can be answered by exploring the codebase, explore first and bring the verified finding back instead of asking the operator to repeat it. Record each round in the spec's `harden_rounds` array.
-- **Grounding contract:** each recorded question carries one `grounded_in` value using exactly one of `spec_gap:<field>`, `code:<file>:<line>` (verified in the current session), or `archive:<task_id>`. Use it as audit trail, not ceremony. Do not invent citations. If you run out of genuine grounded questions, stop.
-- **Termination:** operator types `done`/`stop`, you run out of genuine grounded questions, or you hit `max_questions_per_round` from `.ai/config.yaml` (a cap, not a target).
-- **Output:** appended round in `harden_rounds`; `harden_status: in_progress` while the loop runs. Operator finalises via `scafld harden <task-id> --mark-passed`.
-- **Prompt:** Read `.ai/prompts/harden.md` before entering this mode.
-
-### Execution Mode
-
-- **When:** Spec has status `approved`
-- **Actions:** Apply changes phase-by-phase, run acceptance criteria, log to `.ai/logs/`
-- **Output:** Code changes, validation results, updated spec
-- **Prompt:** Read `.ai/prompts/exec.md` before entering this mode
-- **Autonomy:** Execute all phases without pausing unless blocked, deviating from spec, or hitting a destructive action not covered by spec
-
-For trivial changes (typos, single-line fixes), skip the spec workflow and work directly.
-
-### Review Mode
-
-- **When:** All phases complete, before `scafld complete`
-- **Actions:** Run `scafld review`, then adversarial code review (ideally in a fresh session) and update the latest Review Artifact v3 round with reviewer provenance, `round_status`, and per-pass `pass_results`
-- **Output:** Findings written to `.ai/reviews/{task-id}.md`, verdict recorded in spec
-- **Prompt:** Read `.ai/prompts/review.md` before entering this mode
-- **Mandate:** Find problems, not confirm success. A review that finds zero issues is suspicious. The configured built-in passes are `spec_compliance`, `scope_drift`, `regression_hunt`, `convention_check`, and `dark_patterns`. `scafld complete` only bypasses a blocked gate through the audited `--human-reviewed --reason` path. Local CLI checks improve workflow integrity, but stronger guarantees still need CI or merge gate enforcement, review artifacts bound to the reviewed diff or commit, and out-of-band approval or an external reviewer.
-
----
-
-## Validation
-
-Validation profiles (`light`, `standard`, `strict`) and their check pipelines are defined in `config.yaml`. Agents select a profile based on `task.acceptance.validation_profile` or derive from `task.risk_level` (low→light, medium→standard, high→strict).
-
-**Per-phase:** Run configured checks after each phase completes.
-
-**Pre-commit:** Run full validation pipeline before marking task complete.
-
-**Self-evaluation:** Score work on rubric (defined in `config.yaml`). Threshold is 7/10; perform second pass if below.
-
----
-
-## Safety Controls
-
-Defined in `config.yaml` under `safety`. Key rules:
-
-**Require approval for:** Schema migrations, public API changes, data deletion, production deployments.
-
-**Automatically prevent:** Hardcoded secrets, unbounded queries, SQL injection, XSS vulnerabilities.
-
----
-
-## Coding Conventions
-
-See `CONVENTIONS.md` for full coding standards. Key points:
-
-- Match existing code style; keep diffs focused
-- Prefer existing helpers; keep code DRY
-- Explicit named imports, no confusing aliases
-- Bounded database queries with pagination
-- Idempotent migrations executed out of band
-
----
-
-## Git Commits
-
-Only commit when explicitly asked by the user.
-
-**Format:** `type(scope): title` (conventional commits)
-
-**Types:** `feat`, `fix`, `refactor`, `docs`, `test`, `chore`, `perf`, `style`
-
-**Rules:**
-
-- One logical change per commit
-- Title under 72 characters
-- Include what changed and why in the body
-- No unrelated edits bundled together
-- Pre-commit: code builds, tests pass, no secrets in diff, no debug code
-
----
-
-## Communication
-
-**Progress updates:** Report phase completion, acceptance criteria pass/fail counts, next action. Keep it concise - no verbose preambles.
-
-**When blocked:** State what's blocked, brief error, one recommendation, resolution options.
-
-**Final summary:** Phases completed, acceptance results, self-evaluation score, deviations, files changed.
-
----
-
-## Quick Reference
-
-### Key Paths
-
-| Path | Purpose |
-| ---- | ------- |
-| `.ai/config.yaml` | Validation, rubric, safety, profiles |
-| `.ai/prompts/plan.md` | Planning mode instructions |
-| `.ai/prompts/exec.md` | Execution mode instructions |
-| `.ai/prompts/review.md` | Adversarial review mode instructions |
-| `.ai/schemas/spec.json` | Spec JSON schema |
-| `.ai/specs/` | Task specs by status (drafts/approved/active/archive) |
-| `.ai/reviews/` | Review findings per spec (gitignored, accumulates rounds) |
-| `.ai/logs/` | Execution logs (ReAct traces) |
-| `CONVENTIONS.md` | Coding standards |
-
-### Spec Lifecycle
+Human override is exceptional and audited:
 
 ```bash
-# CLI (manages status, validation, file moves)
-scafld new <task-id>             # scaffold a spec in drafts/
-scafld list                      # show all specs
-scafld status <task-id>          # show details + phase progress
-scafld validate <task-id>        # check against schema
-scafld approve <task-id>         # drafts/ -> approved/
-scafld start <task-id>           # approved/ -> active/
-scafld exec <task-id>            # run acceptance criteria, record results
-scafld audit <task-id>           # compare spec changes vs git diff
-scafld diff <task-id>            # show git history for spec
-scafld review <task-id>          # run configured automated passes + scaffold Review Artifact v3
-scafld complete <task-id>        # read review, record verdict, archive (requires review)
-scafld complete <task-id> --human-reviewed --reason "manual audit"  # exceptional audited override for a blocked review gate
-scafld fail <task-id>            # active/ -> archive/ (failed)
-scafld cancel <task-id>          # active/ -> archive/ (cancelled)
-scafld report                    # aggregate stats across all specs
+scafld complete <task-id> --human-reviewed --reason "manual audit"
 ```
+
+It exists for blocked review gates, not as a routine shortcut.

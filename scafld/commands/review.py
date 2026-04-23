@@ -22,6 +22,8 @@ from scafld.review_workflow import (
     upsert_review_block,
 )
 from scafld.runtime_bundle import REVIEWS_DIR
+from scafld.runtime_contracts import archive_run_artifacts
+from scafld.session_store import ensure_session, record_challenge_verdict, record_human_override
 from scafld.spec_parsing import parse_acceptance_criteria
 from scafld.spec_store import move_spec, require_spec, yaml_read_field
 from scafld.terminal import C_BOLD, C_CYAN, C_DIM, C_GREEN, C_RED, C_YELLOW, STATUS_COLORS, c
@@ -101,6 +103,23 @@ def cmd_complete(args):
     gate_reason = gate["gate_reason"]
     gate_errors = gate["gate_errors"]
     current_git_state = gate["current_git_state"]
+    session = ensure_session(root, args.task_id, spec_path=spec)
+    review_metadata = review_data.get("metadata") or {}
+    if review_data["exists"] and verdict is not None:
+        session = record_challenge_verdict(
+            root,
+            args.task_id,
+            gate="review",
+            review_round=review_data.get("review_count", 0),
+            verdict=verdict,
+            blocked=bool(gate_reason),
+            blocking_count=len(blocking),
+            non_blocking_count=len(non_blocking),
+            reviewer_mode=review_metadata.get("reviewer_mode"),
+            review_file=str(review_file.relative_to(root)),
+            handoff_file=review_metadata.get("review_handoff"),
+            spec_path=spec,
+        )
 
     if gate_reason:
         if not human_reviewed:
@@ -173,6 +192,16 @@ def cmd_complete(args):
         non_blocking = review_data["non_blocking"]
         pass_results = review_data["pass_results"]
         override_applied = True
+        session = record_human_override(
+            root,
+            args.task_id,
+            gate="review",
+            review_round=review_data.get("review_count", 0) - 1,
+            reason=override_reason,
+            confirmed_at=override_confirmed_at,
+            review_file=str(review_file.relative_to(root)),
+            spec_path=spec,
+        )
         print(f"  {c(C_YELLOW, 'override')}: human-reviewed override applied")
     elif human_reviewed:
         if json_mode:
@@ -220,6 +249,8 @@ def cmd_complete(args):
 
     move_result = move_spec(root, spec, "completed")
     dest = move_result.dest
+    archive_month = dest.parent.name
+    archived_run_dir = archive_run_artifacts(root, args.task_id, archive_month)
     if json_mode:
         emit_command_json(
             "complete",
@@ -233,11 +264,15 @@ def cmd_complete(args):
                 "override_applied": override_applied,
                 "review_round": review_data.get("review_count", 0),
                 "review_file": str(review_file.relative_to(root)),
+                "handoff_file": review_data.get("metadata", {}).get("review_handoff"),
+                "run_archive_dir": str(archived_run_dir.relative_to(root)) if archived_run_dir else None,
                 "transition": move_result_payload(root, move_result),
             },
         )
     else:
         print_move_result(root, move_result)
+        if archived_run_dir:
+            print(f"  run archive: {c(C_DIM, str(archived_run_dir.relative_to(root)))}")
 
 
 def cmd_review(args):
@@ -328,6 +363,7 @@ def cmd_review(args):
             text,
             topology,
             normalized_passes,
+            automated_results,
             use_color=not json_mode,
         )
     except ScafldError as exc:
@@ -355,6 +391,12 @@ def cmd_review(args):
             state={"status": status, "review_round": review_round["review_count"]},
             result={
                 "review_file": review_round["review_path_rel"],
+                "handoff_file": review_round["review_handoff_rel"],
+                "handoff_json_file": review_round["review_handoff_json_rel"],
+                "handoff_role": review_round["handoff_role"],
+                "handoff_gate": review_round["handoff_gate"],
+                "review_handoff": review_round["review_handoff_rel"],
+                "review_handoff_json": review_round["review_handoff_json_rel"],
                 "review_prompt": review_round["review_prompt"],
                 "automated_passes": automated_results,
                 "required_sections": review_round["required_sections"],
@@ -362,4 +404,6 @@ def cmd_review(args):
             },
         )
     else:
+        print(f"  challenger handoff: {c(C_DIM, review_round['review_handoff_rel'])}")
+        print()
         print(review_round["review_prompt"])

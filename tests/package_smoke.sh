@@ -39,6 +39,13 @@ requires = md.get_all("Requires-Dist") or []
 assert any(req.startswith("PyYAML") for req in requires), requires
 PY
 
+echo "[3b/6] installed wheel teaches the slim agent surface by default"
+help_output="$(scafld --help)"
+[[ "$help_output" == *"plan"* ]] || fail "default help should expose plan"
+[[ "$help_output" == *"build"* ]] || fail "default help should expose build"
+[[ "$help_output" != *"start"* ]] || fail "default help should hide legacy start"
+[[ "$help_output" != *"exec"* ]] || fail "default help should hide legacy exec"
+
 echo "[4/6] installed wheel can init a workspace"
 WS="$(mktemp -d /tmp/scafld-wheel-workspace.XXXXXX)"
 TMP_DIRS+=("$WS")
@@ -51,6 +58,7 @@ workspace = Path("$WS")
 manifest = json.load(open(workspace / ".ai" / "scafld" / "manifest.json"))
 assert manifest["scafld_version"] == "$EXPECTED_VERSION", manifest["scafld_version"]
 assert (workspace / ".ai" / "scafld" / "prompts" / "harden.md").exists()
+assert (workspace / ".ai" / "scafld" / "prompts" / "recovery.md").exists()
 PY
 
 echo "[5/6] installed wheel init is idempotent for the managed manifest"
@@ -74,6 +82,7 @@ required = {
     "cli/scafld",
     ".ai/config.yaml",
     ".ai/prompts/harden.md",
+    ".ai/prompts/recovery.md",
     ".ai/schemas/spec.json",
     ".ai/specs/examples/add-error-codes.yaml",
     "scafld/__main__.py",
@@ -83,11 +92,13 @@ required = {
     "scafld/commands/app.py",
     "scafld/commands/audit.py",
     "scafld/commands/execution.py",
+    "scafld/commands/handoff.py",
     "scafld/commands/lifecycle.py",
     "scafld/commands/projections.py",
     "scafld/commands/reporting.py",
     "scafld/commands/review.py",
     "scafld/commands/surface.py",
+    "scafld/commands/workflow.py",
     "scafld/commands/workspace.py",
     "scafld/command_runtime.py",
     "scafld/config.py",
@@ -98,6 +109,9 @@ required = {
     "scafld/reviewing.py",
     "scafld/review_workflow.py",
     "scafld/runtime_bundle.py",
+    "scafld/runtime_contracts.py",
+    "scafld/session_store.py",
+    "scafld/handoff_renderer.py",
     "scafld/spec_parsing.py",
     "scafld/spec_store.py",
     "scafld/spec_templates.py",
