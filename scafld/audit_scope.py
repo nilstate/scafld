@@ -1,13 +1,12 @@
 import re
 
-from scafld.runtime_bundle import ACTIVE_DIR, CONFIG_LOCAL_PATH, LOGS_DIR, REVIEWS_DIR, RUNS_DIR, SPECS_DIR
+from scafld.runtime_bundle import ACTIVE_DIR, CONFIG_LOCAL_PATH, REVIEWS_DIR, RUNS_DIR, SPECS_DIR
 from scafld.spec_parsing import require_pyyaml
 
 
 AUDIT_IGNORED_PREFIXES = (
     f"{SPECS_DIR}/",
     f"{REVIEWS_DIR}/",
-    f"{LOGS_DIR}/",
     f"{RUNS_DIR}/",
 )
 AUDIT_IGNORED_FILES = {CONFIG_LOCAL_PATH}

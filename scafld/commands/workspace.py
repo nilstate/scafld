@@ -16,7 +16,6 @@ from scafld.runtime_bundle import (
     DRAFTS_DIR,
     FRAMEWORK_DIR,
     FRAMEWORK_MANIFEST_PATH,
-    LOGS_DIR,
     RUNS_DIR,
     SPECS_DIR,
     VERSION,
@@ -81,7 +80,7 @@ def cmd_init(args):
 
     if not json_mode:
         print(f"{c(C_BOLD, 'Directories:')}")
-    for directory in [DRAFTS_DIR, APPROVED_DIR, ACTIVE_DIR, ARCHIVE_DIR, LOGS_DIR, RUNS_DIR, f"{AI_DIR}/schemas", f"{AI_DIR}/prompts", f"{AI_DIR}/reviews"]:
+    for directory in [DRAFTS_DIR, APPROVED_DIR, ACTIVE_DIR, ARCHIVE_DIR, RUNS_DIR, f"{AI_DIR}/schemas", f"{AI_DIR}/prompts", f"{AI_DIR}/reviews"]:
         path = project_root / directory
         path.mkdir(parents=True, exist_ok=True)
         result["directories"].append({"path": f"{directory}/", "action": "ok"})
@@ -193,7 +192,6 @@ def cmd_init(args):
     gitignore = project_root / ".gitignore"
     scafld_entries = [
         "# scafld",
-        ".ai/logs/",
         ".ai/reviews/",
     ]
     if gitignore.exists():

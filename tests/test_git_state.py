@@ -103,7 +103,7 @@ class GitStateTest(unittest.TestCase):
             sync = build_origin_sync_payload(
                 root,
                 {"git": {"branch": "main"}},
-                excluded_rels=[".ai/specs/", ".ai/reviews/", ".ai/logs/", ".ai/config.local.yaml"],
+                excluded_rels=[".ai/specs/", ".ai/reviews/", ".ai/runs/", ".ai/config.local.yaml"],
             )
 
             self.assertEqual(sync["status"], "in_sync")

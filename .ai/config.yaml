@@ -269,7 +269,6 @@ repo_layout:
   backend: "backend/"
   frontend: "frontend/"
   specs: ".ai/specs/"
-  logs: ".ai/logs/"
 
 # =============================================================================
 # COMMUNICATION STYLE

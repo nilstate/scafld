@@ -16,8 +16,7 @@ dist/
 .DS_Store
 Thumbs.db
 
-# Logs
-.ai/logs/
+# scafld runtime state
 .ai/runs/
 .ai/reviews/
 .ai/scafld/

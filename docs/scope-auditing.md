@@ -43,7 +43,7 @@ safe when every declaration marks the file `ownership: shared`. This is meant
 for coordination surfaces such as plans, shared docs, or workflow glue. Leave
 the field unset for normal code ownership so accidental overlap still fails.
 
-scafld's own execution artifacts under `.ai/specs/`, `.ai/reviews/`, and `.ai/logs/`, plus the local override file `.ai/config.local.yaml`, are ignored so the planning and review ledger does not pollute task scope checks.
+scafld's own execution artifacts under `.ai/specs/`, `.ai/reviews/`, and `.ai/runs/`, plus the local override file `.ai/config.local.yaml`, are ignored so the planning and review ledger does not pollute task scope checks.
 
 ## Integration with review
 

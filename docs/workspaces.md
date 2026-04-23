@@ -70,7 +70,7 @@ scafld sync add-auth
   reports drift in both human output and `--json`.
 
 When scafld evaluates branch drift, it ignores its own control-plane artifacts
-under `.ai/specs/`, `.ai/reviews/`, `.ai/logs/`, plus `.ai/config.local.yaml`.
+under `.ai/specs/`, `.ai/reviews/`, `.ai/runs/`, plus `.ai/config.local.yaml`.
 That keeps sync focused on engineering changes instead of flagging the planning
 ledger itself.
 

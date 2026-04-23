@@ -21,7 +21,6 @@ from scafld.runtime_bundle import (
     CONFIG_PATH,
     DRAFTS_DIR,
     FRAMEWORK_CONFIG_PATH,
-    LOGS_DIR,
     REVIEWS_DIR,
     resolve_schema_path,
     sync_framework_bundle,
@@ -334,7 +333,7 @@ def cmd_new(args):
     auto_initialized = False
     if root is None:
         root = Path.cwd()
-        for rel in (DRAFTS_DIR, APPROVED_DIR, ACTIVE_DIR, ARCHIVE_DIR, LOGS_DIR, REVIEWS_DIR):
+        for rel in (DRAFTS_DIR, APPROVED_DIR, ACTIVE_DIR, ARCHIVE_DIR, REVIEWS_DIR):
             (root / rel).mkdir(parents=True, exist_ok=True)
         sync_framework_bundle(root)
         auto_initialized = True
