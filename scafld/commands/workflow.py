@@ -233,20 +233,20 @@ def cmd_build(args):
             raise SystemExit(exit_code)
         return
 
-    emit_command_json(
-        "build",
-        ok=False,
-        task_id=args.task_id,
-        state={"status": status},
-        error=error_payload(
-            f"build requires an approved or in_progress spec (current: {status})",
-            code=EC.INVALID_SPEC_STATUS,
-            next_action=(
-                f"scafld approve {args.task_id}"
-                if status == "draft"
-                else None
+    message = f"build requires an approved or in_progress spec (current: {status})"
+    if json_mode:
+        emit_command_json(
+            "build",
+            ok=False,
+            task_id=args.task_id,
+            state={"status": status},
+            error=error_payload(
+                message,
+                code=EC.INVALID_SPEC_STATUS,
+                next_action=f"scafld approve {args.task_id}" if status == "draft" else None,
+                exit_code=1,
             ),
-            exit_code=1,
-        ) if json_mode else None,
-    ) if json_mode else print(f"error: build requires an approved or in_progress spec (current: {status})")
+        )
+    else:
+        print(f"error: {message}")
     raise SystemExit(1)

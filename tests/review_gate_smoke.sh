@@ -1028,6 +1028,7 @@ case_all() {
   case_report_nested_exec_and_self_eval
   case_status_phase_count_ignores_top_level_status
   case_json_outputs
+  echo "PASS: review gate smoke"
 }
 
 main() {

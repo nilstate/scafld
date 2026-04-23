@@ -99,7 +99,6 @@ This scaffolds the full `.ai/` structure:
     active/              # Currently executing
     archive/             # Completed work
     examples/            # Reference specs
-  logs/                  # Execution logs (gitignored)
   reviews/               # Review findings (gitignored)
 AGENTS.md                # Your project's invariants and policies
 CONVENTIONS.md           # Coding standards
