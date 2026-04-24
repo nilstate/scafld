@@ -68,7 +68,7 @@ EOF
 repo="$(new_repo)"
 write_approved_spec "$repo"
 
-echo "[1/3] create one failure followed by one recovery"
+echo "[1/4] create one failure followed by one recovery"
 (
   cd "$repo"
   printf 'red\n' > metric.txt
@@ -83,7 +83,7 @@ fi
 capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld build report-task --json"
 assert_json "$output" "data['ok'] is True" "second build should pass"
 
-echo "[2/3] human report shows the LLM execution signals section"
+echo "[2/4] human report shows the LLM execution signals section"
 capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld report"
 assert_contains "$output" "LLM execution signals:" "report should show the session-derived section"
 assert_contains "$output" "recovery convergence: 1/1" "report should show recovered criteria"
@@ -91,12 +91,19 @@ assert_contains "$output" "challenge override: none recorded" "report should sho
 assert_contains "$output" "attempts per phase: phase1=2" "report should show attempts per phase"
 assert_contains "$output" "Per-task metrics" "report should show per-task runtime metrics"
 
-echo "[3/3] json report exposes the same metrics"
+echo "[3/4] json report exposes the same metrics"
 capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld report --json"
 assert_json "$output" "data['result']['llm_runtime']['first_attempt_pass_rate']['total'] == 1" "json report should count first attempts"
 assert_json "$output" "data['result']['llm_runtime']['recovery_convergence_rate']['recovered'] == 1" "json report should count recovered criteria"
 assert_json "$output" "data['result']['llm_runtime']['challenge_override_rate']['total'] == 0" "json report should expose challenge override totals"
 assert_json "$output" "data['result']['llm_runtime']['attempts_per_phase']['phase1'] == 2" "json report should expose attempts per phase"
 assert_json "$output" "data['result']['llm_runtime']['per_task']['report-task']['recovery_convergence_rate']['recovered'] == 1" "json report should expose per-task runtime metrics"
+assert_json "$output" "'review_signal' in data['result']" "json report should expose review signal metrics"
+
+echo "[4/4] runtime-only report filters to the session cohort"
+capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld report --json --runtime-only"
+assert_json "$output" "data['result']['runtime_only'] is True" "runtime-only report should flag the filtered cohort"
+assert_json "$output" "data['result']['total_specs'] == 1" "runtime-only report should keep only specs with runtime sessions"
+assert_json "$output" "data['result']['by_status']['in_progress'] == 1" "runtime-only report should preserve the runtime cohort status counts"
 
 echo "PASS: report metrics smoke"

@@ -44,6 +44,7 @@ def cmd_init(args):
             "Edit CONVENTIONS.md and add stack-specific rules",
             "Edit CLAUDE.md and add project overview and commands",
             "Edit .ai/config.local.yaml and review build/test/lint commands",
+            "Use the handoff-first wrapper scripts so the agent reads the current executor or challenger brief first",
             "Run scafld plan my-feature -t \"My feature\" -s small -r low",
         ],
     }
@@ -102,6 +103,11 @@ def cmd_init(args):
         (f"{AI_DIR}/README.md", f"{AI_DIR}/README.md"),
         (f"{AI_DIR}/OPERATORS.md", f"{AI_DIR}/OPERATORS.md"),
         (f"{SPECS_DIR}/README.md", f"{SPECS_DIR}/README.md"),
+        ("scripts/scafld-provider-adapter.sh", "scripts/scafld-provider-adapter.sh"),
+        ("scripts/scafld-codex-build.sh", "scripts/scafld-codex-build.sh"),
+        ("scripts/scafld-codex-review.sh", "scripts/scafld-codex-review.sh"),
+        ("scripts/scafld-claude-build.sh", "scripts/scafld-claude-build.sh"),
+        ("scripts/scafld-claude-review.sh", "scripts/scafld-claude-review.sh"),
     ]
     for src_rel, dest_rel in copy_files:
         src = scafld_dir / src_rel
@@ -227,6 +233,9 @@ def cmd_init(args):
   4. Edit {c(C_CYAN, '.ai/config.local.yaml')} - set your build/test/lint commands
 
   Then: {c(C_BOLD, 'scafld plan my-feature -t \"My feature\" -s small -r low')} or tell your agent {c(C_BOLD, agent_hint)}
+  Handoff-first wrappers:
+    {c(C_BOLD, 'scripts/scafld-codex-build.sh <task-id>')} / {c(C_BOLD, 'scripts/scafld-claude-build.sh <task-id>')}
+    {c(C_BOLD, 'scripts/scafld-codex-review.sh <task-id>')} / {c(C_BOLD, 'scripts/scafld-claude-review.sh <task-id>')}
 """)
 
 

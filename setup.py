@@ -60,6 +60,16 @@ def runtime_data_files():
         dest = "share/scafld/.ai/specs" if path.parent == specs_root else "share/scafld/.ai/specs/examples"
         files.append((dest, [str(path)]))
 
+    for path in (
+        ROOT / "scripts" / "scafld-provider-adapter.sh",
+        ROOT / "scripts" / "scafld-codex-build.sh",
+        ROOT / "scripts" / "scafld-codex-review.sh",
+        ROOT / "scripts" / "scafld-claude-build.sh",
+        ROOT / "scripts" / "scafld-claude-review.sh",
+    ):
+        if path.exists():
+            files.append(("share/scafld/scripts", [str(path)]))
+
     return files
 
 

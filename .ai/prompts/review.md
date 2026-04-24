@@ -64,6 +64,14 @@ Not every angle applies to every change — use judgment and say what you checke
 - do not invent violations you did not verify
 - if a test is missing, say what behavior is unprotected and why it matters
 
+Required finding format:
+
+- `- **high** \`path/file.py:88\` — the exact failure mode and why it matters`
+- use one of `critical`, `high`, `medium`, or `low`
+- do not write uncited bullets in adversarial sections, blocking, or non-blocking
+- if a section is clean, write one explicit line:
+  `No issues found — checked <what you attacked>`
+
 A strong finding names the defect, cites the line, describes the failure,
 and ideally gives a reproducer:
 
@@ -95,6 +103,8 @@ Do not file weak findings. Sharpen them into strong ones or drop them.
 - use blocking vs non-blocking findings only
 - every configured adversarial section must contain findings or an explicit
   "No issues found" note describing what you checked
+- every blocking and non-blocking bullet must use the required severity and
+  file:line format
 - update the metadata truthfully
 - do not modify code from this handoff
 

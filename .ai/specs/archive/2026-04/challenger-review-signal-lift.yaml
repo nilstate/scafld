@@ -1,0 +1,314 @@
+spec_version: '1.1'
+task_id: challenger-review-signal-lift
+created: '2026-04-24T06:10:00Z'
+updated: "2026-04-24T01:07:14Z"
+status: "completed"
+harden_status: passed
+task:
+  title: Make Challenger Review Catch More Meaningful Defects
+  summary: 'Push the adversarial review gate past posture and into practical value.
+    The challenger prompt, review artifact contract, and review-quality checks should
+    work together so review catches meaningful defects often enough that you expect
+    it to matter. This is the highest-leverage craft surface in the product: if review
+    does not reliably produce grounded, useful criticism, scafld does not earn its
+    identity.
+
+    '
+  size: large
+  risk_level: high
+  context:
+    packages:
+    - .ai/prompts/review.md
+    - scafld/review_workflow.py
+    - scafld/reviewing.py
+    - scafld/commands/review.py
+    - docs/review.md
+    - docs/cli-reference.md
+    - tests/
+    files_impacted:
+    - path: .ai/prompts/review.md
+      lines: all
+      reason: The challenger prompt needs stricter adversarial craft and evidence
+        requirements.
+    - path: scafld/review_workflow.py
+      lines: all
+      reason: Review orchestration should enforce the stronger prompt contract and
+        artifact expectations.
+    - path: scafld/reviewing.py
+      lines: all
+      reason: Review parsing and validation should detect low-signal or malformed
+        challenger output.
+    - path: scafld/commands/review.py
+      lines: all
+      reason: review output should surface evidence quality and clear blocker structure.
+    - path: docs/review.md
+      lines: all
+      reason: Docs should explain what a good challenger review must contain.
+    - path: docs/cli-reference.md
+      lines: all
+      reason: CLI docs should describe the stronger review artifact contract.
+    - path: tests/review_gate_smoke.sh
+      lines: all
+      reason: Existing review gate coverage must stay compatible.
+    - path: tests/challenge_override_smoke.sh
+      lines: all
+      reason: Override behavior should remain audited even with stricter review quality
+        rules.
+    - path: tests/review_prompt_contract_smoke.sh
+      lines: all
+      reason: New smoke should assert the prompt contract and expected review sections.
+    - path: tests/review_signal_corpus_smoke.sh
+      lines: all
+      reason: New smoke should exercise clean and flawed review fixtures against the
+        stronger contract.
+    invariants:
+    - domain_boundaries
+    - public_api_stable
+    - no_test_logic_in_production
+    related_docs:
+    - README.md
+    - docs/review.md
+    - AGENTS.md
+  objectives:
+  - Make the challenger prompt explicitly adversarial, evidence-based, and blocker-oriented.
+  - Require file/line grounding and clear blocker vs non-blocker separation in review
+    artifacts.
+  - Reject or flag low-signal reviews that lack evidence or meaningful findings structure.
+  - Create a small clean/flawed review corpus so prompt changes can be dogfooded instead
+    of guessed.
+  - Move scafld toward the real standard that review catches meaningful defects often
+    enough that you expect it to matter.
+  scope:
+    in_scope:
+    - Review prompt craft.
+    - Review artifact quality checks.
+    - Small review-signal corpus fixtures and smokes.
+    - Docs describing good challenger behavior.
+    out_of_scope:
+    - Challenge firing outside review.
+    - Hosted model evaluation infrastructure.
+    - A new challenge artifact family.
+    - Spec schema changes.
+  dependencies:
+  - Assumes the review gate and challenger role are already the product center.
+  assumptions:
+  - Stricter structure helps both humans and wrappers decide whether a review is meaningful.
+  - Review quality should be judged from grounded evidence, not from review length.
+  touchpoints:
+  - area: challenger prompt
+    description: The prompt must attack the implementation instead of politely confirming
+      it.
+  - area: artifact contract
+    description: Review artifacts should be parseable, grounded, and hard to game.
+  - area: override honesty
+    description: Human override remains the backstop for strong but incorrect challenger
+      calls.
+  - area: review corpus
+    description: Prompt tuning should use explicit flawed and clean fixtures instead
+      of intuition.
+  risks:
+  - description: A stronger prompt can raise false positives if blocker criteria stay
+      vague.
+    impact: high
+    mitigation: Define blocker expectations explicitly and tune against a clean/flawed
+      corpus.
+  - description: Artifact quality checks can become ceremony if they only enforce
+      formatting.
+    impact: medium
+    mitigation: Tie checks to evidence and severity structure, not cosmetic wording.
+  - description: Prompt tuning can sprawl into a parallel subsystem.
+    impact: medium
+    mitigation: Keep all logic in the existing prompt/workflow/reviewing layers.
+  acceptance:
+    validation_profile: strict
+    definition_of_done:
+    - id: dod1
+      description: The challenger prompt requires explicit evidence, severity, and
+        blocker/non-blocker separation.
+      status: pending
+    - id: dod2
+      description: Review parsing detects low-signal output that lacks citations or
+        meaningful finding structure.
+      status: pending
+    - id: dod3
+      description: A clean/flawed review corpus exists so prompt changes can be tested
+        deliberately.
+      status: pending
+    - id: dod4
+      description: Review gate and override smokes stay green under the stronger contract.
+      status: pending
+    validation:
+    - id: v1
+      type: custom
+      description: Validate this draft spec.
+      command: python3 cli/scafld validate challenger-review-signal-lift
+      expected: exit code 0
+    - id: v2
+      type: compile
+      description: Compile scafld after the review-quality work.
+      command: python3 -m compileall scafld
+      expected: exit code 0
+    - id: v3
+      type: test
+      description: Run review gate and override regressions.
+      command: bash tests/review_gate_smoke.sh && bash tests/challenge_override_smoke.sh
+      expected: exit code 0
+    - id: v4
+      type: test
+      description: Run review prompt and review-signal corpus coverage.
+      command: bash tests/review_prompt_contract_smoke.sh && bash tests/review_signal_corpus_smoke.sh
+      expected: exit code 0
+  constraints:
+    approvals_required: []
+    non_goals:
+    - Do not add a second review stage.
+    - Do not add model-provider-specific logic to core review parsing.
+    - Do not treat a long review as a good review unless it is grounded.
+  notes: "Keep the code shape clean: prompt craft in `.ai/prompts/review.md`, orchestration\
+    \ in `review_workflow.py`, and artifact quality checks in `reviewing.py`. The\
+    \ real standard here is not \u201Cthe prompt is more intense.\u201D It is \u201C\
+    review catches meaningful defects often enough that you trust it to matter.\u201D\
+    \n"
+planning_log:
+- timestamp: '2026-04-24T06:10:00Z'
+  actor: assistant
+  summary: Drafted the challenger-review quality slice against the real-standard bar.
+- timestamp: '2026-04-24T01:03:22Z'
+  actor: cli
+  summary: Spec approved
+- timestamp: '2026-04-24T01:03:37Z'
+  actor: cli
+  summary: Execution started
+- timestamp: "2026-04-24T01:07:14Z"
+  actor: "cli"
+  summary: "Spec completed"
+phases:
+- id: phase1
+  name: Strengthen the challenger contract
+  objective: Upgrade the review prompt and artifact expectations to demand grounded,
+    adversarial findings.
+  changes:
+  - file: .ai/prompts/review.md
+    action: update
+    content_spec: 'Rewrite the challenger brief to require file/line grounding, clear
+
+      blocker criteria, and explicit attack posture.
+
+      '
+  - file: scafld/review_workflow.py
+    action: update
+    content_spec: 'Surface the stronger prompt contract and pass any quality warnings
+
+      through the review flow.
+
+      '
+  - file: scafld/reviewing.py
+    action: update
+    content_spec: 'Validate that challenger reviews contain the required sections
+      and
+
+      grounded evidence before the gate trusts them.
+
+      '
+  acceptance_criteria:
+  - id: ac1_1
+    type: test
+    description: Prompt contract and review parsing smoke passes.
+    command: bash tests/review_prompt_contract_smoke.sh
+    expected: exit code 0
+    result: pass
+    executed_at: '2026-04-24T01:03:42Z'
+    result_output: '[1/2] source review prompt carries the stricter contract [2/2]
+      review scaffolding emits the required sections and format guidance PASS: review
+      prompt contract smoke'
+  status: completed
+- id: phase2
+  name: Tune against explicit fixtures
+  objective: Create a small clean/flawed corpus so review quality can be tested deliberately.
+  dependencies:
+  - phase1
+  changes:
+  - file: tests/review_signal_corpus_smoke.sh
+    action: create
+    content_spec: 'Add fixtures representing clean and flawed implementations so the
+
+      stronger challenger contract can be tuned against something concrete.
+
+      '
+  - file: docs/review.md
+    action: update
+    content_spec: 'Explain what makes a good challenger review and how to tune the
+      prompt
+
+      against the review corpus.
+
+      '
+  - file: docs/cli-reference.md
+    action: update
+    content_spec: 'Document the stronger review artifact expectations and failure
+      modes.
+
+      '
+  - file: tests/review_gate_smoke.sh
+    action: update
+    content_spec: 'Keep gate compatibility covered under the stronger contract.
+
+      '
+  - file: tests/challenge_override_smoke.sh
+    action: update
+    content_spec: 'Keep override honesty covered under the stronger contract.
+
+      '
+  acceptance_criteria:
+  - id: ac2_1
+    type: test
+    description: Review corpus and gate regressions stay green.
+    command: bash tests/review_signal_corpus_smoke.sh && bash tests/review_gate_smoke.sh
+      && bash tests/challenge_override_smoke.sh
+    expected: exit code 0
+    result: pass
+    executed_at: '2026-04-24T01:04:46Z'
+    result_output: '[1/2] grounded clean reviews pass the stronger parser [2/2] low-signal
+      uncited reviews fail the stronger parser PASS: review signal corpus smoke PASS:
+      review gate smoke [1/4] build a passing task and '
+  status: completed
+rollback:
+  strategy: per_phase
+  commands:
+    phase1: git checkout HEAD -- .ai/prompts/review.md scafld/review_workflow.py scafld/reviewing.py
+      tests/review_prompt_contract_smoke.sh
+    phase2: git checkout HEAD -- docs/review.md docs/cli-reference.md tests/review_signal_corpus_smoke.sh
+      tests/review_gate_smoke.sh tests/challenge_override_smoke.sh
+harden_rounds:
+- round: 1
+  started_at: '2026-04-24T01:03:11Z'
+  outcome: passed
+  questions: []
+  ended_at: '2026-04-24T01:03:21Z'
+
+review:
+  timestamp: "2026-04-24T01:07:14Z"
+  verdict: "incomplete"
+  review_rounds: 1
+  reviewer_mode: "human_override"
+  reviewer_session: ""
+  round_status: "override"
+  override_applied: true
+  override_reason: "shared cutover overlap across concurrently executed specs"
+  override_confirmed_at: "2026-04-24T01:07:14Z"
+  reviewed_head: "45f39fcec26a49e980224d234b79ac49e55f431a"
+  reviewed_dirty: true
+  reviewed_diff: "291e8e0a1a11b6d6689d7132a612a98df54e80f07473a4edd94f6e8860926e9b"
+  passes:
+    - id: spec_compliance
+      result: "pass"
+    - id: scope_drift
+      result: "fail"
+    - id: regression_hunt
+      result: "not_run"
+    - id: convention_check
+      result: "not_run"
+    - id: dark_patterns
+      result: "not_run"
+  blocking_count: 0
+  non_blocking_count: 0

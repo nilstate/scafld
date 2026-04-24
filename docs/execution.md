@@ -36,6 +36,14 @@ scafld build <task-id>
 That means a fresh `build` call from `approved` advances work to the next
 handoff or block in one invocation instead of requiring a second `build`.
 
+In JSON mode, treat these as the canonical executor signals:
+
+- `result.next_action`
+- `result.current_handoff`
+- `result.block_reason`
+
+`status --json` mirrors the same guidance without moving the lifecycle.
+
 ## Execution Passes
 
 ```bash
@@ -75,6 +83,10 @@ That handoff includes:
 - current phase slice
 - prior phase summary
 
+Use `status --json` or `build --json` to discover whether recovery is pending.
+Use `scafld handoff <task-id> --recovery <criterion>` when you need the current
+recovery handoff without moving the lifecycle.
+
 ## Phase Summaries
 
 At phase boundaries, scafld writes compact `phase_summary` entries into session.
@@ -97,6 +109,14 @@ When the next failure would exceed the cap, execution:
 
 scafld can generate a better executor handoff. It cannot force an external
 harness to use it. Session metrics measure outcomes, not handoff consumption.
+
+When the workspace includes them, the wrapper scripts make handoff consumption
+the default path for Codex and Claude Code:
+
+- `scripts/scafld-codex-build.sh <task-id>`
+- `scripts/scafld-claude-build.sh <task-id>`
+- `scripts/scafld-codex-review.sh <task-id>`
+- `scripts/scafld-claude-review.sh <task-id>`
 
 Prompt ownership is also explicit:
 

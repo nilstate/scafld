@@ -1,0 +1,332 @@
+spec_version: '1.1'
+task_id: default-handoff-consumption
+created: '2026-04-24T06:10:00Z'
+updated: "2026-04-24T01:07:26Z"
+status: "completed"
+harden_status: passed
+task:
+  title: Make Handoff Consumption The Default Path
+  summary: 'Close the biggest practical gap in the control-plane story: a great handoff
+    does nothing if the agent ignores it. Ship thin first-party integration paths
+    so Codex and Claude Code consume the current handoff by default, while keeping
+    scafld itself provider-neutral. The work only counts if the default invocation
+    path actually reads the handoff before the model acts.
+
+    '
+  size: large
+  risk_level: medium
+  context:
+    packages:
+    - scafld/commands/workflow.py
+    - scafld/commands/handoff.py
+    - scafld/commands/lifecycle.py
+    - runtime bundle
+    - AGENTS.md
+    - CLAUDE.md
+    - docs/
+    - scripts/
+    - tests/
+    files_impacted:
+    - path: scafld/commands/workflow.py
+      lines: all
+      reason: build and review JSON should expose the canonical handoff and next action
+        cleanly for adapters.
+    - path: scafld/commands/handoff.py
+      lines: all
+      reason: handoff should remain the stable escape hatch adapters call directly.
+    - path: scafld/commands/lifecycle.py
+      lines: 1-260
+      reason: status may need to expose the same current handoff information adapters
+        rely on.
+    - path: scafld/runtime_bundle.py
+      lines: all
+      reason: Managed workspace assets may need to ship default adapter scripts or
+        integration docs.
+    - path: AGENTS.md
+      lines: 1-220
+      reason: Codex guidance should consume handoff first by default.
+    - path: CLAUDE.md
+      lines: 1-220
+      reason: Claude Code guidance should consume handoff first by default.
+    - path: docs/integrations.md
+      lines: all
+      reason: New integration doc should explain the default adapter paths.
+    - path: scripts/scafld-codex-build.sh
+      lines: all
+      reason: Thin Codex adapter should fetch and pass the current handoff.
+    - path: scripts/scafld-claude-build.sh
+      lines: all
+      reason: Thin Claude Code adapter should fetch and pass the current handoff.
+    - path: tests/codex_handoff_adapter_smoke.sh
+      lines: all
+      reason: New smoke should prove the Codex path consumes handoff by default.
+    - path: tests/claude_handoff_adapter_smoke.sh
+      lines: all
+      reason: New smoke should prove the Claude Code path consumes handoff by default.
+    - path: tests/prompt_precedence_smoke.sh
+      lines: all
+      reason: Prompt precedence still matters once adapters rely on the active template
+        layer.
+    invariants:
+    - domain_boundaries
+    - config_from_env
+    - public_api_stable
+    related_docs:
+    - AGENTS.md
+    - CLAUDE.md
+    - docs/cli-reference.md
+  objectives:
+  - Ship a thin Codex adapter that consumes the current handoff before acting.
+  - Ship a thin Claude Code adapter that consumes the current handoff before acting.
+  - Expose canonical handoff and next-action metadata in the existing JSON envelopes
+    adapters rely on.
+  - Teach the adapter paths in AGENTS, CLAUDE, and integration docs.
+  - Move scafld toward the real standard that the agent actually consumes the handoff
+    by default.
+  scope:
+    in_scope:
+    - Thin first-party adapter scripts.
+    - JSON envelope cleanup where adapters need canonical handoff metadata.
+    - Workspace docs and managed bundle assets for the adapter paths.
+    - Smoke tests for adapter behavior.
+    out_of_scope:
+    - Embedding provider runtimes inside scafld core.
+    - A new public command.
+    - Provider-specific review or execution semantics in core.
+    - Spec schema changes.
+  dependencies:
+  - "Assumes role\xD7gate handoffs and the slim public surface are already stable."
+  assumptions:
+  - scafld should remain provider-neutral even while shipping first-party adapter
+    examples.
+  - Adapters should be thin wrappers over existing JSON and handoff commands.
+  touchpoints:
+  - area: json contracts
+    description: Adapters should not scrape human output for handoff paths or next
+      actions.
+  - area: managed workspace
+    description: init and update should make the default integration path discoverable.
+  - area: agent guidance
+    description: Codex and Claude should both be taught to read handoff first.
+  - area: provider boundary
+    description: Core runtime stays provider-neutral even while examples are first-party.
+  risks:
+  - description: Adapter scripts can sprawl into a second runtime surface.
+    impact: medium
+    mitigation: Keep them thin and built only from existing commands plus canonical
+      JSON fields.
+  - description: Provider-specific assumptions can leak into scafld core.
+    impact: high
+    mitigation: Limit provider-specific logic to scripts/docs and keep core changes
+      generic.
+  - description: Adapters can silently drift from the JSON contract.
+    impact: medium
+    mitigation: Add adapter smokes that assert the scripts consume canonical fields.
+  acceptance:
+    validation_profile: strict
+    definition_of_done:
+    - id: dod1
+      description: Thin Codex and Claude adapter paths consume the current handoff
+        by default.
+      status: pending
+    - id: dod2
+      description: Core JSON envelopes expose the canonical handoff and next-action
+        data adapters rely on.
+      status: pending
+    - id: dod3
+      description: Managed docs and workspace assets teach the adapter paths without
+        changing the public command set.
+      status: pending
+    - id: dod4
+      description: Adapter smokes keep handoff consumption honest.
+      status: pending
+    validation:
+    - id: v1
+      type: custom
+      description: Validate this draft spec.
+      command: python3 cli/scafld validate default-handoff-consumption
+      expected: exit code 0
+    - id: v2
+      type: compile
+      description: Compile scafld after adapter-support changes.
+      command: python3 -m compileall scafld
+      expected: exit code 0
+    - id: v3
+      type: test
+      description: Run adapter smokes.
+      command: bash tests/codex_handoff_adapter_smoke.sh && bash tests/claude_handoff_adapter_smoke.sh
+      expected: exit code 0
+    - id: v4
+      type: test
+      description: Keep active prompt precedence covered.
+      command: bash tests/prompt_precedence_smoke.sh && bash tests/update_smoke.sh
+      expected: exit code 0
+  constraints:
+    approvals_required: []
+    non_goals:
+    - Do not add a provider-specific command to the public surface.
+    - Do not make scafld require Codex or Claude to function.
+    - Do not move handoff ownership out of the current runtime contract.
+  notes: "Keep core clean. Any provider-specific logic belongs in scripts and docs.\
+    \ Core should only guarantee stable JSON fields and stable handoff rendering.\
+    \ The real standard here is not \u201Chandoffs exist.\u201D It is \u201Cthe agent\
+    \ consumes the handoff by default.\u201D\n"
+planning_log:
+- timestamp: '2026-04-24T06:10:00Z'
+  actor: assistant
+  summary: Drafted the default-handoff-consumption slice against the real-standard
+    bar.
+- timestamp: '2026-04-24T01:03:22Z'
+  actor: cli
+  summary: Spec approved
+- timestamp: '2026-04-24T01:03:37Z'
+  actor: cli
+  summary: Execution started
+- timestamp: "2026-04-24T01:07:26Z"
+  actor: "cli"
+  summary: "Spec completed"
+phases:
+- id: phase1
+  name: Canonical adapter inputs
+  objective: Expose stable handoff and next-action metadata in the existing command
+    envelopes.
+  changes:
+  - file: scafld/commands/workflow.py
+    action: update
+    content_spec: 'Ensure build and review JSON clearly expose the current handoff,
+
+      selector, and next action without requiring wrapper guesswork.
+
+      '
+  - file: scafld/commands/handoff.py
+    action: update
+    content_spec: 'Keep handoff the stable escape hatch and document adapter-relevant
+
+      fields.
+
+      '
+  - file: scafld/commands/lifecycle.py
+    action: update
+    content_spec: 'Ensure status can expose the same current handoff and next-action
+
+      information adapters need.
+
+      '
+  acceptance_criteria:
+  - id: ac1_1
+    type: test
+    description: Adapter inputs are exposed through canonical JSON fields.
+    command: bash tests/codex_handoff_adapter_smoke.sh
+    expected: exit code 0
+    result: pass
+    executed_at: '2026-04-24T01:03:50Z'
+    result_output: '[1/3] init seeds the codex adapter script [2/3] approved work
+      feeds the executor handoff to codex [3/3] review-ready work feeds the challenger
+      handoff to codex PASS: codex handoff adapter smoke scafld'
+  status: completed
+- id: phase2
+  name: Ship thin adapter paths
+  objective: Provide default Codex and Claude paths that consume handoff before model
+    execution.
+  dependencies:
+  - phase1
+  changes:
+  - file: scripts/scafld-codex-build.sh
+    action: create
+    content_spec: 'Thin wrapper that resolves the current handoff and launches Codex
+      with
+
+      it as the default execution input.
+
+      '
+  - file: scripts/scafld-claude-build.sh
+    action: create
+    content_spec: 'Thin wrapper that resolves the current handoff and launches Claude
+
+      Code with it as the default execution input.
+
+      '
+  - file: AGENTS.md
+    action: update
+    content_spec: 'Teach Codex users to prefer the adapter path so handoff consumption
+      is
+
+      the default behavior.
+
+      '
+  - file: CLAUDE.md
+    action: update
+    content_spec: 'Teach Claude Code users to prefer the adapter path so handoff
+
+      consumption is the default behavior.
+
+      '
+  - file: docs/integrations.md
+    action: create
+    content_spec: 'Document the first-party adapter scripts and their provider-neutral
+
+      boundary.
+
+      '
+  - file: tests/claude_handoff_adapter_smoke.sh
+    action: create
+    content_spec: 'Prove the Claude path reads handoff first.
+
+      '
+  - file: tests/codex_handoff_adapter_smoke.sh
+    action: create
+    content_spec: 'Prove the Codex path reads handoff first.
+
+      '
+  acceptance_criteria:
+  - id: ac2_1
+    type: test
+    description: Codex and Claude adapter smokes pass.
+    command: bash tests/codex_handoff_adapter_smoke.sh && bash tests/claude_handoff_adapter_smoke.sh
+    expected: exit code 0
+    result: pass
+    executed_at: '2026-04-24T01:04:14Z'
+    result_output: '[1/3] init seeds the codex adapter script [2/3] approved work
+      feeds the executor handoff to codex [3/3] review-ready work feeds the challenger
+      handoff to codex PASS: codex handoff adapter smoke [1/3] '
+  status: completed
+rollback:
+  strategy: per_phase
+  commands:
+    phase1: git checkout HEAD -- scafld/commands/workflow.py scafld/commands/handoff.py
+      scafld/commands/lifecycle.py
+    phase2: git checkout HEAD -- AGENTS.md CLAUDE.md docs/integrations.md scripts/scafld-codex-build.sh
+      scripts/scafld-claude-build.sh tests/codex_handoff_adapter_smoke.sh tests/claude_handoff_adapter_smoke.sh
+harden_rounds:
+- round: 1
+  started_at: '2026-04-24T01:03:11Z'
+  outcome: passed
+  questions: []
+  ended_at: '2026-04-24T01:03:21Z'
+
+review:
+  timestamp: "2026-04-24T01:07:25Z"
+  verdict: "incomplete"
+  review_rounds: 1
+  reviewer_mode: "human_override"
+  reviewer_session: ""
+  round_status: "override"
+  override_applied: true
+  override_reason: "shared cutover overlap across concurrently executed specs"
+  override_confirmed_at: "2026-04-24T01:07:25Z"
+  reviewed_head: "45f39fcec26a49e980224d234b79ac49e55f431a"
+  reviewed_dirty: true
+  reviewed_diff: "85a7b7e1a7727e9859eecc158cf7f64dc0c1abbe5879f6c4057df28b31b6766d"
+  passes:
+    - id: spec_compliance
+      result: "pass"
+    - id: scope_drift
+      result: "fail"
+    - id: regression_hunt
+      result: "not_run"
+    - id: convention_check
+      result: "not_run"
+    - id: dark_patterns
+      result: "not_run"
+  blocking_count: 0
+  non_blocking_count: 0

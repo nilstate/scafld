@@ -59,6 +59,13 @@ manifest = json.load(open(workspace / ".ai" / "scafld" / "manifest.json"))
 assert manifest["scafld_version"] == "$EXPECTED_VERSION", manifest["scafld_version"]
 assert (workspace / ".ai" / "scafld" / "prompts" / "harden.md").exists()
 assert (workspace / ".ai" / "scafld" / "prompts" / "recovery.md").exists()
+assert (workspace / ".ai" / "scafld" / "scripts" / "scafld-provider-adapter.sh").exists()
+assert (workspace / ".ai" / "scafld" / "scripts" / "scafld-codex-build.sh").exists()
+assert (workspace / ".ai" / "scafld" / "scripts" / "scafld-codex-review.sh").exists()
+assert (workspace / "scripts" / "scafld-codex-build.sh").exists()
+assert (workspace / "scripts" / "scafld-codex-review.sh").exists()
+assert (workspace / "scripts" / "scafld-claude-build.sh").exists()
+assert (workspace / "scripts" / "scafld-claude-review.sh").exists()
 PY
 
 echo "[5/6] installed wheel init is idempotent for the managed manifest"
@@ -85,6 +92,11 @@ required = {
     ".ai/prompts/recovery.md",
     ".ai/schemas/spec.json",
     ".ai/specs/examples/add-error-codes.yaml",
+    "scripts/scafld-provider-adapter.sh",
+    "scripts/scafld-codex-build.sh",
+    "scripts/scafld-codex-review.sh",
+    "scripts/scafld-claude-build.sh",
+    "scripts/scafld-claude-review.sh",
     "scafld/__main__.py",
     "scafld/acceptance.py",
     "scafld/audit_scope.py",

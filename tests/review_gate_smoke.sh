@@ -537,6 +537,14 @@ case_human_override() {
   task_id="human-override"
   write_changed_file "$repo"
   write_active_spec "$repo" "$task_id" "false" "exit code 0"
+  write_review_v3 \
+    "$repo" "$task_id" "fail" "executor" "completed" \
+    "fail" "pass" "fail" "pass" "pass" \
+    '- **high** `app.txt:1` — caller contract broken.' \
+    "No issues found — checked AGENTS.md and CONVENTIONS.md." \
+    "No issues found — checked hardcodes and null handling." \
+    '- **high** `app.txt:1` — blocker' \
+    "None."
 
   capture output bash -lc "PATH='$CLI_ROOT':\"\$PATH\" scafld complete --help"
   assert_contains "$output" "--human-reviewed" "complete help should expose --human-reviewed"

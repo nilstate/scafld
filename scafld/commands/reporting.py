@@ -5,6 +5,7 @@ from collections import defaultdict
 from scafld.command_runtime import require_root
 from scafld.git_state import capture_review_git_state
 from scafld.output import emit_command_json
+from scafld.review_signal import review_signal_payload
 from scafld.reviewing import parse_review_file, review_git_gate_reason
 from scafld.review_workflow import load_review_topology
 from scafld.runtime_bundle import REVIEWS_DIR
@@ -43,6 +44,7 @@ def cmd_report(args):
     root = require_root()
     specs = find_all_specs(root)
     json_mode = bool(getattr(args, "json", False))
+    runtime_only = bool(getattr(args, "runtime_only", False))
 
     if not specs:
         if json_mode:
@@ -83,6 +85,14 @@ def cmd_report(args):
     attempts_per_phase = defaultdict(int)
     usage_totals = defaultdict(float)
     per_task_runtime = {}
+    review_signal = {
+        "completed_rounds": 0,
+        "blocking_verdicts": 0,
+        "pass_with_issues_verdicts": 0,
+        "clean_reviews_with_evidence": 0,
+        "grounded_findings": 0,
+    }
+    per_task_review_signal = {}
     review_topology = None
     try:
         review_topology = load_review_topology(root)
@@ -91,10 +101,14 @@ def cmd_report(args):
 
     for spec_path, label in specs:
         text = spec_path.read_text()
-        total += 1
 
         status = yaml_read_field(text, "status") or "unknown"
         triage_entry = report_triage_entry(root, spec_path, text)
+        session = load_session(root, triage_entry["task_id"], spec_path=spec_path)
+        if runtime_only and session is None:
+            continue
+
+        total += 1
         harden_status = yaml_read_field(text, "harden_status")
         if harden_status and harden_status in harden_status_counts:
             harden_status_counts[harden_status] += 1
@@ -158,7 +172,20 @@ def cmd_report(args):
                             "reason": drift_reason,
                         })
 
-        session = load_session(root, triage_entry["task_id"], spec_path=spec_path)
+        if review_topology is not None:
+            review_file = root / REVIEWS_DIR / f"{triage_entry['task_id']}.md"
+            signal = review_signal_payload(parse_review_file(review_file, review_topology))
+            per_task_review_signal[triage_entry["task_id"]] = signal
+            if signal["completed_round"]:
+                review_signal["completed_rounds"] += 1
+            if signal["verdict"] == "fail":
+                review_signal["blocking_verdicts"] += 1
+            if signal["verdict"] == "pass_with_issues":
+                review_signal["pass_with_issues_verdicts"] += 1
+            if signal["clean_review_with_evidence"]:
+                review_signal["clean_reviews_with_evidence"] += 1
+            review_signal["grounded_findings"] += signal["grounded_findings"]
+
         if session is not None:
             runtime_sessions += 1
             runtime = session_summary_payload(session)
@@ -206,6 +233,18 @@ def cmd_report(args):
                 except (TypeError, ValueError):
                     continue
 
+    if total == 0:
+        warning = "no runtime sessions found" if runtime_only else "no specs found"
+        if json_mode:
+            emit_command_json(
+                "report",
+                result={"total_specs": 0, "runtime_only": runtime_only},
+                warnings=[warning],
+            )
+        else:
+            print(f"{c(C_DIM, warning + '.')}")
+        return
+
     if json_mode:
         avg_self_eval = sum(self_eval_scores) / len(self_eval_scores) if self_eval_scores else None
         avg_phases = sum(phase_counts) / len(phase_counts) if phase_counts else None
@@ -213,6 +252,7 @@ def cmd_report(args):
             "report",
             result={
                 "total_specs": total,
+                "runtime_only": runtime_only,
                 "by_status": by_status,
                 "by_month": by_month,
                 "sizes": sizes,
@@ -258,6 +298,10 @@ def cmd_report(args):
                     "per_task": dict(sorted(per_task_runtime.items())),
                     "attribution_note": "Session metrics show outcomes only; external agents may ignore generated handoffs.",
                 },
+                "review_signal": {
+                    **review_signal,
+                    "per_task": dict(sorted(per_task_review_signal.items())),
+                },
                 "triage": {
                     "stale_drafts": stale_drafts,
                     "approved_waiting": approved_waiting,
@@ -268,8 +312,11 @@ def cmd_report(args):
         )
         return
 
-    print(f"{c(C_BOLD, 'scafld Report')}")
+    title = "scafld Runtime Report" if runtime_only else "scafld Report"
+    print(f"{c(C_BOLD, title)}")
     print(f"  {total} total specs")
+    if runtime_only:
+        print(f"  {c(C_DIM, 'runtime-only cohort')}")
     print()
 
     print(f"{c(C_BOLD, 'By status:')}")
@@ -378,6 +425,15 @@ def cmd_report(args):
             print(rendered)
         if len(per_task_runtime) > 5:
             print(f"    {c(C_DIM, f'+ {len(per_task_runtime) - 5} more')}")
+        print()
+
+    if review_topology is not None:
+        print(f"{c(C_BOLD, 'Review signal:')}")
+        print(f"  completed rounds: {review_signal['completed_rounds']}")
+        print(f"  blocking verdicts: {review_signal['blocking_verdicts']}")
+        print(f"  pass_with_issues verdicts: {review_signal['pass_with_issues_verdicts']}")
+        print(f"  clean reviews with evidence: {review_signal['clean_reviews_with_evidence']}")
+        print(f"  grounded findings: {review_signal['grounded_findings']}")
         print()
 
     print(f"{c(C_BOLD, 'Triage:')}")

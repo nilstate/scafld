@@ -48,6 +48,14 @@ scafld update
 Use `scafld handoff` when an external harness needs the current handoff without
 moving the lifecycle.
 
+Use the wrapper scripts when they are present in the repo:
+
+- `scripts/scafld-codex-build.sh <task-id>` resolves the current scafld handoff
+  and pipes it to Codex before the model acts
+- `scripts/scafld-codex-review.sh <task-id>` does the same for the challenger review handoff
+- `scripts/scafld-claude-build.sh <task-id>` does the same for Claude Code
+- `scripts/scafld-claude-review.sh <task-id>` does the same for challenger review in Claude Code
+
 Prompt ownership is simple:
 
 - `.ai/prompts/*.md` is the active template layer
@@ -79,6 +87,12 @@ Defaults:
 
 - approved spec: starts the task and immediately runs validation to the next handoff or block
 - active spec: runs the next execution pass and emits the next executor or recovery handoff
+
+`status` is the control tower:
+
+- trust `result.next_action`
+- trust `result.current_handoff`
+- do not reconstruct lifecycle state manually when status already tells you what happens next
 
 During execution:
 
@@ -141,3 +155,4 @@ scafld complete <task-id> --human-reviewed --reason "manual audit"
 ```
 
 It exists for blocked review gates, not as a routine shortcut.
+It is only available after a completed challenger review round exists.
