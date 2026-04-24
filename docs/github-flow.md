@@ -195,5 +195,16 @@ Wrappers such as runx should stay thin here:
 - avoid rebuilding task, review, or git-binding logic from file paths or
   markdown parsing
 
+For governed wrappers that need explicit lifecycle boundaries, scafld also
+exposes the split native surface behind `--advanced`:
+
+- `new` for draft creation
+- `start` for the approved -> in-progress transition
+- `exec` for acceptance execution
+
+Those commands are the same underlying lifecycle, not a second workflow model.
+Human operators can keep using `plan` and `build`; orchestration layers such as
+runx can consume the thinner split surface without reimplementing scafld state.
+
 That is how scafld stops feeling like an extra system and starts feeling like
 the engineering system.
