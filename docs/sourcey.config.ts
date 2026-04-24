@@ -1,5 +1,6 @@
 export default {
   name: "scafld",
+  prettyUrls: "strip",
   repo: "https://github.com/nilstate/scafld",
   editBranch: "main",
   editBasePath: "docs",
