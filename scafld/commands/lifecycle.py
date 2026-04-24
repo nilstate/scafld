@@ -1,44 +1,38 @@
-import json
-import re
 import sys
 from pathlib import Path
 
-from scafld.audit_scope import CHANGE_OWNERSHIP_VALUES, filter_audit_paths, git_sync_excluded_paths
+from scafld.audit_scope import git_sync_excluded_paths
 from scafld.command_runtime import find_root, require_root
 from scafld.error_codes import ErrorCode as EC
 from scafld.errors import ScafldError
-from scafld.git_state import bind_task_branch, build_origin_sync_payload, list_working_tree_changed_files, refresh_origin_sync
-from scafld.handoff_renderer import render_handoff
+from scafld.git_state import bind_task_branch, refresh_origin_sync
+from scafld.lifecycle_runtime import (
+    approve_spec_snapshot,
+    new_spec_snapshot,
+    start_spec_snapshot,
+    status_snapshot,
+    validation_snapshot,
+)
 from scafld.output import emit_command_json, error_payload
-from scafld.projections import humanize_binding_mode, origin_payload, phase_counts, summarize_origin_source
-from scafld.review_workflow import load_review_topology
-from scafld.reviewing import load_review_state
+from scafld.projections import humanize_binding_mode, origin_payload, summarize_origin_source
 from scafld.runtime_bundle import (
     ACTIVE_DIR,
     APPROVED_DIR,
     ARCHIVE_DIR,
-    CONFIG_LOCAL_PATH,
-    CONFIG_PATH,
     DRAFTS_DIR,
-    FRAMEWORK_CONFIG_PATH,
     REVIEWS_DIR,
-    resolve_schema_path,
     sync_framework_bundle,
 )
 from scafld.runtime_contracts import archive_run_artifacts
-from scafld.spec_parsing import count_phases, now_iso, parse_phase_status_entries
+from scafld.spec_parsing import count_phases, now_iso
 from scafld.spec_store import (
     find_all_specs,
-    find_spec,
     load_spec_document,
     move_spec,
     require_spec,
     write_spec_document,
-    yaml_read_field,
     yaml_read_nested,
 )
-from scafld.session_store import ensure_session, ensure_workspace_baseline, load_session, record_approval, session_summary_payload
-from scafld.spec_templates import build_new_spec_scaffold
 from scafld.terminal import C_BOLD, C_CYAN, C_DIM, C_GREEN, C_RED, C_YELLOW, STATUS_COLORS, c
 
 
@@ -53,48 +47,6 @@ def move_result_payload(root, move_result):
         "from": str(move_result.source.relative_to(root)),
         "to": str(move_result.dest.relative_to(root)),
         "status": move_result.new_status,
-    }
-
-
-def status_snapshot(root, spec, task_id):
-    text = spec.read_text()
-    data = load_spec_document(spec)
-    rel = spec.relative_to(root)
-
-    status = yaml_read_field(text, "status") or "unknown"
-    state = {
-        "file": str(rel),
-        "status": status,
-        "size": yaml_read_nested(text, "task", "size") or "",
-        "risk": yaml_read_nested(text, "task", "risk_level") or "",
-        "updated_at": yaml_read_field(text, "updated") or "",
-    }
-    result = {
-        "title": yaml_read_nested(text, "task", "title") or "",
-        "phase_statuses": parse_phase_status_entries(text),
-        "phase_counts": phase_counts(*count_phases(text)),
-    }
-
-    origin = origin_payload(data)
-    sync = build_origin_sync_payload(root, origin, excluded_rels=git_sync_excluded_paths())
-    result["origin"] = origin
-    result["sync"] = sync
-
-    try:
-        topology = load_review_topology(root)
-    except Exception as exc:
-        review_state = {"exists": False, "errors": [str(exc)]}
-    else:
-        review_state = load_review_state(root / REVIEWS_DIR / f"{task_id}.md", topology)
-    result["review_state"] = review_state
-    session = load_session(root, task_id, spec_path=spec)
-    result["runtime"] = session_summary_payload(session) if session is not None else {}
-
-    return {
-        "text": text,
-        "data": data,
-        "state": state,
-        "result": result,
     }
 
 
@@ -222,110 +174,6 @@ def sync_snapshot(root, spec, task_id):
     }
 
 
-def validation_snapshot(root, spec):
-    rel = spec.relative_to(root)
-    text = spec.read_text()
-    errors = validate_spec(root, spec)
-
-    total, completed, failed, in_progress = count_phases(text)
-    task_id = yaml_read_field(text, "task_id")
-    status = yaml_read_field(text, "status")
-    spec_version = yaml_read_field(text, "spec_version")
-
-    return {
-        "state": {
-            "file": str(rel),
-            "status": status,
-            "schema_version": spec_version,
-        },
-        "result": {
-            "valid": not bool(errors),
-            "phase_count": total,
-            "phase_counts": {
-                "total": total,
-                "completed": completed,
-                "failed": failed,
-                "in_progress": in_progress,
-                "pending": total - completed - failed - in_progress,
-            },
-            "errors": errors,
-        },
-        "task_id": task_id,
-        "errors": errors,
-    }
-
-
-def validate_spec(root, spec):
-    """Validate a spec against the JSON schema. Returns list of errors (empty = valid)."""
-    schema_path = resolve_schema_path(root)
-    if not schema_path.exists():
-        return [f"schema not found at {schema_path.relative_to(root)}"]
-
-    try:
-        schema = json.loads(schema_path.read_text())
-    except json.JSONDecodeError as exc:
-        return [f"invalid schema JSON: {exc}"]
-
-    text = spec.read_text()
-    errors = []
-
-    required_top = schema.get("required", [])
-    for field in required_top:
-        if not yaml_read_field(text, field):
-            if not re.search(rf"^{field}:", text, re.MULTILINE):
-                errors.append(f"missing required field: {field}")
-
-    task_id = yaml_read_field(text, "task_id")
-    if task_id and not re.match(r"^[a-z0-9-]+$", task_id):
-        errors.append(f"task_id must be kebab-case: got '{task_id}'")
-
-    status = yaml_read_field(text, "status")
-    valid_statuses = ["draft", "blocked", "under_review", "approved", "in_progress", "completed", "failed", "cancelled"]
-    if status and status not in valid_statuses:
-        errors.append(f"invalid status: '{status}' (expected one of: {', '.join(valid_statuses)})")
-
-    spec_version = yaml_read_field(text, "spec_version")
-    if spec_version and not re.match(r"^\d+\.\d+$", spec_version):
-        errors.append(f"spec_version must be semver: got '{spec_version}'")
-
-    if not re.search(r"^phases:", text, re.MULTILINE):
-        errors.append("missing required field: phases")
-    else:
-        phase_ids = re.findall(r'^\s*-\s+id:\s*"?(phase\d+)"?', text, re.MULTILINE)
-        if not phase_ids:
-            errors.append("phases array is empty (at least 1 phase required)")
-
-    if not re.search(r"^planning_log:", text, re.MULTILINE):
-        errors.append("missing required field: planning_log")
-
-    if re.search(r"^task:", text, re.MULTILINE):
-        for field in ["title", "summary", "size", "risk_level"]:
-            if not yaml_read_nested(text, "task", field):
-                errors.append(f"missing required task field: task.{field}")
-    else:
-        errors.append("missing required field: task")
-
-    todo_patterns = [
-        (r'^\s+(?:command|content_spec|description|file):\s*"?TODO', "has TODO placeholder"),
-        (r'^\s*-\s+"?TODO', "has TODO list item"),
-    ]
-    for pattern, message in todo_patterns:
-        matches = re.findall(pattern, text, re.MULTILINE)
-        if matches:
-            count = len(matches)
-            errors.append(f"{message} ({count} occurrence{'s' if count > 1 else ''})")
-            break
-
-    ownership_values = re.findall(r'^\s+ownership:\s*"?([^"\n]+)"?', text, re.MULTILINE)
-    invalid_ownership = sorted({value for value in ownership_values if value not in CHANGE_OWNERSHIP_VALUES})
-    for value in invalid_ownership:
-        errors.append(
-            f"invalid change ownership: '{value}' (expected one of: {', '.join(sorted(CHANGE_OWNERSHIP_VALUES))})"
-        )
-
-    return errors
-
-
 def cmd_new(args):
     """Create a new spec from template."""
     json_mode = bool(getattr(args, "json", False))
@@ -337,62 +185,30 @@ def cmd_new(args):
             (root / rel).mkdir(parents=True, exist_ok=True)
         sync_framework_bundle(root)
         auto_initialized = True
-    task_id = args.task_id
-
-    if not re.match(r'^[a-z0-9][a-z0-9-]*[a-z0-9]$', task_id) and not re.match(r'^[a-z0-9]$', task_id):
-        raise ScafldError("task-id must be kebab-case (a-z, 0-9, hyphens)", code=EC.INVALID_TASK_ID)
-
-    existing = find_spec(root, task_id)
-    if existing:
-        rel = existing.relative_to(root)
-        raise ScafldError(f"spec already exists: {rel}", code=EC.SPEC_EXISTS)
-
-    dest_dir = root / DRAFTS_DIR
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    dest = dest_dir / f"{task_id}.yaml"
-
-    ts = now_iso()
-    scaffold = build_new_spec_scaffold(
+    snapshot = new_spec_snapshot(
         root,
-        task_id,
-        timestamp=ts,
-        title=args.title,
-        size=args.size,
-        risk=args.risk,
-        framework_config_path=FRAMEWORK_CONFIG_PATH,
-        config_path=CONFIG_PATH,
-        config_local_path=CONFIG_LOCAL_PATH,
+        args.task_id,
+        title=getattr(args, "title", None),
+        size=getattr(args, "size", None),
+        risk=getattr(args, "risk", None),
+        auto_initialized=auto_initialized,
     )
-    title = scaffold["title"]
-    size = scaffold["size"]
-    risk = scaffold["risk"]
-    repo_context = scaffold["repo_context"]
-    dest.write_text(scaffold["text"])
-    rel = dest.relative_to(root)
+    rel = Path(snapshot["state"]["file"])
+    result = snapshot["result"]
     if json_mode:
         emit_command_json(
             "new",
-            task_id=task_id,
-            state={"status": "draft", "file": str(rel)},
-            result={
-                "title": title,
-                "size": size,
-                "risk": risk,
-                "auto_initialized": auto_initialized,
-                "repo_context": repo_context,
-                "next_commands": [
-                    f"scafld harden {task_id}",
-                    f"scafld approve {task_id}",
-                ],
-            },
+            task_id=args.task_id,
+            state=snapshot["state"],
+            result=result,
         )
         return
     print(f"{c(C_GREEN, 'created')}: {rel}")
-    print(f"  title: {args.title or task_id.replace('-', ' ').title()}")
-    print(f"   size: {size}  risk: {risk}")
+    print(f"  title: {result['title']}")
+    print(f"   size: {result['size']}  risk: {result['risk']}")
     print()
-    print(f"  Edit the spec, then optionally: {c(C_BOLD, f'scafld harden {task_id}')}")
-    print(f"  When ready: {c(C_BOLD, f'scafld approve {task_id}')}")
+    print(f"  Edit the spec, then optionally: {c(C_BOLD, f'scafld harden {args.task_id}')}")
+    print(f"  When ready: {c(C_BOLD, f'scafld approve {args.task_id}')}")
 
 
 def cmd_status(args):
@@ -416,6 +232,9 @@ def cmd_status(args):
     phase_totals = result["phase_counts"]
     origin = result["origin"]
     sync = result["sync"]
+    next_action = result.get("next_action") or {}
+    current_handoff = result.get("current_handoff") or {}
+    block_reason = result.get("block_reason")
     color = STATUS_COLORS.get(status, "")
     print(f"{c(C_BOLD, title)}")
     print(f"     id: {args.task_id}")
@@ -470,6 +289,25 @@ def cmd_status(args):
         print(f"   sync: {c(sync_color, sync_line)}")
     if updated:
         print(f"updated: {c(C_DIM, updated)}")
+    if block_reason:
+        print(f"  block: {c(C_YELLOW, block_reason)}")
+    if current_handoff:
+        handoff_file = current_handoff.get("handoff_file")
+        role = current_handoff.get("role")
+        gate = current_handoff.get("gate")
+        label = f"{role} x {gate}" if role and gate else "handoff"
+        if handoff_file:
+            print(f"handoff: {c(C_DIM, handoff_file)}  ({label})")
+    if next_action:
+        command = next_action.get("command")
+        message = next_action.get("message")
+        followup = next_action.get("followup_command")
+        if command:
+            print(f"   next: {c(C_BOLD, command)}")
+        elif message:
+            print(f"   next: {message}")
+        if followup:
+            print(f"followup: {c(C_DIM, followup)}")
 
 
 def cmd_list(args):
@@ -504,30 +342,14 @@ def cmd_list(args):
 def cmd_approve(args):
     """Move spec from drafts to approved. Validates first."""
     root = require_root()
-    spec = require_spec(root, args.task_id)
-
-    errors = validate_spec(root, spec)
-    if errors:
-        raise ScafldError(
-            "spec has validation errors, cannot approve",
-            [f"- {error}" for error in errors] + [f"fix the spec, then retry: scafld approve {args.task_id}"],
-            code=EC.VALIDATION_FAILED,
-            next_action=f"scafld validate {args.task_id}",
-        )
-
-    move_result = move_spec(root, spec, "approved")
-    session = ensure_session(root, args.task_id, spec_path=move_result.dest)
-    session = record_approval(root, args.task_id, gate="approve", note="spec approved", spec_path=move_result.dest)
+    snapshot = approve_spec_snapshot(root, args.task_id)
+    move_result = snapshot["move_result"]
     if getattr(args, "json", False):
         emit_command_json(
             "approve",
             task_id=args.task_id,
-            state={"status": move_result.new_status},
-            result={
-                "transition": move_result_payload(root, move_result),
-                "session_file": f".ai/runs/{args.task_id}/session.json",
-                "entry_count": session_summary_payload(session).get("entry_count", 0),
-            },
+            state=snapshot["state"],
+            result=snapshot["result"],
         )
         return
     print_move_result(root, move_result)
@@ -537,46 +359,20 @@ def cmd_approve(args):
 def cmd_start(args):
     """Move spec from approved to active."""
     root = require_root()
-    spec = require_spec(root, args.task_id)
-    move_result = move_spec(root, spec, "in_progress")
-    active_spec = move_result.dest
-    session = ensure_session(root, args.task_id, spec_path=active_spec)
-    changed_files, _error = list_working_tree_changed_files(root, excluded_rels=git_sync_excluded_paths())
-    if changed_files is not None:
-        session = ensure_workspace_baseline(
-            root,
-            args.task_id,
-            paths=filter_audit_paths(changed_files),
-            source="start",
-            spec_path=active_spec,
-        )
-    rendered = render_handoff(
-        root,
-        args.task_id,
-        active_spec,
-        role="executor",
-        gate="phase",
-        session=session,
-    )
+    snapshot = start_spec_snapshot(root, args.task_id)
+    move_result = snapshot["move_result"]
+    result = snapshot["result"]
     if getattr(args, "json", False):
         emit_command_json(
             "start",
             task_id=args.task_id,
-            state={"status": move_result.new_status},
-            result={
-                "transition": move_result_payload(root, move_result),
-                "session_file": f".ai/runs/{args.task_id}/session.json",
-                "handoff_file": rendered["path_rel"],
-                "handoff_json_file": rendered["json_path_rel"],
-                "handoff_role": rendered["role"],
-                "handoff_gate": rendered["gate"],
-                "selector": rendered["selector"],
-            },
+            state=snapshot["state"],
+            result=result,
         )
         return
     print_move_result(root, move_result)
     print(f"  session: .ai/runs/{args.task_id}/session.json")
-    print(f"  handoff: {rendered['path_rel']}")
+    print(f"  handoff: {result['handoff_file']}")
 
 
 def cmd_branch(args):

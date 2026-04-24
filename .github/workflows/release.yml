@@ -114,42 +114,9 @@ jobs:
           password: ${{ secrets.PYPI_API_TOKEN }}
           skip-existing: true
 
-  publish-npm:
-    needs: build
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: read
-      id-token: write
-
-    steps:
-      - name: Set up Node
-        uses: actions/setup-node@v6
-        with:
-          node-version: 24
-          registry-url: https://registry.npmjs.org
-          package-manager-cache: false
-
-      - name: Download release artifacts
-        uses: actions/download-artifact@v8
-        with:
-          name: release-artifacts
-          path: release-artifacts
-
-      - name: Publish to npm
-        run: |
-          PACKAGE_VERSION="${GITHUB_REF_NAME#v}"
-          if npm view "scafld@${PACKAGE_VERSION}" version >/dev/null 2>&1; then
-            echo "scafld@${PACKAGE_VERSION} already published; skipping npm publish"
-            exit 0
-          fi
-          npm publish --provenance release-artifacts/npm/*.tgz
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
   github-release:
     needs:
       - publish-pypi
-      - publish-npm
     runs-on: ubuntu-24.04
     permissions:
       contents: write

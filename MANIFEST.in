@@ -5,6 +5,11 @@ include CLAUDE.md
 include CONVENTIONS.md
 include install.sh
 include cli/scafld
+include scripts/scafld-provider-adapter.sh
+include scripts/scafld-codex-build.sh
+include scripts/scafld-codex-review.sh
+include scripts/scafld-claude-build.sh
+include scripts/scafld-claude-review.sh
 recursive-include .ai/prompts *
 recursive-include .ai/schemas *
 include .ai/OPERATORS.md

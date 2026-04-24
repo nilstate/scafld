@@ -37,6 +37,11 @@ FRAMEWORK_BUNDLE_FILES = [
     (f"{AI_DIR}/OPERATORS.md", f"{FRAMEWORK_DIR}/OPERATORS.md"),
     (f"{SPECS_DIR}/README.md", f"{FRAMEWORK_DIR}/specs/README.md"),
     (f"{SPECS_DIR}/examples/add-error-codes.yaml", f"{FRAMEWORK_DIR}/specs/examples/add-error-codes.yaml"),
+    ("scripts/scafld-provider-adapter.sh", f"{FRAMEWORK_DIR}/scripts/scafld-provider-adapter.sh"),
+    ("scripts/scafld-codex-build.sh", f"{FRAMEWORK_DIR}/scripts/scafld-codex-build.sh"),
+    ("scripts/scafld-codex-review.sh", f"{FRAMEWORK_DIR}/scripts/scafld-codex-review.sh"),
+    ("scripts/scafld-claude-build.sh", f"{FRAMEWORK_DIR}/scripts/scafld-claude-build.sh"),
+    ("scripts/scafld-claude-review.sh", f"{FRAMEWORK_DIR}/scripts/scafld-claude-review.sh"),
 ]
 
 

@@ -516,8 +516,18 @@ def session_summary_payload(session):
         key = (entry.get("gate"), entry.get("review_round"))
         latest_challenges[key] = entry
     challenge_verdicts = list(latest_challenges.values())
-    challenge_blocked = sum(1 for entry in challenge_verdicts if entry.get("blocked"))
-    challenge_overrides = sum(1 for entry in entries if entry.get("type") == "human_override")
+    blocked_challenge_keys = {
+        (entry.get("gate"), entry.get("review_round"))
+        for entry in challenge_verdicts
+        if entry.get("blocked")
+    }
+    override_entries = [entry for entry in entries if entry.get("type") == "human_override"]
+    override_keys = {
+        (entry.get("gate"), entry.get("review_round"))
+        for entry in override_entries
+    }
+    challenge_blocked = len(blocked_challenge_keys | override_keys)
+    challenge_overrides = len(override_entries)
     return {
         "attempt_count": len(attempts),
         "entry_count": len(entries),

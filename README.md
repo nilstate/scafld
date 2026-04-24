@@ -55,13 +55,16 @@ That keeps the system sharp without turning every phase into ceremony.
 
 - `review` emits a challenger handoff
 - the challenger writes a verdict into `.ai/reviews/{task-id}.md`
-- `complete` closes only if the review gate passes, or a human applies the audited override path
+- `complete` closes only if the review gate passes, or a human applies the audited override path after a completed challenger round
 
 The override path is explicit:
 
 ```bash
 scafld complete <task-id> --human-reviewed --reason "manual audit"
 ```
+
+That override is available only after a completed challenger review round
+exists.
 
 ## Runtime Layout
 
@@ -119,6 +122,17 @@ Wrapper intent:
 - `plan`: create a draft spec or reopen harden on an existing draft
 - `build`: start approved work and immediately drive validation to the next handoff or block
 - `review`: run the adversarial review gate and emit the challenger handoff
+- `status`: expose the canonical `next_action` and `current_handoff`
+
+When the workspace includes them, the wrapper scripts make handoff consumption
+the default path for Codex and Claude Code instead of a manual convention.
+
+```bash
+scripts/scafld-codex-build.sh <task-id>
+scripts/scafld-codex-review.sh <task-id>
+scripts/scafld-claude-build.sh <task-id>
+scripts/scafld-claude-review.sh <task-id>
+```
 
 ## Success Metrics
 
@@ -131,6 +145,11 @@ The canonical metrics are:
 - `challenge_override_rate`
 
 `report` surfaces all three per task and in aggregate.
+
+Use `scafld report --runtime-only` to focus on tasks with runtime session data.
+
+It also surfaces review-signal counts such as completed challenger rounds,
+grounded findings, and clean reviews that still record what was attacked.
 
 There is also one honest boundary: scafld can emit a better handoff, but an
 external harness may still ignore it. That is why the metrics are framed as
@@ -185,6 +204,13 @@ Start by customizing:
 3. `CONVENTIONS.md`
 4. `.ai/config.local.yaml`
 
+When the workspace includes them, the handoff-first wrappers are:
+
+- `scripts/scafld-codex-build.sh <task-id>`
+- `scripts/scafld-codex-review.sh <task-id>`
+- `scripts/scafld-claude-build.sh <task-id>`
+- `scripts/scafld-claude-review.sh <task-id>`
+
 Repo-aware planning also works for mixed Python+Node repos. When both stacks are
 present, scafld merges the signals and prefers concrete detected commands over
 placeholder defaults.
@@ -210,6 +236,7 @@ Anything beyond that waits until it earns its place through measured wins.
 ## Next Docs
 
 - `docs/execution.md`
+- `docs/integrations.md`
 - `docs/review.md`
 - `docs/run-artifacts.md`
 - `docs/cli-reference.md`

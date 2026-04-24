@@ -7,6 +7,12 @@ REVIEW_PASS_VALUES = {"pass", "fail", "pass_with_issues", "not_run"}
 REVIEW_VERDICTS = {"pass", "fail", "pass_with_issues", "incomplete"}
 REVIEW_ROUND_STATUSES = {"in_progress", "completed", "override"}
 REVIEWER_MODES = {"challenger", "fresh_agent", "auto", "executor", "human_override"}
+FINDING_SEVERITIES = ("critical", "high", "medium", "low")
+FINDING_LINE_RE = re.compile(
+    r"^- \*\*(critical|high|medium|low)\*\* `[^`\n]+:\d+` (?:—|--) .+$",
+    re.IGNORECASE,
+)
+NO_ISSUES_RE = re.compile(r"^No issues found(?: (?:—|--) .+)?$", re.IGNORECASE)
 REVIEW_PASS_REGISTRY = {
     "spec_compliance": {
         "kind": "automated",
@@ -335,6 +341,8 @@ def parse_review_file(review_path, topology):
         "round_status": None,
         "reviewer_mode": None,
         "empty_adversarial": list(adversarial_titles),
+        "adversarial_sections": {},
+        "quality_errors": [],
         "errors": [],
     }
     if not review_path.exists():
@@ -392,6 +400,56 @@ def parse_review_file(review_path, topology):
                 bucket.append(stripped)
     parsed["blocking"] = blocking
     parsed["non_blocking"] = non_blocking
+
+    for heading in adversarial_titles:
+        body = (sections.get(heading) or "").strip()
+        section_state = {
+            "state": "empty",
+            "checked": False,
+            "finding_count": 0,
+        }
+        if not body:
+            parsed["adversarial_sections"][heading] = section_state
+            continue
+        meaningful_lines = [line.strip() for line in body.splitlines() if line.strip()]
+        if not meaningful_lines:
+            parsed["adversarial_sections"][heading] = section_state
+            continue
+        if len(meaningful_lines) == 1 and NO_ISSUES_RE.fullmatch(meaningful_lines[0]):
+            section_state["state"] = "no_issues"
+            section_state["checked"] = "checked" in meaningful_lines[0].lower()
+            parsed["adversarial_sections"][heading] = section_state
+            if "checked" not in meaningful_lines[0].lower():
+                parsed["quality_errors"].append(
+                    f"{heading} must say what was checked when reporting no issues found"
+                )
+            continue
+        section_state["state"] = "findings"
+        for line in meaningful_lines:
+            normalized = line.lower().strip(".")
+            if normalized in {"none", "- none", "n/a", "(none)"}:
+                parsed["quality_errors"].append(
+                    f"{heading} cannot be empty; use a grounded finding or an explicit no-issues note"
+                )
+                continue
+            if line.startswith("* "):
+                line = "- " + line[2:].strip()
+            if FINDING_LINE_RE.fullmatch(line):
+                section_state["finding_count"] += 1
+            if not FINDING_LINE_RE.fullmatch(line):
+                parsed["quality_errors"].append(
+                    f"{heading} findings must use '- **severity** `file:line` — explanation'"
+                )
+                break
+        parsed["adversarial_sections"][heading] = section_state
+
+    for heading, findings in (("Blocking", blocking), ("Non-blocking", non_blocking)):
+        for finding in findings:
+            if not FINDING_LINE_RE.fullmatch(finding):
+                parsed["quality_errors"].append(
+                    f"{heading} findings must use '- **severity** `file:line` — explanation'"
+                )
+                break
 
     metadata_body = sections.get("Metadata")
     if metadata_body is not None:
@@ -482,6 +540,7 @@ def parse_review_file(review_path, topology):
         if not failing:
             parsed["errors"].append("fail verdict requires at least one review pass result of fail")
 
+    parsed["errors"].extend(parsed["quality_errors"])
     parsed["verdict"] = verdict
     return parsed
 
@@ -504,6 +563,8 @@ def review_data_payload(review_data):
         "non_blocking_count": len(review_data.get("non_blocking", [])),
         "pass_results": review_data.get("pass_results", {}),
         "empty_adversarial": review_data.get("empty_adversarial", []),
+        "adversarial_sections": review_data.get("adversarial_sections", {}),
+        "quality_errors": review_data.get("quality_errors", []),
         "errors": review_data.get("errors", []),
     }
 

@@ -17,6 +17,7 @@ class CommandSpec:
     handler_path: str
     args: tuple[ArgumentSpec, ...] = ()
     public: bool = True
+    help_visible: bool = True
 
 
 VERSION_HANDLER_PATH = "scafld.commands.workspace:cmd_version"
@@ -103,6 +104,7 @@ COMMAND_SPECS = (
         "scafld.commands.reporting:cmd_report",
         (
             ArgumentSpec(("--json",), {"action": "store_true", "help": "Emit machine-readable report JSON"}),
+            ArgumentSpec(("--runtime-only",), {"action": "store_true", "help": "Restrict the report to specs with session runtime data"}),
         ),
     ),
     CommandSpec(
@@ -241,6 +243,19 @@ COMMAND_SPECS = (
         ),
         public=False,
     ),
+    CommandSpec(
+        "adapter",
+        "Run a provider against the current scafld handoff",
+        "scafld.commands.adapter:cmd_adapter",
+        (
+            ArgumentSpec(("provider",), {"choices": ["codex", "claude"]}),
+            ArgumentSpec(("mode",), {"choices": ["build", "review"]}),
+            ArgumentSpec(("task_id",), {"help": "Task ID"}),
+            ArgumentSpec(("provider_args",), {"nargs": argparse.REMAINDER}),
+        ),
+        public=False,
+        help_visible=False,
+    ),
 )
 
 COMMAND_SPECS_BY_NAME = {spec.name: spec for spec in COMMAND_SPECS}
@@ -267,7 +282,7 @@ def command_spec(name):
     return COMMAND_SPECS_BY_NAME.get(name)
 
 
-def build_parser(*, include_advanced=False):
+def build_parser(*, include_advanced=False, active_command=None):
     parser = argparse.ArgumentParser(
         prog="scafld",
         description=(
@@ -284,6 +299,8 @@ def build_parser(*, include_advanced=False):
     sub = parser.add_subparsers(dest="command")
 
     for spec in COMMAND_SPECS:
+        if not spec.help_visible and spec.name != active_command:
+            continue
         if not include_advanced and not spec.public:
             continue
         command_parser = sub.add_parser(spec.name, help=spec.help, description=spec.help)

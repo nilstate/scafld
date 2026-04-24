@@ -58,6 +58,19 @@ Current runtime handoffs:
 The handoff is one-way. scafld emits it; the system observes outcomes through
 the filesystem and criteria runs.
 
+## Default Integrations
+
+When the workspace includes them, prefer:
+
+- `scripts/scafld-codex-build.sh <task-id>`
+- `scripts/scafld-codex-review.sh <task-id>`
+- `scripts/scafld-claude-build.sh <task-id>`
+- `scripts/scafld-claude-review.sh <task-id>`
+
+They resolve the current scafld handoff first, then pass it to the external
+agent runtime. That keeps handoff consumption as the default path instead of a
+manual convention.
+
 ## Review
 
 Challenge fires at `review` only in v1.
@@ -75,3 +88,6 @@ That means:
 - `first_attempt_pass_rate`
 - `recovery_convergence_rate`
 - `challenge_override_rate`
+
+Use `scafld report --runtime-only` to limit the report to tasks with runtime
+session data.

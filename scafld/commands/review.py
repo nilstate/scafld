@@ -4,6 +4,7 @@ from scafld.command_runtime import require_root
 from scafld.error_codes import ErrorCode as EC
 from scafld.errors import ScafldError
 from scafld.output import emit_command_json, error_payload
+from scafld.review_runtime import review_snapshot
 from scafld.reviewing import (
     build_spec_review_block,
     parse_review_file,
@@ -16,12 +17,11 @@ from scafld.review_workflow import (
     confirm_human_override,
     evaluate_review_gate,
     load_configured_review_topology,
-    open_review_round,
     review_passes_are_not_run,
-    run_automated_review_suite,
     upsert_review_block,
 )
 from scafld.runtime_bundle import REVIEWS_DIR
+from scafld.runtime_guidance import existing_review_handoff
 from scafld.runtime_contracts import archive_run_artifacts
 from scafld.session_store import ensure_session, record_challenge_verdict, record_human_override
 from scafld.spec_parsing import parse_acceptance_criteria
@@ -103,6 +103,12 @@ def cmd_complete(args):
     gate_reason = gate["gate_reason"]
     gate_errors = gate["gate_errors"]
     current_git_state = gate["current_git_state"]
+    override_ready = (
+        review_data["exists"]
+        and review_data.get("review_count", 0) > 0
+        and review_data.get("round_status") == "completed"
+        and verdict is not None
+    )
     session = ensure_session(root, args.task_id, spec_path=spec)
     review_metadata = review_data.get("metadata") or {}
     if review_data["exists"] and verdict is not None:
@@ -122,8 +128,41 @@ def cmd_complete(args):
         )
 
     if gate_reason:
+        if human_reviewed and not override_ready:
+            message = "cannot override before a completed challenger review exists"
+            next_step = f"scafld review {args.task_id}"
+            if json_mode:
+                emit_command_json(
+                    "complete",
+                    ok=False,
+                    task_id=args.task_id,
+                    state={"status": yaml_read_field(text, "status"), "review_verdict": verdict},
+                    result={
+                        "review_file": str(review_file.relative_to(root)),
+                        "current_handoff": existing_review_handoff(root, args.task_id, review_data.get("metadata") or {}),
+                        "next_action": {
+                            "type": "review",
+                            "command": next_step,
+                            "message": "Run and complete the challenger review gate before applying a human override.",
+                            "followup_command": None,
+                            "blocked": True,
+                        },
+                    },
+                    error=error_payload(
+                        message,
+                        code=EC.REVIEW_GATE_BLOCKED,
+                        next_action=next_step,
+                        exit_code=1,
+                    ),
+                )
+            else:
+                print(f"  {c(C_RED, 'error')}: {message}")
+                print(f"         run '{c(C_BOLD, next_step)}' and finish the challenger round first")
+            sys.exit(1)
+
         if not human_reviewed:
             if json_mode:
+                review_handoff = existing_review_handoff(root, args.task_id, review_data.get("metadata") or {})
                 emit_command_json(
                     "complete",
                     ok=False,
@@ -136,12 +175,24 @@ def cmd_complete(args):
                         "pass_results": pass_results,
                         "review_errors": gate_errors,
                         "blocking": blocking,
+                        "current_handoff": review_handoff,
+                        "next_action": {
+                            "type": "review" if not review_data["exists"] else "address_review_findings",
+                            "command": f"scafld review {args.task_id}" if not review_data["exists"] else None,
+                            "message": (
+                                "Run the challenger review gate."
+                                if not review_data["exists"]
+                                else "Fix the blocking review findings, then rerun review."
+                            ),
+                            "followup_command": None if not review_data["exists"] else f"scafld review {args.task_id}",
+                            "blocked": True,
+                        },
                     },
                     error=error_payload(
                         gate_reason,
                         code=EC.REVIEW_GATE_BLOCKED,
                         details=gate_errors or blocking,
-                        next_action=f"scafld review {args.task_id}" if not review_data["exists"] else None,
+                        next_action=f"scafld review {args.task_id}" if not review_data["exists"] else f"scafld review {args.task_id}",
                         exit_code=1,
                     ),
                 )
@@ -278,132 +329,63 @@ def cmd_complete(args):
 def cmd_review(args):
     """Run automated review passes and generate adversarial review prompt."""
     root = require_root()
-    topology = load_configured_review_topology(root)
-    spec = require_spec(root, args.task_id)
-    text = spec.read_text()
     json_mode = bool(getattr(args, "json", False))
+    payload, exit_code = review_snapshot(root, args.task_id, use_color=not json_mode)
+    result = payload.get("result") or {}
+    state = payload.get("state") or {}
+    automated_results = result.get("automated_passes") or []
 
-    status = yaml_read_field(text, "status")
-    if status != "in_progress":
-        if json_mode:
-            emit_command_json(
-                "review",
-                ok=False,
-                task_id=args.task_id,
-                state={"status": status},
-                error=error_payload(
-                    f"spec must be in_progress to review (current: {status})",
-                    code=EC.INVALID_SPEC_STATUS,
-                    exit_code=1,
-                ),
-            )
-        else:
-            print(f"{c(C_RED, 'error')}: spec must be in_progress to review (current: {status})")
-        sys.exit(1)
-
-    if not json_mode:
-        print(f"{c(C_BOLD, f'Review: {args.task_id}')}")
-        print()
-
-    suite = run_automated_review_suite(root, args.task_id, text, topology)
-    automated_results = suite["automated_results"]
-    automated_passes = suite["automated_passes"]
-    normalized_passes = suite["normalized_passes"]
-    passed = suite["passed"]
-    failed = suite["failed"]
-
-    for definition, outcome in zip(automated_passes, automated_results):
-        if not json_mode:
-            print(f"  {c(C_CYAN, definition['id'])}: {definition['description']}")
-            if outcome["result"] == "pass":
-                print(f"    {c(C_GREEN, 'PASS')}")
-            else:
-                print(f"    {c(C_RED, 'FAIL')}")
-                for line in outcome["lines"][-5:]:
-                    print(f"    {c(C_DIM, line)}")
-
-    if not json_mode:
-        print()
-        summary_parts = []
-        if passed:
-            summary_parts.append(c(C_GREEN, f"{passed} passed"))
-        if failed:
-            summary_parts.append(c(C_RED, f"{failed} failed"))
-        print(f"  Automated passes: {' / '.join(summary_parts)}")
-        print()
-
-    if failed:
-        if json_mode:
-            emit_command_json(
-                "review",
-                ok=False,
-                task_id=args.task_id,
-                state={"status": status},
-                result={
-                    "automated_passes": automated_results,
-                    "failed_count": failed,
-                },
-                error=error_payload(
-                    f"{failed} automated pass(es) failed",
-                    code=EC.AUTOMATED_REVIEW_FAILED,
-                    next_action=f"scafld review {args.task_id}",
-                    exit_code=1,
-                ),
-            )
-        else:
-            print(f"  {c(C_RED, 'error')}: {failed} automated pass(es) failed — fix before reviewing")
-            print(f"  resolve failures, then re-run: {c(C_BOLD, f'scafld review {args.task_id}')}")
-        sys.exit(1)
-
-    try:
-        review_round = open_review_round(
-            root,
-            args.task_id,
-            spec,
-            text,
-            topology,
-            normalized_passes,
-            automated_results,
-            use_color=not json_mode,
-        )
-    except ScafldError as exc:
-        if json_mode:
-            emit_command_json(
-                "review",
-                ok=False,
-                task_id=args.task_id,
-                state={"status": status},
-                error=error_payload(
-                    f"{exc.message}: {exc.details[0]}" if exc.details else exc.message,
-                    code=EC.REVIEW_GIT_STATE_UNAVAILABLE,
-                    exit_code=1,
-                ),
-            )
-        else:
-            print(f"  {c(C_RED, 'error')}: {exc.message}")
-            for detail in exc.details:
-                print(f"         {c(C_DIM, detail)}")
-        sys.exit(1)
     if json_mode:
         emit_command_json(
             "review",
+            ok=payload.get("ok", False),
             task_id=args.task_id,
-            state={"status": status, "review_round": review_round["review_count"]},
-            result={
-                "review_file": review_round["review_path_rel"],
-                "handoff_file": review_round["review_handoff_rel"],
-                "handoff_json_file": review_round["review_handoff_json_rel"],
-                "handoff_role": review_round["handoff_role"],
-                "handoff_gate": review_round["handoff_gate"],
-                "review_handoff": review_round["review_handoff_rel"],
-                "review_handoff_json": review_round["review_handoff_json_rel"],
-                "review_prompt": review_round["review_prompt"],
-                "automated_passes": automated_results,
-                "required_sections": review_round["required_sections"],
-                "complete_command": f"scafld complete {args.task_id}",
-            },
+            state=state,
+            result=result,
+            error=payload.get("error"),
+            warnings=payload.get("warnings") or [],
         )
-    else:
-        print(f"  challenger handoff: {c(C_DIM, review_round['review_handoff_rel'])}")
-        print()
-        print(review_round["review_prompt"])
+        if exit_code:
+            sys.exit(exit_code)
+        return
+
+    if not payload.get("ok"):
+        status = state.get("status") or "unknown"
+        error = payload.get("error") or {}
+        if status != "in_progress":
+            print(f"{c(C_RED, 'error')}: {error.get('message') or f'spec must be in_progress to review (current: {status})'}")
+        else:
+            print(f"  {c(C_RED, 'error')}: {error.get('message') or 'review failed'}")
+            next_action = error.get("next_action")
+            if next_action:
+                print(f"  resolve failures, then re-run: {c(C_BOLD, next_action)}")
+        sys.exit(exit_code)
+
+    print(f"{c(C_BOLD, f'Review: {args.task_id}')}")
+    print()
+    passed = 0
+    failed = 0
+    for outcome in automated_results:
+        if outcome["result"] == "pass":
+            passed += 1
+        else:
+            failed += 1
+        print(f"  {c(C_CYAN, outcome['id'])}: {outcome['description']}")
+        if outcome["result"] == "pass":
+            print(f"    {c(C_GREEN, 'PASS')}")
+        else:
+            print(f"    {c(C_RED, 'FAIL')}")
+            for line in outcome["lines"][-5:]:
+                print(f"    {c(C_DIM, line)}")
+
+    print()
+    summary_parts = []
+    if passed:
+        summary_parts.append(c(C_GREEN, f"{passed} passed"))
+    if failed:
+        summary_parts.append(c(C_RED, f"{failed} failed"))
+    print(f"  Automated passes: {' / '.join(summary_parts)}")
+    print()
+    print(f"  challenger handoff: {c(C_DIM, result['handoff_file'])}")
+    print()
+    print(result["review_prompt"])

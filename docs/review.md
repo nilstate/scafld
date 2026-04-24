@@ -32,6 +32,12 @@ The handoff lives at:
 - `.ai/runs/{task-id}/handoffs/challenger-review.md`
 - `.ai/runs/{task-id}/handoffs/challenger-review.json`
 
+When the workspace includes them, the thin review runners make that handoff the
+default input for the external reviewer runtime:
+
+- `scripts/scafld-codex-review.sh <task-id>`
+- `scripts/scafld-claude-review.sh <task-id>`
+
 ## Challenger Stance
 
 The challenger is not another executor pass.
@@ -42,8 +48,17 @@ Its job is to:
 - attack the contract
 - cite exact file and line
 - separate blocking vs non-blocking findings
+- use explicit severity: `critical`, `high`, `medium`, or `low`
 
 The challenger does not edit code.
+
+Finding format:
+
+- `- **high** \`path/file.py:88\` — the exact failure mode and why it matters`
+
+If an adversarial section is clean, it must still say what was checked:
+
+- `No issues found — checked callers of path/file.py`
 
 ## Complete
 
@@ -57,12 +72,13 @@ scafld complete <task-id> --human-reviewed --reason "manual audit"
 - review exists
 - latest round is structurally valid
 - configured adversarial sections are filled
+- adversarial findings use grounded severity plus `file:line`
 - verdict is not blocking
 - reviewed git state still matches the workspace
 
 If the challenger blocks completion, a human may apply the audited override
-path. That override is recorded in both the review artifact and the session
-ledger.
+path after a completed challenger review round exists. That override is
+recorded in both the review artifact and the session ledger.
 
 ## Session Entries
 
@@ -72,3 +88,9 @@ The review gate writes typed session entries such as:
 - `human_override`
 
 `report` derives `challenge_override_rate` from those entries.
+
+`report` also summarizes challenger review signal across the workspace:
+
+- completed challenger rounds
+- grounded findings
+- clean reviews that still record what was checked

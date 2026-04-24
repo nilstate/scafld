@@ -23,6 +23,16 @@ scafld update
 
 Use `scafld --help --advanced` for the full operator surface.
 
+When the workspace includes them, these wrappers resolve the current handoff
+before the external agent acts:
+
+```bash
+scripts/scafld-codex-build.sh <task-id>
+scripts/scafld-codex-review.sh <task-id>
+scripts/scafld-claude-build.sh <task-id>
+scripts/scafld-claude-review.sh <task-id>
+```
+
 ## JSON Mode
 
 Automation-relevant commands support `--json` and emit one stable envelope:
@@ -68,11 +78,34 @@ Wrapper behavior:
 - approved spec: activates the task and immediately runs execution
 - active spec: runs the next execution pass
 
-When JSON mode starts approved work, inspect:
+Important JSON fields:
 
 - `state.action == "start_exec"`
 - `result.initial_handoff`
-- `result.exec.next_action`
+- `result.next_action`
+- `result.current_handoff`
+- `result.block_reason`
+
+`result.next_action` is the canonical next step. `result.current_handoff`
+describes the handoff the agent should read next when one is available.
+
+## status
+
+```bash
+scafld status <task-id> [--json]
+```
+
+`status` is the control tower surface.
+
+Important JSON fields:
+
+- `result.next_action`
+- `result.current_handoff`
+- `result.block_reason`
+- `result.review_gate`
+
+If a wrapper needs to know what to do next, it should start with `status --json`
+instead of reconstructing lifecycle state manually.
 
 ## review
 
@@ -88,6 +121,8 @@ Important JSON fields:
 - `handoff_json_file`
 - `handoff_role`
 - `handoff_gate`
+- `current_handoff`
+- `next_action`
 
 ## complete
 
@@ -97,7 +132,7 @@ scafld complete <task-id> --human-reviewed --reason "manual audit"
 ```
 
 Archives only after the review gate passes, or after the audited human override
-path is explicitly confirmed.
+path is explicitly confirmed after a completed challenger review round exists.
 
 ## handoff
 
@@ -118,10 +153,12 @@ Important JSON fields:
 - `handoff_file`
 - `handoff_json_file`
 
+See `docs/integrations.md` for the wrapper behavior and provider boundary.
+
 ## report
 
 ```bash
-scafld report [--json]
+scafld report [--runtime-only] [--json]
 ```
 
 Headlines:
@@ -129,6 +166,11 @@ Headlines:
 - `first_attempt_pass_rate`
 - `recovery_convergence_rate`
 - `challenge_override_rate`
+
+Use `--runtime-only` to limit the cohort to tasks with runtime session data.
+
+`report` also includes review-signal counts such as completed challenger rounds,
+grounded findings, and clean reviews with explicit attack evidence.
 
 ## Advanced Commands
 

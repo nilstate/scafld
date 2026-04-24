@@ -164,7 +164,7 @@ EOF
 repo="$(new_repo)"
 write_approved_spec "$repo"
 
-echo "[1/4] build a passing task and render the challenger handoff"
+echo "[1/5] build a passing task and render the challenger handoff"
 (
   cd "$repo"
   printf 'changed\n' > app.txt
@@ -175,7 +175,13 @@ capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld handof
 assert_json "$output" "data['state']['role'] == 'challenger'" "review handoff should use the challenger role"
 [ -f "$repo/.ai/runs/override-task/handoffs/challenger-review.md" ] || fail "challenger review handoff should exist"
 
-echo "[2/4] blocking review can only close through human override"
+echo "[2/5] override is rejected until a challenger round exists"
+if capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld complete override-task --human-reviewed --reason 'manual audit'"; then
+  fail "complete should reject a human override before challenger review exists"
+fi
+assert_contains "$output" "cannot override before a completed challenger review exists" "complete should require a completed challenger round before override"
+
+echo "[3/5] blocking review can only close through human override"
 write_blocking_review "$repo"
 inject_review_git_state "$repo" "override-task"
 if capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld complete override-task"; then
@@ -183,7 +189,7 @@ if capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld com
 fi
 assert_contains "$output" "latest review failed" "complete should explain the blocking challenger verdict"
 
-echo "[3/4] override records challenge and override entries in session"
+echo "[4/5] override records challenge and override entries in session"
 capture output bash -lc "cd '$repo' && printf '%s\n' 'override-task' | script -qefc 'PATH='\''$CLI_ROOT'\'':\"\$PATH\" scafld complete '\''override-task'\'' --human-reviewed --reason '\''manual audit'\''' /dev/null"
 assert_contains "$output" "override applied" "complete should report the human override"
 REPO="$repo" python3 - <<'PY'
@@ -197,7 +203,7 @@ assert any(entry["type"] == "challenge_verdict" and entry["blocked"] is True for
 assert any(entry["type"] == "human_override" and entry["gate"] == "review" for entry in session["entries"]), session
 PY
 
-echo "[4/4] report exposes challenge_override_rate"
+echo "[5/5] report exposes challenge_override_rate"
 capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld report --json"
 assert_json "$output" "data['result']['llm_runtime']['challenge_override_rate']['overrides'] == 1" "report should count human overrides"
 assert_json "$output" "data['result']['llm_runtime']['challenge_override_rate']['total'] == 1" "report should count blocked challenges"

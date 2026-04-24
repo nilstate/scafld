@@ -24,9 +24,9 @@ STATUS_FOLDERS = {
 }
 
 VALID_TRANSITIONS = {
-    "draft": ["under_review", "approved"],
-    "under_review": ["draft", "approved"],
-    "approved": ["in_progress"],
+    "draft": ["under_review", "approved", "cancelled"],
+    "under_review": ["draft", "approved", "cancelled"],
+    "approved": ["in_progress", "cancelled"],
     "in_progress": ["completed", "failed", "cancelled"],
     "failed": ["cancelled"],
 }

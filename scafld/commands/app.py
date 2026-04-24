@@ -17,7 +17,7 @@ def main(argv=None):
     command_name = next((arg for arg in argv if not arg.startswith("-")), None)
     spec = command_spec(command_name) if command_name else None
     include_advanced = "--advanced" in argv or (spec is not None and not spec.public)
-    parser = build_parser(include_advanced=include_advanced)
+    parser = build_parser(include_advanced=include_advanced, active_command=command_name)
     args = parser.parse_args(argv)
 
     if args.version:

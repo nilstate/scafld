@@ -239,6 +239,9 @@ for path in ("$WS1/.ai/scafld/manifest.json", "$WS2/.ai/scafld/manifest.json"):
     assert ".ai/scafld/prompts/harden.md" in data["managed_assets"], data["managed_assets"].keys()
     assert ".ai/scafld/prompts/recovery.md" in data["managed_assets"], data["managed_assets"].keys()
     assert ".ai/scafld/schemas/spec.json" in data["managed_assets"], data["managed_assets"].keys()
+    assert ".ai/scafld/scripts/scafld-provider-adapter.sh" in data["managed_assets"], data["managed_assets"].keys()
+    assert ".ai/scafld/scripts/scafld-codex-review.sh" in data["managed_assets"], data["managed_assets"].keys()
+    assert ".ai/scafld/scripts/scafld-claude-review.sh" in data["managed_assets"], data["managed_assets"].keys()
 PY
 
 echo "[11/12] repo-owned config stays intact"
