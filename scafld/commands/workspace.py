@@ -16,6 +16,7 @@ from scafld.runtime_bundle import (
     DRAFTS_DIR,
     FRAMEWORK_DIR,
     FRAMEWORK_MANIFEST_PATH,
+    REVIEWS_DIR,
     RUNS_DIR,
     SPECS_DIR,
     VERSION,
@@ -23,6 +24,41 @@ from scafld.runtime_bundle import (
     sync_framework_bundle,
 )
 from scafld.terminal import C_BOLD, C_CYAN, C_DIM, C_GREEN, C_YELLOW, c
+
+
+SCAFLD_GITIGNORE_MARKER = "# scafld"
+SCAFLD_GITIGNORE_ENTRIES = (
+    f"{RUNS_DIR}/",
+    f"{REVIEWS_DIR}/",
+    f"{FRAMEWORK_DIR}/",
+)
+
+
+def ensure_scafld_gitignore(project_root):
+    """Ensure scafld runtime paths are present in the workspace .gitignore.
+
+    Returns (status, missing) where status is "created", "updated", or "skip"
+    and missing is the list of entries that were appended.
+    """
+    gitignore = project_root / ".gitignore"
+    if not gitignore.exists():
+        body = SCAFLD_GITIGNORE_MARKER + "\n" + "\n".join(SCAFLD_GITIGNORE_ENTRIES) + "\n"
+        gitignore.write_text(body)
+        return "created", list(SCAFLD_GITIGNORE_ENTRIES)
+    existing = gitignore.read_text()
+    existing_entries = {line.strip() for line in existing.splitlines()}
+    missing = [entry for entry in SCAFLD_GITIGNORE_ENTRIES if entry not in existing_entries]
+    if not missing:
+        return "skip", []
+    appendix_parts = []
+    if not existing.endswith("\n"):
+        appendix_parts.append("\n")
+    if SCAFLD_GITIGNORE_MARKER not in existing:
+        appendix_parts.append(SCAFLD_GITIGNORE_MARKER + "\n")
+    appendix_parts.append("\n".join(missing) + "\n")
+    with open(gitignore, "a", encoding="utf-8") as handle:
+        handle.write("".join(appendix_parts))
+    return "updated", missing
 
 
 def cmd_init(args):
@@ -195,28 +231,15 @@ def cmd_init(args):
 
     if not json_mode:
         print(f"{c(C_BOLD, 'Gitignore:')}")
-    gitignore = project_root / ".gitignore"
-    scafld_entries = [
-        "# scafld",
-        ".ai/reviews/",
-    ]
-    if gitignore.exists():
-        existing = gitignore.read_text()
-        if "# scafld" in existing:
-            result["gitignore"] = {"path": ".gitignore", "action": "skip", "note": "scafld entries exist"}
-            if not json_mode:
-                print(f"  {c(C_DIM, 'skip')}: .gitignore (scafld entries exist)")
-        else:
-            with open(gitignore, "a", encoding="utf-8") as handle:
-                handle.write("\n" + "\n".join(scafld_entries) + "\n")
-            result["gitignore"] = {"path": ".gitignore", "action": "updated", "note": "added scafld entries"}
-            if not json_mode:
-                print(f"  {c(C_GREEN, 'updated')}: .gitignore (added scafld entries)")
-    else:
-        gitignore.write_text("\n".join(scafld_entries) + "\n")
-        result["gitignore"] = {"path": ".gitignore", "action": "created", "note": None}
-        if not json_mode:
+    status, missing = ensure_scafld_gitignore(project_root)
+    result["gitignore"] = {"path": ".gitignore", "action": status, "added": missing}
+    if not json_mode:
+        if status == "created":
             print(f"  {c(C_GREEN, 'created')}: .gitignore")
+        elif status == "updated":
+            print(f"  {c(C_GREEN, 'updated')}: .gitignore (added {', '.join(missing)})")
+        else:
+            print(f"  {c(C_DIM, 'skip')}: .gitignore (entries up to date)")
     if not json_mode:
         print()
 
@@ -303,9 +326,15 @@ def cmd_update(args):
         total_updated += len(summary["updated"])
         total_unchanged += len(summary["unchanged"])
 
+        gitignore_status, gitignore_missing = ensure_scafld_gitignore(workspace)
+        gitignore_color = C_DIM if gitignore_status == "skip" else C_GREEN
+        gitignore_label = "up to date" if gitignore_status == "skip" else gitignore_status
+        gitignore_suffix = f" (added {', '.join(gitignore_missing)})" if gitignore_missing else ""
+
         print(f"{c(C_BOLD, str(workspace))}")
         print(f"  bundle: {len(summary['created'])} created, {len(summary['updated'])} updated, {len(summary['unchanged'])} unchanged")
         print(f"  manifest: {summary['manifest_status']} {summary['manifest_path'].relative_to(workspace)}")
+        print(f"  gitignore: {c(gitignore_color, gitignore_label)}{gitignore_suffix}")
         if args.verbose:
             for rel in summary["created"]:
                 print(f"    {c(C_GREEN, 'created')} {rel}")
