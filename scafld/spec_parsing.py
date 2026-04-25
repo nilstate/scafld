@@ -47,6 +47,7 @@ def parse_phase_status_entries(text):
     entries = []
     in_phases = False
     i = 0
+    top_level_status = yaml_read_field(text, "status")
 
     while i < len(lines):
         line = lines[i]
@@ -88,6 +89,9 @@ def parse_phase_status_entries(text):
                 status = status_match.group(1)
 
             i += 1
+
+        if top_level_status == "completed" and status in ("pending", "in_progress"):
+            status = "completed"
 
         entries.append({"id": phase_id, "status": status})
 

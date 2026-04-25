@@ -40,6 +40,13 @@ scafld fail add-auth       # active/ → archive/YYYY-MM/
 scafld cancel add-auth     # any → archive/YYYY-MM/
 ```
 
+Default execution is phase-scoped:
+
+- `scafld build` activates the task when needed, then runs the current open phase only
+- if that phase passes, scafld emits the next phase handoff and stops at that boundary
+- the next phase does not execute until another explicit `scafld build` or `scafld exec`
+- `scafld exec` follows the same default unless `--phase <id>` is supplied explicitly
+
 ## Filesystem as state machine
 
 The directory structure enforces the lifecycle mechanically. A spec in
@@ -97,6 +104,7 @@ Common machine-facing commands:
 - `scafld plan --json` -- draft file path, task metadata, repo context, and harden commands
 - `scafld status --json` -- lifecycle state plus stored origin metadata and live sync state
 - `scafld approve --json` / `scafld build --json` -- structured lifecycle transitions and execution state
+- default `build --json` / `exec --json` also report the actual `executed_phase` so wrappers know which phase just ran
 - `scafld branch --json` -- recorded repo/branch binding and post-bind sync state
 - `scafld sync --json` -- explicit current-vs-expected git drift report
 - `scafld audit --json` -- declared, matched, undeclared, and missing file sets

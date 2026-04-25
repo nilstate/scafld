@@ -96,21 +96,6 @@ COMMAND_SPECS = (
             ArgumentSpec(("--resume",), {"action": "store_true", "help": "Skip already-passed criteria"}),
             ArgumentSpec(("--json",), {"action": "store_true", "help": "Emit machine-readable execution JSON"}),
         ),
-        public=False,
-        help_visible=False,
-    ),
-    CommandSpec(
-        "execute",
-        "Alias for exec for compatibility with governed wrappers",
-        "scafld.commands.execution:cmd_exec",
-        (
-            ArgumentSpec(("task_id",), {"help": "Task ID"}),
-            ArgumentSpec(("--phase",), {"help": "Restrict execution to one phase id"}),
-            ArgumentSpec(("--resume",), {"action": "store_true", "help": "Skip already-passed criteria"}),
-            ArgumentSpec(("--json",), {"action": "store_true", "help": "Emit machine-readable execution JSON"}),
-        ),
-        public=False,
-        help_visible=False,
     ),
     CommandSpec(
         "review",

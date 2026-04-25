@@ -1,0 +1,203 @@
+spec_version: '1.1'
+task_id: list-command-integrity
+created: '2026-04-25T08:52:38Z'
+updated: "2026-04-25T08:59:38Z"
+status: "completed"
+harden_status: in_progress
+task:
+  title: Restore list command runtime integrity
+  summary: 'Fix the current regression where `scafld list` crashes with a `NameError`
+    instead of showing the task inventory. The immediate bug is simple: `cmd_list()`
+    calls `yaml_read_field()` but `scafld/commands/lifecycle.py` no longer imports
+    it. The real product requirement is a little broader: `list` is one of the default
+    control-surface commands, so it needs a direct regression test that exercises
+    the packaged CLI across the normal spec states instead of relying on incidental
+    coverage from other flows. This task restores the command, adds a real smoke,
+    and keeps the scope tight.
+
+    '
+  size: small
+  risk_level: low
+  context:
+    packages:
+    - scafld
+    - tests
+    files_impacted:
+    - path: scafld/commands/lifecycle.py
+      lines: task-selected
+      reason: The list command currently references `yaml_read_field()` without importing
+        it.
+    - path: tests/list_command_smoke.sh
+      lines: all
+      reason: A dedicated smoke should prove `scafld list` works through the packaged
+        CLI and respects basic filters.
+    invariants:
+    - default_control_surface_commands_must_not_crash
+    - packaged_cli_is_the_truth_surface
+    - list_output_remains_human_first
+    related_docs:
+    - README.md
+    - docs/lifecycle.md
+    - docs/cli-reference.md
+  objectives:
+  - Make `scafld list` run successfully again from the packaged CLI.
+  - Add a dedicated smoke that covers the normal lifecycle buckets and filter behavior.
+  - Keep the fix narrow and avoid changing list semantics beyond restoring integrity.
+  scope:
+    in_scope:
+    - The missing import and any directly related command-runtime cleanup required
+      to restore `scafld list`.
+    - A real CLI smoke for `scafld list`.
+    out_of_scope:
+    - Adding JSON mode to `list`.
+    - Reformatting list output.
+    - Broader lifecycle/reporting redesign.
+  assumptions:
+  - find_all_specs() already provides the right source of truth for list inventory.
+  - A direct smoke is the right guardrail because this bug bypassed the current suites.
+  touchpoints:
+  - area: command integrity
+    description: scafld list should be as reliable as status and report.
+  - area: regression coverage
+    description: The packaged CLI should be exercised directly instead of relying
+      on helper-level tests.
+  risks:
+  - description: A too-minimal fix could restore the import but still leave list filters
+      untested and brittle.
+    impact: medium
+    mitigation: Add a dedicated smoke that proves both unfiltered and filtered listing.
+  acceptance:
+    validation_profile: strict
+    definition_of_done:
+    - id: dod1
+      description: scafld list no longer crashes and shows existing specs.
+      status: pending
+    - id: dod2
+      description: A dedicated smoke proves the packaged CLI can list lifecycle buckets
+        and apply a basic filter.
+      status: pending
+    validation:
+    - id: v1
+      type: compile
+      description: Compile the Python sources after the list command fix.
+      command: python3 -m compileall scafld cli
+      expected: exit code 0
+    - id: v2
+      type: integration
+      description: Dedicated list-command smoke passes.
+      command: bash tests/list_command_smoke.sh
+      expected: exit code 0
+  constraints:
+    approvals_required: []
+    non_goals:
+    - Do not widen the task into a list UX redesign.
+    - Do not add compatibility branches or duplicate parsing helpers.
+    - Do not bypass the packaged CLI in the regression coverage.
+  notes: 'This is a real product bug in one of the commands shown in the default help
+    surface. The bar here is simple: the command should work, and it should stay working.
+
+    '
+planning_log:
+- timestamp: '2026-04-25T08:52:38Z'
+  actor: user
+  summary: Spec created via scafld plan
+- timestamp: '2026-04-25T09:03:00Z'
+  actor: assistant
+  summary: Replaced the placeholder draft with a bounded spec for the live scafld
+    list NameError regression and its direct CLI smoke coverage.
+- timestamp: '2026-04-25T08:55:27Z'
+  actor: cli
+  summary: Spec approved
+- timestamp: '2026-04-25T08:55:35Z'
+  actor: cli
+  summary: Execution started
+- timestamp: '2026-04-25T08:57:30Z'
+  actor: assistant
+  summary: Tightened phase2 after phase1 compile passed without exercising the broken
+    user-facing command; phase2 now carries the runtime fix plus the direct CLI smoke.
+- timestamp: "2026-04-25T08:59:38Z"
+  actor: "cli"
+  summary: "Spec completed"
+phases:
+- id: phase1
+  name: Restore list command execution
+  objective: Make the default list surface run again without changing its human-first
+    contract.
+  changes:
+  - file: scafld/commands/lifecycle.py
+    action: update
+    content_spec: Import the missing scalar YAML reader and keep list inventory reading
+      aligned with the existing lifecycle parsing helpers.
+  acceptance_criteria:
+  - id: ac1_1
+    type: compile
+    description: Python sources compile after the list command fix.
+    command: python3 -m compileall scafld cli
+    expected: exit code 0
+    result: pass
+    executed_at: '2026-04-25T08:56:34Z'
+    result_output: Listing 'scafld'... Listing 'scafld/commands'... Listing 'cli'...
+  status: completed
+- id: phase2
+  name: Restore the live command and lock it with a smoke
+  objective: Land the runtime fix and prove the command works through the real CLI
+    across lifecycle buckets and a basic filter.
+  dependencies:
+  - phase1
+  changes:
+  - file: scafld/commands/lifecycle.py
+    action: update
+    content_spec: Restore the live list command path so the packaged CLI can enumerate
+      specs without crashing.
+  - file: tests/list_command_smoke.sh
+    action: create
+    content_spec: Create a packaged-CLI smoke that seeds a few specs, exercises `scafld
+      list` with and without filters, and asserts the command does not crash.
+  acceptance_criteria:
+  - id: ac2_1
+    type: integration
+    description: Dedicated list-command smoke passes.
+    command: bash tests/list_command_smoke.sh
+    expected: exit code 0
+    result: pass
+    executed_at: '2026-04-25T08:58:53Z'
+    result_output: '[1/2] unfiltered list shows lifecycle buckets without crashing
+      [2/2] filtered list narrows to the requested bucket PASS: list command smoke'
+  status: completed
+rollback:
+  strategy: per_phase
+  commands:
+    phase1: git checkout HEAD -- scafld/commands/lifecycle.py
+    phase2: git checkout HEAD -- scafld/commands/lifecycle.py tests/list_command_smoke.sh
+harden_rounds:
+- round: 1
+  started_at: '2026-04-25T08:52:38Z'
+  outcome: in_progress
+  questions: []
+
+review:
+  timestamp: "2026-04-25T09:00:15Z"
+  verdict: "pass"
+  review_rounds: 1
+  reviewer_mode: "challenger"
+  reviewer_session: "manual-challenger-cli"
+  round_status: "completed"
+  override_applied: false
+  override_reason: null
+  override_confirmed_at: null
+  reviewed_head: "896977d4b2808c4ca17ebd8fb0265af19f5058b6"
+  reviewed_dirty: true
+  reviewed_diff: "2a3833d4d95d92e97d371371b5cda8279a90761942806d1949532be6903871de"
+  passes:
+    - id: spec_compliance
+      result: "pass"
+    - id: scope_drift
+      result: "pass"
+    - id: regression_hunt
+      result: "pass"
+    - id: convention_check
+      result: "pass"
+    - id: dark_patterns
+      result: "pass"
+  blocking_count: 0
+  non_blocking_count: 0

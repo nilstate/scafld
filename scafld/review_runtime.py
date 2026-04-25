@@ -92,7 +92,11 @@ def review_snapshot(root, task_id, *, use_color=False):
         "ok": True,
         "command": "review",
         "task_id": task_id,
-        "state": {"status": status, "review_round": review_round["review_count"]},
+        "state": {
+            "status": status,
+            "review_round": review_round["review_count"],
+            "review_action": review_round["review_action"],
+        },
         "result": {
             "review_file": review_round["review_path_rel"],
             "handoff_file": review_round["review_handoff_rel"],
@@ -101,6 +105,7 @@ def review_snapshot(root, task_id, *, use_color=False):
             "handoff_gate": review_round["handoff_gate"],
             "review_handoff": review_round["review_handoff_rel"],
             "review_handoff_json": review_round["review_handoff_json_rel"],
+            "review_action": review_round["review_action"],
             "review_prompt": review_round["review_prompt"],
             "automated_passes": automated_results,
             "required_sections": review_round["required_sections"],

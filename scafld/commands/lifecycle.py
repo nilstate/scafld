@@ -31,6 +31,7 @@ from scafld.spec_store import (
     move_spec,
     require_spec,
     write_spec_document,
+    yaml_read_field,
     yaml_read_nested,
 )
 from scafld.terminal import C_BOLD, C_CYAN, C_DIM, C_GREEN, C_RED, C_YELLOW, STATUS_COLORS, c

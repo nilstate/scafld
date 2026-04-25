@@ -1,3 +1,4 @@
+import re
 import sys
 
 from scafld.command_runtime import require_root
@@ -41,6 +42,149 @@ def print_move_result(root, move_result):
     transition = move_result_payload(root, move_result)
     print(f"{c(C_GREEN, '  moved')}: {transition['from']} -> {transition['to']}")
     print(f" {c(C_DIM, 'status')}: {c(STATUS_COLORS.get(transition['status'], ''), transition['status'])}")
+
+
+def normalize_completed_archive_truth(text):
+    """Stamp terminal completion truth into the spec before archival."""
+    return _rewrite_completed_dod_statuses(_rewrite_completed_phase_statuses(text))
+
+
+def _rewrite_completed_phase_statuses(text):
+    lines = text.splitlines(True)
+    result = []
+    i = 0
+    in_phases = False
+
+    while i < len(lines):
+        line = lines[i]
+        stripped = line.strip()
+        indent = len(line) - len(line.lstrip())
+
+        if not in_phases:
+            result.append(line)
+            if re.match(r"^phases:\s*$", line):
+                in_phases = True
+            i += 1
+            continue
+
+        if stripped and indent == 0 and not stripped.startswith("- "):
+            in_phases = False
+            continue
+
+        match = re.match(r'^(\s*)-\s+id:\s*"?(phase\d+)"?\s*$', line)
+        if not match:
+            result.append(line)
+            i += 1
+            continue
+
+        item_indent = len(match.group(1))
+        field_indent = " " * (item_indent + 2)
+        result.append(line)
+        i += 1
+
+        preserved = []
+        insert_at = None
+        while i < len(lines):
+            field_line = lines[i]
+            if not field_line.strip():
+                preserved.append(field_line)
+                i += 1
+                continue
+
+            field_indent_level = len(field_line) - len(field_line.lstrip())
+            if field_indent_level <= item_indent:
+                break
+            if field_indent_level == item_indent and field_line.strip().startswith("- "):
+                break
+
+            if field_indent_level == len(field_indent) and re.match(
+                r'^\s+status:\s*"?(pending|in_progress|completed|failed|skipped)"?\s*$',
+                field_line,
+            ):
+                if insert_at is None:
+                    insert_at = len(preserved)
+                i += 1
+                continue
+
+            preserved.append(field_line)
+            i += 1
+
+        if insert_at is None:
+            insert_at = len(preserved)
+        preserved[insert_at:insert_at] = [f'{field_indent}status: "completed"\n']
+        result.extend(preserved)
+
+    return "".join(result)
+
+
+def _rewrite_completed_dod_statuses(text):
+    lines = text.splitlines(True)
+    result = []
+    i = 0
+    in_definition_of_done = False
+    block_indent = 0
+
+    while i < len(lines):
+        line = lines[i]
+        stripped = line.strip()
+        indent = len(line) - len(line.lstrip())
+
+        if not in_definition_of_done:
+            result.append(line)
+            if re.match(r"^\s*definition_of_done:\s*$", line):
+                in_definition_of_done = True
+                block_indent = indent
+            i += 1
+            continue
+
+        if stripped and indent <= block_indent:
+            in_definition_of_done = False
+            continue
+
+        match = re.match(r'^\s*-\s+id:\s*"?(dod\d+)"?\s*$', line)
+        if not match:
+            result.append(line)
+            i += 1
+            continue
+
+        item_indent = len(line) - len(line.lstrip())
+        field_indent = " " * (item_indent + 2)
+        result.append(line)
+        i += 1
+
+        preserved = []
+        insert_at = None
+        while i < len(lines):
+            field_line = lines[i]
+            if not field_line.strip():
+                preserved.append(field_line)
+                i += 1
+                continue
+
+            field_indent_level = len(field_line) - len(field_line.lstrip())
+            if field_indent_level <= item_indent:
+                break
+            if field_indent_level == item_indent and field_line.strip().startswith("- "):
+                break
+
+            if field_indent_level == len(field_indent) and re.match(
+                r'^\s+status:\s*"?(pending|in_progress|done)"?\s*$',
+                field_line,
+            ):
+                if insert_at is None:
+                    insert_at = len(preserved)
+                i += 1
+                continue
+
+            preserved.append(field_line)
+            i += 1
+
+        if insert_at is None:
+            insert_at = len(preserved)
+        preserved[insert_at:insert_at] = [f'{field_indent}status: "done"\n']
+        result.extend(preserved)
+
+    return "".join(result)
 
 
 def cmd_complete(args):
@@ -293,6 +437,7 @@ def cmd_complete(args):
         override_confirmed_at=override_confirmed_at,
     )
     text = upsert_review_block(text, review_block)
+    text = normalize_completed_archive_truth(text)
     spec.write_text(text)
 
     if not json_mode:

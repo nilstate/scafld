@@ -3,11 +3,10 @@ import re
 from collections import defaultdict
 
 from scafld.command_runtime import require_root
-from scafld.git_state import capture_review_git_state
 from scafld.output import emit_command_json
 from scafld.review_signal import review_signal_payload
 from scafld.reviewing import parse_review_file, review_git_gate_reason
-from scafld.review_workflow import load_review_topology
+from scafld.review_workflow import capture_bound_review_git_state, load_review_topology
 from scafld.runtime_bundle import REVIEWS_DIR
 from scafld.session_store import load_session, session_summary_payload
 from scafld.spec_parsing import count_phases, extract_self_eval_score, parse_acceptance_criteria, parse_iso8601_timestamp
@@ -158,7 +157,11 @@ def cmd_report(args):
             review_file = root / REVIEWS_DIR / f"{triage_entry['task_id']}.md"
             review_data = parse_review_file(review_file, review_topology)
             if review_data.get("exists"):
-                current_git_state, current_git_error = capture_review_git_state(root, review_file.relative_to(root))
+                current_git_state, current_git_error = capture_bound_review_git_state(
+                    root,
+                    triage_entry["task_id"],
+                    review_file.relative_to(root),
+                )
                 if current_git_error:
                     review_drift.append({
                         **triage_entry,

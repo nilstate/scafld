@@ -202,9 +202,11 @@ assert_json "$output" "data['command'] == 'status' and data['result']['origin'][
 capture output bash -lc "cd '$WS' && PATH='$CLI_ROOT':\"\$PATH\" scafld audit '$TASK_ID' --json"
 assert_json "$output" "data['command'] == 'audit' and data['ok'] is True and data['result']['counts']['matched'] == 1 and data['result']['counts']['undeclared'] == 0" "audit --json should confirm the bounded changed file set"
 
-echo "[4/8] execute alias stays compatible with governed wrappers"
-capture output bash -lc "cd '$WS' && PATH='$CLI_ROOT':\"\$PATH\" scafld execute '$TASK_ID' --resume --json"
-assert_json "$output" "data['command'] == 'exec' and data['ok'] is True and data['result']['summary']['skipped_resume'] == 1" "execute should remain an alias of exec for wrapper compatibility"
+echo "[4/8] the old execute alias is gone"
+if capture output bash -lc "cd '$WS' && PATH='$CLI_ROOT':\"\$PATH\" scafld execute '$TASK_ID' --resume --json"; then
+  fail "execute alias should no longer resolve"
+fi
+assert_contains "$output" "invalid choice" "execute alias should fail as an invalid command"
 
 echo "[5/8] review and complete emit the handoff and archive facts"
 capture output bash -lc "cd '$WS' && PATH='$CLI_ROOT':\"\$PATH\" scafld review '$TASK_ID' --json"

@@ -77,10 +77,14 @@ Wrapper behavior:
 
 - approved spec: activates the task and immediately runs execution
 - active spec: runs the next execution pass
+- default execution scope: current open phase only
+- if that phase passes, `build` emits the next phase handoff and stops there
+- later phases do not run until another explicit `build` or `exec`
 
 Important JSON fields:
 
 - `state.action == "start_exec"`
+- `result.executed_phase`
 - `result.initial_handoff`
 - `result.next_action`
 - `result.current_handoff`
@@ -88,6 +92,23 @@ Important JSON fields:
 
 `result.next_action` is the canonical next step. `result.current_handoff`
 describes the handoff the agent should read next when one is available.
+
+## exec
+
+```bash
+scafld exec <task-id> [--phase PHASE] [--resume] [--json]
+```
+
+Default behavior matches `build`: without `--phase`, scafld resolves the
+current open phase and executes only that phase's criteria.
+
+Important JSON fields:
+
+- `state.executed_phase`
+- `result.executed_phase`
+- `result.criteria`
+- `result.next_handoff`
+- `result.next_action`
 
 ## status
 

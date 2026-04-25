@@ -11,20 +11,12 @@ from scafld.execution_runtime import (
 )
 from scafld.output import emit_command_json, error_payload
 from scafld.runtime_bundle import DRAFTS_DIR
-from scafld.spec_parsing import require_pyyaml
-from scafld.spec_store import require_spec
+from scafld.spec_store import require_spec, yaml_read_field
 from scafld.terminal import C_BOLD, C_CYAN, C_DIM, C_GREEN, C_RED, C_YELLOW, c
 
 
 def cmd_harden(args):
     """Scaffold HARDEN MODE prompt or mark a hardening round passed."""
-    try:
-        yaml = require_pyyaml()
-    except RuntimeError:
-        print(f"{c(C_RED, 'error')}: scafld harden requires PyYAML")
-        print("  install it into the Python runtime that executes scafld:")
-        print(f"  {c(C_BOLD, 'python3 -m pip install PyYAML')}")
-        sys.exit(1)
     root = require_root()
     spec = require_spec(root, args.task_id)
     json_mode = bool(getattr(args, "json", False))
@@ -58,7 +50,7 @@ def cmd_harden(args):
                     "harden",
                     ok=False,
                     task_id=args.task_id,
-                    state={"file": str(rel), "harden_status": (yaml.safe_load(spec.read_text()) or {}).get("harden_status")},
+                    state={"file": str(rel), "harden_status": yaml_read_field(spec.read_text(), "harden_status")},
                     error=error_payload(exc.message, code=exc.code, details=exc.details, next_action=exc.next_action, exit_code=exc.exit_code),
                 )
             else:
@@ -118,14 +110,15 @@ def cmd_harden(args):
 def print_exec_payload(task_id, payload, *, phase=None, resume=False):
     state = payload.get("state") or {}
     result = payload.get("result") or {}
+    resolved_phase = phase or result.get("executed_phase") or state.get("executed_phase")
     criteria = result.get("criteria") or []
     summary = result.get("summary") or empty_exec_summary()
     warnings = payload.get("warnings") or []
     error = payload.get("error") or {}
 
     print(f"{c(C_BOLD, f'Executing acceptance criteria for {task_id}')}")
-    if phase:
-        print(f"  phase: {phase}")
+    if resolved_phase:
+        print(f"  phase: {resolved_phase}")
     if resume and summary.get("skipped_resume"):
         print(f"  {c(C_DIM, f'resume: skipping {summary['skipped_resume']} already-passed criteria')}")
     if warnings:

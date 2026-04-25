@@ -1,3 +1,6 @@
+import json
+import re
+
 from scafld.acceptance import evaluate_acceptance_criterion, record_exec_result
 from scafld.error_codes import ErrorCode as EC
 from scafld.errors import ScafldError
@@ -19,12 +22,11 @@ from scafld.session_store import (
     set_recovery_attempt,
     update_latest_attempt_status,
 )
-from scafld.spec_parsing import extract_spec_cwd, now_iso, parse_acceptance_criteria, require_pyyaml
-from scafld.spec_store import load_spec_document, require_spec, yaml_read_field
+from scafld.spec_parsing import extract_spec_cwd, now_iso, parse_acceptance_criteria
+from scafld.spec_store import load_spec_document, require_spec, write_spec_document, yaml_read_field
 
 
 def harden_open_snapshot(root, task_id):
-    yaml = require_pyyaml()
     spec = require_spec(root, task_id)
     rel = spec.relative_to(root)
     if not str(rel).startswith(DRAFTS_DIR):
@@ -34,7 +36,7 @@ def harden_open_snapshot(root, task_id):
             code=EC.INVALID_SPEC_LOCATION,
         )
 
-    data = yaml.safe_load(spec.read_text()) or {}
+    data = load_spec_document(spec)
     rounds = data.get("harden_rounds") or []
     prompt_path = resolve_prompt_path(root, "harden.md")
     if not prompt_path.exists():
@@ -53,7 +55,7 @@ def harden_open_snapshot(root, task_id):
     data["harden_status"] = "in_progress"
     data["harden_rounds"] = rounds
     data["updated"] = now_iso()
-    spec.write_text(yaml.safe_dump(data, sort_keys=False))
+    write_spec_document(spec, data)
     prompt_text = prompt_path.read_text()
     return {
         "state": {"file": str(rel), "harden_status": "in_progress", "round": next_round},
@@ -66,7 +68,6 @@ def harden_open_snapshot(root, task_id):
 
 
 def harden_pass_snapshot(root, task_id):
-    yaml = require_pyyaml()
     spec = require_spec(root, task_id)
     rel = spec.relative_to(root)
     if not str(rel).startswith(DRAFTS_DIR):
@@ -76,7 +77,7 @@ def harden_pass_snapshot(root, task_id):
             code=EC.INVALID_SPEC_LOCATION,
         )
 
-    data = yaml.safe_load(spec.read_text()) or {}
+    data = load_spec_document(spec)
     rounds = data.get("harden_rounds") or []
     if not rounds:
         raise ScafldError(
@@ -90,7 +91,7 @@ def harden_pass_snapshot(root, task_id):
     rounds[-1]["outcome"] = "passed"
     data["harden_rounds"] = rounds
     data["updated"] = now_iso()
-    spec.write_text(yaml.safe_dump(data, sort_keys=False))
+    write_spec_document(spec, data)
     return {
         "state": {"file": str(rel), "harden_status": "passed", "round": rounds[-1]["round"]},
         "result": {
@@ -133,19 +134,19 @@ def phase_completion_summary(phase):
 
 def sync_phase_statuses(spec):
     """Update per-phase status fields from current acceptance results."""
-    try:
-        yaml = require_pyyaml()
-    except RuntimeError:
-        return load_spec_document(spec)
-
-    data = yaml.safe_load(spec.read_text()) or {}
+    text = spec.read_text()
+    data = load_spec_document(spec)
     phases = data.get("phases")
     if not isinstance(phases, list):
         return data if isinstance(data, dict) else {}
 
+    next_statuses = {}
     changed = False
     for phase in phases:
         if not isinstance(phase, dict):
+            continue
+        phase_id = phase.get("id")
+        if not phase_id:
             continue
         criteria = phase.get("acceptance_criteria")
         if not isinstance(criteria, list) or not criteria:
@@ -160,18 +161,88 @@ def sync_phase_statuses(spec):
                 next_status = "in_progress"
             else:
                 next_status = "pending"
+        next_statuses[phase_id] = next_status
         if phase.get("status") != next_status:
             phase["status"] = next_status
             changed = True
 
     if changed:
-        spec.write_text(yaml.safe_dump(data, sort_keys=False))
+        spec.write_text(_rewrite_phase_status_fields(text, next_statuses))
     return data if isinstance(data, dict) else {}
+
+
+def _rewrite_phase_status_fields(text, phase_statuses):
+    lines = text.splitlines(True)
+    result = []
+    i = 0
+    in_phases = False
+
+    while i < len(lines):
+        line = lines[i]
+        stripped = line.strip()
+        indent = len(line) - len(line.lstrip())
+
+        if not in_phases:
+            result.append(line)
+            if re.match(r"^phases:\s*$", line):
+                in_phases = True
+            i += 1
+            continue
+
+        if stripped and indent == 0 and not stripped.startswith("- "):
+            in_phases = False
+            result.append(line)
+            i += 1
+            continue
+
+        match = re.match(r'^(\s*)-\s+id:\s*"?(phase\d+)"?\s*$', line)
+        if not match:
+            result.append(line)
+            i += 1
+            continue
+
+        phase_id = match.group(2)
+        item_indent = len(match.group(1))
+        field_indent = " " * (item_indent + 2)
+        result.append(line)
+        i += 1
+
+        preserved = []
+        insert_at = None
+        while i < len(lines):
+            field_line = lines[i]
+            if not field_line.strip():
+                preserved.append(field_line)
+                i += 1
+                continue
+
+            field_indent_level = len(field_line) - len(field_line.lstrip())
+            if field_indent_level <= item_indent:
+                break
+            if field_indent_level == item_indent and field_line.strip().startswith("- "):
+                break
+
+            if field_indent_level == len(field_indent) and re.match(r"^\s+status:\s*(.+)$", field_line):
+                if insert_at is None:
+                    insert_at = len(preserved)
+                i += 1
+                continue
+
+            preserved.append(field_line)
+            i += 1
+
+        if insert_at is None:
+            insert_at = len(preserved)
+        preserved[insert_at:insert_at] = [f"{field_indent}status: {json.dumps(phase_statuses[phase_id])}\n"]
+        result.extend(preserved)
+
+    return "".join(result)
 
 
 def exec_snapshot(root, task_id, *, phase=None, resume=False):
     spec = require_spec(root, task_id)
     text = spec.read_text()
+    spec_data = load_spec_document(spec)
     status = yaml_read_field(text, "status")
     if status not in ("in_progress", "approved"):
         return ({
@@ -190,6 +261,7 @@ def exec_snapshot(root, task_id, *, phase=None, resume=False):
 
     spec_cwd = extract_spec_cwd(text)
     criteria = parse_acceptance_criteria(text)
+    resolved_phase = phase or current_phase_id(spec_data)
     if not criteria:
         warning = "no acceptance criteria found in spec"
         return ({
@@ -202,8 +274,8 @@ def exec_snapshot(root, task_id, *, phase=None, resume=False):
             "error": None,
         }, 0)
 
-    if phase:
-        criteria = [criterion for criterion in criteria if criterion.get("phase") == phase]
+    if resolved_phase:
+        criteria = [criterion for criterion in criteria if criterion.get("phase") == resolved_phase]
         if not criteria:
             return ({
                 "ok": False,
@@ -213,7 +285,7 @@ def exec_snapshot(root, task_id, *, phase=None, resume=False):
                 "result": None,
                 "warnings": [],
                 "error": error_payload(
-                    f"phase not found or has no criteria: {phase}",
+                    f"phase not found or has no criteria: {resolved_phase}",
                     code=EC.PHASE_NOT_FOUND,
                     exit_code=1,
                 ),
@@ -493,8 +565,12 @@ def exec_snapshot(root, task_id, *, phase=None, resume=False):
         "ok": failed == 0,
         "command": "exec",
         "task_id": task_id,
-        "state": {"status": status},
+        "state": {
+            "status": status,
+            "executed_phase": resolved_phase,
+        },
         "result": {
+            "executed_phase": resolved_phase,
             "criteria": criterion_results,
             "summary": summary,
             "session_file": relative_path(root, session_path(root, task_id, spec_path=spec)),

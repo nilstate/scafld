@@ -1,0 +1,168 @@
+spec_version: '1.1'
+task_id: completed-progress-truthfulness
+created: '2026-04-25T09:35:43Z'
+updated: "2026-04-25T09:44:03Z"
+status: "completed"
+harden_status: passed
+task:
+  title: Make completed task progress truthful
+  summary: 'Fix the progress-truth gap where archived completed specs can still render
+    as `[0/x]` in `scafld list` because their per-phase status fields were never finalized.
+    The clean model is: completing a spec stamps truthful terminal phase and definition-of-done
+    state into the archived document, and read surfaces count older completed archives
+    truthfully even before they are rewritten.
+
+    '
+  size: small
+  risk_level: medium
+  context:
+    packages:
+    - scafld
+    - tests
+    files_impacted:
+    - path: scafld/commands/review.py
+      lines: task-selected
+      reason: Completion is the right lifecycle boundary to stamp terminal truth into
+        the archived spec.
+    - path: scafld/spec_parsing.py
+      lines: task-selected
+      reason: Phase counting currently trusts stale archived phase statuses and drives
+        `scafld list`.
+    - path: tests/completed_progress_truth_smoke.sh
+      lines: all
+      reason: A raw CLI smoke should prove both legacy archive projection and new
+        completion behavior.
+    invariants:
+    - completed_specs_must_not_render_partial_progress
+    - archived_specs_should_store_terminal_truth
+    - packaged_cli_is_the_truth_surface
+  objectives:
+  - Make `scafld list` show truthful completed progress for both legacy and newly
+    completed specs.
+  - Stamp completed archives with terminal phase and DoD truth at completion time.
+  - Prove the behavior through the raw packaged CLI instead of helper internals.
+  touchpoints:
+  - area: completion lifecycle
+    description: Completing a spec should normalize terminal truth into the archived
+      file.
+  - area: phase counting
+    description: Read surfaces should not trust stale archived phase statuses for
+      completed specs.
+  - area: archive UX
+    description: '"scafld list" should never show "completed ... [0/x]".'
+  acceptance:
+    definition_of_done:
+    - id: dod1
+      description: Newly completed specs archive with all phases marked completed
+        and all DoD entries marked done.
+      status: pending
+    - id: dod2
+      description: Legacy completed archives with stale phase statuses still render
+        truthful completed progress in "scafld list".
+      status: pending
+    validation:
+    - id: v1
+      type: compile
+      description: Compile the Python sources after the completion-truth fix.
+      command: python3 -m compileall scafld cli
+      expected: exit code 0
+    - id: v2
+      type: integration
+      description: Raw CLI smoke proves both legacy archive projection and new completion
+        stamping are truthful.
+      command: bash tests/completed_progress_truth_smoke.sh
+      expected: exit code 0
+  constraints:
+    approvals_required: []
+    non_goals:
+    - Do not rewrite the whole archive tree just to repair old specs.
+    - Do not invent a second progress model separate from phase and DoD state.
+  notes: 'The product surface is the problem here. If the main list view says `completed
+    [0/1]`, users cannot trust the lifecycle at a glance.
+
+    '
+planning_log:
+- timestamp: '2026-04-25T09:35:43Z'
+  actor: user
+  summary: Spec created via scafld plan
+- timestamp: '2026-04-25T09:39:05Z'
+  actor: assistant
+  summary: Replaced the placeholder draft with a concrete write-and-read truth fix
+    for completed archive progress.
+- timestamp: "2026-04-25T09:38:09Z"
+  actor: "cli"
+  summary: "Spec approved"
+- timestamp: "2026-04-25T09:38:43Z"
+  actor: "cli"
+  summary: "Execution started"
+- timestamp: "2026-04-25T09:44:03Z"
+  actor: "cli"
+  summary: "Spec completed"
+phases:
+- id: phase1
+  name: Normalize completed archive truth
+  objective: Make completed archive state truthful both when written today and when
+    projected from older archived specs.
+  changes:
+  - file: scafld/commands/review.py
+    action: update
+    content_spec: Normalize completed specs before archiving so phases are terminal
+      and DoD entries are marked done.
+  - file: scafld/spec_parsing.py
+    action: update
+    content_spec: Count completed archived phases truthfully even when older archive
+      files still carry stale pending phase statuses.
+  - file: tests/completed_progress_truth_smoke.sh
+    action: create
+    content_spec: Add a raw CLI smoke that proves legacy completed archives render
+      truthfully and new completion stamps truthful terminal state into the archived
+      spec.
+  acceptance_criteria:
+  - id: ac1_1
+    type: integration
+    description: Raw CLI smoke proves completed progress is truthful for both legacy
+      and newly completed specs.
+    command: bash tests/completed_progress_truth_smoke.sh
+    expected: exit code 0
+    result: "pass"
+    executed_at: "2026-04-25T09:43:02Z"
+    result_output: "[1/5] legacy completed archive lists as fully done [2/5] review opens for the fresh active spec [3/5] complete archives the fresh spec through the raw CLI [4/5] archived fresh spec stores terminal pha"
+  status: "completed"
+rollback:
+  strategy: per_phase
+  commands:
+    phase1: git checkout HEAD -- scafld/commands/review.py scafld/spec_parsing.py
+      tests/completed_progress_truth_smoke.sh
+harden_rounds:
+- round: 1
+  started_at: '2026-04-25T09:35:43Z'
+  outcome: passed
+  questions: []
+  ended_at: '2026-04-25T09:38:00Z'
+
+review:
+  timestamp: "2026-04-25T09:43:39Z"
+  verdict: "pass"
+  review_rounds: 1
+  reviewer_mode: "challenger"
+  reviewer_session: "manual-challenger-cli"
+  round_status: "completed"
+  override_applied: false
+  override_reason: null
+  override_confirmed_at: null
+  reviewed_head: "896977d4b2808c4ca17ebd8fb0265af19f5058b6"
+  reviewed_dirty: true
+  reviewed_diff: "d6bccfaa710b5b9dcfb59d1ca35a6bee1e0801e3c8fa75f38d46bc69d6379bf7"
+  passes:
+    - id: spec_compliance
+      result: "pass"
+    - id: scope_drift
+      result: "pass"
+    - id: regression_hunt
+      result: "pass"
+    - id: convention_check
+      result: "pass"
+    - id: dark_patterns
+      result: "pass"
+  blocking_count: 0
+  non_blocking_count: 0
