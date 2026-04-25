@@ -77,44 +77,50 @@ def validate_spec(root, spec):
     except json.JSONDecodeError as exc:
         return [f"invalid schema JSON: {exc}"]
 
-    text = spec.read_text()
     errors = []
+    try:
+        data = load_spec_document(spec)
+    except ScafldError as exc:
+        return [exc.message, *exc.details]
+
+    text = spec.read_text()
 
     required_top = schema.get("required", [])
     for field in required_top:
-        if not yaml_read_field(text, field):
-            if not re.search(rf"^{field}:", text, re.MULTILINE):
-                errors.append(f"missing required field: {field}")
+        if data.get(field) in (None, ""):
+            errors.append(f"missing required field: {field}")
 
-    task_id = yaml_read_field(text, "task_id")
+    task_id = data.get("task_id")
     if task_id and not re.match(r"^[a-z0-9-]+$", task_id):
         errors.append(f"task_id must be kebab-case: got '{task_id}'")
 
-    status = yaml_read_field(text, "status")
+    status = data.get("status")
     valid_statuses = ["draft", "blocked", "under_review", "approved", "in_progress", "completed", "failed", "cancelled"]
     if status and status not in valid_statuses:
         errors.append(f"invalid status: '{status}' (expected one of: {', '.join(valid_statuses)})")
 
-    spec_version = yaml_read_field(text, "spec_version")
+    spec_version = data.get("spec_version")
     if spec_version and not re.match(r"^\d+\.\d+$", spec_version):
         errors.append(f"spec_version must be semver: got '{spec_version}'")
 
-    if not re.search(r"^phases:", text, re.MULTILINE):
+    phases = data.get("phases")
+    if not isinstance(phases, list):
         errors.append("missing required field: phases")
     else:
-        phase_ids = re.findall(r'^\s*-\s+id:\s*"?(phase\d+)"?', text, re.MULTILINE)
+        phase_ids = [phase.get("id") for phase in phases if isinstance(phase, dict)]
         if not phase_ids:
             errors.append("phases array is empty (at least 1 phase required)")
 
-    if not re.search(r"^planning_log:", text, re.MULTILINE):
+    if not isinstance(data.get("planning_log"), list):
         errors.append("missing required field: planning_log")
 
-    if re.search(r"^task:", text, re.MULTILINE):
-        for field in ["title", "summary", "size", "risk_level"]:
-            if not yaml_read_nested(text, "task", field):
-                errors.append(f"missing required task field: task.{field}")
-    else:
+    task = data.get("task")
+    if not isinstance(task, dict):
         errors.append("missing required field: task")
+    else:
+        for field in ["title", "summary", "size", "risk_level"]:
+            if task.get(field) in (None, ""):
+                errors.append(f"missing required task field: task.{field}")
 
     todo_patterns = [
         (r'^\s+(?:command|content_spec|description|file):\s*"?TODO', "has TODO placeholder"),
@@ -132,8 +138,12 @@ def validation_snapshot(root, spec):
     rel = spec.relative_to(root)
     text = spec.read_text()
     errors = validate_spec(root, spec)
+    invalid_document = any(error.startswith("invalid spec document:") for error in errors)
 
-    total, completed, failed, in_progress = count_phases(text)
+    if invalid_document:
+        total = completed = failed = in_progress = 0
+    else:
+        total, completed, failed, in_progress = count_phases(text)
     task_id = yaml_read_field(text, "task_id")
     status = yaml_read_field(text, "status")
     spec_version = yaml_read_field(text, "spec_version")

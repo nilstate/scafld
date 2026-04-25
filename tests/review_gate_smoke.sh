@@ -164,7 +164,7 @@ task_id = os.environ["REVIEW_TASK_ID"]
 sys.path.insert(0, os.environ["REPO_ROOT"])
 from scafld.git_state import capture_review_git_state
 
-state, error = capture_review_git_state(repo, f".ai/reviews/{task_id}.md")
+state, error = capture_review_git_state(repo, [f".ai/reviews/{task_id}.md", f".ai/runs/{task_id}"])
 if error:
     raise SystemExit(error)
 
@@ -178,6 +178,73 @@ metadata_match = matches[-1]
 metadata = json.loads(metadata_match.group(1))
 metadata.update(state)
 review_path.write_text(text[:metadata_match.start(1)] + json.dumps(metadata, indent=2) + text[metadata_match.end(1):])
+PY
+}
+
+complete_scaffolded_review_round() {
+  local repo="$1"
+  local task_id="$2"
+  local verdict="${3:-pass}"
+  REVIEW_REPO="$repo" REVIEW_TASK_ID="$task_id" REVIEW_VERDICT="$verdict" python3 - <<'PY'
+import json
+import os
+import pathlib
+import re
+
+repo = pathlib.Path(os.environ["REVIEW_REPO"])
+task_id = os.environ["REVIEW_TASK_ID"]
+verdict = os.environ["REVIEW_VERDICT"]
+review_path = repo / ".ai" / "reviews" / f"{task_id}.md"
+text = review_path.read_text()
+
+json_blocks = list(re.finditer(r"```json\s*\n(.*?)\n```", text, re.DOTALL))
+if not json_blocks:
+    raise SystemExit("review metadata JSON block not found")
+
+metadata_match = json_blocks[-1]
+metadata = json.loads(metadata_match.group(1))
+metadata["round_status"] = "completed"
+metadata["reviewer_mode"] = "fresh_agent"
+metadata["reviewer_session"] = "sess-1"
+
+pass_results = dict(metadata.get("pass_results") or {})
+for pass_id in ("spec_compliance", "scope_drift", "regression_hunt", "convention_check", "dark_patterns"):
+    pass_results[pass_id] = "pass"
+metadata["pass_results"] = pass_results
+
+text = text[:metadata_match.start(1)] + json.dumps(metadata, indent=2) + text[metadata_match.end(1):]
+
+pass_lines = "\n".join([
+    "- spec_compliance: PASS",
+    "- scope_drift: PASS",
+    "- regression_hunt: PASS",
+    "- convention_check: PASS",
+    "- dark_patterns: PASS",
+]) + "\n"
+
+section_updates = {
+    "Pass Results": pass_lines,
+    "Regression Hunt": "No issues found — checked callers of app.txt.\n",
+    "Convention Check": "No issues found — checked AGENTS.md and CONVENTIONS.md.\n",
+    "Dark Patterns": "No issues found — checked hardcodes and null handling.\n",
+    "Blocking": "None.\n",
+    "Non-blocking": "None.\n",
+    "Verdict": verdict + "\n",
+}
+
+for heading, body in section_updates.items():
+    pattern = rf"(^### {re.escape(heading)}\s*\n?)(.*?)(?=^### |\Z)"
+    text, count = re.subn(
+        pattern,
+        lambda match, body=body: (match.group(1) if match.group(1).endswith("\n") else match.group(1) + "\n") + body,
+        text,
+        count=1,
+        flags=re.MULTILINE | re.DOTALL,
+    )
+    if count != 1:
+        raise SystemExit(f"could not update section {heading}")
+
+review_path.write_text(text)
 PY
 }
 
@@ -529,6 +596,59 @@ case_review_git_binding() {
   spec_text="$(cat "$archive_path")"
   assert_contains "$spec_text" 'reviewed_head: "' "archived spec should record the reviewed commit"
   assert_contains "$spec_text" 'reviewed_diff: "' "archived spec should record the reviewed workspace fingerprint"
+}
+
+case_review_open_complete_flow() {
+  local repo task_id output archive_path
+  repo="$(new_repo)"
+  task_id="review-open-complete-flow"
+  write_changed_file "$repo"
+  write_active_spec "$repo" "$task_id" "grep -q '^changed$' app.txt" "exit code 0" "pass"
+
+  capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld review '$task_id'"
+  assert_contains "$output" "challenger handoff:" "review should emit the challenger handoff"
+  [ -f "$repo/.ai/runs/$task_id/handoffs/challenger-review.md" ] || fail "review should materialize the review handoff"
+
+  complete_scaffolded_review_round "$repo" "$task_id" "pass"
+
+  capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld complete '$task_id'"
+  archive_path="$(archive_spec_path "$repo" "$task_id")"
+  [ -n "$archive_path" ] || fail "complete should archive a freshly reviewed task without false control-plane drift"
+}
+
+case_review_refreshes_in_progress_round() {
+  local repo task_id output review_text review_count
+  repo="$(new_repo)"
+  task_id="review-refreshes-in-progress-round"
+  write_changed_file "$repo"
+  write_active_spec "$repo" "$task_id" "grep -q '^changed$' app.txt" "exit code 0" "pass"
+
+  capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld review '$task_id' --json"
+  assert_json "$output" "data['command'] == 'review' and data['state']['review_round'] == 1 and data['state']['review_action'] == 'opened'" "first review should open round 1"
+
+  REVIEW_REPO="$repo" REVIEW_TASK_ID="$task_id" python3 - <<'PY'
+import os
+import pathlib
+import re
+
+repo = pathlib.Path(os.environ["REVIEW_REPO"])
+task_id = os.environ["REVIEW_TASK_ID"]
+review_path = repo / ".ai" / "reviews" / f"{task_id}.md"
+text = review_path.read_text()
+pattern = r"(^### Regression Hunt\s*\n)(.*?)(?=^### |\Z)"
+updated, count = re.subn(pattern, r"\1SHOULD-BE-RESET\n", text, count=1, flags=re.MULTILINE | re.DOTALL)
+if count != 1:
+    raise SystemExit("could not seed stale regression text")
+review_path.write_text(updated)
+PY
+
+  capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld review '$task_id' --json"
+  assert_json "$output" "data['command'] == 'review' and data['state']['review_round'] == 1 and data['state']['review_action'] == 'refreshed'" "rerunning review should refresh the active round"
+
+  review_text="$(cat "$repo/.ai/reviews/$task_id.md")"
+  review_count="$(grep -c '^## Review ' "$repo/.ai/reviews/$task_id.md")"
+  [ "$review_count" = "1" ] || fail "rerunning review should preserve a single in-progress round"
+  assert_not_contains "$review_text" "SHOULD-BE-RESET" "refresh should replace stale in-progress review content"
 }
 
 case_human_override() {
@@ -1024,6 +1144,8 @@ case_all() {
   case_review_scaffold_topology
   case_review_complete_topology
   case_review_git_binding
+  case_review_open_complete_flow
+  case_review_refreshes_in_progress_round
   case_human_override
   case_duplicate_task_id
   case_failed_review_round
@@ -1047,6 +1169,8 @@ main() {
     review-scaffold-topology) case_review_scaffold_topology ;;
     review-complete-topology) case_review_complete_topology ;;
     review-git-binding) case_review_git_binding ;;
+    review-open-complete-flow) case_review_open_complete_flow ;;
+    review-refreshes-in-progress-round) case_review_refreshes_in_progress_round ;;
     human-override) case_human_override ;;
     duplicate-task-id) case_duplicate_task_id ;;
     failed-review-round) case_failed_review_round ;;

@@ -2,6 +2,7 @@ import json
 import re
 import subprocess
 import sys
+from pathlib import Path
 
 from scafld.audit_scope import collect_changed_files
 from scafld.acceptance import evaluate_acceptance_criterion
@@ -56,22 +57,41 @@ def ensure_review_file_header(review_file, task_id, spec_text):
 """)
 
 
-def append_review_round(
-    review_file,
-    task_id,
-    spec_text,
-    topology,
-    metadata,
-    verdict="",
-    blocking=None,
-    non_blocking=None,
-    section_bodies=None,
-):
-    """Append a review round using Review Artifact v3."""
-    ensure_review_file_header(review_file, task_id, spec_text)
-
+def next_review_round_number(review_file):
+    """Return the next sequential review round number for one review file."""
+    if not review_file.exists():
+        return 1
     existing_text = review_file.read_text()
-    review_count = len(re.findall(r"^## Review \d+\s+—", existing_text, re.MULTILINE)) + 1
+    return len(re.findall(r"^## Review \d+\s+—", existing_text, re.MULTILINE)) + 1
+
+
+def latest_review_round_number(review_file):
+    """Return the latest review round number, if one exists."""
+    if not review_file.exists():
+        return None
+    existing_text = review_file.read_text()
+    matches = list(re.finditer(r"^## Review (\d+)\s+—", existing_text, re.MULTILINE))
+    if not matches:
+        return None
+    return int(matches[-1].group(1))
+
+
+def review_binding_excluded_rels(task_id, review_file_rel):
+    """Return task-scoped review control-plane paths excluded from review binding."""
+    excluded = []
+    if review_file_rel:
+        excluded.append(Path(review_file_rel).as_posix())
+    excluded.append((Path(".ai") / "runs" / task_id).as_posix())
+    return excluded
+
+
+def capture_bound_review_git_state(root, task_id, review_file_rel):
+    """Capture reviewed git state using the shared review binding exclusions."""
+    return capture_review_git_state(root, review_binding_excluded_rels(task_id, review_file_rel))
+
+
+def render_review_round_text(topology, metadata, review_count, verdict="", blocking=None, non_blocking=None, section_bodies=None):
+    """Render one review round block using Review Artifact v3."""
     metadata_json = json.dumps(metadata, indent=2)
     blocking_body = "\n".join(blocking or [])
     non_blocking_body = "\n".join(non_blocking or [])
@@ -82,7 +102,7 @@ def append_review_round(
         for definition in review_passes_by_kind(topology, "adversarial")
     )
 
-    round_text = f"""## Review {review_count} — {now_iso()}
+    return f"""## Review {review_count} — {now_iso()}
 
 ### Metadata
 ```json
@@ -102,12 +122,61 @@ def append_review_round(
 
 ### Verdict
 {verdict_body}
-"""
+""".strip()
 
-    if existing_text.strip():
+
+def replace_latest_review_round_text(existing_text, round_text):
+    """Replace the latest review round block while preserving prior history and header."""
+    matches = list(re.finditer(r"^## Review \d+\s+—", existing_text, re.MULTILINE))
+    if not matches:
+        return round_text.strip() + "\n"
+
+    prefix = existing_text[:matches[-1].start()].rstrip()
+    if prefix.endswith("---"):
+        prefix = prefix[:-3].rstrip()
+
+    parts = [part for part in (prefix, round_text.strip()) if part]
+    return "\n\n---\n\n".join(parts) + "\n"
+
+
+def append_review_round(
+    review_file,
+    task_id,
+    spec_text,
+    topology,
+    metadata,
+    verdict="",
+    blocking=None,
+    non_blocking=None,
+    section_bodies=None,
+    review_count=None,
+    replace_latest=False,
+):
+    """Append a review round using Review Artifact v3."""
+    ensure_review_file_header(review_file, task_id, spec_text)
+
+    existing_text = review_file.read_text()
+    if review_count is None:
+        review_count = latest_review_round_number(review_file) if replace_latest else next_review_round_number(review_file)
+        if review_count is None:
+            review_count = 1
+
+    round_text = render_review_round_text(
+        topology,
+        metadata,
+        review_count,
+        verdict=verdict,
+        blocking=blocking,
+        non_blocking=non_blocking,
+        section_bodies=section_bodies,
+    )
+
+    if replace_latest:
+        review_file.write_text(replace_latest_review_round_text(existing_text, round_text))
+    elif existing_text.strip():
         review_file.write_text(existing_text.rstrip() + "\n\n---\n\n" + round_text)
     else:
-        review_file.write_text(round_text)
+        review_file.write_text(round_text + "\n")
     return review_count
 
 
@@ -387,7 +456,45 @@ def open_review_round(root, task_id, spec, text, topology, normalized_passes, au
     reviews_dir = root / REVIEWS_DIR
     reviews_dir.mkdir(parents=True, exist_ok=True)
     review_file = reviews_dir / f"{task_id}.md"
-    review_git_state, review_git_error = capture_review_git_state(root, review_file.relative_to(root))
+    review_file_rel = review_file.relative_to(root)
+    ensure_review_file_header(review_file, task_id, text)
+    existing_review = parse_review_file(review_file, topology)
+    refresh_existing = existing_review.get("exists") and existing_review.get("round_status") == "in_progress"
+    review_count = (
+        latest_review_round_number(review_file)
+        if refresh_existing
+        else next_review_round_number(review_file)
+    )
+    if review_count is None:
+        review_count = 1
+
+    adversarial_passes = review_passes_by_kind(topology, "adversarial")
+    session = load_session(root, task_id, spec_path=spec)
+    rendered = render_handoff(
+        root,
+        task_id,
+        spec,
+        role="challenger",
+        gate="review",
+        selector="review",
+        session=session,
+        context={
+            "review_file_rel": str(review_file_rel),
+            "review_count": review_count,
+            "required_sections": [
+                "Metadata",
+                "Pass Results",
+                *[definition["title"] for definition in adversarial_passes],
+                "Blocking",
+                "Non-blocking",
+                "Verdict",
+            ],
+            "automated_results": automated_results or [],
+            "reviewer_isolation": "fresh_context_handoff",
+        },
+    )
+
+    review_git_state, review_git_error = capture_bound_review_git_state(root, task_id, review_file_rel)
     if review_git_error:
         raise ScafldError(
             "could not capture reviewed git state",
@@ -402,7 +509,7 @@ def open_review_round(root, task_id, spec, text, topology, normalized_passes, au
         reviewed_at=now_iso(),
         reviewer_session="",
         review_git_state=review_git_state,
-        review_handoff=f".ai/runs/{task_id}/handoffs/challenger-review.md",
+        review_handoff=rendered["path_rel"],
         reviewer_isolation="fresh_context_handoff",
     )
     review_count = append_review_round(
@@ -414,37 +521,15 @@ def open_review_round(root, task_id, spec, text, topology, normalized_passes, au
         verdict="",
         blocking=[],
         non_blocking=[],
+        review_count=review_count,
+        replace_latest=refresh_existing,
     )
 
-    adversarial_passes = review_passes_by_kind(topology, "adversarial")
-    session = load_session(root, task_id, spec_path=spec)
-    rendered = render_handoff(
-        root,
-        task_id,
-        spec,
-        role="challenger",
-        gate="review",
-        selector="review",
-        session=session,
-        context={
-            "review_file_rel": str(review_file.relative_to(root)),
-            "review_count": review_count,
-            "required_sections": [
-                "Metadata",
-                "Pass Results",
-                *[definition["title"] for definition in adversarial_passes],
-                "Blocking",
-                "Non-blocking",
-                "Verdict",
-            ],
-            "automated_results": automated_results or [],
-            "reviewer_isolation": "fresh_context_handoff",
-        },
-    )
     return {
         "review_file": review_file,
-        "review_path_rel": str(review_file.relative_to(root)),
+        "review_path_rel": str(review_file_rel),
         "review_count": review_count,
+        "review_action": "refreshed" if refresh_existing else "opened",
         "review_prompt": rendered["content"],
         "review_handoff_rel": rendered["path_rel"],
         "review_handoff_json_rel": rendered["json_path_rel"],
@@ -478,7 +563,11 @@ def evaluate_review_gate(root, review_file, review_data):
     elif review_data["verdict"] in (None, "incomplete") or review_data["round_status"] == "in_progress":
         gate_reason = "latest review is incomplete"
     else:
-        current_git_state, current_git_error = capture_review_git_state(root, review_file.relative_to(root))
+        current_git_state, current_git_error = capture_bound_review_git_state(
+            root,
+            review_file.stem,
+            review_file.relative_to(root),
+        )
         if current_git_error:
             gate_reason = "current git state is unavailable for review binding"
             gate_errors.append(f"git state: {current_git_error}")
@@ -495,7 +584,11 @@ def evaluate_review_gate(root, review_file, review_data):
 
 def apply_human_override(root, task_id, text, topology, review_file, review_data, pass_results, override_reason, current_git_state=None):
     if current_git_state is None:
-        current_git_state, current_git_error = capture_review_git_state(root, review_file.relative_to(root))
+        current_git_state, current_git_error = capture_bound_review_git_state(
+            root,
+            task_id,
+            review_file.relative_to(root),
+        )
         if current_git_error:
             raise ScafldError(
                 "current git state is unavailable for review binding",

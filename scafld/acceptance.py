@@ -1,7 +1,8 @@
+import json
 import re
 import subprocess
 
-from scafld.spec_parsing import now_iso
+from scafld.spec_parsing import now_iso, require_pyyaml
 
 
 DEFAULT_ACCEPTANCE_TIMEOUT_SECONDS = 600
@@ -10,9 +11,50 @@ GENERIC_PASS_EXPECTATIONS = {"all pass", "all tests pass", "all specs pass"}
 
 def record_exec_result(text, ac_id, passed, output_snippet=""):
     """Record execution result for an acceptance criterion in the spec."""
+    yaml = require_pyyaml()
+    data = yaml.safe_load(text) or {}
+    if not isinstance(data, dict):
+        return text
+
+    status = "pass" if passed else "fail"
+    executed_at = now_iso()
+    snippet = output_snippet[:200].replace("\n", " ")
+    nested_result = False
+
+    phases = data.get("phases")
+    if not isinstance(phases, list):
+        return text
+
+    for phase in phases:
+        if not isinstance(phase, dict):
+            continue
+        for block_name in ("acceptance_criteria", "validation"):
+            block = phase.get(block_name)
+            if not isinstance(block, list):
+                continue
+            for entry in block:
+                if not isinstance(entry, dict):
+                    continue
+                if entry.get("id") != ac_id and entry.get("dod_id") != ac_id:
+                    continue
+                nested_result = isinstance(entry.get("result"), dict)
+                return _rewrite_exec_result_fields(
+                    text=text,
+                    ac_id=ac_id,
+                    nested_result=nested_result,
+                    status=status,
+                    executed_at=executed_at,
+                    output_snippet=snippet if output_snippet else "",
+                )
+
+    return text
+
+
+def _rewrite_exec_result_fields(*, text, ac_id, nested_result, status, executed_at, output_snippet):
     lines = text.splitlines(True)
     result = []
     i = 0
+
     while i < len(lines):
         line = lines[i]
         if re.search(rf'(?:id|dod_id):\s*"?{re.escape(ac_id)}"?\s*$', line):
@@ -22,55 +64,89 @@ def record_exec_result(text, ac_id, passed, output_snippet=""):
                 field_indent = " " * (len(item_match.group(1)) + 2)
             else:
                 field_indent = " " * (len(line) - len(line.lstrip()))
-            nested_result = False
+
             i += 1
+            preserved = []
+            insert_at = None
             while i < len(lines):
                 field_line = lines[i]
                 if not field_line.strip():
-                    break
+                    preserved.append(field_line)
+                    i += 1
+                    continue
+
                 field_indent_level = len(field_line) - len(field_line.lstrip())
                 expected_indent = len(field_indent)
                 if field_indent_level < expected_indent:
                     break
                 if field_indent_level == expected_indent - 2 and field_line.strip().startswith("- "):
                     break
-                if field_indent_level == expected_indent and re.match(r"^\s+result:\s*$", field_line):
-                    nested_result = True
-                    i += 1
-                    while i < len(lines):
-                        nested = lines[i]
-                        if not nested.strip():
-                            i += 1
-                            continue
-                        nested_indent = len(nested) - len(nested.lstrip())
-                        if nested_indent <= expected_indent:
-                            break
-                        i += 1
+
+                if field_indent_level == expected_indent and re.match(
+                    r"^\s+(result|result_output|executed_at):(?:\s|$)",
+                    field_line,
+                ):
+                    if insert_at is None:
+                        insert_at = len(preserved)
+                    i = _skip_yaml_field(lines, i, field_indent_level, expected_indent - 2)
                     continue
-                if field_indent_level == expected_indent and re.match(r"^\s+(result|result_output|executed_at):", field_line):
-                    i += 1
-                    continue
-                result.append(field_line)
+
+                preserved.append(field_line)
                 i += 1
-            status = "pass" if passed else "fail"
-            executed_at = now_iso()
-            snippet = output_snippet[:200].replace('"', '\\"').replace("\n", " ")
-            if nested_result:
-                result.append(f"{field_indent}result:\n")
-                result.append(f'{field_indent}  status: "{status}"\n')
-                result.append(f'{field_indent}  timestamp: "{executed_at}"\n')
-                if output_snippet:
-                    result.append(f'{field_indent}  output: "{snippet}"\n')
-            else:
-                result.append(f'{field_indent}result: "{status}"\n')
-                result.append(f'{field_indent}executed_at: "{executed_at}"\n')
-                if output_snippet:
-                    result.append(f'{field_indent}result_output: "{snippet}"\n')
+
+            runtime_lines = _render_exec_result_fields(
+                field_indent=field_indent,
+                nested_result=nested_result,
+                status=status,
+                executed_at=executed_at,
+                output_snippet=output_snippet,
+            )
+            if insert_at is None:
+                insert_at = len(preserved)
+            preserved[insert_at:insert_at] = runtime_lines
+            result.extend(preserved)
             continue
+
         result.append(line)
         i += 1
 
     return "".join(result)
+
+
+def _skip_yaml_field(lines, start_index, field_indent_level, item_indent_level):
+    i = start_index + 1
+    while i < len(lines):
+        next_line = lines[i]
+        if not next_line.strip():
+            i += 1
+            continue
+        next_indent = len(next_line) - len(next_line.lstrip())
+        if next_indent <= field_indent_level:
+            break
+        if next_indent <= item_indent_level and next_line.strip().startswith("- "):
+            break
+        i += 1
+    return i
+
+
+def _render_exec_result_fields(*, field_indent, nested_result, status, executed_at, output_snippet):
+    if nested_result:
+        lines = [
+            f"{field_indent}result:\n",
+            f"{field_indent}  status: {json.dumps(status)}\n",
+            f"{field_indent}  timestamp: {json.dumps(executed_at)}\n",
+        ]
+        if output_snippet:
+            lines.append(f"{field_indent}  output: {json.dumps(output_snippet)}\n")
+        return lines
+
+    lines = [
+        f"{field_indent}result: {json.dumps(status)}\n",
+        f"{field_indent}executed_at: {json.dumps(executed_at)}\n",
+    ]
+    if output_snippet:
+        lines.append(f"{field_indent}result_output: {json.dumps(output_snippet)}\n")
+    return lines
 
 
 def criterion_timeout_seconds(criterion):

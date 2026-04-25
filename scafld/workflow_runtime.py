@@ -1,6 +1,7 @@
 from scafld.error_codes import ErrorCode as EC
 from scafld.errors import ScafldError
 from scafld.execution_runtime import exec_snapshot, harden_open_snapshot
+from scafld.handoff_renderer import current_phase_id
 from scafld.lifecycle_runtime import new_spec_snapshot, start_spec_snapshot, status_snapshot
 from scafld.output import error_payload
 from scafld.runtime_bundle import DRAFTS_DIR
@@ -151,8 +152,9 @@ def build_snapshot(root, task_id):
                 "error": error,
             }, exc.exit_code)
 
-        exec_payload, exec_code = exec_snapshot(root, task_id, phase=None, resume=True)
         active_spec = require_spec(root, task_id)
+        resolved_phase = current_phase_id(load_spec_document(active_spec))
+        exec_payload, exec_code = exec_snapshot(root, task_id, phase=resolved_phase, resume=True)
         session = load_session(root, task_id, spec_path=active_spec)
         snapshot = status_snapshot(root, active_spec, task_id)
         guidance = derive_task_guidance(
@@ -194,7 +196,8 @@ def build_snapshot(root, task_id):
         }, exec_code)
 
     if status == "in_progress":
-        payload, exit_code = exec_snapshot(root, task_id, phase=None, resume=True)
+        resolved_phase = current_phase_id(load_spec_document(spec))
+        payload, exit_code = exec_snapshot(root, task_id, phase=resolved_phase, resume=True)
         active_spec = require_spec(root, task_id)
         session = load_session(root, task_id, spec_path=active_spec)
         snapshot = status_snapshot(root, active_spec, task_id)

@@ -39,7 +39,7 @@ task_id = os.environ["REVIEW_TASK_ID"]
 sys.path.insert(0, os.environ["REPO_ROOT"])
 from scafld.git_state import capture_review_git_state
 
-state, error = capture_review_git_state(repo, f".ai/reviews/{task_id}.md")
+state, error = capture_review_git_state(repo, [f".ai/reviews/{task_id}.md", f".ai/runs/{task_id}"])
 if error:
     raise SystemExit(error)
 

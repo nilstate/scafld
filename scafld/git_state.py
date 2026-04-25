@@ -109,8 +109,12 @@ def git_pathspec(excluded_rels=None):
 
 
 def review_git_pathspec(excluded_rel=None):
-    """Return a root-scoped pathspec that optionally excludes one relative path."""
-    return git_pathspec([excluded_rel] if excluded_rel else None)
+    """Return a root-scoped pathspec that excludes one or more review paths."""
+    if excluded_rel is None:
+        return git_pathspec()
+    if isinstance(excluded_rel, (str, Path)):
+        return git_pathspec([excluded_rel])
+    return git_pathspec(excluded_rel)
 
 
 def ref_exists(root, ref_name):
@@ -491,7 +495,7 @@ def list_changed_files_against_ref(root, base_ref, excluded_rels=None):
 
 
 def capture_review_git_state(root, excluded_rel=None):
-    """Capture the reviewed git state, excluding the review artifact itself."""
+    """Capture the reviewed git state, excluding review control-plane paths."""
     empty = {
         "reviewed_head": None,
         "reviewed_dirty": None,

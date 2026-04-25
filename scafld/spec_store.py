@@ -60,7 +60,21 @@ def require_pyyaml():
 def load_spec_document(spec_path):
     """Load a full spec document for structured edits."""
     yaml = require_pyyaml()
-    data = yaml.safe_load(spec_path.read_text(encoding="utf-8")) or {}
+    try:
+        data = yaml.safe_load(spec_path.read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError as exc:
+        details = []
+        mark = getattr(exc, "problem_mark", None)
+        if mark is not None:
+            details.append(f"yaml parse error at line {mark.line + 1}, column {mark.column + 1}")
+        problem = getattr(exc, "problem", None)
+        if isinstance(problem, str) and problem:
+            details.append(problem)
+        raise ScafldError(
+            f"invalid spec document: {spec_path.name}",
+            details,
+            code=ErrorCode.INVALID_SPEC_DOCUMENT,
+        ) from exc
     if not isinstance(data, dict):
         raise ScafldError(
             f"invalid spec document: {spec_path.name}",

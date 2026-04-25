@@ -1,0 +1,254 @@
+spec_version: '1.1'
+task_id: strict-yaml-spec-gates
+created: '2026-04-25T09:06:27Z'
+updated: "2026-04-25T09:14:35Z"
+status: "completed"
+harden_status: in_progress
+task:
+  title: Make spec gates enforce real YAML integrity
+  summary: 'Fix the integrity gap where scafld validates and approves specs using
+    regex field reads while later runtime paths use `yaml.safe_load()`. Right now
+    a spec with syntactically invalid YAML can pass `scafld validate`, pass `scafld
+    approve`, and then blow up `scafld build` with a raw traceback. That is a broken
+    gate and a bad operator experience. The clean model is: spec gates parse real
+    YAML before approving anything, malformed specs fail with structured validation
+    errors, and any remaining runtime path that loads a malformed spec returns a structured
+    scafld error instead of a Python traceback.
+
+    '
+  size: medium
+  risk_level: high
+  context:
+    packages:
+    - scafld
+    - tests
+    files_impacted:
+    - path: scafld/spec_store.py
+      lines: task-selected
+      reason: Central spec loading should convert YAML parser failures into structured
+        ScafldError values.
+    - path: scafld/lifecycle_runtime.py
+      lines: task-selected
+      reason: Validate and approve currently rely on regex checks instead of real
+        YAML parsing.
+    - path: scafld/execution_runtime.py
+      lines: task-selected
+      reason: Harden and execution paths still use direct yaml.safe_load calls that
+        can traceback on malformed specs.
+    - path: scafld/commands/execution.py
+      lines: task-selected
+      reason: Harden JSON error shaping should not crash while reporting malformed-spec
+        failures.
+    - path: tests/invalid_yaml_spec_smoke.sh
+      lines: all
+      reason: A disposable-repo smoke should prove validate/approve/build/harden all
+        fail cleanly on malformed YAML.
+    invariants:
+    - validation_gates_must_be_stricter_than_runtime
+    - malformed_specs_must_fail_as_scafld_errors_not_python_tracebacks
+    - packaged_cli_is_the_truth_surface
+    related_docs:
+    - README.md
+    - docs/lifecycle.md
+    - docs/cli-reference.md
+  objectives:
+  - Make `scafld validate` reject malformed YAML before schema-style checks.
+  - Make `scafld approve` refuse malformed YAML because validation already rejects
+    it.
+  - Convert malformed-spec runtime loads into structured scafld errors instead of
+    raw tracebacks.
+  - Lock the behavior with a disposable-repo smoke that exercises the packaged CLI.
+  scope:
+    in_scope:
+    - Structured YAML error handling for validate, approve, build, and harden.
+    - Shared spec-loading helpers for command/runtime paths that currently crash on
+      malformed YAML.
+    - A packaged-CLI smoke for malformed spec handling.
+    out_of_scope:
+    - Rewriting the full schema validator.
+    - Semantic validation of every spec field beyond current checks.
+    - Changing how well-formed specs move through the lifecycle.
+  assumptions:
+  - INVALID_SPEC_DOCUMENT is the right error family for malformed YAML parsing failures.
+  - Regex field readers are still fine as lightweight helpers once the document has
+    already been parsed successfully.
+  touchpoints:
+  - area: gate integrity
+    description: Validate and approve must stop bad specs before execution starts.
+  - area: runtime error shaping
+    description: Build and harden must surface malformed specs as structured command
+      failures.
+  - area: operator trust
+    description: "A malformed spec should never appear \u201Cvalid\u201D until a later\
+      \ traceback proves otherwise."
+  risks:
+  - description: Tightening validation could reject malformed specs that old workflows
+      accidentally depended on slipping through.
+    impact: medium
+    mitigation: This is the desired hard cut; cover the new behavior with a disposable-repo
+      smoke and keep well-formed spec behavior unchanged.
+  - description: Replacing direct yaml.safe_load calls could change non-error behavior
+      in harden/execution flows.
+    impact: medium
+    mitigation: Route through shared helpers, preserve existing data shapes, and validate
+      with focused CLI smoke.
+  - description: Runtime callers outside validate/approve could still traceback if
+      they bypass the structured loader.
+    impact: high
+    mitigation: Audit direct yaml.safe_load(spec.read_text()) call sites and pull
+      them onto the shared load path within this task.
+  acceptance:
+    validation_profile: strict
+    definition_of_done:
+    - id: dod1
+      description: Malformed YAML fails validate and approve with structured validation
+        errors.
+      status: pending
+    - id: dod2
+      description: Malformed YAML in build or harden fails as a structured scafld
+        error, not a traceback.
+      status: pending
+    - id: dod3
+      description: A disposable-repo smoke proves the packaged CLI behavior end to
+        end.
+      status: pending
+    validation:
+    - id: v1
+      type: compile
+      description: Compile the Python sources after the YAML integrity hardening.
+      command: python3 -m compileall scafld cli
+      expected: exit code 0
+    - id: v2
+      type: integration
+      description: Invalid-YAML smoke proves validate, approve, build, and harden
+        all fail cleanly.
+      command: bash tests/invalid_yaml_spec_smoke.sh
+      expected: exit code 0
+  constraints:
+    approvals_required: []
+    non_goals:
+    - Do not add a compatibility mode that allows malformed YAML through validate.
+    - Do not leave raw YAML parser tracebacks as an accepted operator surface.
+    - Do not broaden the task into a general schema redesign.
+  notes: "This is one of the few issues that directly breaks trust in the product:\
+    \ the gate says \u201Cvalid\u201D, then the next command crashes on the same file.\
+    \ That has to be fixed at the root.\n"
+planning_log:
+- timestamp: '2026-04-25T09:06:27Z'
+  actor: user
+  summary: Spec created via scafld plan
+- timestamp: '2026-04-25T09:08:40Z'
+  actor: assistant
+  summary: Replaced the placeholder draft with a spec grounded in a live repro where
+    validate and approve accepted malformed YAML that later crashed build.
+- timestamp: '2026-04-25T09:08:43Z'
+  actor: cli
+  summary: Spec approved
+- timestamp: '2026-04-25T09:08:48Z'
+  actor: cli
+  summary: Execution started
+- timestamp: "2026-04-25T09:14:35Z"
+  actor: "cli"
+  summary: "Spec completed"
+phases:
+- id: phase1
+  name: Make validate and approve parse real YAML
+  objective: Reject malformed specs at the gate instead of after approval.
+  changes:
+  - file: scafld/spec_store.py
+    action: update
+    content_spec: Introduce structured malformed-YAML handling for spec document loads.
+  - file: scafld/lifecycle_runtime.py
+    action: update
+    content_spec: Make validate/approve parse real YAML and surface malformed-document
+      errors as validation failures.
+  - file: tests/invalid_yaml_spec_smoke.sh
+    action: create
+    content_spec: Create a packaged-CLI smoke that proves validate and approve reject
+      malformed YAML in a disposable repo.
+  acceptance_criteria:
+  - id: ac1_1
+    type: integration
+    description: Invalid-YAML smoke proves validate and approve fail cleanly.
+    command: bash tests/invalid_yaml_spec_smoke.sh --phase gate
+    expected: exit code 0
+    result: pass
+    executed_at: '2026-04-25T09:10:27Z'
+    result_output: '[gate 1/2] validate rejects malformed YAML [gate 2/2] approve
+      refuses malformed YAML PASS: invalid yaml spec smoke'
+  status: completed
+- id: phase2
+  name: Remove malformed-spec tracebacks from runtime surfaces
+  objective: Make build and harden return structured scafld errors when a malformed
+    spec still reaches runtime.
+  dependencies:
+  - phase1
+  changes:
+  - file: scafld/execution_runtime.py
+    action: update
+    content_spec: Route harden/execution spec loads through the structured loader
+      instead of raw yaml.safe_load calls.
+  - file: scafld/commands/execution.py
+    action: update
+    content_spec: Keep harden JSON error shaping safe when the spec itself is malformed.
+  - file: tests/invalid_yaml_spec_smoke.sh
+    action: update
+    content_spec: Extend the smoke to prove build and harden return structured malformed-spec
+      failures instead of tracebacks.
+  acceptance_criteria:
+  - id: ac2_1
+    type: compile
+    description: Python sources compile after the structured YAML load changes.
+    command: python3 -m compileall scafld cli
+    expected: exit code 0
+    result: "pass"
+    executed_at: "2026-04-25T09:13:36Z"
+    result_output: "Listing 'scafld'... Listing 'scafld/commands'... Listing 'cli'..."
+  - id: ac2_2
+    type: integration
+    description: Invalid-YAML smoke proves build and harden fail cleanly.
+    command: bash tests/invalid_yaml_spec_smoke.sh --phase runtime
+    expected: exit code 0
+    result: "pass"
+    executed_at: "2026-04-25T09:13:37Z"
+    result_output: "[runtime 1/2] build fails as a structured malformed-spec error [runtime 2/2] harden fails as a structured malformed-spec error PASS: invalid yaml spec smoke"
+  status: completed
+rollback:
+  strategy: per_phase
+  commands:
+    phase1: git checkout HEAD -- scafld/spec_store.py scafld/lifecycle_runtime.py
+      tests/invalid_yaml_spec_smoke.sh
+    phase2: git checkout HEAD -- scafld/execution_runtime.py scafld/commands/execution.py
+      tests/invalid_yaml_spec_smoke.sh
+harden_rounds:
+- round: 1
+  started_at: '2026-04-25T09:06:27Z'
+  outcome: in_progress
+  questions: []
+
+review:
+  timestamp: "2026-04-25T09:14:45Z"
+  verdict: "pass"
+  review_rounds: 2
+  reviewer_mode: "challenger"
+  reviewer_session: "manual-challenger-cli"
+  round_status: "completed"
+  override_applied: false
+  override_reason: null
+  override_confirmed_at: null
+  reviewed_head: "896977d4b2808c4ca17ebd8fb0265af19f5058b6"
+  reviewed_dirty: true
+  reviewed_diff: "e9ff916cc506fe74e5a40d4d657bfe139c51a588dd7d3b273e481261da062d6f"
+  passes:
+    - id: spec_compliance
+      result: "pass"
+    - id: scope_drift
+      result: "pass"
+    - id: regression_hunt
+      result: "pass"
+    - id: convention_check
+      result: "pass"
+    - id: dark_patterns
+      result: "pass"
+  blocking_count: 0
+  non_blocking_count: 0
