@@ -1,0 +1,331 @@
+spec_version: '1.1'
+task_id: external-review-runner-hard-cut
+created: '2026-04-25T13:38:58Z'
+updated: "2026-04-25T14:14:00Z"
+status: "in_progress"
+harden_status: passed
+task:
+  title: Make adversarial review use a real external runner
+  summary: '`scafld review` still only opens the challenger round and emits a handoff,
+    while the thin provider wrappers are an optional side path. The clean model is:
+    `scafld review` owns challenger execution. It resolves a runner explicitly, defaults
+    to external execution, prefers `codex` then `claude`, supports explicit `local`
+    and `manual` fallback modes, and records review provenance without introducing
+    compatibility shims or a second review artifact format.
+
+    '
+  size: medium
+  risk_level: medium
+  context:
+    packages:
+    - scafld
+    - docs
+    - tests
+    files_impacted:
+    - path: scafld/commands/review.py
+      lines: all
+      reason: Review command should own runner resolution and execution instead of
+        only printing the challenger handoff.
+    - path: scafld/review_runtime.py
+      lines: all
+      reason: Review snapshot/result payload should expose runner-ready metadata without
+        breaking the JSON control surface.
+    - path: scafld/review_workflow.py
+      lines: all
+      reason: The review round writer and metadata model are the canonical place to
+        persist completed challenger provenance.
+    - path: scafld/reviewing.py
+      lines: all
+      reason: Review metadata validation must understand the new runner/provenance
+        fields.
+    - path: scafld/commands/surface.py
+      lines: all
+      reason: The public review command needs explicit runner/provider/model overrides.
+    - path: scafld/review_runner.py
+      lines: all
+      reason: New dedicated boundary for runner selection, provider invocation, and
+        output normalization.
+    - path: .ai/config.yaml
+      lines: all
+      reason: Review runner defaults belong in config, not hardcoded CLI assumptions.
+    - path: docs/review.md
+      lines: all
+      reason: The review product surface and fallback modes need to match the new
+        command behavior.
+    - path: docs/integrations.md
+      lines: all
+      reason: Thin wrapper docs must stop claiming wrappers are the default review
+        path.
+    - path: docs/configuration.md
+      lines: all
+      reason: Runner/provider/model config needs a documented contract.
+    - path: docs/cli-reference.md
+      lines: all
+      reason: Review flags and default runner semantics are part of the taught CLI
+        surface.
+    - path: tests/review_gate_smoke.sh
+      lines: all
+      reason: The real review gate smoke should prove external, local, and manual
+        review paths.
+    - path: tests/codex_handoff_adapter_smoke.sh
+      lines: all
+      reason: Existing adapter smoke should keep proving the thin provider wrapper
+        still works as a non-default integration surface.
+    - path: tests/claude_handoff_adapter_smoke.sh
+      lines: all
+      reason: Claude wrapper smoke should continue to prove the optional integration
+        path after the hard cut.
+    invariants:
+    - domain_boundaries
+    - no_legacy_code
+    - packaged_cli_is_the_truth_surface
+    - review_artifact_stays_scafld_owned
+  objectives:
+  - Make `scafld review` own challenger runner selection and execution by default.
+  - Keep the external path clean: explicit provider selection, codex-first auto resolution,
+      claude fallback, and real provenance capture.
+  - Preserve an explicit degraded fallback path via `local` or `manual` instead of
+    silent implicit fallback.
+  - Keep the existing review artifact and review gate contracts intact instead of
+    introducing a parallel format.
+  scope:
+    in_scope:
+    - review command flags and control flow
+    - review runner config and provider resolution
+    - external subprocess execution for codex and claude
+    - local/manual fallback modes
+    - review metadata/provenance fields
+    - docs and smoke coverage for the new review surface
+    out_of_scope:
+    - changing the adversarial pass topology itself
+    - changing complete/override semantics beyond consuming the new review metadata
+    - replacing the thin provider wrapper scripts for build/review integration
+  assumptions:
+  - codex and claude non-interactive CLIs are available in at least some environments,
+    but may be absent in others
+  - the JSON review surface should remain a control-plane snapshot and not mix subprocess
+    stdout into machine-readable output
+  - scafld should remain provider-neutral in core even while shipping first-party
+    codex and claude runner implementations
+  touchpoints:
+  - area: review command surface
+    description: '`scafld review` should be the canonical challenger entrypoint instead
+      of wrapper-first behavior.'
+  - area: review artifact contract
+    description: The latest review round should stay scafld-owned, validated, and
+      provenance-rich.
+  - area: provider integrations
+    description: Codex and Claude should remain thin external integrations selected
+      by the runner boundary, not leak into review core logic.
+  acceptance:
+    validation_profile: standard
+    definition_of_done:
+    - id: dod1
+      description: '`scafld review` defaults to external runner resolution and completes
+        a challenger round through a clean subprocess path when a provider is available.'
+      status: done
+      checked_at: "2026-04-25T14:14:00Z"
+      notes: "review now defaults to external execution and writes completed rounds through scafld."
+    - id: dod2
+      description: Explicit `local` and `manual` review modes exist and are visibly
+        degraded, not silent fallback.
+      status: done
+      checked_at: "2026-04-25T14:14:00Z"
+      notes: "local/manual review require explicit selection and leave the round in_progress."
+    - id: dod3
+      description: Review metadata records runner/provider provenance without changing
+        the gate artifact shape.
+      status: done
+      checked_at: "2026-04-25T14:14:00Z"
+      notes: "review metadata now carries review_provenance with runner/provider/model timing and response hash."
+    - id: dod4
+      description: Docs and smoke tests teach and prove the new review path.
+      status: done
+      checked_at: "2026-04-25T14:14:00Z"
+      notes: "docs/help are aligned and the review + adapter smokes are green."
+    validation:
+    - id: v1
+      type: compile
+      description: Compile the Python sources after review runner changes.
+      command: python3 -m compileall scafld cli
+      expected: exit code 0
+    - id: v2
+      type: integration
+      description: Review gate smoke proves external, local, and manual runner behavior.
+      command: bash tests/review_gate_smoke.sh external-runner
+      expected: exit code 0
+    - id: v3
+      type: integration
+      description: Codex wrapper smoke still proves the thin review adapter path.
+      command: bash tests/codex_handoff_adapter_smoke.sh
+      expected: exit code 0
+    - id: v4
+      type: integration
+      description: Claude wrapper smoke still proves the thin review adapter path.
+      command: bash tests/claude_handoff_adapter_smoke.sh
+      expected: exit code 0
+  constraints:
+    approvals_required: []
+    non_goals:
+    - Do not add compatibility aliases that preserve the old wrapper-first review
+      model as the taught surface.
+    - Do not silently fall back from external to local review.
+    - Do not let the external agent rewrite unrelated files as part of review execution.
+  notes: 'The clean product line here is narrow: `scafld review` owns challenger execution,
+    provider integrations stay thin, and degraded fallback modes are explicit.
+
+    '
+planning_log:
+- timestamp: '2026-04-25T13:38:58Z'
+  actor: user
+  summary: Spec created via scafld plan
+- timestamp: '2026-04-25T13:46:00Z'
+  actor: assistant
+  summary: Replaced the placeholder draft with the hard-cut external-review runner
+    plan grounded in the current review/runtime boundary.
+- timestamp: "2026-04-25T13:41:14Z"
+  actor: "cli"
+  summary: "Spec approved"
+- timestamp: "2026-04-25T13:41:14Z"
+  actor: "cli"
+  summary: "Execution started"
+- timestamp: "2026-04-25T14:02:00Z"
+  actor: "assistant"
+  summary: "Completed phase 1 and phase 2: added review runner config/selection, wired external/local/manual review execution, and proved the new path through targeted review smoke."
+- timestamp: "2026-04-25T14:14:00Z"
+  actor: "assistant"
+  summary: "Completed phase 3: aligned taught docs/help to the external-default review path and revalidated the optional codex/claude adapter lanes."
+phases:
+- id: phase1
+  name: Add runner config and selection boundary
+  objective: Define the explicit runner/provider/model contract and add a dedicated
+    review-runner seam instead of overloading the current prompt-pipe helper.
+  changes:
+  - file: .ai/config.yaml
+    action: update
+    content_spec: Add review runner defaults covering runner mode and external provider/model
+      selection.
+  - file: scafld/commands/surface.py
+    action: update
+    content_spec: Add explicit review flags for runner/provider/model overrides.
+  - file: scafld/review_runner.py
+    action: create
+    content_spec: Create the dedicated runner boundary for loading config and resolving
+      runner/provider selection.
+  acceptance_criteria:
+  - id: ac1_1
+    type: integration
+    description: Review surface exposes the new runner/provider/model options without
+      breaking help or parsing.
+    command: python3 - <<'PY'\nfrom scafld.commands.surface import COMMAND_SPECS\nreview
+      = next(spec for spec in COMMAND_SPECS if spec.name == 'review')\nflags = {flag
+      for arg in review.args for flag in arg.flags if flag.startswith('--')}\nassert
+      '--runner' in flags\nassert '--provider' in flags\nassert '--model' in flags\nPY
+    expected: exit code 0
+    result:
+      status: pass
+      timestamp: "2026-04-25T14:02:00Z"
+      output: "review surface exposes runner/provider/model overrides"
+  status: completed
+- id: phase2
+  name: Run challenger reviews through external, local, and manual paths
+  objective: Make `scafld review` default to external subprocess execution, preserve
+    explicit degraded modes, and persist completed review data plus provenance through
+    the existing review artifact.
+  dependencies:
+  - phase1
+  changes:
+  - file: scafld/commands/review.py
+    action: update
+    content_spec: Use the new review runner to execute or emit the challenger round
+      depending on runner mode.
+  - file: scafld/review_runtime.py
+    action: update
+    content_spec: Expose runner-ready review payload fields without mixing provider
+      subprocess output into JSON mode.
+  - file: scafld/review_workflow.py
+    action: update
+    content_spec: Add helpers to complete the latest review round from structured
+      runner output while keeping the canonical artifact shape.
+  - file: scafld/reviewing.py
+    action: update
+    content_spec: Validate and surface the new runner/provider provenance metadata.
+  - file: tests/review_gate_smoke.sh
+    action: update
+    content_spec: Add review-gate coverage for codex-first resolution, claude fallback,
+      explicit local mode, and explicit manual mode.
+  acceptance_criteria:
+  - id: ac2_1
+    type: integration
+    description: Review gate smoke proves external/local/manual runner behavior.
+    command: bash tests/review_gate_smoke.sh external-runner
+    expected: exit code 0
+    result:
+      status: pass
+      timestamp: "2026-04-25T14:02:00Z"
+      output: "external runner smoke passed with codex-path proof, claude fallback, and explicit local/manual degradation"
+  status: completed
+- id: phase3
+  name: Sync wrappers, docs, and integration expectations
+  objective: Keep the thin provider wrapper story honest now that `scafld review`
+    owns the default challenger path.
+  dependencies:
+  - phase2
+  changes:
+  - file: docs/review.md
+    action: update
+    content_spec: Teach the new default review runner behavior, degraded modes, and
+      provenance semantics.
+  - file: docs/integrations.md
+    action: update
+    content_spec: Clarify that wrapper scripts are optional integrations, not the
+      primary review product surface.
+  - file: docs/configuration.md
+    action: update
+    content_spec: Document the new review runner config and override flags.
+  - file: docs/cli-reference.md
+    action: update
+    content_spec: Document review flags and the non-JSON default external execution
+      behavior.
+  - file: tests/codex_handoff_adapter_smoke.sh
+    action: update
+    content_spec: Keep proving that the codex review wrapper still feeds the challenger
+      handoff as an optional adapter path.
+  - file: tests/claude_handoff_adapter_smoke.sh
+    action: update
+    content_spec: Keep proving that the claude review wrapper still feeds the challenger
+      handoff as an optional adapter path.
+  acceptance_criteria:
+  - id: ac3_1
+    type: integration
+    description: Codex wrapper smoke still passes after the review hard cut.
+    command: bash tests/codex_handoff_adapter_smoke.sh
+    expected: exit code 0
+    result:
+      status: pass
+      timestamp: "2026-04-25T14:14:00Z"
+      output: "codex handoff adapter smoke passed"
+  - id: ac3_2
+    type: integration
+    description: Claude wrapper smoke still passes after the review hard cut.
+    command: bash tests/claude_handoff_adapter_smoke.sh
+    expected: exit code 0
+    result:
+      status: pass
+      timestamp: "2026-04-25T14:14:00Z"
+      output: "claude handoff adapter smoke passed"
+  status: completed
+rollback:
+  strategy: per_phase
+  commands:
+    phase1: git checkout HEAD -- .ai/config.yaml scafld/commands/surface.py scafld/review_runner.py
+    phase2: git checkout HEAD -- scafld/commands/review.py scafld/review_runtime.py
+      scafld/review_workflow.py scafld/reviewing.py tests/review_gate_smoke.sh
+    phase3: git checkout HEAD -- docs/review.md docs/integrations.md docs/configuration.md
+      docs/cli-reference.md tests/codex_handoff_adapter_smoke.sh tests/claude_handoff_adapter_smoke.sh
+harden_rounds:
+- round: 1
+  started_at: '2026-04-25T13:38:58Z'
+  outcome: passed
+  questions: []
+  ended_at: '2026-04-25T13:41:06Z'

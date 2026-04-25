@@ -27,8 +27,9 @@ scafld report
 Advanced operator commands still exist behind `scafld --help --advanced`, but
 they are not the taught surface.
 
-When the workspace includes them, prefer these wrappers so the current handoff
-is consumed before the model acts:
+Use `scafld review <task-id>` as the default challenger entrypoint. When the
+workspace includes them, the wrappers remain optional provider-specific handoff
+adapters:
 
 ```bash
 scripts/scafld-claude-build.sh <task-id>
@@ -52,8 +53,8 @@ Show the current task status.
 - Read the generated handoff before editing code.
 - Prefer `scripts/scafld-claude-build.sh <task-id>` when the workspace includes
   it; the wrapper resolves the current scafld handoff before Claude acts.
-- Prefer `scripts/scafld-claude-review.sh <task-id>` for the adversarial review
-  pass when the workspace includes it.
+- Prefer `scafld review <task-id>` first. Use `scripts/scafld-claude-review.sh <task-id>`
+  only when you explicitly want the claude handoff adapter path.
 - Use `scafld handoff <task-id>` when you need the current executor or challenger brief without moving lifecycle state.
 - `build` starts approved work, then advances active work through validation on later calls.
 - `status` is the canonical next-step surface; read `next_action` and

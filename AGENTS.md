@@ -48,13 +48,14 @@ scafld update
 Use `scafld handoff` when an external harness needs the current handoff without
 moving the lifecycle.
 
-Use the wrapper scripts when they are present in the repo:
+Use `scafld review <task-id>` as the default challenger entrypoint. Use the
+wrapper scripts when you explicitly want the provider-specific handoff adapter:
 
 - `scripts/scafld-codex-build.sh <task-id>` resolves the current scafld handoff
   and pipes it to Codex before the model acts
-- `scripts/scafld-codex-review.sh <task-id>` does the same for the challenger review handoff
+- `scripts/scafld-codex-review.sh <task-id>` is the optional codex handoff adapter for challenger review
 - `scripts/scafld-claude-build.sh <task-id>` does the same for Claude Code
-- `scripts/scafld-claude-review.sh <task-id>` does the same for challenger review in Claude Code
+- `scripts/scafld-claude-review.sh <task-id>` is the optional claude handoff adapter for challenger review
 
 Prompt ownership is simple:
 
@@ -105,7 +106,8 @@ During execution:
 `review` is the hero gate.
 
 - it runs automated checks first
-- it emits a `challenger × review` handoff
+- it defaults to a fresh external challenger when configured for `external`
+- it still exposes a `challenger × review` handoff for explicit `local` or `manual` review modes
 - the challenger writes findings into `.ai/reviews/{task-id}.md`
 - `complete` closes only if the gate passes, or a human uses the audited override path
 

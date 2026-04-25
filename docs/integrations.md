@@ -20,8 +20,8 @@ Each wrapper:
 2. resolves the current scafld handoff for the selected mode
 3. pipes that handoff to the external agent runtime before the model acts
 
-That is the whole point of the wrapper layer: make handoff consumption the
-default path instead of an optional convention.
+That is the whole point of the wrapper layer: expose provider-specific handoff
+adapters without turning wrapper behavior into the core lifecycle contract.
 
 ## What The Wrappers Do
 
@@ -33,8 +33,10 @@ For executor work:
 For challenger review work:
 
 - run `scafld review`
-- resolve the `challenger × review` handoff
-- pass that handoff to the reviewer runtime
+- if review is configured for `external`, scafld itself will already spawn the
+  challenger runner by default
+- if review is configured for `local` or `manual`, the wrapper can consume the
+  emitted `challenger × review` handoff directly
 
 For blocked review findings, the wrapper can pass the latest challenger handoff
 back into the runtime so the executor has the exact review context in front of
@@ -61,4 +63,5 @@ Override the binary name with:
 - `SCAFLD_CODEX_BIN`
 - `SCAFLD_CLAUDE_BIN`
 
-Everything provider-specific stays at the script layer.
+Everything provider-specific stays at the script layer. The default review path
+now lives in `scafld review`; wrappers are optional transport.

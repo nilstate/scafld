@@ -110,13 +110,15 @@ When the next failure would exceed the cap, execution:
 scafld can generate a better executor handoff. It cannot force an external
 harness to use it. Session metrics measure outcomes, not handoff consumption.
 
-When the workspace includes them, the wrapper scripts make handoff consumption
-the default path for Codex and Claude Code:
+When the workspace includes them, the wrapper scripts remain optional handoff
+adapters for Codex and Claude Code:
 
 - `scripts/scafld-codex-build.sh <task-id>`
 - `scripts/scafld-claude-build.sh <task-id>`
 - `scripts/scafld-codex-review.sh <task-id>`
 - `scripts/scafld-claude-review.sh <task-id>`
+
+`scafld review` itself is now the default challenger entrypoint.
 
 Prompt ownership is also explicit:
 

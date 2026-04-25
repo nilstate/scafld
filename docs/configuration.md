@@ -59,6 +59,40 @@ Configured titles and order flow into both:
 - the review scaffold under `.ai/reviews/`
 - the generated challenger handoff
 
+## Review Runner
+
+The review runner contract stays narrow:
+
+```yaml
+review:
+  runner: "external"     # external | local | manual
+  external:
+    provider: "auto"     # auto | codex | claude
+    codex:
+      model: ""
+    claude:
+      model: ""
+```
+
+Meaning:
+
+- `runner`: default review execution mode
+- `external.provider`: provider selection for external review; `auto` prefers
+  `codex` first, then `claude`
+- `external.<provider>.model`: optional provider-specific model pin
+
+CLI overrides are explicit:
+
+```bash
+scafld review <task-id> --runner local
+scafld review <task-id> --runner manual
+scafld review <task-id> --provider codex --model gpt-5
+```
+
+There is no silent fallback from external review into local review. If no
+external provider exists, scafld fails cleanly and tells you to opt into
+`local` or `manual`.
+
 ## Why It Stays Small
 
 The cutover goal is clean execution, not config sprawl.

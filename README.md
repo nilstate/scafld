@@ -124,8 +124,9 @@ Wrapper intent:
 - `review`: run the adversarial review gate and emit the challenger handoff
 - `status`: expose the canonical `next_action` and `current_handoff`
 
-When the workspace includes them, the wrapper scripts make handoff consumption
-the default path for Codex and Claude Code instead of a manual convention.
+When the workspace includes them, the wrapper scripts are optional handoff
+adapters for Codex and Claude Code. The default challenger path is now
+`scafld review` itself.
 
 ```bash
 scripts/scafld-codex-build.sh <task-id>

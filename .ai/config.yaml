@@ -198,6 +198,14 @@ rubric:
 # Every spec gets the same review — no profiles.
 # Recommended: run the agent review in a fresh context/session.
 review:
+  runner: "external"
+  external:
+    provider: "auto"
+    codex:
+      model: ""
+    claude:
+      model: ""
+
   # Review pipeline is built from named built-in passes only.
   # Ordering is explicit; scafld sorts by `order`, not mapping insertion luck.
   automated_passes:

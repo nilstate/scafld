@@ -25,7 +25,8 @@ The command:
 
 1. runs automated passes
 2. appends a new round to `.ai/reviews/{task-id}.md`
-3. emits a `challenger × review` handoff
+3. resolves the configured review runner
+4. either executes a fresh external challenger or emits the `challenger × review` handoff for an explicit degraded path
 
 The handoff lives at:
 
@@ -36,11 +37,34 @@ If the latest review round is still `in_progress`, rerunning `scafld review
 <task-id>` refreshes that same round in place. It does not append a second
 round until the challenger has actually finished the current one.
 
-When the workspace includes them, the thin review runners make that handoff the
-default input for the external reviewer runtime:
+The default runner is `external`:
+
+- resolve `codex` first
+- fall back to `claude` when codex is unavailable
+- fail cleanly if neither exists
+
+Explicit degraded modes stay available:
+
+```bash
+scafld review <task-id> --runner local
+scafld review <task-id> --runner manual
+```
+
+- `local`: prints the challenger prompt for the current shared runtime and leaves
+  the round `in_progress`
+- `manual`: handoff-only mode, also leaving the round `in_progress`
+
+`--json` remains the control-plane snapshot. It does not spawn an external
+reviewer.
+
+When the workspace includes them, the thin review wrappers remain optional
+integration surfaces:
 
 - `scripts/scafld-codex-review.sh <task-id>`
 - `scripts/scafld-claude-review.sh <task-id>`
+
+They are not the primary review product surface anymore. They are thin provider
+adapters over the same handoff contract.
 
 ## Challenger Stance
 
@@ -55,6 +79,10 @@ Its job is to:
 - use explicit severity: `critical`, `high`, `medium`, or `low`
 
 The challenger does not edit code.
+
+When scafld runs an external challenger itself, it still owns the canonical
+review artifact. The subprocess returns structured review data; scafld writes
+the latest review round and records runner/provider provenance in metadata.
 
 Finding format:
 

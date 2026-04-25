@@ -546,6 +546,50 @@ def open_review_round(root, task_id, spec, text, topology, normalized_passes, au
     }
 
 
+def complete_review_round_from_result(review_file, task_id, spec_text, topology, review_data, runner_result):
+    metadata = review_data.get("metadata") or {}
+    review_git_state = {
+        "reviewed_head": metadata.get("reviewed_head"),
+        "reviewed_dirty": metadata.get("reviewed_dirty"),
+        "reviewed_diff": metadata.get("reviewed_diff"),
+    }
+    pass_results = normalize_review_pass_results(topology, metadata.get("pass_results"))
+    for pass_id, value in (runner_result.pass_results or {}).items():
+        pass_results[pass_id] = value
+
+    completed_metadata = build_review_metadata(
+        topology,
+        reviewer_mode=runner_result.reviewer_mode,
+        round_status="completed",
+        pass_results=pass_results,
+        reviewed_at=now_iso(),
+        reviewer_session=runner_result.reviewer_session,
+        review_git_state=review_git_state,
+        review_handoff=metadata.get("review_handoff"),
+        reviewer_isolation=runner_result.reviewer_isolation,
+        review_provenance=runner_result.provenance,
+    )
+
+    section_bodies = {}
+    for definition in review_passes_by_kind(topology, "adversarial"):
+        section_bodies[definition["id"]] = runner_result.sections.get(definition["id"], "").rstrip()
+
+    append_review_round(
+        review_file,
+        task_id,
+        spec_text,
+        topology,
+        completed_metadata,
+        verdict=runner_result.verdict,
+        blocking=runner_result.blocking,
+        non_blocking=runner_result.non_blocking,
+        section_bodies=section_bodies,
+        review_count=review_data.get("review_count") or 1,
+        replace_latest=True,
+    )
+    return parse_review_file(review_file, topology)
+
+
 def evaluate_review_gate(root, review_file, review_data):
     gate_errors = list(review_data["errors"])
     current_git_state = None

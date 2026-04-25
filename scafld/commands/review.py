@@ -5,6 +5,7 @@ from scafld.command_runtime import require_root
 from scafld.error_codes import ErrorCode as EC
 from scafld.errors import ScafldError
 from scafld.output import emit_command_json, error_payload
+from scafld.review_runner import resolve_review_runner, run_external_review
 from scafld.review_runtime import review_snapshot
 from scafld.reviewing import (
     build_spec_review_block,
@@ -14,6 +15,7 @@ from scafld.review_workflow import (
     apply_human_override,
     automated_review_pass_ids,
     check_self_eval,
+    complete_review_round_from_result,
     collect_automated_review_passes,
     confirm_human_override,
     evaluate_review_gate,
@@ -506,6 +508,16 @@ def cmd_review(args):
                 print(f"  resolve failures, then re-run: {c(C_BOLD, next_action)}")
         sys.exit(exit_code)
 
+    try:
+        resolved_runner = resolve_review_runner(
+            root,
+            runner_override=getattr(args, "runner", None),
+            provider_override=getattr(args, "provider", None),
+            model_override=getattr(args, "model", None),
+        )
+    except ValueError as exc:
+        raise ScafldError(str(exc), code=EC.INVALID_ARGUMENTS)
+
     print(f"{c(C_BOLD, f'Review: {args.task_id}')}")
     print()
     passed = 0
@@ -532,5 +544,56 @@ def cmd_review(args):
     print(f"  Automated passes: {' / '.join(summary_parts)}")
     print()
     print(f"  challenger handoff: {c(C_DIM, result['handoff_file'])}")
+    print(f"  review runner: {c(C_DIM, resolved_runner.runner)}")
+    if resolved_runner.runner == "external":
+        topology = load_configured_review_topology(root)
+        review_file = root / result["review_file"]
+        spec = require_spec(root, args.task_id)
+        review_data = parse_review_file(review_file, topology)
+        try:
+            runner_result = run_external_review(
+                root,
+                args.task_id,
+                result["review_prompt"],
+                topology,
+                resolved_runner,
+            )
+        except ScafldError as exc:
+            print()
+            print(f"  {c(C_RED, 'error')}: {exc.message}")
+            for detail in exc.details:
+                print(f"    {c(C_DIM, detail)}")
+            print(f"  review file: {c(C_DIM, result['review_file'])}")
+            print(f"  fallback: {c(C_BOLD, f'scafld review {args.task_id} --runner local')} or {c(C_BOLD, f'scafld review {args.task_id} --runner manual')}")
+            sys.exit(exc.exit_code)
+
+        review_data = complete_review_round_from_result(
+            review_file,
+            args.task_id,
+            spec.read_text(),
+            topology,
+            review_data,
+            runner_result,
+        )
+        verdict = review_data.get("verdict") or "incomplete"
+        print(f"  provider: {c(C_DIM, runner_result.provenance.get('provider', 'unknown'))}")
+        if runner_result.provenance.get("model"):
+            print(f"  model: {c(C_DIM, runner_result.provenance['model'])}")
+        print(f"  review file: {c(C_DIM, result['review_file'])}")
+        print()
+        if verdict == "fail":
+            print(f"  {c(C_RED, 'review')}: FAIL — {len(review_data.get('blocking', []))} blocking finding(s)")
+        elif verdict == "pass_with_issues":
+            print(f"  {c(C_YELLOW, 'review')}: pass with {len(review_data.get('non_blocking', []))} non-blocking finding(s)")
+        else:
+            print(f"  {c(C_GREEN, 'review')}: pass")
+        print(f"  next: {c(C_BOLD, f'scafld complete {args.task_id}')}")
+        return
+
+    print()
+    if resolved_runner.runner == "local":
+        print(f"  {c(C_YELLOW, 'warning')}: local review uses the current shared runtime; it is an explicit degraded path")
+    else:
+        print(f"  {c(C_DIM, 'manual')}: handoff only; no external challenger was spawned")
     print()
     print(result["review_prompt"])
