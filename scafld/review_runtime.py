@@ -1,6 +1,7 @@
 from scafld.error_codes import ErrorCode as EC
 from scafld.errors import ScafldError
 from scafld.output import error_payload
+from scafld.review_runner import resolve_review_runner
 from scafld.review_workflow import (
     load_configured_review_topology,
     open_review_round,
@@ -11,6 +12,21 @@ from scafld.spec_store import require_spec, yaml_read_field
 
 def review_snapshot(root, task_id, *, use_color=False):
     topology = load_configured_review_topology(root)
+    try:
+        resolved_runner = resolve_review_runner(root)
+    except ValueError as exc:
+        return ({
+            "ok": False,
+            "command": "review",
+            "task_id": task_id,
+            "state": {"status": yaml_read_field(require_spec(root, task_id).read_text(), "status")},
+            "result": None,
+            "warnings": [],
+            "error": error_payload(
+                str(exc),
+                exit_code=1,
+            ),
+        }, 1)
     spec = require_spec(root, task_id)
     text = spec.read_text()
     status = yaml_read_field(text, "status")
@@ -96,6 +112,7 @@ def review_snapshot(root, task_id, *, use_color=False):
             "status": status,
             "review_round": review_round["review_count"],
             "review_action": review_round["review_action"],
+            "review_runner": resolved_runner.runner,
         },
         "result": {
             "review_file": review_round["review_path_rel"],
@@ -106,6 +123,11 @@ def review_snapshot(root, task_id, *, use_color=False):
             "review_handoff": review_round["review_handoff_rel"],
             "review_handoff_json": review_round["review_handoff_json_rel"],
             "review_action": review_round["review_action"],
+            "review_runner": {
+                "runner": resolved_runner.runner,
+                "provider": resolved_runner.provider,
+                "model": resolved_runner.model,
+            },
             "review_prompt": review_round["review_prompt"],
             "automated_passes": automated_results,
             "required_sections": review_round["required_sections"],

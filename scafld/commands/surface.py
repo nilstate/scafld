@@ -3,6 +3,8 @@ from dataclasses import dataclass, field
 from functools import lru_cache
 from importlib import import_module
 
+from scafld.review_runner import REVIEW_PROVIDER_VALUES, REVIEW_RUNNER_VALUES
+
 
 @dataclass(frozen=True)
 class ArgumentSpec:
@@ -99,10 +101,13 @@ COMMAND_SPECS = (
     ),
     CommandSpec(
         "review",
-        "Run the adversarial review gate and emit a challenger handoff",
+        "Run the adversarial review gate and execute or emit the challenger handoff",
         "scafld.commands.review:cmd_review",
         (
             ArgumentSpec(("task_id",), {"help": "Task ID"}),
+            ArgumentSpec(("--runner",), {"choices": REVIEW_RUNNER_VALUES, "help": "Review runner mode override"}),
+            ArgumentSpec(("--provider",), {"choices": REVIEW_PROVIDER_VALUES, "help": "External review provider override"}),
+            ArgumentSpec(("--model",), {"help": "External review model override"}),
             ArgumentSpec(("--json",), {"action": "store_true", "help": "Emit machine-readable review handoff JSON"}),
         ),
     ),

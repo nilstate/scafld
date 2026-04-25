@@ -149,6 +149,7 @@ def build_review_metadata(
     review_git_state=None,
     review_handoff=None,
     reviewer_isolation=None,
+    review_provenance=None,
 ):
     """Build Review Artifact v3 metadata."""
     metadata = {
@@ -164,6 +165,8 @@ def build_review_metadata(
         metadata["review_handoff"] = review_handoff
     if reviewer_isolation is not None:
         metadata["reviewer_isolation"] = reviewer_isolation
+    if review_provenance is not None:
+        metadata["review_provenance"] = review_provenance
     metadata.update(review_git_state or {
         "reviewed_head": None,
         "reviewed_dirty": None,
@@ -211,6 +214,10 @@ def validate_review_metadata(metadata, topology):
     override_reason = metadata.get("override_reason")
     if override_reason is not None and not isinstance(override_reason, str):
         errors.append("override_reason must be a string or null")
+
+    review_provenance = metadata.get("review_provenance")
+    if review_provenance is not None and not isinstance(review_provenance, dict):
+        errors.append("review_provenance must be an object when present")
 
     raw_pass_results = metadata.get("pass_results")
     if not isinstance(raw_pass_results, dict):
@@ -556,6 +563,7 @@ def review_data_payload(review_data):
         "reviewer_mode": review_data.get("reviewer_mode"),
         "review_handoff": metadata.get("review_handoff"),
         "reviewer_isolation": metadata.get("reviewer_isolation"),
+        "review_provenance": metadata.get("review_provenance"),
         "reviewed_head": metadata.get("reviewed_head"),
         "reviewed_dirty": metadata.get("reviewed_dirty"),
         "reviewed_diff": metadata.get("reviewed_diff"),

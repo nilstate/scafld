@@ -103,6 +103,7 @@ write_local_order_override() {
   local repo="$1"
   cat > "$repo/.ai/config.local.yaml" <<'EOF'
 review:
+  runner: "manual"
   adversarial_passes:
     convention_check:
       order: 30
@@ -123,6 +124,7 @@ write_local_title_override() {
   local repo="$1"
   cat > "$repo/.ai/config.local.yaml" <<'EOF'
 review:
+  runner: "manual"
   adversarial_passes:
     regression_hunt:
       order: 30
@@ -136,6 +138,14 @@ review:
       order: 50
       title: "Defect Sweep"
       description: "Hunt for subtle bugs and hardcoded shortcuts"
+EOF
+}
+
+write_manual_review_runner_override() {
+  local repo="$1"
+  cat > "$repo/.ai/config.local.yaml" <<'EOF'
+review:
+  runner: "manual"
 EOF
 }
 
@@ -604,6 +614,7 @@ case_review_open_complete_flow() {
   task_id="review-open-complete-flow"
   write_changed_file "$repo"
   write_active_spec "$repo" "$task_id" "grep -q '^changed$' app.txt" "exit code 0" "pass"
+  write_manual_review_runner_override "$repo"
 
   capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld review '$task_id'"
   assert_contains "$output" "challenger handoff:" "review should emit the challenger handoff"
@@ -776,12 +787,130 @@ case_non_mutating_review() {
   task_id="non-mutating-review"
   write_changed_file "$repo"
   write_active_spec "$repo" "$task_id" "grep -q '^changed$' app.txt" "exit code 0" "fail"
+  write_manual_review_runner_override "$repo"
   before="$(cat "$repo/.ai/specs/active/$task_id.yaml")"
   bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld review '$task_id'" >/dev/null
   after="$(cat "$repo/.ai/specs/active/$task_id.yaml")"
   if [ "$before" != "$after" ]; then
     fail "scafld review should not mutate existing execution evidence"
   fi
+}
+
+case_external_runner() {
+  local repo task_id output review_text prompt_capture args_capture stub_dir
+  repo="$(new_repo)"
+  task_id="external-runner"
+  write_changed_file "$repo"
+  write_active_spec "$repo" "$task_id" "grep -q '^changed$' app.txt" "exit code 0" "pass"
+
+  stub_dir="$(mktemp -d /tmp/scafld-review-runner.XXXXXX)"
+  TMP_DIRS+=("$stub_dir")
+  cat > "$stub_dir/codex" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+output=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o|--output-last-message)
+      output="$2"
+      shift 2
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+cat > "${SCAFLD_REVIEW_PROMPT_CAPTURE:?}"
+cat > "$output" <<'JSON'
+{
+  "reviewer_mode": "fresh_agent",
+  "reviewer_session": "codex-review-session",
+  "pass_results": {
+    "regression_hunt": "pass",
+    "convention_check": "pass",
+    "dark_patterns": "pass"
+  },
+  "sections": {
+    "regression_hunt": "No issues found — checked callers of app.txt.",
+    "convention_check": "No issues found — checked AGENTS.md and CONVENTIONS.md.",
+    "dark_patterns": "No issues found — checked hardcodes and null handling."
+  },
+  "blocking": [],
+  "non_blocking": [],
+  "verdict": "pass"
+}
+JSON
+EOF
+  chmod +x "$stub_dir/codex"
+
+  prompt_capture="$repo/external-review.prompt"
+  capture output bash -lc "cd '$repo' && PATH='$stub_dir:$CLI_ROOT':\"\$PATH\" PYTHONPATH='$REPO_ROOT' python3 -c \"from scafld.review_runner import resolve_external_provider; assert resolve_external_provider('auto')[0] == 'codex'; print('ok')\""
+  assert_contains "$output" "ok" "auto provider resolution should prefer codex when it is available"
+
+  capture output bash -lc "cd '$repo' && PATH='$stub_dir:$CLI_ROOT':\"\$PATH\" SCAFLD_REVIEW_PROMPT_CAPTURE='$prompt_capture' scafld review '$task_id' --provider codex"
+  assert_contains "$output" "review runner: external" "review should report external runner mode"
+  assert_contains "$output" "provider:" "review should report the resolved provider"
+  assert_contains "$output" "next: scafld complete $task_id" "review should point at complete after external review writes the round"
+  assert_contains_file "$prompt_capture" "Return only JSON." "external review should wrap the handoff with a strict JSON output contract"
+  review_text="$(cat "$repo/.ai/reviews/$task_id.md")"
+  assert_contains "$review_text" '"reviewer_mode": "fresh_agent"' "external review should complete the round with fresh_agent provenance"
+  assert_contains "$review_text" '"provider": "codex"' "external review provenance should record the codex provider"
+  assert_contains "$review_text" '### Verdict' "external review should preserve the canonical review artifact shape"
+  assert_contains "$review_text" 'pass' "external review should stamp the returned verdict"
+
+  repo="$(new_repo)"
+  task_id="external-runner-fallback"
+  write_changed_file "$repo"
+  write_active_spec "$repo" "$task_id" "grep -q '^changed$' app.txt" "exit code 0" "pass"
+
+  stub_dir="$(mktemp -d /tmp/scafld-review-runner-claude.XXXXXX)"
+  TMP_DIRS+=("$stub_dir")
+  cat > "$stub_dir/claude" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+cat > "${SCAFLD_REVIEW_PROMPT_CAPTURE:?}"
+cat <<'JSON'
+{
+  "reviewer_mode": "fresh_agent",
+  "reviewer_session": "claude-review-session",
+  "pass_results": {
+    "regression_hunt": "pass",
+    "convention_check": "pass",
+    "dark_patterns": "pass"
+  },
+  "sections": {
+    "regression_hunt": "No issues found — checked callers of app.txt.",
+    "convention_check": "No issues found — checked AGENTS.md and CONVENTIONS.md.",
+    "dark_patterns": "No issues found — checked hardcodes and null handling."
+  },
+  "blocking": [],
+  "non_blocking": [],
+  "verdict": "pass"
+}
+JSON
+EOF
+  chmod +x "$stub_dir/claude"
+  prompt_capture="$repo/external-review-fallback.prompt"
+  capture output bash -lc "cd '$repo' && PATH='$stub_dir:$CLI_ROOT':\"\$PATH\" SCAFLD_CODEX_BIN='definitely-missing-codex' SCAFLD_REVIEW_PROMPT_CAPTURE='$prompt_capture' scafld review '$task_id'"
+  assert_contains "$output" "provider:" "review should report the fallback provider"
+  assert_contains "$(cat "$repo/.ai/reviews/$task_id.md")" '"provider": "claude"' "external review should fall back to claude when codex is absent"
+
+  repo="$(new_repo)"
+  task_id="local-runner"
+  write_changed_file "$repo"
+  write_active_spec "$repo" "$task_id" "grep -q '^changed$' app.txt" "exit code 0" "pass"
+  capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld review '$task_id' --runner local"
+  assert_contains "$output" "local review uses the current shared runtime" "local runner should be visibly degraded"
+  assert_contains "$output" "ADVERSARIAL REVIEW" "local runner should still emit the challenger prompt"
+  assert_contains "$(cat "$repo/.ai/reviews/$task_id.md")" '"round_status": "in_progress"' "local runner should leave the scaffolded round in progress"
+
+  repo="$(new_repo)"
+  task_id="manual-runner"
+  write_changed_file "$repo"
+  write_active_spec "$repo" "$task_id" "grep -q '^changed$' app.txt" "exit code 0" "pass"
+  capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld review '$task_id' --runner manual"
+  assert_contains "$output" "manual" "manual runner should report handoff-only mode"
+  assert_contains "$output" "ADVERSARIAL REVIEW" "manual runner should still emit the challenger prompt"
 }
 
 case_exec_resume_nested_results() {
@@ -1152,6 +1281,7 @@ case_all() {
   case_malformed_review
   case_provenance_and_results
   case_non_mutating_review
+  case_external_runner
   case_exec_resume_nested_results
   case_exec_timeout_override
   case_complete_nested_exec_and_self_eval
@@ -1177,6 +1307,7 @@ main() {
     malformed-review) case_malformed_review ;;
     provenance-and-results) case_provenance_and_results ;;
     non-mutating-review) case_non_mutating_review ;;
+    external-runner) case_external_runner ;;
     exec-resume-nested-results) case_exec_resume_nested_results ;;
     exec-timeout-override) case_exec_timeout_override ;;
     complete-nested-exec-and-self-eval) case_complete_nested_exec_and_self_eval ;;

@@ -131,10 +131,22 @@ instead of reconstructing lifecycle state manually.
 ## review
 
 ```bash
-scafld review <task-id> [--json]
+scafld review <task-id> [--runner external|local|manual] [--provider auto|codex|claude] [--model MODEL] [--json]
 ```
 
-Runs automated passes, appends a review round, and emits the challenger handoff.
+Default text-mode behavior:
+
+- run automated passes
+- append or refresh the latest review round
+- resolve the configured review runner
+- if `external`, execute a fresh external challenger and let scafld write the
+  completed review round
+- if `local` or `manual`, emit the challenger prompt and leave the round
+  `in_progress`
+
+`--json` stays machine-facing snapshot mode: it returns the review prompt,
+handoff paths, required sections, and resolved default runner metadata without
+spawning the external reviewer.
 
 Important JSON fields:
 
@@ -142,6 +154,7 @@ Important JSON fields:
 - `handoff_json_file`
 - `handoff_role`
 - `handoff_gate`
+- `review_runner`
 - `current_handoff`
 - `next_action`
 
