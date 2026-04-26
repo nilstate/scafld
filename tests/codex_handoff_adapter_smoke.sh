@@ -143,6 +143,10 @@ args_path="$repo/codex-phase.args"
 assert_contains_file "$capture_path" 'role: "executor"' "codex adapter should feed an executor handoff"
 assert_contains_file "$capture_path" '## Phase Objective' "codex adapter should feed the phase handoff content"
 assert_contains_file "$args_path" '--phase-arg' "codex adapter should pass through provider args"
+assert_contains_file "$repo/.ai/runs/adapter-task/session.json" '"type": "provider_invocation"' "codex adapter should record provider invocation telemetry"
+assert_contains_file "$repo/.ai/runs/adapter-task/session.json" '"role": "executor"' "codex adapter should record executor attribution"
+assert_contains_file "$repo/.ai/runs/adapter-task/session.json" '"provider": "codex"' "codex adapter should record the codex provider"
+assert_contains_file "$repo/.ai/runs/adapter-task/session.json" '"confidence": "unknown"' "codex adapter should record attribution confidence"
 
 echo "[3/3] review-ready work feeds the challenger handoff to codex"
 review_repo="$(new_repo)"
@@ -160,5 +164,7 @@ args_path="$review_repo/codex-review.args"
 )
 assert_contains_file "$capture_path" 'role: "challenger"' "codex adapter should feed a challenger handoff for review-ready work"
 assert_contains_file "$capture_path" '## Challenge Contract' "codex adapter should feed the review challenge contract"
+assert_contains_file "$review_repo/.ai/runs/review-task/session.json" '"role": "challenger"' "codex review adapter should record challenger attribution"
+assert_contains_file "$review_repo/.ai/runs/review-task/session.json" '"provider": "codex"' "codex review adapter should record the codex provider"
 
 echo "PASS: codex handoff adapter smoke"

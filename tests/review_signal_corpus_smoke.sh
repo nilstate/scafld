@@ -37,7 +37,7 @@ repo = Path(os.environ["REVIEW_REPO"])
 sys.path.insert(0, os.environ["REPO_ROOT"])
 from scafld.review_signal import review_signal_payload
 from scafld.review_workflow import load_review_topology
-from scafld.reviewing import parse_review_file
+from scafld.reviewing import clean_no_issues_has_evidence, parse_review_file
 
 review_path = repo / ".ai" / "reviews" / "clean.md"
 review_path.parent.mkdir(parents=True, exist_ok=True)
@@ -114,7 +114,7 @@ repo = Path(os.environ["REVIEW_REPO"])
 sys.path.insert(0, os.environ["REPO_ROOT"])
 from scafld.review_signal import review_signal_payload
 from scafld.review_workflow import load_review_topology
-from scafld.reviewing import parse_review_file
+from scafld.reviewing import clean_no_issues_has_evidence, parse_review_file
 
 review_path = repo / ".ai" / "reviews" / "flawed.md"
 review_path.write_text(
@@ -178,6 +178,12 @@ assert any("must use '- **severity** `file:line` — explanation'" in error for 
 assert any("Convention Check" in error for error in parsed["errors"]), parsed
 signal = review_signal_payload(parsed)
 assert signal["clean_review_with_evidence"] is False, signal
+assert clean_no_issues_has_evidence("No issues found — checked many things.") is False
+assert clean_no_issues_has_evidence("No issues found — checked the relevant code.") is False
+assert clean_no_issues_has_evidence("No issues found — checked callers.") is False
+assert clean_no_issues_has_evidence("No issues found — checked null.") is False
+assert clean_no_issues_has_evidence("No issues found — checked rule.") is False
+assert clean_no_issues_has_evidence("No issues found — checked callers of api.py.") is True
 PY
 
 echo "PASS: review signal corpus smoke"

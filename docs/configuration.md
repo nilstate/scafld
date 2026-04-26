@@ -68,6 +68,8 @@ review:
   runner: "external"     # external | local | manual
   external:
     provider: "auto"     # auto | codex | claude
+    timeout_seconds: 600
+    fallback_policy: "warn" # warn | allow | disable
     codex:
       model: ""
     claude:
@@ -79,6 +81,11 @@ Meaning:
 - `runner`: default review execution mode
 - `external.provider`: provider selection for external review; `auto` prefers
   `codex` first, then `claude`
+- `external.timeout_seconds`: maximum provider subprocess runtime before
+  `scafld review` fails with fallback guidance
+- `external.fallback_policy`: behavior when `provider: auto` cannot find
+  Codex but can find Claude; `warn` allows fallback with a warning, `allow`
+  records the weaker isolation without warning, and `disable` requires Codex
 - `external.<provider>.model`: optional provider-specific model pin
 
 CLI overrides are explicit:
@@ -92,6 +99,20 @@ scafld review <task-id> --provider codex --model gpt-5
 There is no silent fallback from external review into local review. If no
 external provider exists, scafld fails cleanly and tells you to opt into
 `local` or `manual`.
+
+Provider fallback is not treated as equivalent isolation. Codex provenance is
+recorded as read-only and ephemeral. Claude provenance is recorded as restricted
+tools plus fresh session, which is weaker than the Codex sandbox unless the
+installed Claude CLI grows an equivalent control. Set
+`review.external.fallback_policy: "disable"` to prevent automatic Claude
+fallback.
+
+Review provenance separates requested and observed model fields. An empty
+observed model means scafld could not verify what the provider actually billed.
+Provider invocation session entries include `confidence`: `observed`,
+`requested_only`, or `unknown`.
+Reports use conservative separation states: `separated`, `same_model`,
+`unknown_executor`, `unknown_challenger`, and `unknown_both`.
 
 ## Why It Stays Small
 

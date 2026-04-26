@@ -12,7 +12,58 @@ FINDING_LINE_RE = re.compile(
     r"^- \*\*(critical|high|medium|low)\*\* `[^`\n]+:\d+` (?:—|--) .+$",
     re.IGNORECASE,
 )
-NO_ISSUES_RE = re.compile(r"^No issues found(?: (?:—|--) .+)?$", re.IGNORECASE)
+NO_ISSUES_RE = re.compile(
+    r"^No(?: additional)? issues found(?: (?:—|--) checked (?P<checked>.+))?$",
+    re.IGNORECASE,
+)
+GENERIC_CLEAN_TARGETS = {
+    "all",
+    "all changes",
+    "all files",
+    "changes",
+    "everything",
+    "implementation",
+    "it",
+    "nothing in particular",
+    "the change",
+    "the changes",
+    "the code",
+    "the codebase",
+    "the diff",
+    "the implementation",
+    "the relevant code",
+    "many things",
+    "many files",
+    "several things",
+    "various things",
+}
+CONCRETE_CLEAN_RE = re.compile(r"(?:^|[\s`])[\w./-]+\.[A-Za-z0-9]{1,8}(?:\b|`)")
+CONCRETE_CLEAN_TERMS = {
+    "caller",
+    "callers",
+    "callee",
+    "callees",
+    "consumer",
+    "consumers",
+    "importer",
+    "importers",
+    "rule",
+    "rules",
+    "path",
+    "paths",
+    "schema",
+    "schemas",
+    "contract",
+    "contracts",
+    "endpoint",
+    "endpoints",
+    "null",
+    "retry",
+    "hardcode",
+    "hardcodes",
+    "race",
+    "races",
+}
 REVIEW_PASS_REGISTRY = {
     "spec_compliance": {
         "kind": "automated",
@@ -136,6 +187,31 @@ def review_pass_label(value):
         "pass_with_issues": "PASS WITH ISSUES",
         "not_run": "NOT RUN",
     }.get(value, str(value).upper())
+
+
+def clean_no_issues_target(line):
+    match = NO_ISSUES_RE.fullmatch(line.strip())
+    if not match:
+        return None
+    checked = (match.group("checked") or "").strip()
+    return checked or ""
+
+
+def clean_no_issues_has_evidence(line):
+    checked = clean_no_issues_target(line)
+    if checked is None:
+        return False
+    normalized = checked.lower().strip(" .")
+    if not normalized or normalized in GENERIC_CLEAN_TARGETS:
+        return False
+    if re.search(r"\b(many|various|several|relevant)\s+(things|code|files|areas|parts)\b", normalized):
+        return False
+    if CONCRETE_CLEAN_RE.search(checked):
+        return True
+    words = set(re.findall(r"[a-z0-9_]+", normalized))
+    if len(words) <= 1:
+        return False
+    return bool(words & CONCRETE_CLEAN_TERMS)
 
 
 def build_review_metadata(
@@ -349,6 +425,7 @@ def parse_review_file(review_path, topology):
         "reviewer_mode": None,
         "empty_adversarial": list(adversarial_titles),
         "adversarial_sections": {},
+        "adversarial_findings": [],
         "quality_errors": [],
         "errors": [],
     }
@@ -405,14 +482,21 @@ def parse_review_file(review_path, topology):
                 stripped = "- " + stripped[2:].strip()
             if stripped.startswith("- "):
                 bucket.append(stripped)
+                continue
+            parsed["quality_errors"].append(
+                f"{heading} contains malformed content; use finding bullets or None."
+            )
+            break
     parsed["blocking"] = blocking
     parsed["non_blocking"] = non_blocking
 
+    adversarial_findings = []
     for heading in adversarial_titles:
         body = (sections.get(heading) or "").strip()
         section_state = {
             "state": "empty",
             "checked": False,
+            "evidence": False,
             "finding_count": 0,
         }
         if not body:
@@ -424,11 +508,17 @@ def parse_review_file(review_path, topology):
             continue
         if len(meaningful_lines) == 1 and NO_ISSUES_RE.fullmatch(meaningful_lines[0]):
             section_state["state"] = "no_issues"
-            section_state["checked"] = "checked" in meaningful_lines[0].lower()
+            checked_target = clean_no_issues_target(meaningful_lines[0])
+            section_state["checked"] = bool(checked_target)
+            section_state["evidence"] = clean_no_issues_has_evidence(meaningful_lines[0])
             parsed["adversarial_sections"][heading] = section_state
-            if "checked" not in meaningful_lines[0].lower():
+            if not checked_target:
                 parsed["quality_errors"].append(
                     f"{heading} must say what was checked when reporting no issues found"
+                )
+            elif not section_state["evidence"]:
+                parsed["quality_errors"].append(
+                    f"{heading} clean no-issues note must name concrete files, callers, rules, or paths checked"
                 )
             continue
         section_state["state"] = "findings"
@@ -443,12 +533,14 @@ def parse_review_file(review_path, topology):
                 line = "- " + line[2:].strip()
             if FINDING_LINE_RE.fullmatch(line):
                 section_state["finding_count"] += 1
+                adversarial_findings.append(line)
             if not FINDING_LINE_RE.fullmatch(line):
                 parsed["quality_errors"].append(
                     f"{heading} findings must use '- **severity** `file:line` — explanation'"
                 )
                 break
         parsed["adversarial_sections"][heading] = section_state
+    parsed["adversarial_findings"] = adversarial_findings
 
     for heading, findings in (("Blocking", blocking), ("Non-blocking", non_blocking)):
         for finding in findings:
@@ -483,15 +575,13 @@ def parse_review_file(review_path, topology):
     else:
         normalized_verdict = re.sub(r'[`*_]+', ' ', verdict_body.lower())
         normalized_verdict = re.sub(r'\s+', ' ', normalized_verdict).strip()
-        if "pass with issues" in normalized_verdict:
+        if normalized_verdict in {"pass with issues", "pass_with_issues"}:
             verdict = "pass_with_issues"
-        elif "pass_with_issues" in normalized_verdict:
-            verdict = "pass_with_issues"
-        elif re.search(r'\bfail\b', normalized_verdict):
+        elif normalized_verdict == "fail":
             verdict = "fail"
-        elif re.search(r'\bpass\b', normalized_verdict):
+        elif normalized_verdict == "pass":
             verdict = "pass"
-        elif re.search(r'\bincomplete\b', normalized_verdict):
+        elif normalized_verdict == "incomplete":
             verdict = "incomplete"
         elif normalized_verdict:
             parsed["errors"].append("latest review verdict is invalid")
@@ -516,6 +606,10 @@ def parse_review_file(review_path, topology):
             parsed["errors"].append("pass verdict cannot include blocking findings")
         if non_blocking:
             parsed["errors"].append("pass verdict cannot include non-blocking findings")
+        if adversarial_findings:
+            parsed["errors"].append("pass verdict cannot include adversarial findings")
+    if adversarial_findings and not (blocking or non_blocking):
+        parsed["errors"].append("adversarial findings must be collected into Blocking or Non-blocking")
     if verdict == "incomplete" and parsed["round_status"] == "completed":
         parsed["errors"].append("completed review round cannot use verdict=incomplete")
 
@@ -572,6 +666,7 @@ def review_data_payload(review_data):
         "pass_results": review_data.get("pass_results", {}),
         "empty_adversarial": review_data.get("empty_adversarial", []),
         "adversarial_sections": review_data.get("adversarial_sections", {}),
+        "adversarial_findings": review_data.get("adversarial_findings", []),
         "quality_errors": review_data.get("quality_errors", []),
         "errors": review_data.get("errors", []),
     }

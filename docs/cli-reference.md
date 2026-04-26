@@ -139,14 +139,22 @@ Default text-mode behavior:
 - run automated passes
 - append or refresh the latest review round
 - resolve the configured review runner
-- if `external`, execute a fresh external challenger and let scafld write the
-  completed review round
+- if `external`, execute a fresh external challenger, parse its prose review
+  body, and let scafld write the completed review round only after validation
 - if `local` or `manual`, emit the challenger prompt and leave the round
   `in_progress`
 
 `--json` stays machine-facing snapshot mode: it returns the review prompt,
-handoff paths, required sections, and resolved default runner metadata without
-spawning the external reviewer.
+handoff paths, required sections, and resolved runner/provider/model metadata
+without spawning the external reviewer.
+
+External provider calls fail rather than hang when `review.external.timeout_seconds`
+is reached. Invalid external output also fails the review command; it leaves the
+latest round in progress and does not suggest `scafld complete`.
+
+For `provider: auto`, `review.external.fallback_policy` controls Codex to Claude
+fallback: `warn` allows it with a visible warning, `allow` allows it while
+recording the weaker isolation in provenance, and `disable` requires Codex.
 
 Important JSON fields:
 

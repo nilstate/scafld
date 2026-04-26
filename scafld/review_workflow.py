@@ -2,6 +2,7 @@ import json
 import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 from scafld.audit_scope import collect_changed_files
@@ -574,19 +575,52 @@ def complete_review_round_from_result(review_file, task_id, spec_text, topology,
     for definition in review_passes_by_kind(topology, "adversarial"):
         section_bodies[definition["id"]] = runner_result.sections.get(definition["id"], "").rstrip()
 
-    append_review_round(
-        review_file,
-        task_id,
-        spec_text,
+    review_count = review_data.get("review_count") or 1
+    ensure_review_file_header(review_file, task_id, spec_text)
+    existing_text = review_file.read_text()
+    round_text = render_review_round_text(
         topology,
         completed_metadata,
+        review_count,
         verdict=runner_result.verdict,
         blocking=runner_result.blocking,
         non_blocking=runner_result.non_blocking,
         section_bodies=section_bodies,
-        review_count=review_data.get("review_count") or 1,
-        replace_latest=True,
     )
+    candidate_text = replace_latest_review_round_text(existing_text, round_text)
+
+    with tempfile.NamedTemporaryFile(
+        prefix=f"scafld-review-candidate-{task_id}-",
+        suffix=".md",
+        dir=str(review_file.parent),
+        mode="w",
+        encoding="utf-8",
+        delete=False,
+    ) as tmp:
+        tmp.write(candidate_text)
+        tmp_path = Path(tmp.name)
+    try:
+        candidate = parse_review_file(tmp_path, topology)
+    finally:
+        try:
+            tmp_path.unlink()
+        except OSError:
+            pass
+
+    if candidate.get("empty_adversarial") or candidate.get("errors"):
+        details = []
+        if candidate.get("empty_adversarial"):
+            details.append(
+                "missing adversarial section content: "
+                + ", ".join(candidate["empty_adversarial"])
+            )
+        details.extend(candidate.get("errors") or [])
+        raise ScafldError(
+            "external reviewer produced an invalid review artifact",
+            details[:8],
+        )
+
+    review_file.write_text(candidate_text)
     return parse_review_file(review_file, topology)
 
 

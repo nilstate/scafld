@@ -40,8 +40,14 @@ round until the challenger has actually finished the current one.
 The default runner is `external`:
 
 - resolve `codex` first
-- fall back to `claude` when codex is unavailable
+- fall back to `claude` when codex is unavailable, with a visible weaker
+  isolation warning
 - fail cleanly if neither exists
+- stop after `review.external.timeout_seconds` instead of hanging indefinitely
+
+Set `review.external.fallback_policy: "disable"` to require Codex for
+`provider: auto`. `warn` is the default and prints a warning on Claude fallback;
+`allow` records the downgrade in provenance without escalating the message.
 
 Explicit degraded modes stay available:
 
@@ -55,7 +61,7 @@ scafld review <task-id> --runner manual
 - `manual`: handoff-only mode, also leaving the round `in_progress`
 
 `--json` remains the control-plane snapshot. It does not spawn an external
-reviewer.
+reviewer. It reports runner/provider/model overrides as snapshot metadata only.
 
 When the workspace includes them, the thin review wrappers remain optional
 integration surfaces:
@@ -81,16 +87,42 @@ Its job is to:
 The challenger does not edit code.
 
 When scafld runs an external challenger itself, it still owns the canonical
-review artifact. The subprocess returns structured review data; scafld writes
-the latest review round and records runner/provider provenance in metadata.
+review artifact. The subprocess returns prose markdown sections; scafld writes a
+candidate latest review round, parses it with the same gate as a manual review,
+and only persists it if the artifact is valid. Invalid external output fails
+`scafld review` and does not print a completion command.
 
 Finding format:
 
 - `- **high** \`path/file.py:88\` — the exact failure mode and why it matters`
 
+`Blocking` and `Non-blocking` accept only finding bullets or `None.`.
+`Verdict` accepts only `pass`, `fail`, or `pass_with_issues`.
+Any finding recorded in an adversarial section must be collected into
+`Blocking` or `Non-blocking`; a clean verdict cannot coexist with section
+findings.
+
 If an adversarial section is clean, it must still say what was checked:
 
 - `No issues found — checked callers of path/file.py`
+- `No issues found — checked AGENTS.md and CONVENTIONS.md`
+
+Generic clean notes such as `checked everything` or `checked the diff` are not
+evidence.
+
+Provider isolation is recorded in review provenance. Codex runs with the
+read-only ephemeral subprocess path. Claude uses restricted tools and a fresh
+session, but its CLI does not expose an equivalent sandbox here, so fallback from
+Codex to Claude is marked as weaker isolation.
+
+Provider invocation session entries also carry attribution confidence. Observed
+provider facts can coexist with unknown model facts; reports keep requested-only
+and unknown model attribution separate from proven model separation.
+
+The external runner prompt keeps trusted challenger instructions outside the
+untrusted handoff boundary. The generated handoff, spec text, automated results,
+and session notes are fenced as data for the reviewer to inspect, not
+instructions the provider may obey.
 
 ## Complete
 

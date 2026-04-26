@@ -81,6 +81,13 @@ def cmd_report(args):
     recovered_total = 0
     challenge_overrides = 0
     challenge_blocked = 0
+    provider_invocations = 0
+    provider_invocations_by_role = defaultdict(int)
+    provider_confidence = defaultdict(int)
+    provider_models_observed = 0
+    provider_models_unknown = 0
+    provider_isolation_downgrades = 0
+    provider_model_separation = defaultdict(int)
     attempts_per_phase = defaultdict(int)
     usage_totals = defaultdict(float)
     per_task_runtime = {}
@@ -220,6 +227,15 @@ def cmd_report(args):
                 },
                 "attempts_per_phase": runtime["attempts_per_phase"],
                 "failed_exhausted": runtime["failed_exhausted"],
+                "provider_telemetry": {
+                    "invocations": runtime["provider_invocations"],
+                    "by_role": runtime["provider_invocations_by_role"],
+                    "confidence": runtime["provider_confidence"],
+                    "models_observed": runtime["provider_models_observed"],
+                    "models_unknown": runtime["provider_models_unknown"],
+                    "isolation_downgrades": runtime["provider_isolation_downgrades"],
+                    "model_separation": runtime["provider_model_separation"],
+                },
             }
             first_attempt_passed += runtime["first_attempt_passed"]
             first_attempt_total += runtime["first_attempt_total"]
@@ -227,6 +243,17 @@ def cmd_report(args):
             recovered_total += runtime["recovered_total"]
             challenge_overrides += runtime["challenge_overrides"]
             challenge_blocked += runtime["challenge_blocked"]
+            provider_invocations += runtime["provider_invocations"]
+            provider_models_observed += runtime["provider_models_observed"]
+            provider_models_unknown += runtime["provider_models_unknown"]
+            provider_isolation_downgrades += runtime["provider_isolation_downgrades"]
+            separation_state = runtime["provider_model_separation"]["state"]
+            if separation_state != "none":
+                provider_model_separation[separation_state] += 1
+            for role, count in runtime["provider_invocations_by_role"].items():
+                provider_invocations_by_role[role] += count
+            for confidence, count in runtime["provider_confidence"].items():
+                provider_confidence[confidence] += count
             for phase_id, count in runtime["attempts_per_phase"].items():
                 attempts_per_phase[phase_id] += count
             usage = runtime.get("usage") if isinstance(runtime.get("usage"), dict) else {}
@@ -298,6 +325,15 @@ def cmd_report(args):
                     },
                     "attempts_per_phase": dict(sorted(attempts_per_phase.items())),
                     "usage_totals": dict(sorted(usage_totals.items())),
+                    "provider_telemetry": {
+                        "invocations": provider_invocations,
+                        "by_role": dict(sorted(provider_invocations_by_role.items())),
+                        "confidence": dict(sorted(provider_confidence.items())),
+                        "models_observed": provider_models_observed,
+                        "models_unknown": provider_models_unknown,
+                        "isolation_downgrades": provider_isolation_downgrades,
+                        "model_separation": dict(sorted(provider_model_separation.items())),
+                    },
                     "per_task": dict(sorted(per_task_runtime.items())),
                     "attribution_note": "Session metrics show outcomes only; external agents may ignore generated handoffs.",
                 },
@@ -409,6 +445,24 @@ def cmd_report(args):
         if usage_totals:
             rendered_usage = ", ".join(f"{key}={value:g}" for key, value in sorted(usage_totals.items()))
             print(f"  usage totals: {rendered_usage}")
+        if provider_invocations:
+            by_role = ", ".join(f"{role}={count}" for role, count in sorted(provider_invocations_by_role.items()))
+            separation = ", ".join(
+                f"{state}={count}" for state, count in sorted(provider_model_separation.items())
+            )
+            print(
+                f"  provider invocations: {provider_invocations} "
+                f"(models observed {provider_models_observed}, unknown {provider_models_unknown})"
+            )
+            if by_role:
+                print(f"  provider roles: {by_role}")
+            if provider_confidence:
+                rendered_confidence = ", ".join(
+                    f"{key}={value}" for key, value in sorted(provider_confidence.items())
+                )
+                print(f"  provider confidence: {rendered_confidence}")
+            print(f"  isolation downgrades: {provider_isolation_downgrades}")
+            print(f"  model separation: {separation}")
         print()
 
         print(f"  {c(C_BOLD, 'Per-task metrics')}")

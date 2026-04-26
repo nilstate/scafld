@@ -477,7 +477,30 @@ def cmd_review(args):
     """Run automated review passes and generate adversarial review prompt."""
     root = require_root()
     json_mode = bool(getattr(args, "json", False))
-    payload, exit_code = review_snapshot(root, args.task_id, use_color=not json_mode)
+    try:
+        resolved_runner = resolve_review_runner(
+            root,
+            runner_override=getattr(args, "runner", None),
+            provider_override=getattr(args, "provider", None),
+            model_override=getattr(args, "model", None),
+        )
+    except ValueError as exc:
+        if json_mode:
+            emit_command_json(
+                "review",
+                ok=False,
+                task_id=args.task_id,
+                error=error_payload(str(exc), code=EC.INVALID_ARGUMENTS, exit_code=1),
+            )
+            sys.exit(1)
+        raise ScafldError(str(exc), code=EC.INVALID_ARGUMENTS)
+
+    payload, exit_code = review_snapshot(
+        root,
+        args.task_id,
+        use_color=not json_mode,
+        resolved_runner=resolved_runner,
+    )
     result = payload.get("result") or {}
     state = payload.get("state") or {}
     automated_results = result.get("automated_passes") or []
@@ -507,16 +530,6 @@ def cmd_review(args):
             if next_action:
                 print(f"  resolve failures, then re-run: {c(C_BOLD, next_action)}")
         sys.exit(exit_code)
-
-    try:
-        resolved_runner = resolve_review_runner(
-            root,
-            runner_override=getattr(args, "runner", None),
-            provider_override=getattr(args, "provider", None),
-            model_override=getattr(args, "model", None),
-        )
-    except ValueError as exc:
-        raise ScafldError(str(exc), code=EC.INVALID_ARGUMENTS)
 
     print(f"{c(C_BOLD, f'Review: {args.task_id}')}")
     print()
@@ -577,17 +590,25 @@ def cmd_review(args):
         )
         verdict = review_data.get("verdict") or "incomplete"
         print(f"  provider: {c(C_DIM, runner_result.provenance.get('provider', 'unknown'))}")
-        if runner_result.provenance.get("model"):
-            print(f"  model: {c(C_DIM, runner_result.provenance['model'])}")
+        if runner_result.provenance.get("model_requested"):
+            print(f"  model: {c(C_DIM, runner_result.provenance['model_requested'])}")
+        print(f"  isolation: {c(C_DIM, runner_result.provenance.get('isolation_level', 'unknown'))}")
+        if runner_result.provenance.get("isolation_downgraded"):
+            fallback_policy = runner_result.provenance.get("fallback_policy") or "warn"
+            label = "warning" if fallback_policy == "warn" else "note"
+            color = C_YELLOW if fallback_policy == "warn" else C_DIM
+            print(f"  {c(color, label)}: provider=auto fell back to weaker Claude isolation")
         print(f"  review file: {c(C_DIM, result['review_file'])}")
         print()
         if verdict == "fail":
             print(f"  {c(C_RED, 'review')}: FAIL — {len(review_data.get('blocking', []))} blocking finding(s)")
+            print(f"  next: fix the blocking findings, then rerun {c(C_BOLD, f'scafld review {args.task_id}')}")
         elif verdict == "pass_with_issues":
             print(f"  {c(C_YELLOW, 'review')}: pass with {len(review_data.get('non_blocking', []))} non-blocking finding(s)")
+            print(f"  next: {c(C_BOLD, f'scafld complete {args.task_id}')}")
         else:
             print(f"  {c(C_GREEN, 'review')}: pass")
-        print(f"  next: {c(C_BOLD, f'scafld complete {args.task_id}')}")
+            print(f"  next: {c(C_BOLD, f'scafld complete {args.task_id}')}")
         return
 
     print()

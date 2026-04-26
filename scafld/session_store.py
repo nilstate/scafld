@@ -430,6 +430,100 @@ def record_human_override(
     return mutate_session(root, task_id, apply, spec_path=spec_path)
 
 
+def record_provider_invocation(
+    root,
+    task_id,
+    *,
+    role,
+    gate,
+    provider,
+    provider_bin=None,
+    provider_requested=None,
+    model_requested="",
+    model_observed="",
+    model_source="unknown",
+    isolation_level="",
+    isolation_downgraded=False,
+    fallback_policy="",
+    confidence=None,
+    spec_path=None,
+):
+    if confidence is None:
+        if model_observed:
+            confidence = "observed"
+        elif model_requested:
+            confidence = "requested_only"
+        else:
+            confidence = "unknown"
+
+    def apply(session):
+        append_entry(
+            session,
+            "provider_invocation",
+            role=role,
+            gate=gate,
+            provider=provider,
+            provider_bin=provider_bin or provider,
+            provider_requested=provider_requested or provider,
+            model_requested=model_requested or "",
+            model_observed=model_observed or "",
+            model_source=model_source or "unknown",
+            isolation_level=isolation_level or "",
+            isolation_downgraded=bool(isolation_downgraded),
+            fallback_policy=fallback_policy or "",
+            confidence=confidence,
+        )
+
+    return mutate_session(root, task_id, apply, spec_path=spec_path)
+
+
+def _provider_model_separation(provider_invocations):
+    latest_by_role = {}
+    for entry in provider_invocations:
+        role = entry.get("role")
+        if role in {"executor", "challenger"}:
+            latest_by_role[role] = entry
+
+    executor = latest_by_role.get("executor")
+    challenger = latest_by_role.get("challenger")
+    if executor is None and challenger is None:
+        return {
+            "state": "none",
+            "executor_model_observed": "",
+            "challenger_model_observed": "",
+        }
+    if executor is None:
+        return {
+            "state": "unknown_executor",
+            "executor_model_observed": "",
+            "challenger_model_observed": challenger.get("model_observed") or "",
+        }
+    if challenger is None:
+        return {
+            "state": "unknown_challenger",
+            "executor_model_observed": executor.get("model_observed") or "",
+            "challenger_model_observed": "",
+        }
+
+    executor_model = executor.get("model_observed") or ""
+    challenger_model = challenger.get("model_observed") or ""
+    if not executor_model and not challenger_model:
+        state = "unknown_both"
+    elif not executor_model:
+        state = "unknown_executor"
+    elif not challenger_model:
+        state = "unknown_challenger"
+    elif executor_model == challenger_model:
+        state = "same_model"
+    else:
+        state = "separated"
+    return {
+        "state": state,
+        "executor_model_observed": executor_model,
+        "challenger_model_observed": challenger_model,
+    }
+
+
 def attempts_for_criterion(session, criterion_id):
     return [attempt for attempt in session.get("attempts", []) if attempt.get("criterion_id") == criterion_id]
 
@@ -522,6 +616,17 @@ def session_summary_payload(session):
         if entry.get("blocked")
     }
     override_entries = [entry for entry in entries if entry.get("type") == "human_override"]
+    provider_invocations = [entry for entry in entries if entry.get("type") == "provider_invocation"]
+    provider_invocations_by_role = defaultdict(int)
+    provider_confidence = defaultdict(int)
+    for entry in provider_invocations:
+        provider_invocations_by_role[entry.get("role") or "unknown"] += 1
+        provider_confidence[entry.get("confidence") or "unknown"] += 1
+    provider_model_separation = _provider_model_separation(provider_invocations) if provider_invocations else {
+        "state": "none",
+        "executor_model_observed": "",
+        "challenger_model_observed": "",
+    }
     override_keys = {
         (entry.get("gate"), entry.get("review_round"))
         for entry in override_entries
@@ -547,5 +652,12 @@ def session_summary_payload(session):
             if challenge_blocked
             else None
         ),
+        "provider_invocations": len(provider_invocations),
+        "provider_invocations_by_role": dict(sorted(provider_invocations_by_role.items())),
+        "provider_confidence": dict(sorted(provider_confidence.items())),
+        "provider_models_observed": sum(1 for entry in provider_invocations if entry.get("model_observed")),
+        "provider_models_unknown": sum(1 for entry in provider_invocations if not entry.get("model_observed")),
+        "provider_isolation_downgrades": sum(1 for entry in provider_invocations if entry.get("isolation_downgraded")),
+        "provider_model_separation": provider_model_separation,
         "usage": usage,
     }

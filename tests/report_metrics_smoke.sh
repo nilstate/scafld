@@ -68,7 +68,7 @@ EOF
 repo="$(new_repo)"
 write_approved_spec "$repo"
 
-echo "[1/4] create one failure followed by one recovery"
+echo "[1/5] create one failure followed by one recovery"
 (
   cd "$repo"
   printf 'red\n' > metric.txt
@@ -83,24 +83,94 @@ fi
 capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld build report-task --json"
 assert_json "$output" "data['ok'] is True" "second build should pass"
 
-echo "[2/4] human report shows the LLM execution signals section"
+echo "[2/5] record provider telemetry for attribution reporting"
+REPO_UNDER_TEST="$repo" PYTHONPATH="$REPO_ROOT" python3 - <<'PY'
+import os
+from pathlib import Path
+from scafld.session_store import record_provider_invocation, session_summary_payload
+
+root = Path(os.environ["REPO_UNDER_TEST"])
+record_provider_invocation(
+    root,
+    "report-task",
+    role="executor",
+    gate="build",
+    provider="codex",
+    provider_bin="codex",
+    model_requested="gpt-smoke",
+    model_observed="",
+    model_source="requested",
+    isolation_level="provider_adapter",
+)
+record_provider_invocation(
+    root,
+    "report-task",
+    role="challenger",
+    gate="review",
+    provider="claude",
+    provider_bin="claude",
+    provider_requested="auto",
+    model_requested="",
+    model_observed="",
+    model_source="unknown",
+    isolation_level="claude_restricted_tools_fresh_session",
+    isolation_downgraded=True,
+    fallback_policy="warn",
+)
+
+def separation_state(entries):
+    return session_summary_payload({"entries": entries, "attempts": []})["provider_model_separation"]["state"]
+
+assert separation_state([]) == "none"
+assert separation_state([
+    {"type": "provider_invocation", "role": "executor", "model_observed": "gpt-a"},
+]) == "unknown_challenger"
+assert separation_state([
+    {"type": "provider_invocation", "role": "challenger", "model_observed": "gpt-b"},
+]) == "unknown_executor"
+assert separation_state([
+    {"type": "provider_invocation", "role": "executor", "model_observed": ""},
+    {"type": "provider_invocation", "role": "challenger", "model_observed": ""},
+]) == "unknown_both"
+assert separation_state([
+    {"type": "provider_invocation", "role": "executor", "model_observed": "gpt-a"},
+    {"type": "provider_invocation", "role": "challenger", "model_observed": "gpt-a"},
+]) == "same_model"
+assert separation_state([
+    {"type": "provider_invocation", "role": "executor", "model_observed": "gpt-a"},
+    {"type": "provider_invocation", "role": "challenger", "model_observed": "gpt-b"},
+]) == "separated"
+PY
+
+echo "[3/5] human report shows the LLM execution signals section"
 capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld report"
 assert_contains "$output" "LLM execution signals:" "report should show the session-derived section"
 assert_contains "$output" "recovery convergence: 1/1" "report should show recovered criteria"
 assert_contains "$output" "challenge override: none recorded" "report should show challenge override metrics"
 assert_contains "$output" "attempts per phase: phase1=2" "report should show attempts per phase"
+assert_contains "$output" "provider invocations: 2" "report should show provider invocation totals"
+assert_contains "$output" "provider confidence: requested_only=1, unknown=1" "report should show provider confidence counts"
+assert_contains "$output" "isolation downgrades: 1" "report should show provider isolation downgrades"
+assert_contains "$output" "model separation: unknown_both=1" "report should show unknown model separation"
 assert_contains "$output" "Per-task metrics" "report should show per-task runtime metrics"
 
-echo "[3/4] json report exposes the same metrics"
+echo "[4/5] json report exposes the same metrics"
 capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld report --json"
 assert_json "$output" "data['result']['llm_runtime']['first_attempt_pass_rate']['total'] == 1" "json report should count first attempts"
 assert_json "$output" "data['result']['llm_runtime']['recovery_convergence_rate']['recovered'] == 1" "json report should count recovered criteria"
 assert_json "$output" "data['result']['llm_runtime']['challenge_override_rate']['total'] == 0" "json report should expose challenge override totals"
 assert_json "$output" "data['result']['llm_runtime']['attempts_per_phase']['phase1'] == 2" "json report should expose attempts per phase"
+assert_json "$output" "data['result']['llm_runtime']['provider_telemetry']['invocations'] == 2" "json report should expose provider invocation totals"
+assert_json "$output" "data['result']['llm_runtime']['provider_telemetry']['confidence']['requested_only'] == 1" "json report should expose requested-only confidence counts"
+assert_json "$output" "data['result']['llm_runtime']['provider_telemetry']['confidence']['unknown'] == 1" "json report should expose unknown confidence counts"
+assert_json "$output" "data['result']['llm_runtime']['provider_telemetry']['models_unknown'] == 2" "json report should expose unknown provider model counts"
+assert_json "$output" "data['result']['llm_runtime']['provider_telemetry']['isolation_downgrades'] == 1" "json report should expose isolation downgrade counts"
+assert_json "$output" "data['result']['llm_runtime']['provider_telemetry']['model_separation']['unknown_both'] == 1" "json report should expose unknown model separation"
 assert_json "$output" "data['result']['llm_runtime']['per_task']['report-task']['recovery_convergence_rate']['recovered'] == 1" "json report should expose per-task runtime metrics"
+assert_json "$output" "data['result']['llm_runtime']['per_task']['report-task']['provider_telemetry']['isolation_downgrades'] == 1" "json report should expose per-task provider telemetry"
 assert_json "$output" "'review_signal' in data['result']" "json report should expose review signal metrics"
 
-echo "[4/4] runtime-only report filters to the session cohort"
+echo "[5/5] runtime-only report filters to the session cohort"
 capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld report --json --runtime-only"
 assert_json "$output" "data['result']['runtime_only'] is True" "runtime-only report should flag the filtered cohort"
 assert_json "$output" "data['result']['total_specs'] == 1" "runtime-only report should keep only specs with runtime sessions"

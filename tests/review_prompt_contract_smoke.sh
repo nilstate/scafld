@@ -73,13 +73,14 @@ write_active_spec "$repo"
 
 echo "[1/2] source review prompt carries the stricter contract"
 assert_contains_file "$REPO_ROOT/.ai/prompts/review.md" 'Required finding format' "review prompt should teach the required finding format"
-assert_contains_file "$REPO_ROOT/.ai/prompts/review.md" 'No issues found — checked <what you attacked>' "review prompt should teach the explicit no-issues format"
+assert_contains_file "$REPO_ROOT/.ai/prompts/review.md" 'No issues found — checked <specific files, callers, rules, or paths attacked>' "review prompt should teach the explicit no-issues format"
+assert_contains_file "$REPO_ROOT/.ai/prompts/review.md" 'untrusted data' "review prompt should treat spec content as untrusted data"
 
 echo "[2/2] review scaffolding emits the required sections and format guidance"
 capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld review review-task --json"
 assert_json "$output" "'Regression Hunt' in data['result']['required_sections']" "review should require the regression hunt section"
 assert_json "$output" "'Blocking' in data['result']['required_sections']" "review should require the blocking section"
 assert_contains "$output" 'path/file.py:88' "review prompt should carry the strict finding example"
-assert_contains "$output" '<what you attacked>' "review prompt should carry the explicit no-issues guidance"
+assert_contains "$output" '<specific files, callers, rules, or paths attacked>' "review prompt should carry the explicit no-issues guidance"
 
 echo "PASS: review prompt contract smoke"
