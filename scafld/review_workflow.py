@@ -20,6 +20,7 @@ from scafld.reviewing import (
     review_pass_ids,
     review_passes_by_kind,
 )
+from scafld.runtime_contracts import diagnostics_dir, relative_path
 from scafld.runtime_bundle import CONFIG_PATH, REVIEWS_DIR, load_runtime_config, scafld_source_root
 from scafld.session_store import load_session
 from scafld.spec_parsing import extract_self_eval_score, extract_spec_cwd, now_iso, parse_acceptance_criteria
@@ -547,7 +548,31 @@ def open_review_round(root, task_id, spec, text, topology, normalized_passes, au
     }
 
 
-def complete_review_round_from_result(review_file, task_id, spec_text, topology, review_data, runner_result):
+def external_review_artifact_diagnostic(root, task_id, *, raw_output, candidate_text, errors):
+    diagnostic_root = diagnostics_dir(root, task_id)
+    diagnostic_root.mkdir(parents=True, exist_ok=True)
+    existing = sorted(diagnostic_root.glob("external-review-artifact-attempt-*.md"))
+    diagnostic_path = diagnostic_root / f"external-review-artifact-attempt-{len(existing) + 1}.md"
+    diagnostic_path.write_text(
+        "\n".join([
+            "# External Review Artifact Diagnostic",
+            "",
+            "## Validation Errors",
+            *(f"- {error}" for error in errors),
+            "",
+            "## Raw External Output",
+            raw_output or "",
+            "",
+            "## Candidate Review Artifact",
+            candidate_text,
+            "",
+        ]),
+        encoding="utf-8",
+    )
+    return relative_path(root, diagnostic_path)
+
+
+def complete_review_round_from_result(root, review_file, task_id, spec_text, topology, review_data, runner_result):
     metadata = review_data.get("metadata") or {}
     review_git_state = {
         "reviewed_head": metadata.get("reviewed_head"),
@@ -615,9 +640,17 @@ def complete_review_round_from_result(review_file, task_id, spec_text, topology,
                 + ", ".join(candidate["empty_adversarial"])
             )
         details.extend(candidate.get("errors") or [])
+        visible_details = details[:7]
+        diagnostic_path = external_review_artifact_diagnostic(
+            root,
+            task_id,
+            raw_output=getattr(runner_result, "raw_output", ""),
+            candidate_text=candidate_text,
+            errors=visible_details,
+        )
         raise ScafldError(
             "external reviewer produced an invalid review artifact",
-            details[:8],
+            [*visible_details, f"diagnostic: {diagnostic_path}"],
         )
 
     review_file.write_text(candidate_text)

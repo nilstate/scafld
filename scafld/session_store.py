@@ -446,6 +446,14 @@ def record_provider_invocation(
     isolation_downgraded=False,
     fallback_policy="",
     confidence=None,
+    status="completed",
+    started_at="",
+    completed_at="",
+    exit_code=None,
+    timed_out=False,
+    timeout_seconds=None,
+    diagnostic_path=None,
+    warning="",
     spec_path=None,
 ):
     if confidence is None:
@@ -457,22 +465,35 @@ def record_provider_invocation(
             confidence = "unknown"
 
     def apply(session):
-        append_entry(
-            session,
-            "provider_invocation",
-            role=role,
-            gate=gate,
-            provider=provider,
-            provider_bin=provider_bin or provider,
-            provider_requested=provider_requested or provider,
-            model_requested=model_requested or "",
-            model_observed=model_observed or "",
-            model_source=model_source or "unknown",
-            isolation_level=isolation_level or "",
-            isolation_downgraded=bool(isolation_downgraded),
-            fallback_policy=fallback_policy or "",
-            confidence=confidence,
-        )
+        fields = {
+            "role": role,
+            "gate": gate,
+            "provider": provider,
+            "provider_bin": provider_bin or provider,
+            "provider_requested": provider_requested or provider,
+            "model_requested": model_requested or "",
+            "model_observed": model_observed or "",
+            "model_source": model_source or "unknown",
+            "isolation_level": isolation_level or "",
+            "isolation_downgraded": bool(isolation_downgraded),
+            "fallback_policy": fallback_policy or "",
+            "confidence": confidence,
+            "status": status or "completed",
+            "timed_out": bool(timed_out),
+        }
+        if started_at:
+            fields["started_at"] = started_at
+        if completed_at:
+            fields["completed_at"] = completed_at
+        if exit_code is not None:
+            fields["exit_code"] = exit_code
+        if timeout_seconds is not None:
+            fields["timeout_seconds"] = timeout_seconds
+        if diagnostic_path:
+            fields["diagnostic_path"] = diagnostic_path
+        if warning:
+            fields["warning"] = warning
+        append_entry(session, "provider_invocation", **fields)
 
     return mutate_session(root, task_id, apply, spec_path=spec_path)
 
@@ -619,9 +640,11 @@ def session_summary_payload(session):
     provider_invocations = [entry for entry in entries if entry.get("type") == "provider_invocation"]
     provider_invocations_by_role = defaultdict(int)
     provider_confidence = defaultdict(int)
+    provider_statuses = defaultdict(int)
     for entry in provider_invocations:
         provider_invocations_by_role[entry.get("role") or "unknown"] += 1
         provider_confidence[entry.get("confidence") or "unknown"] += 1
+        provider_statuses[entry.get("status") or "unknown"] += 1
     provider_model_separation = _provider_model_separation(provider_invocations) if provider_invocations else {
         "state": "none",
         "executor_model_observed": "",
@@ -655,6 +678,7 @@ def session_summary_payload(session):
         "provider_invocations": len(provider_invocations),
         "provider_invocations_by_role": dict(sorted(provider_invocations_by_role.items())),
         "provider_confidence": dict(sorted(provider_confidence.items())),
+        "provider_statuses": dict(sorted(provider_statuses.items())),
         "provider_models_observed": sum(1 for entry in provider_invocations if entry.get("model_observed")),
         "provider_models_unknown": sum(1 for entry in provider_invocations if not entry.get("model_observed")),
         "provider_isolation_downgrades": sum(1 for entry in provider_invocations if entry.get("isolation_downgraded")),

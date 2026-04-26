@@ -26,7 +26,7 @@ from scafld.review_workflow import (
 from scafld.runtime_bundle import REVIEWS_DIR
 from scafld.runtime_guidance import existing_review_handoff
 from scafld.runtime_contracts import archive_run_artifacts
-from scafld.session_store import ensure_session, record_challenge_verdict, record_human_override
+from scafld.session_store import ensure_session, record_challenge_verdict, record_human_override, record_provider_invocation
 from scafld.spec_parsing import parse_acceptance_criteria
 from scafld.spec_store import move_spec, require_spec, yaml_read_field
 from scafld.terminal import C_BOLD, C_CYAN, C_DIM, C_GREEN, C_RED, C_YELLOW, STATUS_COLORS, c
@@ -38,6 +38,39 @@ def move_result_payload(root, move_result):
         "to": str(move_result.dest.relative_to(root)),
         "status": move_result.new_status,
     }
+
+
+def diagnostic_path_from_details(details):
+    for detail in details or []:
+        if isinstance(detail, str) and detail.startswith("diagnostic: "):
+            return detail.split("diagnostic: ", 1)[1]
+    return ""
+
+
+def record_external_review_invocation(root, task_id, provenance, *, status, diagnostic_path=""):
+    record_provider_invocation(
+        root,
+        task_id,
+        role="challenger",
+        gate="review",
+        provider=provenance.get("provider") or "unknown",
+        provider_bin=provenance.get("provider_bin") or provenance.get("provider") or "unknown",
+        provider_requested=provenance.get("provider_requested") or provenance.get("provider") or "unknown",
+        model_requested=provenance.get("model_requested") or "",
+        model_observed=provenance.get("model_observed") or "",
+        model_source=provenance.get("model_source") or "unknown",
+        isolation_level=provenance.get("isolation_level") or "",
+        isolation_downgraded=bool(provenance.get("isolation_downgraded")),
+        fallback_policy=provenance.get("fallback_policy") or "",
+        status=status,
+        started_at=provenance.get("started_at") or "",
+        completed_at=provenance.get("completed_at") or "",
+        exit_code=provenance.get("exit_code"),
+        timed_out=bool(provenance.get("timed_out")),
+        timeout_seconds=provenance.get("timeout_seconds"),
+        diagnostic_path=diagnostic_path,
+        warning=provenance.get("warning") or "",
+    )
 
 
 def print_move_result(root, move_result):
@@ -580,14 +613,32 @@ def cmd_review(args):
             print(f"  fallback: {c(C_BOLD, f'scafld review {args.task_id} --runner local')} or {c(C_BOLD, f'scafld review {args.task_id} --runner manual')}")
             sys.exit(exc.exit_code)
 
-        review_data = complete_review_round_from_result(
-            review_file,
-            args.task_id,
-            spec.read_text(),
-            topology,
-            review_data,
-            runner_result,
-        )
+        try:
+            review_data = complete_review_round_from_result(
+                root,
+                review_file,
+                args.task_id,
+                spec.read_text(),
+                topology,
+                review_data,
+                runner_result,
+            )
+        except ScafldError as exc:
+            record_external_review_invocation(
+                root,
+                args.task_id,
+                runner_result.provenance,
+                status="invalid_artifact",
+                diagnostic_path=diagnostic_path_from_details(exc.details),
+            )
+            print()
+            print(f"  {c(C_RED, 'error')}: {exc.message}")
+            for detail in exc.details:
+                print(f"    {c(C_DIM, detail)}")
+            print(f"  review file: {c(C_DIM, result['review_file'])}")
+            print(f"  fallback: {c(C_BOLD, f'scafld review {args.task_id} --runner local')} or {c(C_BOLD, f'scafld review {args.task_id} --runner manual')}")
+            sys.exit(exc.exit_code)
+        record_external_review_invocation(root, args.task_id, runner_result.provenance, status="completed")
         verdict = review_data.get("verdict") or "incomplete"
         print(f"  provider: {c(C_DIM, runner_result.provenance.get('provider', 'unknown'))}")
         if runner_result.provenance.get("model_requested"):

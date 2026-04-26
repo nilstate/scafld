@@ -179,12 +179,16 @@ assert_json "$output" "data['tasks'][0]['task_id'] == 'demo-task'" "cohort scrip
 assert_json "$output" "data['tasks'][0]['runtime']['first_attempt_pass_rate']['passed'] == 1" "cohort script should surface first-attempt pass data"
 assert_json "$output" "data['aggregate']['review_signal']['completed_rounds'] == 1" "cohort script should surface aggregate review signal"
 assert_json "$output" "data['tasks'][0]['review_signal']['clean_review_with_evidence'] is True" "cohort script should surface per-task review signal"
+assert_json "$output" "data['tasks'][0]['review_signal']['format_compliant_clean_review'] is True" "cohort script should surface renamed per-task review signal"
 assert_json "$output" "data['tasks'][0]['questions'][0]['id'] == 'build_flow'" "cohort script should emit the fixed question set"
 
 echo "[2/2] markdown mode stays readable"
 capture output bash -lc "cd '$REPO_ROOT' && python3 scripts/real_standard.py --root '$repo' --task demo-task"
 assert_contains "$output" "Task Cohort Summary" "markdown mode should render a heading"
-assert_contains "$output" "Clean reviews with evidence" "markdown mode should render review signal metrics"
+assert_contains "$output" "Format-compliant clean reviews" "markdown mode should render review signal metrics"
+assert_contains "$output" "Format-compliant clean review" "markdown mode should render per-task review signal metrics"
+assert_not_contains "$output" "Clean review with evidence" "markdown mode should not render the stale per-task review signal label"
+assert_not_contains "$output" "Clean reviews with evidence" "markdown mode should not render the stale aggregate review signal label"
 assert_contains "$output" "Did build feel easier than managing the same task through a raw agent loop?" "markdown mode should render the fixed questions"
 
 echo "PASS: real standard cohort smoke"

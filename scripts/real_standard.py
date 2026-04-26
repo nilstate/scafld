@@ -109,7 +109,7 @@ def render_markdown(root, aggregate, tasks):
             f"- Challenge override: {challenge.get('overrides', 0)}/{challenge.get('total', 0)}",
             f"- Review rounds: {review_signal.get('completed_rounds', 0)}",
             f"- Grounded findings: {review_signal.get('grounded_findings', 0)}",
-            f"- Clean reviews with evidence: {review_signal.get('clean_reviews_with_evidence', 0)}",
+            f"- Format-compliant clean reviews: {review_signal.get('format_compliant_clean_reviews', review_signal.get('clean_reviews_with_evidence', 0))}",
             "",
         ]
     )
@@ -131,7 +131,7 @@ def render_markdown(root, aggregate, tasks):
                 f"- Recovery convergence: {recovery.get('recovered', 0)}/{recovery.get('total', 0)}",
                 f"- Challenge override: {challenge.get('overrides', 0)}/{challenge.get('total', 0)}",
                 f"- Grounded findings: {task_review_signal.get('grounded_findings', 0)}",
-                f"- Clean review with evidence: `{bool(task_review_signal.get('clean_review_with_evidence'))}`",
+                f"- Format-compliant clean review: `{bool(task_review_signal.get('format_compliant_clean_review', task_review_signal.get('clean_review_with_evidence')))}`",
                 "",
                 "Questions:",
             ]
