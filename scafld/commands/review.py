@@ -641,14 +641,15 @@ def cmd_review(args):
         record_external_review_invocation(root, args.task_id, runner_result.provenance, status="completed")
         verdict = review_data.get("verdict") or "incomplete"
         print(f"  provider: {c(C_DIM, runner_result.provenance.get('provider', 'unknown'))}")
-        if runner_result.provenance.get("model_requested"):
-            print(f"  model: {c(C_DIM, runner_result.provenance['model_requested'])}")
+        if runner_result.provenance.get("model_observed"):
+            print(f"  model observed: {c(C_DIM, runner_result.provenance['model_observed'])}")
+        elif runner_result.provenance.get("model_requested"):
+            print(f"  model requested: {c(C_DIM, runner_result.provenance['model_requested'])}")
         print(f"  isolation: {c(C_DIM, runner_result.provenance.get('isolation_level', 'unknown'))}")
         if runner_result.provenance.get("isolation_downgraded"):
             fallback_policy = runner_result.provenance.get("fallback_policy") or "warn"
-            label = "warning" if fallback_policy == "warn" else "note"
-            color = C_YELLOW if fallback_policy == "warn" else C_DIM
-            print(f"  {c(color, label)}: provider=auto fell back to weaker Claude isolation")
+            if fallback_policy != "warn":
+                print(f"  {c(C_DIM, 'note')}: provider=auto fell back to weaker Claude isolation")
         print(f"  review file: {c(C_DIM, result['review_file'])}")
         print()
         if verdict == "fail":

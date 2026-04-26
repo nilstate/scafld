@@ -109,6 +109,7 @@ def cmd_report(args):
     provider_models_observed = 0
     provider_models_unknown = 0
     provider_isolation_downgrades = 0
+    provider_weaker_review_isolation = 0
     provider_model_separation = defaultdict(int)
     attempts_per_phase = defaultdict(int)
     usage_totals = defaultdict(float)
@@ -271,6 +272,7 @@ def cmd_report(args):
                     "models_observed": runtime["provider_models_observed"],
                     "models_unknown": runtime["provider_models_unknown"],
                     "isolation_downgrades": runtime["provider_isolation_downgrades"],
+                    "weaker_review_isolation": runtime["provider_weaker_review_isolation"],
                     "model_separation": runtime["provider_model_separation"],
                 },
             }
@@ -284,6 +286,7 @@ def cmd_report(args):
             provider_models_observed += runtime["provider_models_observed"]
             provider_models_unknown += runtime["provider_models_unknown"]
             provider_isolation_downgrades += runtime["provider_isolation_downgrades"]
+            provider_weaker_review_isolation += runtime["provider_weaker_review_isolation"]
             separation_state = runtime["provider_model_separation"]["state"]
             if separation_state != "none":
                 provider_model_separation[separation_state] += 1
@@ -372,6 +375,7 @@ def cmd_report(args):
                         "models_observed": provider_models_observed,
                         "models_unknown": provider_models_unknown,
                         "isolation_downgrades": provider_isolation_downgrades,
+                        "weaker_review_isolation": provider_weaker_review_isolation,
                         "model_separation": dict(sorted(provider_model_separation.items())),
                     },
                     "per_task": dict(sorted(per_task_runtime.items())),
@@ -507,6 +511,7 @@ def cmd_report(args):
                 rendered_statuses = ", ".join(f"{key}={value}" for key, value in sorted(provider_statuses.items()))
                 print(f"  provider statuses: {rendered_statuses}")
             print(f"  isolation downgrades: {provider_isolation_downgrades}/{provider_invocations}")
+            print(f"  weaker review isolation: {provider_weaker_review_isolation}/{provider_invocations}")
             print(f"  model separation: {separation}")
         print()
 

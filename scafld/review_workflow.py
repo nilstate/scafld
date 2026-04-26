@@ -548,7 +548,7 @@ def open_review_round(root, task_id, spec, text, topology, normalized_passes, au
     }
 
 
-def external_review_artifact_diagnostic(root, task_id, *, raw_output, candidate_text, errors):
+def external_review_artifact_diagnostic(root, task_id, *, raw_output, candidate_text, errors, prompt_sha256=""):
     diagnostic_root = diagnostics_dir(root, task_id)
     diagnostic_root.mkdir(parents=True, exist_ok=True)
     existing = sorted(diagnostic_root.glob("external-review-artifact-attempt-*.md"))
@@ -559,6 +559,8 @@ def external_review_artifact_diagnostic(root, task_id, *, raw_output, candidate_
             "",
             "## Validation Errors",
             *(f"- {error}" for error in errors),
+            "",
+            f"prompt_sha256: {prompt_sha256}",
             "",
             "## Raw External Output",
             raw_output or "",
@@ -647,6 +649,7 @@ def complete_review_round_from_result(root, review_file, task_id, spec_text, top
             raw_output=getattr(runner_result, "raw_output", ""),
             candidate_text=candidate_text,
             errors=visible_details,
+            prompt_sha256=(getattr(runner_result, "provenance", {}) or {}).get("prompt_sha256", ""),
         )
         raise ScafldError(
             "external reviewer produced an invalid review artifact",
