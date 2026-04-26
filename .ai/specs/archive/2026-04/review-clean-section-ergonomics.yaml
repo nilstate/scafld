@@ -1,8 +1,8 @@
 spec_version: '1.1'
 task_id: review-clean-section-ergonomics
 created: '2026-04-25T09:44:33Z'
-updated: '2026-04-25T09:45:57Z'
-status: draft
+updated: "2026-04-26T11:12:23Z"
+status: "completed"
 harden_status: passed
 task:
   title: Make clean review sections easier to write correctly
@@ -81,6 +81,15 @@ planning_log:
   actor: assistant
   summary: Replaced the placeholder draft with a parser-and-docs fix grounded in the
     real review phrase mismatch hit during dogfooding.
+- timestamp: "2026-04-26T11:11:20Z"
+  actor: "cli"
+  summary: "Spec approved"
+- timestamp: "2026-04-26T11:11:21Z"
+  actor: "cli"
+  summary: "Execution started"
+- timestamp: "2026-04-26T11:12:23Z"
+  actor: "cli"
+  summary: "Spec completed"
 phases:
 - id: phase1
   name: Widen clean-section parsing and teach it
@@ -105,7 +114,9 @@ phases:
     description: Review gate smoke proves the natural clean-section variant passes.
     command: bash tests/review_gate_smoke.sh clean-section-variants
     expected: exit code 0
-  status: pending
+    result: "pass"
+    executed_at: "2026-04-26T11:11:23Z"
+  status: "completed"
 rollback:
   strategy: per_phase
   commands:
@@ -116,3 +127,30 @@ harden_rounds:
   outcome: passed
   questions: []
   ended_at: '2026-04-25T09:45:57Z'
+
+review:
+  timestamp: "2026-04-26T11:11:47Z"
+  verdict: "pass"
+  review_rounds: 1
+  reviewer_mode: "fresh_agent"
+  reviewer_session: "manual-clean-section-review"
+  round_status: "completed"
+  override_applied: false
+  override_reason: null
+  override_confirmed_at: null
+  reviewed_head: "94fe3ac8b85bc57510614ae90edd0e3d743e0122"
+  reviewed_dirty: true
+  reviewed_diff: "282882db396f42607958fc423b75d34ce428a6ae13c8bb12f74a5ff1fc113b38"
+  passes:
+    - id: spec_compliance
+      result: "pass"
+    - id: scope_drift
+      result: "pass"
+    - id: regression_hunt
+      result: "pass"
+    - id: convention_check
+      result: "pass"
+    - id: dark_patterns
+      result: "pass"
+  blocking_count: 0
+  non_blocking_count: 0

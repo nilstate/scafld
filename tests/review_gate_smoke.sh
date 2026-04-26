@@ -627,6 +627,27 @@ case_review_open_complete_flow() {
   [ -n "$archive_path" ] || fail "complete should archive a freshly reviewed task without false control-plane drift"
 }
 
+case_clean_section_variants() {
+  local repo task_id output archive_path
+  repo="$(new_repo)"
+  task_id="clean-section-variants"
+  write_changed_file "$repo"
+  write_active_spec "$repo" "$task_id" "grep -q '^changed$' app.txt" "exit code 0" "pass"
+
+  write_review_v3 \
+    "$repo" "$task_id" "pass" "fresh_agent" "completed" \
+    "pass" "pass" "pass" "pass" "pass" \
+    "No additional issues found — checked callers of app.txt." \
+    "No additional issues found — checked AGENTS.md and CONVENTIONS.md." \
+    "No additional issues found — checked hardcodes and null handling in app.txt." \
+    "None." "None."
+
+  capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld complete '$task_id'"
+  assert_contains "$output" "review" "clean-section variant should clear the review gate"
+  archive_path="$(archive_spec_path "$repo" "$task_id")"
+  [ -n "$archive_path" ] || fail "clean-section variant should archive the spec"
+}
+
 case_review_refreshes_in_progress_round() {
   local repo task_id output review_text review_count
   repo="$(new_repo)"
@@ -1779,6 +1800,7 @@ case_all() {
   case_review_complete_topology
   case_review_git_binding
   case_review_open_complete_flow
+  case_clean_section_variants
   case_review_refreshes_in_progress_round
   case_human_override
   case_duplicate_task_id
@@ -1808,6 +1830,7 @@ main() {
     review-complete-topology) case_review_complete_topology ;;
     review-git-binding) case_review_git_binding ;;
     review-open-complete-flow) case_review_open_complete_flow ;;
+    clean-section-variants) case_clean_section_variants ;;
     review-refreshes-in-progress-round) case_review_refreshes_in_progress_round ;;
     human-override) case_human_override ;;
     duplicate-task-id) case_duplicate_task_id ;;

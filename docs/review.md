@@ -105,6 +105,7 @@ findings.
 If an adversarial section is clean, it must still say what was checked:
 
 - `No issues found — checked callers of path/file.py`
+- `No additional issues found — checked callers of path/file.py`
 - `No issues found — checked AGENTS.md and CONVENTIONS.md`
 
 Generic clean notes such as `checked everything` or `checked the diff` are not
