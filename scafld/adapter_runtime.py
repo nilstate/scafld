@@ -7,7 +7,13 @@ from scafld.handoff_renderer import render_handoff
 from scafld.handoff_renderer import current_phase_id
 from scafld.lifecycle_runtime import status_snapshot
 from scafld.review_runtime import review_snapshot
-from scafld.session_store import attempts_for_criterion, failed_attempts_for_criterion, latest_failed_attempt, load_session
+from scafld.session_store import (
+    attempts_for_criterion,
+    failed_attempts_for_criterion,
+    latest_failed_attempt,
+    load_session,
+    record_provider_invocation,
+)
 from scafld.spec_store import load_spec_document, require_spec
 
 
@@ -103,6 +109,15 @@ def review_prompt(root, task_id):
     return result.get("review_prompt") or "", result.get("handoff_file") or ""
 
 
+def model_arg(provider_args):
+    for index, arg in enumerate(provider_args):
+        if arg in {"-m", "--model"} and index + 1 < len(provider_args):
+            return provider_args[index + 1]
+        if arg.startswith("--model="):
+            return arg.split("=", 1)[1]
+    return ""
+
+
 def run_provider(root, provider, mode, task_id, provider_args):
     provider_label, env_name = resolve_provider(provider)
     provider_bin = os.environ.get(env_name, provider_label)
@@ -117,6 +132,18 @@ def run_provider(root, provider, mode, task_id, provider_args):
         raise ValueError(f"unknown mode '{mode}'")
 
     print(f"scafld: feeding {handoff_file or 'generated handoff'} to {provider_label}", file=sys.stderr)
+    record_provider_invocation(
+        root,
+        task_id,
+        role="executor" if mode == "build" else "challenger",
+        gate=mode,
+        provider=provider_label,
+        provider_bin=provider_bin,
+        model_requested=model_arg(provider_args),
+        model_observed="",
+        model_source="requested" if model_arg(provider_args) else "unknown",
+        isolation_level="provider_adapter",
+    )
     proc = subprocess.run(
         [provider_bin, *provider_args],
         input=(prompt if prompt.endswith("\n") else prompt + "\n"),

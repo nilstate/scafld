@@ -203,13 +203,16 @@ phases:
   changes:
   - file: .ai/config.yaml
     action: update
+    ownership: shared
     content_spec: Add review runner defaults covering runner mode and external provider/model
       selection.
   - file: scafld/commands/surface.py
     action: update
+    ownership: shared
     content_spec: Add explicit review flags for runner/provider/model overrides.
   - file: scafld/review_runner.py
     action: create
+    ownership: shared
     content_spec: Create the dedicated runner boundary for loading config and resolving
       runner/provider selection.
   acceptance_criteria:
@@ -237,21 +240,26 @@ phases:
   changes:
   - file: scafld/commands/review.py
     action: update
+    ownership: shared
     content_spec: Use the new review runner to execute or emit the challenger round
       depending on runner mode.
   - file: scafld/review_runtime.py
     action: update
+    ownership: shared
     content_spec: Expose runner-ready review payload fields without mixing provider
       subprocess output into JSON mode.
   - file: scafld/review_workflow.py
     action: update
+    ownership: shared
     content_spec: Add helpers to complete the latest review round from structured
       runner output while keeping the canonical artifact shape.
   - file: scafld/reviewing.py
     action: update
+    ownership: shared
     content_spec: Validate and surface the new runner/provider provenance metadata.
   - file: tests/review_gate_smoke.sh
     action: update
+    ownership: shared
     content_spec: Add review-gate coverage for codex-first resolution, claude fallback,
       explicit local mode, and explicit manual mode.
   acceptance_criteria:
@@ -274,25 +282,31 @@ phases:
   changes:
   - file: docs/review.md
     action: update
+    ownership: shared
     content_spec: Teach the new default review runner behavior, degraded modes, and
       provenance semantics.
   - file: docs/integrations.md
     action: update
+    ownership: shared
     content_spec: Clarify that wrapper scripts are optional integrations, not the
       primary review product surface.
   - file: docs/configuration.md
     action: update
+    ownership: shared
     content_spec: Document the new review runner config and override flags.
   - file: docs/cli-reference.md
     action: update
+    ownership: shared
     content_spec: Document review flags and the non-JSON default external execution
       behavior.
   - file: tests/codex_handoff_adapter_smoke.sh
     action: update
+    ownership: shared
     content_spec: Keep proving that the codex review wrapper still feeds the challenger
       handoff as an optional adapter path.
   - file: tests/claude_handoff_adapter_smoke.sh
     action: update
+    ownership: shared
     content_spec: Keep proving that the claude review wrapper still feeds the challenger
       handoff as an optional adapter path.
   acceptance_criteria:

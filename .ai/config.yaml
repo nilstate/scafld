@@ -201,6 +201,8 @@ review:
   runner: "external"
   external:
     provider: "auto"
+    timeout_seconds: 600
+    fallback_policy: "warn"
     codex:
       model: ""
     claude:

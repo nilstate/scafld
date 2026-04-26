@@ -10,10 +10,24 @@ from scafld.review_workflow import (
 from scafld.spec_store import require_spec, yaml_read_field
 
 
-def review_snapshot(root, task_id, *, use_color=False):
+def review_snapshot(
+    root,
+    task_id,
+    *,
+    use_color=False,
+    resolved_runner=None,
+    runner_override=None,
+    provider_override=None,
+    model_override=None,
+):
     topology = load_configured_review_topology(root)
     try:
-        resolved_runner = resolve_review_runner(root)
+        resolved_runner = resolved_runner or resolve_review_runner(
+            root,
+            runner_override=runner_override,
+            provider_override=provider_override,
+            model_override=model_override,
+        )
     except ValueError as exc:
         return ({
             "ok": False,
@@ -127,6 +141,9 @@ def review_snapshot(root, task_id, *, use_color=False):
                 "runner": resolved_runner.runner,
                 "provider": resolved_runner.provider,
                 "model": resolved_runner.model,
+                "timeout_seconds": resolved_runner.timeout_seconds,
+                "fallback_policy": resolved_runner.fallback_policy,
+                "snapshot_only": True,
             },
             "review_prompt": review_round["review_prompt"],
             "automated_passes": automated_results,

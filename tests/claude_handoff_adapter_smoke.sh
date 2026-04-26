@@ -143,6 +143,10 @@ args_path="$repo/claude-phase.args"
 assert_contains_file "$capture_path" 'role: "executor"' "claude adapter should feed an executor handoff"
 assert_contains_file "$capture_path" '## Phase Objective' "claude adapter should feed the phase handoff content"
 assert_contains_file "$args_path" '--phase-arg' "claude adapter should pass through provider args"
+assert_contains_file "$repo/.ai/runs/adapter-task/session.json" '"type": "provider_invocation"' "claude adapter should record provider invocation telemetry"
+assert_contains_file "$repo/.ai/runs/adapter-task/session.json" '"role": "executor"' "claude adapter should record executor attribution"
+assert_contains_file "$repo/.ai/runs/adapter-task/session.json" '"provider": "claude"' "claude adapter should record the claude provider"
+assert_contains_file "$repo/.ai/runs/adapter-task/session.json" '"confidence": "unknown"' "claude adapter should record attribution confidence"
 
 echo "[3/3] review-ready work feeds the challenger handoff to claude"
 review_repo="$(new_repo)"
@@ -160,5 +164,7 @@ args_path="$review_repo/claude-review.args"
 )
 assert_contains_file "$capture_path" 'role: "challenger"' "claude adapter should feed a challenger handoff for review-ready work"
 assert_contains_file "$capture_path" '## Challenge Contract' "claude adapter should feed the review challenge contract"
+assert_contains_file "$review_repo/.ai/runs/review-task/session.json" '"role": "challenger"' "claude review adapter should record challenger attribution"
+assert_contains_file "$review_repo/.ai/runs/review-task/session.json" '"provider": "claude"' "claude review adapter should record the claude provider"
 
 echo "PASS: claude handoff adapter smoke"

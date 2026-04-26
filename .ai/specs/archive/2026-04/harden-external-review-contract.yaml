@@ -1,0 +1,894 @@
+spec_version: "1.1"
+task_id: harden-external-review-contract
+created: "2026-04-25T14:44:29Z"
+updated: "2026-04-26T06:43:29Z"
+status: "completed"
+harden_status: not_run
+task:
+  title: Harden external review into a trustworthy gate
+  summary: >
+    The external review runner is structurally useful, but its current contract
+    is too easy to game. It accepts shape-valid JSON with weak evidence,
+    records model-self-reported provenance, has no subprocess timeout, treats
+    Codex and Claude isolation as equivalent, and exposes misleading review
+    metadata in some command paths. This task turns the runner from a
+    rigorous-looking wrapper into a trustable review gate by making scafld own
+    observed facts, keeping findings in prose, validating the rendered review
+    before completion is suggested, and clearly surfacing isolation and model
+    attribution limits.
+  size: large
+  risk_level: high
+  context:
+    packages:
+    - scafld
+    - tests
+    - docs
+    files_impacted:
+    - path: scafld/review_runner.py
+      lines: all
+      reason: >
+        Core boundary for runner config, provider resolution, prompt wrapping,
+        subprocess execution, output normalization, timeout handling, hashing,
+        provenance, and provider isolation metadata.
+    - path: scafld/review_workflow.py
+      lines: all
+      reason: >
+        Writes completed review rounds from runner output and must validate the
+        canonical review artifact before replacing the in-progress round.
+    - path: scafld/reviewing.py
+      lines: all
+      reason: >
+        Parser/gate quality rules must reject filler clean sections and keep
+        finding format validation strict after the runner contract changes.
+    - path: scafld/commands/review.py
+      lines: all
+      reason: >
+        User-facing review command must report real runner status, fail on
+        invalid external output, honor flag overrides in JSON mode, and avoid
+        suggesting completion after a malformed runner result.
+    - path: scafld/review_runtime.py
+      lines: all
+      reason: >
+        Review snapshots need runner override awareness and should expose
+        control-plane runner metadata without claiming that JSON mode spawned a
+        reviewer.
+    - path: scafld/commands/surface.py
+      lines: all
+      reason: >
+        CLI flags may need timeout/isolation related help and JSON-mode override
+        semantics documented through the command surface.
+    - path: scafld/handoff_renderer.py
+      lines: all
+      reason: >
+        Generated challenger handoffs carry spec-derived content and may need
+        explicit untrusted-input boundaries or structured section metadata.
+    - path: .ai/prompts/review.md
+      lines: all
+      reason: >
+        The challenger template must teach the evidence contract, clean-section
+        rules, and untrusted spec/diff boundary in the same language the parser
+        enforces.
+    - path: .ai/scafld/prompts/review.md
+      lines: all
+      reason: >
+        Managed runtime bundle copy must stay aligned with the canonical review
+        prompt.
+    - path: .ai/config.yaml
+      lines: all
+      reason: >
+        Review runner defaults need timeout, fallback policy, and isolation
+        configuration fields.
+    - path: .ai/specs/active/external-review-runner-hard-cut.yaml
+      lines: ownership metadata only
+      reason: >
+        Active-scope audit needs the predecessor runner spec to explicitly mark
+        overlapping runner files as shared while this hardening spec supersedes
+        and continues that work.
+    - path: .ai/scafld/config.yaml
+      lines: all
+      reason: >
+        Managed runtime bundle copy must stay aligned when review runner config
+        defaults change.
+    - path: scafld/adapter_runtime.py
+      lines: all
+      reason: >
+        Optional provider adapters are the only place scafld can observe
+        executor provider/model facts when it launches external agents.
+    - path: scafld/session_store.py
+      lines: all
+      reason: >
+        Session entries may need typed provider/model telemetry for executor
+        and challenger attribution.
+    - path: scafld/execution_runtime.py
+      lines: all
+      reason: >
+        Native execution/session lifecycle may need to preserve observed
+        executor metadata when wrapper-launched work flows through scafld.
+    - path: scafld/commands/reporting.py
+      lines: all
+      reason: >
+        Reports should surface review trust signals, isolation downgrade counts,
+        and known/unknown model separation instead of implying proof where none
+        exists.
+    - path: scafld/review_signal.py
+      lines: all
+      reason: >
+        Clean-review signal should distinguish evidence-backed clean sections
+        from generic boilerplate.
+    - path: docs/review.md
+      lines: all
+      reason: >
+        Operator-facing review docs must describe the hardened runner contract,
+        evidence requirements, isolation caveats, and failure behavior.
+    - path: docs/configuration.md
+      lines: all
+      reason: >
+        Review runner config docs must include timeout, auto fallback policy,
+        provider model pins, and isolation metadata semantics.
+    - path: docs/cli-reference.md
+      lines: all
+      reason: >
+        CLI docs must match review flag behavior, JSON mode, and timeout/error
+        outcomes.
+    - path: docs/integrations.md
+      lines: all
+      reason: >
+        Provider integration docs must be honest about Codex vs Claude isolation
+        and wrapper attribution limits.
+    - path: tests/review_gate_smoke.sh
+      lines: all
+      reason: >
+        Main smoke harness should prove hardened external review behavior,
+        timeout handling, malformed output rejection, and fallback warnings.
+    - path: tests/review_prompt_contract_smoke.sh
+      lines: all
+      reason: >
+        Prompt contract smoke should prove untrusted spec content is fenced and
+        cannot be mistaken for runner instructions.
+    - path: tests/review_signal_corpus_smoke.sh
+      lines: all
+      reason: >
+        Review signal fixtures should prove generic clean-section boilerplate is
+        not counted as evidence.
+    - path: tests/codex_handoff_adapter_smoke.sh
+      lines: all
+      reason: >
+        Optional Codex adapter smoke may need to record observed executor
+        provider/model facts without changing the primary review runner.
+    - path: tests/claude_handoff_adapter_smoke.sh
+      lines: all
+      reason: >
+        Optional Claude adapter smoke may need to record observed executor
+        provider/model facts and document weaker isolation.
+    - path: tests/package_smoke.sh
+      lines: all
+      reason: >
+        Package smoke may need fixture updates if managed prompt/config assets
+        change.
+    - path: tests/update_smoke.sh
+      lines: all
+      reason: >
+        Runtime bundle update smoke may need assertions for changed managed
+        config/prompt assets.
+    invariants:
+    - review_artifact_stays_scafld_owned
+    - provenance_must_be_observed_not_model_claimed
+    - findings_stay_grounded_prose
+    - degraded_isolation_must_be_visible
+    - packaged_cli_is_the_truth_surface
+    related_docs:
+    - docs/review.md
+    - docs/configuration.md
+    - docs/cli-reference.md
+    - docs/integrations.md
+  objectives:
+  - >
+    Remove model-controlled provenance fields from the external review output
+    contract; scafld must set reviewer mode, session, isolation, provider,
+    model, timing, exit, timeout, and hash facts from observed runner state.
+  - >
+    Replace the broad verdict/blocking/non_blocking JSON envelope with a
+    prose-first review body that is parsed by the same review artifact gate used
+    for manual challenger rounds.
+  - >
+    Add external reviewer subprocess timeouts with configurable defaults and
+    clear failure/fallback messaging.
+  - >
+    Fence spec-derived and handoff-derived prompt content as untrusted input so
+    injected instructions in task descriptions cannot override runner rules.
+  - >
+    Make Codex and Claude isolation differences explicit in args, provenance,
+    warnings, docs, and reports; do not silently treat Claude fallback as
+    equivalent to the Codex sandbox.
+  - >
+    Ensure scafld validates the rendered completed review round before replacing
+    the latest round or printing the next complete command.
+  - >
+    Record executor/challenger provider and model telemetry only when observed,
+    and report unknown values as unknown rather than proof of model separation.
+  scope:
+    in_scope:
+    - external review runner output contract
+    - review artifact writing and validation before command success
+    - runner provenance and response hashing
+    - timeout configuration and subprocess failure handling
+    - Codex and Claude argument hardening
+    - prompt-injection boundaries around generated handoffs
+    - review signal quality checks for clean sections
+    - JSON and human CLI review surfaces
+    - docs and smoke coverage for the hardened contract
+    - best-effort executor/challenger model attribution where scafld observes it
+    out_of_scope:
+    - building a general semantic judge for review substance
+    - changing the review pass topology beyond what the existing passes need
+    - removing local or manual degraded review modes
+    - requiring Claude to provide Codex-equivalent sandboxing if the CLI cannot
+      support it
+    - blocking all reviews when executor model telemetry is unknown
+  assumptions:
+  - >
+    Codex remains the strongest supported external review provider because its
+    non-interactive CLI supports read-only sandboxing and ephemeral execution.
+  - >
+    Claude can be made fresher with session and MCP/settings controls, but it
+    still lacks a visible Codex-equivalent sandbox in the installed CLI surface.
+  - >
+    The existing markdown review parser is the right canonical gate; runner
+    output should feed that parser instead of becoming a second trusted format.
+  - >
+    Shape validation can catch generic filler and malformed findings, but it
+    cannot prove that a model performed a real review. The product should surface
+    evidence limits honestly.
+  touchpoints:
+  - area: review runner trust boundary
+    description: >
+      External provider output is untrusted. Scafld should parse it, render a
+      canonical review round, validate that round, then persist only if the gate
+      accepts the structure and evidence contract.
+  - area: review provenance
+    description: >
+      Provenance fields must be observed runner facts. Model-supplied strings
+      must not become reviewer_mode, reviewer_session, provider, model, or
+      isolation facts.
+  - area: provider isolation
+    description: >
+      Codex and Claude have different isolation properties. The CLI and reports
+      should make that visible, especially when provider=auto falls back from
+      Codex to Claude.
+  - area: prompt construction
+    description: >
+      Runner instructions need to be outside the untrusted handoff/spec block,
+      with explicit boundary markers and instructions to treat all task content
+      as data.
+  - area: telemetry and reporting
+    description: >
+      Scafld should report what it knows about executor/challenger model
+      separation, and explicitly report unknown when it cannot observe it.
+  risks:
+  - description: >
+      Replacing the JSON envelope with prose-first output may make provider
+      parsing more complex and break the current smoke stubs.
+    impact: high
+    mitigation: >
+      Implement the new contract behind the same review artifact parser and add
+      targeted stubs for valid prose, malformed prose, and generic filler.
+  - description: >
+      Tightening clean-section validation may reject legitimate but concise clean
+      reviews.
+    impact: medium
+    mitigation: >
+      Accept a documented family of evidence-backed clean notes and include
+      fixtures for both accepted concrete notes and rejected generic notes.
+  - description: >
+      Claude hardening flags may vary by installed Claude Code version.
+    impact: medium
+    mitigation: >
+      Use only flags visible in `claude --help` for this environment, keep docs
+      honest, and fail clearly if a configured strict Claude mode is unsupported.
+  - description: >
+      Capturing executor model telemetry may overpromise if work was performed
+      outside scafld wrappers.
+    impact: medium
+    mitigation: >
+      Record observed telemetry only from scafld-launched provider paths and
+      report missing values as unknown.
+  acceptance:
+    validation_profile: strict
+    definition_of_done:
+    - id: dod1
+      description: >
+        External review provenance fields are set by scafld from observed
+        subprocess facts, and malicious model-supplied reviewer_mode or session
+        strings are ignored.
+      status: pending
+    - id: dod2
+      description: >
+        External review output is prose-first and must pass the canonical
+        markdown review parser before `scafld review` reports success or prints
+        `scafld complete`.
+      status: pending
+    - id: dod3
+      description: >
+        External review subprocesses obey a configurable timeout with a default
+        of 600 seconds and fail cleanly with local/manual fallback guidance.
+      status: pending
+    - id: dod4
+      description: >
+        Prompt injection inside task/spec/handoff content is fenced as
+        untrusted input in the external review prompt.
+      status: pending
+    - id: dod5
+      description: >
+        Codex and Claude provenance records include an isolation level and auto
+        fallback from Codex to Claude is visible to users and reports.
+      status: pending
+    - id: dod6
+      description: >
+        Generic clean-section filler such as "No issues found - checked
+        everything" no longer counts as evidence-backed clean review signal.
+      status: pending
+    - id: dod7
+      description: >
+        Docs and CLI help describe the hardened review contract, timeout config,
+        JSON mode semantics, and provider isolation limits.
+      status: pending
+    validation:
+    - id: v1
+      type: compile
+      description: Compile the Python sources after runner and review changes.
+      command: python3 -m compileall scafld cli
+      expected: exit code 0
+    - id: v2
+      type: integration
+      description: Run the full review gate smoke suite.
+      command: bash tests/review_gate_smoke.sh
+      expected: exit code 0
+      timeout_seconds: 900
+    - id: v3
+      type: integration
+      description: Run the review prompt contract smoke suite.
+      command: bash tests/review_prompt_contract_smoke.sh
+      expected: exit code 0
+    - id: v4
+      type: integration
+      description: Run review signal corpus fixtures.
+      command: bash tests/review_signal_corpus_smoke.sh
+      expected: exit code 0
+    - id: v5
+      type: integration
+      description: Prove optional Codex and Claude adapter paths still work.
+      command: bash tests/codex_handoff_adapter_smoke.sh && bash tests/claude_handoff_adapter_smoke.sh
+      expected: exit code 0
+      timeout_seconds: 900
+    - id: v6
+      type: integration
+      description: Prove packaging and managed runtime bundle updates stay coherent.
+      command: bash tests/package_smoke.sh && bash tests/update_smoke.sh
+      expected: exit code 0
+      timeout_seconds: 900
+    - id: v7
+      type: documentation
+      description: Documentation mentions timeout, isolation, prose contract, and JSON mode behavior.
+      command: >
+        bash -lc 'for term in timeout isolation "prose" "--json"; do
+        rg -q -- "$term" docs/review.md docs/configuration.md docs/cli-reference.md;
+        done'
+      expected: exit code 0
+  constraints:
+    approvals_required: []
+    non_goals:
+    - Do not add a second review artifact path beside `.ai/reviews/{task-id}.md`.
+    - Do not trust model-supplied provenance as observed fact.
+    - Do not silently downgrade from external review to local/manual review.
+    - Do not claim model separation when either side is unknown.
+    - Do not let external reviewers edit code as part of the review command.
+  notes: >
+    This is a hardening task, not a feature expansion. The useful product is a
+    small number of honest gates: observed provenance, bounded subprocesses,
+    review prose parsed by the existing gate, visible isolation downgrade, and
+    enough smoke coverage to stop regressions.
+planning_log:
+- timestamp: "2026-04-25T14:44:29Z"
+  actor: user
+  summary: >
+    Asked to write the next scafld hardening work as a concrete scafld plan spec
+    after adversarial review of the external review runner updates.
+- timestamp: "2026-04-25T14:44:29Z"
+  actor: assistant
+  summary: >
+    Created a draft spec that turns the review feedback into executable phases:
+    trusted provenance, prose-first review output, timeout and isolation
+    hardening, prompt boundaries, docs, smoke coverage, and observed model
+    telemetry.
+- timestamp: "2026-04-25T14:49:59Z"
+  actor: "cli"
+  summary: "Spec approved"
+- timestamp: "2026-04-25T14:50:14Z"
+  actor: "cli"
+  summary: "Execution started"
+- timestamp: "2026-04-26T06:43:29Z"
+  actor: "cli"
+  summary: "Spec completed"
+phases:
+- id: phase1
+  name: Make runner facts observed and bounded
+  objective: >
+    Remove model-self-reported provenance from the external output contract and
+    add timeout/hash/config support at the runner boundary.
+  changes:
+  - file: scafld/review_runner.py
+    action: update
+    ownership: shared
+    content_spec: >
+      Remove reviewer_mode and reviewer_session from the accepted model payload.
+      Set reviewer_mode to fresh_agent for external runs inside scafld. Add
+      ReviewRunnerConfig fields for timeout_seconds and auto fallback policy.
+      Pass timeout to subprocess.run for Codex and Claude. Catch TimeoutExpired
+      and raise ScafldError with degraded runner guidance. Record
+      model_requested, model_observed, model_source, provider, provider_bin,
+      provider_env, started_at, completed_at, exit_code, timed_out,
+      isolation_level, raw_response_sha256, and canonical_response_sha256.
+  - file: .ai/config.yaml
+    action: update
+    ownership: shared
+    content_spec: >
+      Add review.external.timeout_seconds defaulting to 600 and an explicit
+      auto fallback policy field that controls whether Claude fallback is
+      allowed, warned, or disabled.
+  - file: .ai/specs/active/external-review-runner-hard-cut.yaml
+    action: update
+    ownership: shared
+    content_spec: >
+      Mark overlapping runner/review/doc/test declarations as shared so the
+      active predecessor spec and this hardening continuation do not conflict
+      in scope audit.
+  - file: .ai/scafld/config.yaml
+    action: update
+    ownership: shared
+    content_spec: >
+      Keep the managed runtime bundle config copy aligned with .ai/config.yaml.
+  - file: docs/configuration.md
+    action: update
+    ownership: shared
+    content_spec: >
+      Document timeout_seconds, model_requested vs model_observed, and fallback
+      policy semantics.
+  - file: tests/review_gate_smoke.sh
+    action: update
+    ownership: shared
+    content_spec: >
+      Add cases for malicious self-reported reviewer_mode/session being ignored,
+      timeout_seconds killing a hanging provider, and provenance recording both
+      raw and canonical response hashes.
+  acceptance_criteria:
+  - id: ac1_1
+    type: integration
+    description: Malicious model provenance does not become review metadata.
+    command: bash tests/review_gate_smoke.sh external-runner-provenance
+    expected: exit code 0
+    result: "pass"
+    executed_at: "2026-04-25T15:05:45Z"
+  - id: ac1_2
+    type: integration
+    description: External runner timeout fails cleanly with fallback guidance.
+    command: bash tests/review_gate_smoke.sh external-runner-timeout
+    expected: exit code 0
+    result: "pass"
+    executed_at: "2026-04-25T15:05:50Z"
+  - id: ac1_3
+    type: compile
+    description: Python sources compile after runner config changes.
+    command: python3 -m compileall scafld cli
+    expected: exit code 0
+    result: "pass"
+    executed_at: "2026-04-25T15:05:51Z"
+    result_output: "Listing 'scafld'... Listing 'scafld/commands'... Listing 'cli'..."
+  status: "completed"
+- id: phase2
+  name: Restore prose as the review contract
+  objective: >
+    Stop treating shape-valid JSON as a trusted review and route external
+    challenger content through the canonical markdown parser before persisting.
+  dependencies:
+  - phase1
+  changes:
+  - file: scafld/review_runner.py
+    action: update
+    ownership: shared
+    content_spec: >
+      Replace the broad verdict/blocking/non_blocking JSON payload with a
+      prose-first output contract. Permit only a narrow control object for
+      pass_results if needed; adversarial sections, Blocking, Non-blocking, and
+      Verdict must be prose in the canonical review shape.
+  - file: scafld/review_workflow.py
+    action: update
+    ownership: shared
+    content_spec: >
+      Render candidate completed review rounds from external prose into a
+      temporary string/file, run parse_review_file on that candidate, reject
+      parser errors, and only then replace the latest in-progress review round.
+  - file: scafld/reviewing.py
+    action: update
+    ownership: shared
+    content_spec: >
+      Tighten clean-section quality validation so generic filler does not pass.
+      Require clean notes to name concrete reviewed targets such as changed
+      files, callers/importers, documented rule files, or commands. Keep
+      blocking and non-blocking finding format strict.
+  - file: scafld/commands/review.py
+    action: update
+    ownership: shared
+    content_spec: >
+      If external output would create parser errors, print those errors, leave
+      the existing review round in_progress, and exit nonzero without printing
+      the next complete command.
+  - file: scafld/review_signal.py
+    action: update
+    ownership: shared
+    content_spec: >
+      Count clean_review_with_evidence only when all clean sections satisfy the
+      concrete-target clean-note rule.
+  - file: .ai/prompts/review.md
+    action: update
+    ownership: shared
+    content_spec: >
+      Teach the prose-first output contract and concrete clean-section evidence
+      rule.
+  - file: .ai/scafld/prompts/review.md
+    action: update
+    ownership: shared
+    content_spec: >
+      Keep the managed review prompt copy aligned with .ai/prompts/review.md.
+  - file: docs/review.md
+    action: update
+    ownership: shared
+    content_spec: >
+      Document that findings stay in prose and that scafld validates the final
+      markdown artifact before accepting external review output.
+  - file: tests/review_gate_smoke.sh
+    action: update
+    ownership: shared
+    content_spec: >
+      Add cases for valid prose external review, malformed prose rejection,
+      invalid finding format rejection, and generic clean-section filler
+      rejection.
+  - file: tests/review_signal_corpus_smoke.sh
+    action: update
+    ownership: shared
+    content_spec: >
+      Add corpus fixtures proving evidence-backed clean sections count and
+      generic clean sections do not.
+  acceptance_criteria:
+  - id: ac2_1
+    type: integration
+    description: Valid prose external review completes and passes the existing gate.
+    command: bash tests/review_gate_smoke.sh external-runner-prose
+    expected: exit code 0
+    result: "pass"
+    executed_at: "2026-04-25T15:06:17Z"
+  - id: ac2_2
+    type: integration
+    description: Malformed external prose is rejected before the review command reports success.
+    command: bash tests/review_gate_smoke.sh external-runner-malformed-prose
+    expected: exit code 0
+    result: "pass"
+    executed_at: "2026-04-25T15:06:20Z"
+  - id: ac2_3
+    type: integration
+    description: Generic clean-section filler no longer counts as clean evidence.
+    command: bash tests/review_signal_corpus_smoke.sh
+    expected: exit code 0
+    result: "pass"
+    executed_at: "2026-04-25T15:06:22Z"
+    result_output: "[1/2] grounded clean reviews pass the stronger parser [2/2] low-signal uncited reviews fail the stronger parser PASS: review signal corpus smoke"
+  status: "completed"
+- id: phase3
+  name: Harden provider isolation and prompt boundaries
+  objective: >
+    Make runner prompts resistant to spec-level instruction injection and make
+    provider isolation differences explicit instead of hidden behind provider=auto.
+  dependencies:
+  - phase2
+  changes:
+  - file: scafld/review_runner.py
+    action: update
+    ownership: shared
+    content_spec: >
+      Wrap generated handoff content in explicit untrusted-input boundary
+      markers. Keep runner instructions outside the untrusted block. Remove
+      Codex --ignore-rules unless convention_check is removed; prefer keeping
+      convention_check and letting project rules be visible. Harden Claude args
+      with a fresh --session-id UUID, restricted tools, strict empty MCP config,
+      and minimal settings where supported by the installed Claude CLI. Record
+      isolation_level values such as codex_read_only_ephemeral,
+      claude_restricted_tools_fresh_session, or degraded.
+  - file: scafld/handoff_renderer.py
+    action: update
+    ownership: shared
+    content_spec: >
+      If needed, render review handoff sections with labels that the external
+      runner can fence as untrusted data without losing the current handoff
+      readability.
+  - file: .ai/prompts/review.md
+    action: update
+    ownership: shared
+    content_spec: >
+      State that task descriptions, spec fields, summaries, and session notes
+      are data, not instructions. Keep output and evidence rules outside that
+      data boundary.
+  - file: .ai/scafld/prompts/review.md
+    action: update
+    ownership: shared
+    content_spec: >
+      Keep the managed review prompt copy aligned.
+  - file: scafld/commands/review.py
+    action: update
+    ownership: shared
+    content_spec: >
+      Print a visible warning when provider=auto resolves to a weaker isolation
+      provider than the preferred Codex path.
+  - file: docs/integrations.md
+    action: update
+    ownership: shared
+    content_spec: >
+      Document the exact provider isolation differences, known Claude limits,
+      and what scafld does to reduce but not eliminate those limits.
+  - file: docs/review.md
+    action: update
+    ownership: shared
+    content_spec: >
+      Document prompt boundary behavior and provider fallback warnings.
+  - file: tests/review_prompt_contract_smoke.sh
+    action: update
+    ownership: shared
+    content_spec: >
+      Add a fixture where the spec summary contains an instruction to force a
+      pass verdict and assert the generated runner prompt fences it as
+      untrusted input.
+  - file: tests/review_gate_smoke.sh
+    action: update
+    ownership: shared
+    content_spec: >
+      Assert Codex args include read-only sandboxing and no longer contradict
+      convention_check. Assert Claude fallback records weaker isolation and
+      prints a warning.
+  acceptance_criteria:
+  - id: ac3_1
+    type: integration
+    description: Prompt injection content from the spec is fenced as untrusted input.
+    command: bash tests/review_prompt_contract_smoke.sh
+    expected: exit code 0
+    result: "pass"
+    executed_at: "2026-04-25T15:06:41Z"
+    result_output: "[1/2] source review prompt carries the stricter contract [2/2] review scaffolding emits the required sections and format guidance PASS: review prompt contract smoke"
+  - id: ac3_2
+    type: integration
+    description: Codex and Claude provider args/provenance expose their isolation levels.
+    command: bash tests/review_gate_smoke.sh external-runner-isolation
+    expected: exit code 0
+    result: "pass"
+    executed_at: "2026-04-25T15:06:52Z"
+  - id: ac3_3
+    type: documentation
+    description: Docs describe Claude as weaker isolation than Codex unless proven otherwise.
+    command: rg -q "weaker" docs/review.md docs/integrations.md
+    expected: exit code 0
+    result: "pass"
+    executed_at: "2026-04-25T15:06:52Z"
+  status: "completed"
+- id: phase4
+  name: Align command surfaces docs and bundle
+  objective: >
+    Make the public CLI, JSON output, docs, and managed runtime bundle tell the
+    same truth about the hardened review runner.
+  dependencies:
+  - phase3
+  changes:
+  - file: scafld/review_runtime.py
+    action: update
+    ownership: shared
+    content_spec: >
+      Accept runner/provider/model override inputs or a pre-resolved runner so
+      review --json reports the same override semantics as human mode without
+      spawning the external reviewer.
+  - file: scafld/commands/review.py
+    action: update
+    ownership: shared
+    content_spec: >
+      Resolve review runner overrides before JSON-mode emission and include
+      clear fields showing that JSON mode is a snapshot only and did not run a
+      provider.
+  - file: scafld/commands/surface.py
+    action: update
+    ownership: shared
+    content_spec: >
+      Update review help text for timeout/fallback/isolation semantics if new
+      flags or config-derived output fields are exposed.
+  - file: docs/cli-reference.md
+    action: update
+    ownership: shared
+    content_spec: >
+      Document human and JSON review behavior after hardening, including
+      timeout failures and invalid external output failures.
+  - file: docs/configuration.md
+    action: update
+    ownership: shared
+    content_spec: >
+      Finalize config examples for the hardened runner.
+  - file: docs/review.md
+    action: update
+    ownership: shared
+    content_spec: >
+      Finalize operator workflow docs for external, local, and manual review.
+  - file: tests/review_gate_smoke.sh
+    action: update
+    ownership: shared
+    content_spec: >
+      Add a review --json case proving --runner/--provider/--model overrides
+      are reflected in the snapshot without invoking provider stubs.
+  - file: tests/package_smoke.sh
+    action: update
+    ownership: shared
+    content_spec: >
+      Update expected managed assets if prompt/config content changes affect
+      package smoke fixtures.
+  - file: tests/update_smoke.sh
+    action: update
+    ownership: shared
+    content_spec: >
+      Update managed runtime bundle assertions if changed config/prompt assets
+      need new checks.
+  acceptance_criteria:
+  - id: ac4_1
+    type: integration
+    description: Review JSON mode honors runner/provider/model override metadata without spawning.
+    command: bash tests/review_gate_smoke.sh external-runner-json-overrides
+    expected: exit code 0
+    result: "pass"
+    executed_at: "2026-04-25T15:07:08Z"
+  - id: ac4_2
+    type: integration
+    description: Package and update smokes pass after managed asset changes.
+    command: bash tests/package_smoke.sh && bash tests/update_smoke.sh
+    expected: exit code 0
+    timeout_seconds: 900
+    result: "pass"
+    executed_at: "2026-04-25T15:08:54Z"
+    result_output: "[1/5] canonical version is in sync [2/5] build wheel [3/5] installed wheel exposes the expected version [3b/6] installed wheel teaches the slim agent surface by default [4/6] installed wheel can init "
+  - id: ac4_3
+    type: documentation
+    description: CLI docs include timeout, invalid output, and JSON snapshot behavior.
+    command: >
+      bash -lc 'for term in timeout "invalid external" "snapshot"; do
+      rg -q -- "$term" docs/cli-reference.md docs/review.md;
+      done'
+    expected: exit code 0
+    result: "pass"
+    executed_at: "2026-04-25T15:08:55Z"
+  status: "completed"
+- id: phase5
+  name: Add observed model separation telemetry
+  objective: >
+    Record executor/challenger provider and model facts where scafld observes
+    them, while treating unknown values as unknown instead of failed or proven
+    separation.
+  dependencies:
+  - phase4
+  changes:
+  - file: scafld/adapter_runtime.py
+    action: update
+    ownership: shared
+    content_spec: >
+      When scafld provider adapters launch executor or review handoffs, record
+      observed provider, requested model arguments if present, provider binary,
+      mode, and timestamp into the task session.
+  - file: scafld/session_store.py
+    action: update
+    ownership: shared
+    content_spec: >
+      Add typed session entries for provider_invocation or model_attribution
+      with role, gate, provider, model_requested, model_observed, source, and
+      confidence fields.
+  - file: scafld/execution_runtime.py
+    action: update
+    ownership: shared
+    content_spec: >
+      Preserve attribution data through build/session lifecycle when available
+      without making native local execution depend on external provider data.
+  - file: scafld/review_runner.py
+    action: update
+    ownership: shared
+    content_spec: >
+      Record challenger attribution using the same session/provenance vocabulary
+      as executor attribution.
+  - file: scafld/commands/reporting.py
+    action: update
+    ownership: shared
+    content_spec: >
+      Report executor/challenger model separation as separated, same_model,
+      unknown_executor, unknown_challenger, or unknown_both. Include isolation
+      downgrade counts.
+  - file: docs/review.md
+    action: update
+    ownership: shared
+    content_spec: >
+      Document that model separation is an observed telemetry signal, not a hard
+      proof when work happened outside scafld wrappers.
+  - file: tests/codex_handoff_adapter_smoke.sh
+    action: update
+    ownership: shared
+    content_spec: >
+      Prove Codex adapter invocations record executor provider attribution.
+  - file: tests/claude_handoff_adapter_smoke.sh
+    action: update
+    ownership: shared
+    content_spec: >
+      Prove Claude adapter invocations record executor provider attribution.
+  - file: tests/report_metrics_smoke.sh
+    action: update
+    ownership: shared
+    content_spec: >
+      Prove reports surface known/unknown model separation states and isolation
+      downgrade counts.
+  acceptance_criteria:
+  - id: ac5_1
+    type: integration
+    description: Provider adapter smokes record executor attribution.
+    command: bash tests/codex_handoff_adapter_smoke.sh && bash tests/claude_handoff_adapter_smoke.sh
+    expected: exit code 0
+    timeout_seconds: 900
+    result: "pass"
+    executed_at: "2026-04-25T15:09:11Z"
+    result_output: "[1/3] init seeds the codex adapter scripts [2/3] approved work feeds the executor handoff to codex [3/3] review-ready work feeds the challenger handoff to codex PASS: codex handoff adapter smoke [1/3]"
+  - id: ac5_2
+    type: integration
+    description: Report metrics distinguish known separation from unknown attribution.
+    command: bash tests/report_metrics_smoke.sh
+    expected: exit code 0
+    result: "pass"
+    executed_at: "2026-04-25T15:09:17Z"
+    result_output: "[1/4] create one failure followed by one recovery [2/4] human report shows the LLM execution signals section [3/4] json report exposes the same metrics [4/4] runtime-only report filters to the session"
+  - id: ac5_3
+    type: compile
+    description: Python sources compile after telemetry changes.
+    command: python3 -m compileall scafld cli
+    expected: exit code 0
+    result: "pass"
+    executed_at: "2026-04-25T15:09:18Z"
+    result_output: "Listing 'scafld'... Listing 'scafld/commands'... Listing 'cli'..."
+  status: "completed"
+rollback:
+  strategy: per_phase
+  commands:
+    phase1: git checkout HEAD -- scafld/review_runner.py .ai/config.yaml .ai/scafld/config.yaml docs/configuration.md tests/review_gate_smoke.sh
+    phase2: git checkout HEAD -- scafld/review_runner.py scafld/review_workflow.py scafld/reviewing.py scafld/commands/review.py scafld/review_signal.py .ai/prompts/review.md .ai/scafld/prompts/review.md docs/review.md tests/review_gate_smoke.sh tests/review_signal_corpus_smoke.sh
+    phase3: git checkout HEAD -- scafld/review_runner.py scafld/handoff_renderer.py .ai/prompts/review.md .ai/scafld/prompts/review.md scafld/commands/review.py docs/integrations.md docs/review.md tests/review_prompt_contract_smoke.sh tests/review_gate_smoke.sh
+    phase4: git checkout HEAD -- scafld/review_runtime.py scafld/commands/review.py scafld/commands/surface.py docs/cli-reference.md docs/configuration.md docs/review.md tests/review_gate_smoke.sh tests/package_smoke.sh tests/update_smoke.sh
+    phase5: git checkout HEAD -- scafld/adapter_runtime.py scafld/session_store.py scafld/execution_runtime.py scafld/review_runner.py scafld/commands/reporting.py docs/review.md tests/codex_handoff_adapter_smoke.sh tests/claude_handoff_adapter_smoke.sh tests/report_metrics_smoke.sh
+
+review:
+  timestamp: "2026-04-26T06:43:19Z"
+  verdict: "pass"
+  review_rounds: 9
+  reviewer_mode: "fresh_agent"
+  reviewer_session: ""
+  round_status: "completed"
+  override_applied: false
+  override_reason: null
+  override_confirmed_at: null
+  reviewed_head: "77029ac7ee7e51d486bb6390197ea977086184a3"
+  reviewed_dirty: true
+  reviewed_diff: "ce3d96b9502961d39b86c867b2bc678808a123f670b6ad3eed5842e8a0f960a9"
+  passes:
+    - id: spec_compliance
+      result: "pass"
+    - id: scope_drift
+      result: "pass"
+    - id: regression_hunt
+      result: "pass"
+    - id: convention_check
+      result: "pass"
+    - id: dark_patterns
+      result: "pass"
+  blocking_count: 0
+  non_blocking_count: 0

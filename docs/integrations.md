@@ -35,8 +35,14 @@ For challenger review work:
 - run `scafld review`
 - if review is configured for `external`, scafld itself will already spawn the
   challenger runner by default
+- Codex review runs with scafld's read-only ephemeral subprocess settings
+- Claude review uses restricted tools and a fresh session, but this is weaker
+  isolation than the Codex sandbox in the currently supported CLI surface
 - if review is configured for `local` or `manual`, the wrapper can consume the
   emitted `challenger × review` handoff directly
+- `review.external.fallback_policy: "disable"` prevents `provider: auto` from
+  using Claude when Codex is unavailable; `warn` and `allow` both record the
+  isolation difference in provenance
 
 For blocked review findings, the wrapper can pass the latest challenger handoff
 back into the runtime so the executor has the exact review context in front of
