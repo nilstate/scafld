@@ -1,8 +1,13 @@
 spec_version: '1.1'
 task_id: external-review-runner-hard-cut
 created: '2026-04-25T13:38:58Z'
-updated: "2026-04-25T14:14:00Z"
-status: "in_progress"
+updated: "2026-04-26T08:17:18Z"
+status: "cancelled"
+cancelled_at: "2026-04-26T08:17:18Z"
+cancel_reason: "Superseded by the hardened external review contract implementation."
+superseded_by: "harden-external-review-contract"
+superseded_at: "2026-04-26T08:17:18Z"
+superseded_reason: "Superseded by the hardened external review contract implementation."
 harden_status: passed
 task:
   title: Make adversarial review use a real external runner
@@ -195,6 +200,12 @@ planning_log:
 - timestamp: "2026-04-25T14:14:00Z"
   actor: "assistant"
   summary: "Completed phase 3: aligned taught docs/help to the external-default review path and revalidated the optional codex/claude adapter lanes."
+- timestamp: "2026-04-26T08:17:18Z"
+  actor: "cli"
+  summary: "Spec cancelled"
+- timestamp: "2026-04-26T08:17:18Z"
+  actor: "cli"
+  summary: "Spec superseded by harden-external-review-contract: Superseded by the hardened external review contract implementation."
 phases:
 - id: phase1
   name: Add runner config and selection boundary

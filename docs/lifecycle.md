@@ -88,11 +88,18 @@ Multiple specs can be active simultaneously. Each spec tracks its own state inde
 scafld list
 scafld list active
 scafld list draft
+scafld list stale-active
+scafld list superseded
 
 # Detailed status for a specific spec
 scafld status add-auth
 scafld status add-auth --json
 ```
+
+`stale-active` lists active specs whose phases are all complete but which were
+never reviewed, completed, or cancelled. Cancelled specs may also record
+`superseded_by` metadata so `list`, `status`, and `report` show which newer
+spec replaced them.
 
 In JSON mode, lifecycle commands emit one shared envelope with `ok`,
 `command`, `task_id`, `warnings`, `state`, `result`, and `error`. That lets

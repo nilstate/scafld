@@ -124,6 +124,8 @@ Important JSON fields:
 - `result.current_handoff`
 - `result.block_reason`
 - `result.review_gate`
+- `result.lifecycle_flags.active_done_open`
+- `result.supersession`
 
 If a wrapper needs to know what to do next, it should start with `status --json`
 instead of reconstructing lifecycle state manually.
@@ -214,6 +216,23 @@ Use `--runtime-only` to limit the cohort to tasks with runtime session data.
 `report` also includes review-signal counts such as completed challenger rounds,
 grounded findings, and clean reviews with explicit attack evidence.
 
+The triage section highlights stale active specs whose phases are all complete
+but which still need review/completion or cancellation. Specs cancelled with
+supersession metadata are reported as `old-task -> replacement-task`.
+
+## list
+
+```bash
+scafld list [filter]
+```
+
+Useful filters:
+
+- `active`
+- `stale-active` for active specs with all phases complete
+- `superseded` for archived specs retired in favor of another spec
+- `archive`
+
 ## Advanced Commands
 
 The operator surface remains available behind `--help --advanced`:
@@ -226,7 +245,7 @@ scafld sync
 scafld audit
 scafld diff
 scafld fail
-scafld cancel
+scafld cancel <task-id> [--reason TEXT] [--superseded-by TASK]
 scafld summary
 scafld checks
 scafld pr-body

@@ -239,6 +239,8 @@ COMMAND_SPECS = (
         "scafld.commands.lifecycle:cmd_cancel",
         (
             ArgumentSpec(("task_id",), {"help": "Task ID"}),
+            ArgumentSpec(("--reason",), {"help": "Cancellation reason"}),
+            ArgumentSpec(("--superseded-by",), {"dest": "superseded_by", "help": "Replacement task ID"}),
             ArgumentSpec(("--json",), {"action": "store_true", "help": "Emit machine-readable cancellation JSON"}),
         ),
         public=False,

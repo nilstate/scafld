@@ -109,7 +109,7 @@ No issues found — checked callers of $changed_file.
 No issues found — checked AGENTS.md and CONVENTIONS.md.
 
 ### Dark Patterns
-No issues found — checked obvious failure modes.
+No issues found — checked $changed_file content boundary and lifecycle completion path.
 
 ### Blocking
 None.
@@ -130,6 +130,7 @@ write_spec_fixture() {
   local updated="$4"
   local file_name="$5"
   local include_result="${6:-no}"
+  local phase_status="${7:-pending}"
 
   local result_block=""
   if [ "$include_result" = "yes" ]; then
@@ -165,6 +166,7 @@ phases:
         command: "grep -q '^ok$' $file_name"
         expected: "exit code 0"
 $result_block
+    status: "$phase_status"
 
 planning_log:
   - timestamp: "$updated"
@@ -267,7 +269,7 @@ EOF
   assert_contains "$output" "1 passed" "build should record the passing acceptance criterion"
 
   echo "[4/6] run review and complete the spec"
-  capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld review demo-task"
+  capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld review demo-task --runner manual"
   assert_contains "$output" "ADVERSARIAL REVIEW" "review should emit the handoff prompt"
   write_review_pass "$repo" "demo-task" "demo.txt"
   capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld complete demo-task"
@@ -286,7 +288,14 @@ EOF
   write_spec_fixture "$repo/.ai/specs/drafts/stale-draft.yaml" "stale-draft" "draft" "2025-01-01T00:00:00Z" "stale.txt"
   write_spec_fixture "$repo/.ai/specs/approved/waiting-spec.yaml" "waiting-spec" "approved" "2026-04-01T00:00:00Z" "waiting.txt"
   write_spec_fixture "$repo/.ai/specs/active/no-exec.yaml" "no-exec" "in_progress" "2026-04-01T00:00:00Z" "no-exec.txt"
+  write_spec_fixture "$repo/.ai/specs/active/stale-active.yaml" "stale-active" "in_progress" "2026-04-01T00:00:00Z" "stale-active.txt" "yes" "completed"
   write_spec_fixture "$repo/.ai/specs/active/review-drift.yaml" "review-drift" "in_progress" "2026-04-01T00:00:00Z" "drift.txt" "yes"
+  write_spec_fixture "$repo/.ai/specs/archive/2026-04/superseded-old.yaml" "superseded-old" "cancelled" "2026-04-02T00:00:00Z" "old.txt" "yes" "completed"
+  cat >> "$repo/.ai/specs/archive/2026-04/superseded-old.yaml" <<'EOF'
+superseded_by: "demo-task"
+superseded_at: "2026-04-02T01:00:00Z"
+superseded_reason: "Demo task replaced it"
+EOF
   printf 'ok\n' > "$repo/drift.txt"
   write_review_pass "$repo" "review-drift" "drift.txt"
   printf 'drifted\n' > "$repo/drift.txt"
@@ -298,6 +307,10 @@ EOF
   assert_contains "$report_output" "stale-draft" "report should list stale drafts"
   assert_contains "$report_output" "Approved waiting to start" "report should include approved triage"
   assert_contains "$report_output" "waiting-spec" "report should list approved specs waiting to start"
+  assert_contains "$report_output" "Stale active specs" "report should include stale active triage"
+  assert_contains "$report_output" "stale-active" "report should list active done/open specs"
+  assert_contains "$report_output" "Superseded specs" "report should include superseded triage"
+  assert_contains "$report_output" "superseded-old -> demo-task" "report should list superseded specs"
   assert_contains "$report_output" "Active with no exec evidence" "report should include active/no-exec triage"
   assert_contains "$report_output" "no-exec" "report should list active specs without exec evidence"
   assert_contains "$report_output" "Review drift" "report should include review drift triage"

@@ -113,6 +113,26 @@ def count_phases(text):
     return total, completed, failed, in_progress
 
 
+def active_done_open(text, status=None):
+    """Return True when an active spec has completed every phase but remains open."""
+    status = status or yaml_read_field(text, "status") or ""
+    total, completed, failed, in_progress = count_phases(text)
+    return status == "in_progress" and total > 0 and completed == total and failed == 0 and in_progress == 0
+
+
+def supersession_payload(text):
+    """Read optional supersession metadata from a spec."""
+    superseded_by = yaml_read_field(text, "superseded_by") or ""
+    superseded_at = yaml_read_field(text, "superseded_at") or ""
+    reason = yaml_read_field(text, "superseded_reason") or ""
+    return {
+        "superseded": bool(superseded_by),
+        "superseded_by": superseded_by,
+        "superseded_at": superseded_at,
+        "reason": reason,
+    }
+
+
 def parse_acceptance_criteria(text):
     """Extract acceptance criteria from all phases.
 

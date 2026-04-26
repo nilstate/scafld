@@ -147,13 +147,15 @@ assert_json "$output" "data['command'] == 'fail' and data['state']['status'] == 
 
 echo "[9/12] cancel --json emits archive transition"
 write_spec "$WS/.ai/specs/active/json-cancel.yaml" "json-cancel" "in_progress"
-capture output bash -lc "cd '$WS' && PATH='$CLI_ROOT':\"\$PATH\" scafld cancel json-cancel --json"
+capture output bash -lc "cd '$WS' && PATH='$CLI_ROOT':\"\$PATH\" scafld cancel json-cancel --superseded-by json-fail --reason 'replaced by json-fail' --json"
 assert_json "$output" "data['command'] == 'cancel' and data['state']['status'] == 'cancelled'" "cancel --json should emit cancelled status"
+assert_json "$output" "data['result']['supersession']['superseded_by'] == 'json-fail' and data['result']['reason'] == 'replaced by json-fail'" "cancel --json should emit supersession metadata"
 
 echo "[10/12] report --json aggregates machine-readable stats"
 capture output bash -lc "cd '$WS' && PATH='$CLI_ROOT':\"\$PATH\" scafld report --json"
 assert_json "$output" "data['command'] == 'report' and data['result']['total_specs'] >= 4" "report --json should emit aggregate totals"
 assert_json "$output" "'completed' in data['result']['by_status'] or 'failed' in data['result']['by_status']" "report --json should emit status buckets"
+assert_json "$output" "any(item['task_id'] == 'json-cancel' and item['superseded_by'] == 'json-fail' for item in data['result']['triage']['superseded'])" "report --json should expose superseded specs"
 
 echo "[11/12] top-level errors use structured error envelopes"
 if capture output bash -lc "cd '$WS' && PATH='$CLI_ROOT':\"\$PATH\" scafld status missing-task --json"; then

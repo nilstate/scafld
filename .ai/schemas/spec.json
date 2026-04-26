@@ -40,6 +40,34 @@
       "description": "Current lifecycle state of this task"
     },
 
+    "cancelled_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp when the spec was cancelled"
+    },
+
+    "cancel_reason": {
+      "type": "string",
+      "description": "Human-readable reason recorded when the spec was cancelled"
+    },
+
+    "superseded_by": {
+      "type": "string",
+      "pattern": "^[a-z0-9-]+$",
+      "description": "Replacement task id when this spec was retired in favor of another spec"
+    },
+
+    "superseded_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp when the spec was superseded"
+    },
+
+    "superseded_reason": {
+      "type": "string",
+      "description": "Reason this spec was superseded"
+    },
+
     "task": {
       "type": "object",
       "required": ["title", "summary", "size", "risk_level", "context", "objectives", "touchpoints", "acceptance"],
