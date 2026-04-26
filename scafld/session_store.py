@@ -23,7 +23,7 @@ PROVIDER_INVOCATION_STATUSES = (
     "invalid_output",
     "invalid_artifact",
 )
-PROVIDER_CONFIDENCE_VALUES = ("observed", "requested_only", "unknown")
+PROVIDER_CONFIDENCE_VALUES = ("observed", "inferred", "requested_only", "unknown")
 STRONG_REVIEW_ISOLATION_LEVELS = {"codex_read_only_ephemeral"}
 
 
@@ -469,7 +469,9 @@ def record_provider_invocation(
     spec_path=None,
 ):
     if confidence is None:
-        if model_observed:
+        if model_observed and model_source == "inferred":
+            confidence = "inferred"
+        elif model_observed:
             confidence = "observed"
         elif model_requested:
             confidence = "requested_only"
@@ -529,6 +531,16 @@ def _normalize_provider_invocation_value(value, *, allowed, field, default):
     return normalized
 
 
+def _trusted_observed_provider_model(entry):
+    model = entry.get("model_observed") or ""
+    if not model:
+        return ""
+    confidence = entry.get("confidence")
+    if confidence in {None, "", "observed"}:
+        return model
+    return ""
+
+
 def _provider_model_separation(provider_invocations):
     latest_by_role = {}
     for entry in provider_invocations:
@@ -548,17 +560,17 @@ def _provider_model_separation(provider_invocations):
         return {
             "state": "unknown_executor",
             "executor_model_observed": "",
-            "challenger_model_observed": challenger.get("model_observed") or "",
+            "challenger_model_observed": _trusted_observed_provider_model(challenger),
         }
     if challenger is None:
         return {
             "state": "unknown_challenger",
-            "executor_model_observed": executor.get("model_observed") or "",
+            "executor_model_observed": _trusted_observed_provider_model(executor),
             "challenger_model_observed": "",
         }
 
-    executor_model = executor.get("model_observed") or ""
-    challenger_model = challenger.get("model_observed") or ""
+    executor_model = _trusted_observed_provider_model(executor)
+    challenger_model = _trusted_observed_provider_model(challenger)
     if not executor_model and not challenger_model:
         state = "unknown_both"
     elif not executor_model:
@@ -673,10 +685,19 @@ def session_summary_payload(session):
     provider_confidence = defaultdict(int)
     provider_statuses = defaultdict(int)
     provider_weaker_review_isolation = 0
+    provider_models_observed = 0
+    provider_models_inferred = 0
+    provider_models_unknown = 0
     for entry in provider_invocations:
         provider_invocations_by_role[entry.get("role") or "unknown"] += 1
         provider_confidence[entry.get("confidence") or "unknown"] += 1
         provider_statuses[entry.get("status") or "unknown"] += 1
+        if entry.get("model_observed") and entry.get("confidence") == "inferred":
+            provider_models_inferred += 1
+        elif entry.get("model_observed") and (entry.get("confidence") in {None, "", "observed"}):
+            provider_models_observed += 1
+        elif not entry.get("model_observed"):
+            provider_models_unknown += 1
         if (
             entry.get("role") == "challenger"
             and entry.get("gate") == "review"
@@ -718,8 +739,9 @@ def session_summary_payload(session):
         "provider_invocations_by_role": dict(sorted(provider_invocations_by_role.items())),
         "provider_confidence": dict(sorted(provider_confidence.items())),
         "provider_statuses": dict(sorted(provider_statuses.items())),
-        "provider_models_observed": sum(1 for entry in provider_invocations if entry.get("model_observed")),
-        "provider_models_unknown": sum(1 for entry in provider_invocations if not entry.get("model_observed")),
+        "provider_models_observed": provider_models_observed,
+        "provider_models_inferred": provider_models_inferred,
+        "provider_models_unknown": provider_models_unknown,
         "provider_isolation_downgrades": sum(1 for entry in provider_invocations if entry.get("isolation_downgraded")),
         "provider_weaker_review_isolation": provider_weaker_review_isolation,
         "provider_model_separation": provider_model_separation,

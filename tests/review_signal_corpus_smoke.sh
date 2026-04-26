@@ -27,7 +27,7 @@ new_repo() {
 
 repo="$(new_repo)"
 
-echo "[1/2] grounded clean reviews pass the stronger parser"
+echo "[1/3] grounded clean reviews pass the stronger parser"
 REVIEW_REPO="$repo" REPO_ROOT="$REPO_ROOT" python3 - <<'PY'
 from pathlib import Path
 import os
@@ -101,10 +101,86 @@ assert not parsed["errors"], parsed
 assert parsed["verdict"] == "pass", parsed
 signal = review_signal_payload(parsed)
 assert signal["clean_review_with_evidence"] is True, signal
+assert signal["deprecated_aliases"]["clean_review_with_evidence"] == "format_compliant_clean_review", signal
 assert signal["grounded_findings"] == 0, signal
 PY
 
-echo "[2/2] low-signal uncited reviews fail the stronger parser"
+echo "[2/3] YAML and Markdown anchor citations stay valid"
+REVIEW_REPO="$repo" REPO_ROOT="$REPO_ROOT" python3 - <<'PY'
+from pathlib import Path
+import os
+import sys
+
+repo = Path(os.environ["REVIEW_REPO"])
+sys.path.insert(0, os.environ["REPO_ROOT"])
+from scafld.review_signal import review_signal_payload
+from scafld.review_workflow import load_review_topology
+from scafld.reviewing import parse_review_file
+
+review_path = repo / ".ai" / "reviews" / "anchors.md"
+review_path.write_text(
+    """# Review: anchors
+
+## Review 1 — 2026-04-24T00:00:00Z
+
+### Metadata
+```json
+{
+  "schema_version": 3,
+  "round_status": "completed",
+  "reviewer_mode": "challenger",
+  "reviewer_session": "sess-1",
+  "reviewed_at": "2026-04-24T00:00:00Z",
+  "override_reason": null,
+  "reviewed_head": null,
+  "reviewed_dirty": null,
+  "reviewed_diff": null,
+  "pass_results": {
+    "spec_compliance": "pass",
+    "scope_drift": "pass",
+    "regression_hunt": "fail",
+    "convention_check": "pass",
+    "dark_patterns": "pass"
+  }
+}
+```
+
+### Pass Results
+- spec_compliance: PASS
+- scope_drift: PASS
+- regression_hunt: FAIL
+- convention_check: PASS
+- dark_patterns: PASS
+
+### Regression Hunt
+- **medium** `docs/review.md#provider-isolation` — anchor citation remains stable when documentation lines move.
+
+### Convention Check
+No issues found — checked AGENTS.md and CONVENTIONS.md.
+
+### Dark Patterns
+No issues found — checked hardcodes and null handling in app.txt.
+
+### Blocking
+- **medium** `docs/review.md#provider-isolation` — anchor citation remains stable when documentation lines move.
+
+### Non-blocking
+None.
+
+### Verdict
+fail
+""",
+    encoding="utf-8",
+)
+topology = load_review_topology(repo)
+parsed = parse_review_file(review_path, topology)
+assert not parsed["errors"], parsed
+assert parsed["verdict"] == "fail", parsed
+signal = review_signal_payload(parsed)
+assert signal["grounded_findings"] == 1, signal
+PY
+
+echo "[3/3] low-signal uncited reviews fail the stronger parser"
 REVIEW_REPO="$repo" REPO_ROOT="$REPO_ROOT" python3 - <<'PY'
 from pathlib import Path
 import os
@@ -174,7 +250,7 @@ fail
 topology = load_review_topology(repo)
 parsed = parse_review_file(review_path, topology)
 assert parsed["errors"], parsed
-assert any("must use '- **severity** `file:line` — explanation'" in error for error in parsed["errors"]), parsed
+assert any("must use '- **severity** `file:line` or `doc.md#anchor` — explanation'" in error for error in parsed["errors"]), parsed
 assert any("Convention Check" in error for error in parsed["errors"]), parsed
 signal = review_signal_payload(parsed)
 assert signal["clean_review_with_evidence"] is False, signal

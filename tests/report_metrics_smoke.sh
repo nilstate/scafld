@@ -117,6 +117,19 @@ record_provider_invocation(
     isolation_downgraded=True,
     fallback_policy="warn",
 )
+record_provider_invocation(
+    root,
+    "report-task",
+    role="challenger",
+    gate="review",
+    provider="codex",
+    provider_bin="codex",
+    provider_requested="codex",
+    model_requested="",
+    model_observed="gpt-5.3-codex",
+    model_source="inferred",
+    isolation_level="codex_read_only_ephemeral",
+)
 try:
     record_provider_invocation(
         root,
@@ -167,6 +180,10 @@ assert separation_state([
     {"type": "provider_invocation", "role": "executor", "model_observed": "gpt-a"},
     {"type": "provider_invocation", "role": "challenger", "model_observed": "gpt-b"},
 ]) == "separated"
+assert separation_state([
+    {"type": "provider_invocation", "role": "executor", "model_observed": "gpt-a", "confidence": "observed"},
+    {"type": "provider_invocation", "role": "challenger", "model_observed": "gpt-b", "confidence": "inferred"},
+]) == "unknown_challenger"
 legacy_summary = session_summary_payload({
     "entries": [
         {
@@ -191,11 +208,12 @@ assert_contains "$output" "LLM execution signals:" "report should show the sessi
 assert_contains "$output" "recovery convergence: 1/1" "report should show recovered criteria"
 assert_contains "$output" "challenge override: none recorded" "report should show challenge override metrics"
 assert_contains "$output" "attempts per phase: phase1=2" "report should show attempts per phase"
-assert_contains "$output" "provider invocations: 2" "report should show provider invocation totals"
-assert_contains "$output" "provider confidence: requested_only=1, unknown=1" "report should show provider confidence counts"
-assert_contains "$output" "provider statuses: completed=2" "report should show provider invocation statuses"
-assert_contains "$output" "isolation downgrades: 1/2" "report should show provider isolation downgrade denominator"
-assert_contains "$output" "weaker review isolation: 1/2" "report should show weaker review isolation denominator"
+assert_contains "$output" "provider invocations: 3" "report should show provider invocation totals"
+assert_contains "$output" "models observed 0, inferred 1, unknown 2" "report should distinguish observed, inferred, and unknown model counts"
+assert_contains "$output" "provider confidence: inferred=1, requested_only=1, unknown=1" "report should show provider confidence counts"
+assert_contains "$output" "provider statuses: completed=3" "report should show provider invocation statuses"
+assert_contains "$output" "isolation downgrades: 1/3" "report should show provider isolation downgrade denominator"
+assert_contains "$output" "weaker review isolation: 1/3" "report should show weaker review isolation denominator"
 assert_contains "$output" "model separation: unknown_both=1" "report should show unknown model separation"
 assert_contains "$output" "Per-task metrics" "report should show per-task runtime metrics"
 
@@ -205,10 +223,13 @@ assert_json "$output" "data['result']['llm_runtime']['first_attempt_pass_rate'][
 assert_json "$output" "data['result']['llm_runtime']['recovery_convergence_rate']['recovered'] == 1" "json report should count recovered criteria"
 assert_json "$output" "data['result']['llm_runtime']['challenge_override_rate']['total'] == 0" "json report should expose challenge override totals"
 assert_json "$output" "data['result']['llm_runtime']['attempts_per_phase']['phase1'] == 2" "json report should expose attempts per phase"
-assert_json "$output" "data['result']['llm_runtime']['provider_telemetry']['invocations'] == 2" "json report should expose provider invocation totals"
+assert_json "$output" "data['result']['llm_runtime']['provider_telemetry']['invocations'] == 3" "json report should expose provider invocation totals"
+assert_json "$output" "data['result']['llm_runtime']['provider_telemetry']['confidence']['inferred'] == 1" "json report should expose inferred confidence counts"
 assert_json "$output" "data['result']['llm_runtime']['provider_telemetry']['confidence']['requested_only'] == 1" "json report should expose requested-only confidence counts"
 assert_json "$output" "data['result']['llm_runtime']['provider_telemetry']['confidence']['unknown'] == 1" "json report should expose unknown confidence counts"
-assert_json "$output" "data['result']['llm_runtime']['provider_telemetry']['statuses']['completed'] == 2" "json report should expose provider status counts"
+assert_json "$output" "data['result']['llm_runtime']['provider_telemetry']['statuses']['completed'] == 3" "json report should expose provider status counts"
+assert_json "$output" "data['result']['llm_runtime']['provider_telemetry']['models_observed'] == 0" "json report should expose observed provider model counts"
+assert_json "$output" "data['result']['llm_runtime']['provider_telemetry']['models_inferred'] == 1" "json report should expose inferred provider model counts"
 assert_json "$output" "data['result']['llm_runtime']['provider_telemetry']['models_unknown'] == 2" "json report should expose unknown provider model counts"
 assert_json "$output" "data['result']['llm_runtime']['provider_telemetry']['isolation_downgrades'] == 1" "json report should expose isolation downgrade counts"
 assert_json "$output" "data['result']['llm_runtime']['provider_telemetry']['weaker_review_isolation'] == 1" "json report should expose weaker review isolation counts"

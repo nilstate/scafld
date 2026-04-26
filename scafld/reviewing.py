@@ -8,8 +8,10 @@ REVIEW_VERDICTS = {"pass", "fail", "pass_with_issues", "incomplete"}
 REVIEW_ROUND_STATUSES = {"in_progress", "completed", "override"}
 REVIEWER_MODES = {"challenger", "fresh_agent", "auto", "executor", "human_override"}
 FINDING_SEVERITIES = ("critical", "high", "medium", "low")
+FINDING_TARGET = r"(?:[^`\n]+:\d+|[^`\n]+\.(?:ya?ml|md|markdown)#[A-Za-z0-9_.:/-]+)"
+FINDING_FORMAT_DESCRIPTION = "`file:line` or `doc.md#anchor`"
 FINDING_LINE_RE = re.compile(
-    r"^- \*\*(critical|high|medium|low)\*\* `[^`\n]+:\d+` (?:—|--) .+$",
+    rf"^- \*\*(critical|high|medium|low)\*\* `{FINDING_TARGET}` (?:—|--) .+$",
     re.IGNORECASE,
 )
 NO_ISSUES_RE = re.compile(
@@ -536,7 +538,7 @@ def parse_review_file(review_path, topology):
                 adversarial_findings.append(line)
             if not FINDING_LINE_RE.fullmatch(line):
                 parsed["quality_errors"].append(
-                    f"{heading} findings must use '- **severity** `file:line` — explanation'"
+                    f"{heading} findings must use '- **severity** {FINDING_FORMAT_DESCRIPTION} — explanation'"
                 )
                 break
         parsed["adversarial_sections"][heading] = section_state
@@ -546,7 +548,7 @@ def parse_review_file(review_path, topology):
         for finding in findings:
             if not FINDING_LINE_RE.fullmatch(finding):
                 parsed["quality_errors"].append(
-                    f"{heading} findings must use '- **severity** `file:line` — explanation'"
+                    f"{heading} findings must use '- **severity** {FINDING_FORMAT_DESCRIPTION} — explanation'"
                 )
                 break
 

@@ -36,6 +36,9 @@ def review_signal_payload(review_data):
         "no_issue_sections": no_issue_sections,
         "checked_no_issue_sections": checked_sections,
         "format_compliant_clean_review": format_compliant_clean_review,
+        "deprecated_aliases": {
+            "clean_review_with_evidence": "format_compliant_clean_review",
+        },
         "clean_review_with_evidence": format_compliant_clean_review,
     }
 

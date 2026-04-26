@@ -642,10 +642,15 @@ def cmd_review(args):
         verdict = review_data.get("verdict") or "incomplete"
         print(f"  provider: {c(C_DIM, runner_result.provenance.get('provider', 'unknown'))}")
         if runner_result.provenance.get("model_observed"):
-            print(f"  model observed: {c(C_DIM, runner_result.provenance['model_observed'])}")
+            label = "model inferred" if runner_result.provenance.get("model_source") == "inferred" else "model observed"
+            print(f"  {label}: {c(C_DIM, runner_result.provenance['model_observed'])}")
         elif runner_result.provenance.get("model_requested"):
             print(f"  model requested: {c(C_DIM, runner_result.provenance['model_requested'])}")
         print(f"  isolation: {c(C_DIM, runner_result.provenance.get('isolation_level', 'unknown'))}")
+        for runner_warning in runner_result.provenance.get("warnings") or []:
+            if runner_warning == "provider=auto fell back to weaker Claude isolation":
+                continue
+            print(f"  {c(C_YELLOW, 'warning')}: {runner_warning}")
         if runner_result.provenance.get("isolation_downgraded"):
             fallback_policy = runner_result.provenance.get("fallback_policy") or "warn"
             if fallback_policy != "warn":

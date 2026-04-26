@@ -285,7 +285,7 @@ def render_adversarial_review_prompt(task_id, spec_path_rel, review_path_rel, re
 {attack_vectors_text}
 
   {cc(C_BOLD, 'Rules:')}
-    - Every finding must cite a specific file and line number
+    - Every finding must cite a specific file line or stable YAML/Markdown anchor
     - Classify as blocking (must fix) or non-blocking (should fix)
     - Do not suggest improvements — only flag defects and omissions
     - Do not modify any code — review only
@@ -306,7 +306,7 @@ def render_adversarial_review_prompt(task_id, spec_path_rel, review_path_rel, re
        - pass_results: keep automated results, and set each adversarial pass to pass | pass_with_issues | fail
     2. Fill {cc(C_BOLD, section_titles_text)} with findings from each vector
     3. Collect blocking/non-blocking findings into {cc(C_BOLD, '### Blocking')} and
-       {cc(C_BOLD, '### Non-blocking')} using: - **severity** `file:line` — description
+       {cc(C_BOLD, '### Non-blocking')} using: - **severity** `file:line` or `doc.md#anchor` — description
     4. Set {cc(C_BOLD, '### Verdict')}: pass | fail | pass_with_issues
 
   When done: {cc(C_BOLD, f'scafld complete {task_id}')}

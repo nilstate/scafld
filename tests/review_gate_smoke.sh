@@ -1289,7 +1289,7 @@ case_external_runner_observed_model_truth() {
   local repo task_id output stub_dir review_text session_json diagnostic output_file args_capture env_capture prompt_capture
 
   repo="$(new_repo)"
-  task_id="external-runner-codex-model-observed"
+  task_id="external-runner-codex-model-inferred"
   write_changed_file "$repo"
   write_active_spec "$repo" "$task_id" "grep -q '^changed$' app.txt" "exit code 0" "pass"
   stub_dir="$(mktemp -d /tmp/scafld-review-runner-codex-model.XXXXXX)"
@@ -1310,7 +1310,7 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 cat >/dev/null
-echo "model: gpt-codex-observed" >&2
+echo "model: gpt-codex-inferred" >&2
 cat > "$output" <<'MARKDOWN'
 ### Pass Results
 - regression_hunt: PASS
@@ -1339,16 +1339,75 @@ EOF
   chmod +x "$stub_dir/codex"
 
   capture output bash -lc "cd '$repo' && PATH='$stub_dir:$CLI_ROOT':\"\$PATH\" scafld review '$task_id' --provider codex"
-  assert_contains "$output" "model observed:" "codex review should print observed model when provider output exposes it"
+  assert_contains "$output" "model inferred:" "codex review should print inferred model for unstructured provider hints"
   review_text="$(cat "$repo/.ai/reviews/$task_id.md")"
-  assert_contains "$review_text" '"model_observed": "gpt-codex-observed"' "codex provenance should store observed model"
-  assert_contains "$review_text" '"model_source": "observed"' "codex provenance should mark observed model source"
+  assert_contains "$review_text" '"model_observed": "gpt-codex-inferred"' "codex provenance should store inferred model"
+  assert_contains "$review_text" '"model_source": "inferred"' "codex provenance should mark unstructured model source as inferred"
   assert_contains "$review_text" '"prompt_sha256":' "codex provenance should store prompt sha256"
   assert_contains "$review_text" '"raw_response_sha256":' "codex provenance should keep raw response hash"
   assert_contains "$review_text" '"canonical_response_sha256":' "codex provenance should keep canonical response hash"
   assert_not_contains "$review_text" '"response_sha256"' "codex provenance should not keep duplicate response hash alias"
   session_json="$(cat "$repo/.ai/runs/$task_id/session.json")"
-  assert_json "$session_json" "data['entries'][-1]['type'] == 'provider_invocation' and data['entries'][-1]['status'] == 'completed' and data['entries'][-1]['model_observed'] == 'gpt-codex-observed' and data['entries'][-1]['confidence'] == 'observed'" "codex provider telemetry should record observed model confidence"
+  assert_json "$session_json" "data['entries'][-1]['type'] == 'provider_invocation' and data['entries'][-1]['status'] == 'completed' and data['entries'][-1]['model_observed'] == 'gpt-codex-inferred' and data['entries'][-1]['confidence'] == 'inferred'" "codex provider telemetry should record inferred model confidence"
+
+  repo="$(new_repo)"
+  task_id="external-runner-codex-model-false-positive"
+  write_changed_file "$repo"
+  write_active_spec "$repo" "$task_id" "grep -q '^changed$' app.txt" "exit code 0" "pass"
+  stub_dir="$(mktemp -d /tmp/scafld-review-runner-codex-model-false-positive.XXXXXX)"
+  TMP_DIRS+=("$stub_dir")
+  cat > "$stub_dir/codex" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+output=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o|--output-last-message)
+      output="$2"
+      shift 2
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+cat >/dev/null
+echo "model: User" >&2
+cat > "$output" <<'MARKDOWN'
+### Pass Results
+- regression_hunt: PASS
+- convention_check: PASS
+- dark_patterns: PASS
+
+### Regression Hunt
+No issues found — checked callers of app.txt.
+
+### Convention Check
+No issues found — checked AGENTS.md and CONVENTIONS.md.
+
+### Dark Patterns
+No issues found — checked hardcodes and null handling in app.txt.
+
+### Blocking
+None.
+
+### Non-blocking
+None.
+
+### Verdict
+pass
+MARKDOWN
+EOF
+  chmod +x "$stub_dir/codex"
+
+  capture output bash -lc "cd '$repo' && PATH='$stub_dir:$CLI_ROOT':\"\$PATH\" scafld review '$task_id' --provider codex"
+  assert_not_contains "$output" "model inferred:" "codex review should ignore generic model: User false positives"
+  assert_not_contains "$output" "model observed:" "codex review should not promote generic model hints"
+  review_text="$(cat "$repo/.ai/reviews/$task_id.md")"
+  assert_contains "$review_text" '"model_observed": ""' "codex provenance should leave rejected model hints empty"
+  assert_contains "$review_text" '"model_source": "unknown"' "codex provenance should mark rejected model hints unknown"
+  session_json="$(cat "$repo/.ai/runs/$task_id/session.json")"
+  assert_json "$session_json" "data['entries'][-1]['type'] == 'provider_invocation' and data['entries'][-1]['status'] == 'completed' and data['entries'][-1]['model_observed'] == '' and data['entries'][-1]['confidence'] == 'unknown'" "codex telemetry should keep rejected model hints unknown"
 
   repo="$(new_repo)"
   task_id="external-runner-claude-model-observed"
@@ -1389,7 +1448,7 @@ pass
 """
 print(json.dumps({
     "type": "result",
-    "session_id": "claude-json-session",
+    "session_id": "00000000-0000-4000-8000-000000000001",
     "modelUsage": {
         "claude-feedback-observed": {
             "inputTokens": 1,
@@ -1423,13 +1482,16 @@ except (ValueError, IndexError) as exc:
 uuid.UUID(session_id)
 PY
   assert_contains "$output" "model observed:" "claude review should print observed model from json envelope"
+  assert_contains "$output" "warning: claude reported a different session id:" "claude review should warn when observed session differs from requested session"
   review_text="$(cat "$repo/.ai/reviews/$task_id.md")"
   assert_contains "$review_text" '"model_observed": "claude-feedback-observed"' "claude provenance should store observed model"
   assert_contains "$review_text" '"model_source": "observed"' "claude provenance should mark observed model source"
+  assert_contains "$review_text" '"provider_session_observed": "00000000-0000-4000-8000-000000000001"' "claude provenance should store observed provider session"
   assert_contains "$review_text" '"provider": "claude"' "claude provenance should store provider"
   session_json="$(cat "$repo/.ai/runs/$task_id/session.json")"
-  assert_json "$session_json" "data['entries'][-1]['type'] == 'provider_invocation' and data['entries'][-1]['status'] == 'completed' and data['entries'][-1]['model_observed'] == 'claude-feedback-observed' and data['entries'][-1]['confidence'] == 'observed'" "claude provider telemetry should record observed model confidence"
-  assert_contains_file "$prompt_capture" "one numeric line only" "review runner prompt should forbid line-range findings"
+  assert_json "$session_json" "data['entries'][-1]['type'] == 'provider_invocation' and data['entries'][-1]['status'] == 'completed' and data['entries'][-1]['model_observed'] == 'claude-feedback-observed' and data['entries'][-1]['confidence'] == 'observed' and 'claude reported a different session id:' in data['entries'][-1]['warning']" "claude provider telemetry should record observed model confidence and session mismatch warning"
+  assert_contains_file "$prompt_capture" "numeric citations must use one line only" "review runner prompt should forbid line-range findings"
+  assert_contains_file "$prompt_capture" "doc.md#heading" "review runner prompt should allow YAML/Markdown anchor findings"
   assert_contains_file "$prompt_capture" "at most 10 total findings" "review runner prompt should cap review verbosity"
 
   repo="$(new_repo)"
@@ -1489,17 +1551,28 @@ EOF
   assert_contains_file "$diagnostic" "prompt_sha256:" "external diagnostic should include prompt sha256"
   assert_contains_file "$diagnostic" "## Prompt Preview" "external diagnostic should include prompt context"
   session_json="$(cat "$repo/.ai/runs/$task_id/session.json")"
-  assert_json "$session_json" "data['entries'][-1]['type'] == 'provider_invocation' and data['entries'][-1]['status'] == 'invalid_output' and data['entries'][-1]['model_observed'] == 'gpt-diagnostic-observed'" "invalid output telemetry should still keep observed model"
+  assert_json "$session_json" "data['entries'][-1]['type'] == 'provider_invocation' and data['entries'][-1]['status'] == 'invalid_output' and data['entries'][-1]['model_observed'] == 'gpt-diagnostic-observed' and data['entries'][-1]['confidence'] == 'inferred'" "invalid output telemetry should still keep inferred model hints"
 
   PYTHONPATH="$REPO_ROOT" python3 - <<'PY'
 import json
-from scafld.review_runner import _extract_claude_stdout
+from scafld.review_runner import (
+    _extract_claude_stdout,
+    _extract_codex_observed_model,
+    _normalize_observed_claude_session_id,
+)
 
 assert _extract_claude_stdout(json.dumps({
     "result": "ok",
     "model": "x" * 200,
     "modelUsage": {"claude-safe": {"costUSD": "NaN"}},
 }))[1] == "claude-safe"
+assert _extract_claude_stdout(json.dumps({
+    "result": "ok",
+    "modelUsage": {
+        "claude-z": {},
+        "claude-a": {},
+    },
+}))[1] == "claude-a"
 
 nested = {"result": "ok"}
 cursor = nested
@@ -1508,6 +1581,24 @@ for _ in range(20):
     cursor = cursor["next"]
 cursor["model"] = "claude-too-deep"
 assert _extract_claude_stdout(json.dumps(nested))[1] == ""
+
+shadow = {
+    "result": "ok",
+    "debug": {"model": "claude-debug-shadow"},
+}
+assert _extract_claude_stdout(json.dumps(shadow))[1] == ""
+
+assert _extract_codex_observed_model("", "model: User") == ("", "")
+assert _extract_codex_observed_model("", "model_id: legacy") == ("", "")
+assert _extract_codex_observed_model("", "model: o2") == ("", "")
+assert _extract_codex_observed_model("", "model: o1-mini") == ("o1-mini", "inferred")
+assert _extract_codex_observed_model("", "model: gpt-5.3-codex") == ("gpt-5.3-codex", "inferred")
+
+assert (
+    _normalize_observed_claude_session_id("00000000-0000-4000-8000-000000000001".upper())
+    == "00000000-0000-4000-8000-000000000001"
+)
+assert _normalize_observed_claude_session_id("not-a-uuid") == "not-a-uuid"
 PY
 }
 
@@ -2311,6 +2402,7 @@ main() {
     external-runner-isolation) case_external_runner ;;
     external-runner-timeout) case_external_runner_timeout ;;
     external-runner-observability) case_external_runner_observability ;;
+    external-runner-attribution-precision) case_external_runner_observed_model_truth ;;
     external-runner-observed-model-truth) case_external_runner_observed_model_truth ;;
     external-runner-malformed-prose) case_external_runner_malformed_prose ;;
     external-runner-json-overrides) case_external_runner_json_overrides ;;

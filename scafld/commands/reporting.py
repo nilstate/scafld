@@ -107,6 +107,7 @@ def cmd_report(args):
     provider_confidence = defaultdict(int)
     provider_statuses = defaultdict(int)
     provider_models_observed = 0
+    provider_models_inferred = 0
     provider_models_unknown = 0
     provider_isolation_downgrades = 0
     provider_weaker_review_isolation = 0
@@ -120,6 +121,9 @@ def cmd_report(args):
         "pass_with_issues_verdicts": 0,
         "format_compliant_clean_reviews": 0,
         "clean_reviews_with_evidence": 0,
+        "deprecated_aliases": {
+            "clean_reviews_with_evidence": "format_compliant_clean_reviews",
+        },
         "grounded_findings": 0,
     }
     per_task_review_signal = {}
@@ -270,6 +274,7 @@ def cmd_report(args):
                     "confidence": runtime["provider_confidence"],
                     "statuses": runtime["provider_statuses"],
                     "models_observed": runtime["provider_models_observed"],
+                    "models_inferred": runtime["provider_models_inferred"],
                     "models_unknown": runtime["provider_models_unknown"],
                     "isolation_downgrades": runtime["provider_isolation_downgrades"],
                     "weaker_review_isolation": runtime["provider_weaker_review_isolation"],
@@ -284,6 +289,7 @@ def cmd_report(args):
             challenge_blocked += runtime["challenge_blocked"]
             provider_invocations += runtime["provider_invocations"]
             provider_models_observed += runtime["provider_models_observed"]
+            provider_models_inferred += runtime["provider_models_inferred"]
             provider_models_unknown += runtime["provider_models_unknown"]
             provider_isolation_downgrades += runtime["provider_isolation_downgrades"]
             provider_weaker_review_isolation += runtime["provider_weaker_review_isolation"]
@@ -373,6 +379,7 @@ def cmd_report(args):
                         "confidence": dict(sorted(provider_confidence.items())),
                         "statuses": dict(sorted(provider_statuses.items())),
                         "models_observed": provider_models_observed,
+                        "models_inferred": provider_models_inferred,
                         "models_unknown": provider_models_unknown,
                         "isolation_downgrades": provider_isolation_downgrades,
                         "weaker_review_isolation": provider_weaker_review_isolation,
@@ -498,7 +505,7 @@ def cmd_report(args):
             )
             print(
                 f"  provider invocations: {provider_invocations} "
-                f"(models observed {provider_models_observed}, unknown {provider_models_unknown})"
+                f"(models observed {provider_models_observed}, inferred {provider_models_inferred}, unknown {provider_models_unknown})"
             )
             if by_role:
                 print(f"  provider roles: {by_role}")
