@@ -27,12 +27,6 @@ jobs:
       - name: Install runtime dependencies
         run: python3 -m pip install --upgrade pip PyYAML
 
-      - name: Set up Node
-        uses: actions/setup-node@v6
-        with:
-          node-version: 24
-          package-manager-cache: false
-
       - name: Validate canonical version against tag
         run: python3 scripts/sync_version.py --check --tag "${GITHUB_REF_NAME#v}"
 
@@ -81,11 +75,8 @@ jobs:
       - name: Build Python artifacts
         run: |
           rm -rf release-artifacts dist build scafld.egg-info
-          mkdir -p release-artifacts/dist release-artifacts/npm
+          mkdir -p release-artifacts/dist
           python3 -m build --outdir release-artifacts/dist
-
-      - name: Build npm tarball
-        run: npm pack --pack-destination release-artifacts/npm
 
       - name: Upload release artifacts
         uses: actions/upload-artifact@v7
@@ -134,4 +125,3 @@ jobs:
           generate_release_notes: true
           files: |
             release-artifacts/dist/*
-            release-artifacts/npm/*
