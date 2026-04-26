@@ -33,6 +33,10 @@ The model is intentionally small:
         executor-recovery-ac1_1-1.json
         challenger-review.md
         challenger-review.json
+        executor-review-repair.md
+        executor-review-repair.json
+      review-packets/
+        review-1.json
       diagnostics/
         ac1_1-attempt1.txt
       session.json
@@ -62,7 +66,32 @@ Current role×gate handoffs:
 
 - `executor × phase`
 - `executor × recovery`
+- `executor × review_repair`
 - `challenger × review`
+
+`executor-review-repair.md` is rendered from the latest external ReviewPacket.
+It is the repair brief for the next implementation agent and includes checked
+surfaces, finding evidence, suggested fixes, tests to add, and spec-update
+suggestions. Its JSON sibling carries the schema, task, review round, packet
+path, and finding counts for tooling.
+
+## Review Packet
+
+External challenger output is normalized into:
+
+```text
+.ai/runs/{task-id}/review-packets/review-N.json
+```
+
+The packet artifact is the structured provider content captured before the
+markdown review projection. It carries pass results, checked surfaces, findings,
+evidence, repair guidance, tests, and spec-update suggestions. It does not carry
+provider provenance; scafld records provider, model, session, timing, isolation,
+hashes, diagnostics, and artifact references in review metadata and session
+entries.
+
+The packet is canonical for machine-to-machine repair context. The markdown
+review remains canonical for the human-readable completion gate.
 
 ## Session
 
@@ -84,6 +113,11 @@ Important typed entries in v1:
 - `phase_summary`
 - `challenge_verdict`
 - `human_override`
+- `provider_invocation`
+
+Successful external review `provider_invocation` entries may point at
+`review_packet`, `repair_handoff`, and `repair_handoff_json` so reports and
+agents can locate the packet-derived repair material from the session ledger.
 
 ## Retention
 

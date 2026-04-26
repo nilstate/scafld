@@ -9,10 +9,11 @@ HANDOFF_SCHEMA_VERSION = 3
 SESSION_SCHEMA_VERSION = 3
 HANDOFFS_DIRNAME = "handoffs"
 DIAGNOSTICS_DIRNAME = "diagnostics"
+REVIEW_PACKETS_DIRNAME = "review-packets"
 RUNS_ARCHIVE_DIRNAME = "archive"
 
 HANDOFF_ROLE_VALUES = ("executor", "challenger", "human")
-HANDOFF_GATE_VALUES = ("harden", "phase", "recovery", "review")
+HANDOFF_GATE_VALUES = ("harden", "phase", "recovery", "review", "review_repair")
 
 DEFAULT_MODEL_PROFILE = "default"
 DEFAULT_CONTEXT_BUDGET_TOKENS = 12000
@@ -120,6 +121,10 @@ def diagnostics_dir(root, task_id, *, spec_path=None):
     return task_run_dir(root, task_id, spec_path=spec_path) / DIAGNOSTICS_DIRNAME
 
 
+def review_packets_dir(root, task_id, *, spec_path=None):
+    return task_run_dir(root, task_id, spec_path=spec_path) / REVIEW_PACKETS_DIRNAME
+
+
 def session_path(root, task_id, *, spec_path=None):
     return task_run_dir(root, task_id, spec_path=spec_path) / "session.json"
 
@@ -132,12 +137,15 @@ def ensure_run_dirs(root, task_id, *, spec_path=None):
     run_dir = task_run_dir(root, task_id, spec_path=spec_path)
     handoff_dir = handoffs_dir(root, task_id, spec_path=spec_path)
     diagnostic_dir = diagnostics_dir(root, task_id, spec_path=spec_path)
+    packet_dir = review_packets_dir(root, task_id, spec_path=spec_path)
     handoff_dir.mkdir(parents=True, exist_ok=True)
     diagnostic_dir.mkdir(parents=True, exist_ok=True)
+    packet_dir.mkdir(parents=True, exist_ok=True)
     return {
         "run_dir": run_dir,
         "handoffs_dir": handoff_dir,
         "diagnostics_dir": diagnostic_dir,
+        "review_packets_dir": packet_dir,
         "session_path": session_path(root, task_id, spec_path=spec_path),
     }
 
@@ -145,8 +153,8 @@ def ensure_run_dirs(root, task_id, *, spec_path=None):
 def handoff_filename(*, role=None, gate=None, selector=None, attempt=None):
     role, gate = normalize_handoff_identity(role=role, gate=gate)
     safe_selector = normalize_selector(selector, fallback="current")
-    stem = f"{role}-{gate}"
-    if gate not in {"review", "harden"}:
+    stem = f"{role}-{gate.replace('_', '-')}"
+    if gate not in {"review", "review_repair", "harden"}:
         stem += f"-{safe_selector}"
     if attempt not in (None, ""):
         stem += f"-{attempt}"

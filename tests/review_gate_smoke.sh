@@ -877,30 +877,25 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 cat > "${SCAFLD_REVIEW_PROMPT_CAPTURE:?}"
-cat > "$output" <<'MARKDOWN'
-### Pass Results
-- regression_hunt: PASS
-- convention_check: PASS
-- dark_patterns: PASS
+python3 - "$output" <<'PY'
+import json
+import sys
 
-### Regression Hunt
-No issues found — checked callers of app.txt.
-
-### Convention Check
-No issues found — checked AGENTS.md and CONVENTIONS.md.
-
-### Dark Patterns
-No issues found — checked hardcodes and null handling in app.txt.
-
-### Blocking
-None.
-
-### Non-blocking
-None.
-
-### Verdict
-pass
-MARKDOWN
+passes = ["regression_hunt", "convention_check", "dark_patterns"]
+packet = {
+    "schema_version": "review_packet.v1",
+    "review_summary": "Checked app.txt callers, conventions, and dark-pattern paths.",
+    "verdict": "pass",
+    "pass_results": {pass_id: "pass" for pass_id in passes},
+    "checked_surfaces": [
+        {"pass_id": "regression_hunt", "targets": ["app.txt:1"], "summary": "callers of app.txt", "limitations": []},
+        {"pass_id": "convention_check", "targets": ["AGENTS.md#review"], "summary": "AGENTS.md and CONVENTIONS.md rules", "limitations": []},
+        {"pass_id": "dark_patterns", "targets": ["app.txt:1"], "summary": "hardcodes and null handling in app.txt", "limitations": []},
+    ],
+    "findings": [],
+}
+open(sys.argv[1], "w", encoding="utf-8").write(json.dumps(packet))
+PY
 EOF
   chmod +x "$stub_dir/codex"
 
@@ -913,7 +908,7 @@ EOF
   assert_contains "$output" "provider:" "review should report the resolved provider"
   assert_contains "$output" "next: scafld complete $task_id" "review should point at complete after external review writes the round"
   assert_contains_file "$prompt_capture" "SCAFLD_UNTRUSTED_REVIEW_HANDOFF_BEGIN" "external review should fence the handoff as untrusted input"
-  assert_contains_file "$prompt_capture" "Return only the review body markdown" "external review should use a prose markdown output contract"
+  assert_contains_file "$prompt_capture" "Return one ReviewPacket JSON object" "external review should use a structured packet output contract"
   assert_contains_file "$prompt_capture" "Trusted attack vectors, all required" "external review should keep trusted attack instructions outside the handoff"
   assert_contains_file "$prompt_capture" "Read CONVENTIONS.md and AGENTS.md" "external review should keep convention-check instructions trusted"
   python3 - "$prompt_capture" <<'PY'
@@ -938,8 +933,85 @@ PY
   assert_contains "$review_text" '"provider": "codex"' "external review provenance should record the codex provider"
   assert_contains "$review_text" '"isolation_level": "codex_read_only_ephemeral"' "external review provenance should record codex isolation"
   assert_contains "$review_text" '"canonical_response_sha256":' "external review provenance should hash the canonical response"
+  assert_contains "$review_text" '"review_packet": ".ai/runs/' "external review provenance should store packet artifact path"
+  assert_contains "$output" "review packet:" "external review should print packet artifact path"
+  assert_contains "$output" "repair handoff:" "external review should print repair handoff path"
+  [ -f "$repo/.ai/runs/$task_id/review-packets/review-1.json" ] || fail "external review should persist normalized packet"
+  [ -f "$repo/.ai/runs/$task_id/handoffs/executor-review-repair.md" ] || fail "external review should persist repair handoff"
+  assert_json "$(cat "$repo/.ai/runs/$task_id/session.json")" "data['entries'][-1]['type'] == 'provider_invocation' and data['entries'][-1]['review_packet'].endswith('review-packets/review-1.json') and data['entries'][-1]['repair_handoff'].endswith('handoffs/executor-review-repair.md')" "external review telemetry should point at packet repair artifacts"
   assert_contains "$review_text" '### Verdict' "external review should preserve the canonical review artifact shape"
   assert_contains "$review_text" 'pass' "external review should stamp the returned verdict"
+
+  repo="$(new_repo)"
+  task_id="external-runner-repair-handoff"
+  write_changed_file "$repo"
+  write_active_spec "$repo" "$task_id" "grep -q '^changed$' app.txt" "exit code 0" "pass"
+
+  stub_dir="$(mktemp -d /tmp/scafld-review-runner-repair.XXXXXX)"
+  TMP_DIRS+=("$stub_dir")
+  cat > "$stub_dir/codex" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+output=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o|--output-last-message)
+      output="$2"
+      shift 2
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+cat >/dev/null
+python3 - "$output" <<'PY'
+import json
+import sys
+
+passes = ["regression_hunt", "convention_check", "dark_patterns"]
+packet = {
+    "schema_version": "review_packet.v1",
+    "review_summary": "Found one blocking repair handoff fixture finding.",
+    "verdict": "fail",
+    "pass_results": {
+        "regression_hunt": "fail",
+        "convention_check": "pass",
+        "dark_patterns": "pass",
+    },
+    "checked_surfaces": [
+        {"pass_id": "regression_hunt", "targets": ["app.txt:1"], "summary": "app.txt review repair path", "limitations": []},
+        {"pass_id": "convention_check", "targets": ["AGENTS.md#Review"], "summary": "AGENTS.md review repair guidance", "limitations": []},
+        {"pass_id": "dark_patterns", "targets": ["app.txt:1"], "summary": "repair handoff hardcoded path", "limitations": []},
+    ],
+    "findings": [
+        {
+            "id": "F1",
+            "pass_id": "regression_hunt",
+            "severity": "high",
+            "blocking": True,
+            "target": "app.txt:1",
+            "summary": "app.txt fixture blocks completion.",
+            "failure_mode": "The fixture intentionally fails review.",
+            "why_it_matters": "Status should point the executor at the packet-derived repair handoff.",
+            "evidence": ["app.txt:1 contains the changed fixture."],
+            "suggested_fix": "Use the review repair handoff for the next executor turn.",
+            "tests_to_add": ["Assert status exposes executor-review-repair.md."],
+            "spec_update_suggestions": [],
+        }
+    ],
+}
+open(sys.argv[1], "w", encoding="utf-8").write(json.dumps(packet))
+PY
+EOF
+  chmod +x "$stub_dir/codex"
+
+  capture output bash -lc "cd '$repo' && PATH='$stub_dir:$CLI_ROOT':\"\$PATH\" scafld review '$task_id' --provider codex"
+  assert_contains "$output" "review: FAIL" "blocking external packet should fail the review round"
+  capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld status '$task_id' --json"
+  assert_json "$output" "data['result']['current_handoff']['role'] == 'executor' and data['result']['current_handoff']['gate'] == 'review_repair'" "failed structured review should expose executor repair handoff as current"
+  assert_json "$output" "data['result']['current_handoff']['handoff_file'].endswith('handoffs/executor-review-repair.md')" "failed structured review should point at executor-review-repair.md"
+  assert_json "$output" "'review repair handoff' in data['result']['next_action']['message']" "failed structured review next action should mention the repair handoff"
 
   repo="$(new_repo)"
   task_id="external-runner-fallback"
@@ -952,30 +1024,22 @@ PY
 #!/usr/bin/env bash
 set -euo pipefail
 cat > "${SCAFLD_REVIEW_PROMPT_CAPTURE:?}"
-cat <<'MARKDOWN'
-### Pass Results
-- regression_hunt: PASS
-- convention_check: PASS
-- dark_patterns: PASS
-
-### Regression Hunt
-No issues found — checked callers of app.txt.
-
-### Convention Check
-No issues found — checked AGENTS.md and CONVENTIONS.md.
-
-### Dark Patterns
-No issues found — checked hardcodes and null handling in app.txt.
-
-### Blocking
-None.
-
-### Non-blocking
-None.
-
-### Verdict
-pass
-MARKDOWN
+python3 - <<'PY'
+import json
+passes = ["regression_hunt", "convention_check", "dark_patterns"]
+print(json.dumps({
+    "schema_version": "review_packet.v1",
+    "review_summary": "Checked app.txt callers, conventions, and dark-pattern paths.",
+    "verdict": "pass",
+    "pass_results": {pass_id: "pass" for pass_id in passes},
+    "checked_surfaces": [
+        {"pass_id": "regression_hunt", "targets": ["app.txt:1"], "summary": "callers of app.txt", "limitations": []},
+        {"pass_id": "convention_check", "targets": ["AGENTS.md#review"], "summary": "AGENTS.md and CONVENTIONS.md rules", "limitations": []},
+        {"pass_id": "dark_patterns", "targets": ["app.txt:1"], "summary": "hardcodes and null handling in app.txt", "limitations": []},
+    ],
+    "findings": [],
+}))
+PY
 EOF
   chmod +x "$stub_dir/claude"
   prompt_capture="$repo/external-review-fallback.prompt"
@@ -1130,7 +1194,7 @@ EOF
     fail "malformed external runner output should fail review"
   fi
   diagnostic="$repo/.ai/runs/$task_id/diagnostics/external-review-attempt-1.txt"
-  assert_contains "$output" "missing ### Pass Results" "malformed external output should be rejected"
+  assert_contains "$output" "invalid ReviewPacket JSON" "malformed external output should be rejected"
   assert_contains "$output" "diagnostic: .ai/runs/$task_id/diagnostics/external-review-attempt-1.txt" "malformed external output should report diagnostics"
   [ -f "$diagnostic" ] || fail "malformed external output should persist diagnostics"
   assert_contains_file "$diagnostic" "looks good to me" "malformed diagnostic should include raw output"
@@ -1174,10 +1238,10 @@ EOF
   assert_json "$session_json" "data['entries'][-1]['type'] == 'provider_invocation' and data['entries'][-1]['status'] == 'invalid_output'" "invalid-byte external output should record invalid_output telemetry"
 
   repo="$(new_repo)"
-  task_id="external-runner-invalid-artifact"
+  task_id="external-runner-invalid-packet"
   write_changed_file "$repo"
   write_active_spec "$repo" "$task_id" "grep -q '^changed$' app.txt" "exit code 0" "pass"
-  stub_dir="$(mktemp -d /tmp/scafld-review-runner-invalid-artifact.XXXXXX)"
+  stub_dir="$(mktemp -d /tmp/scafld-review-runner-invalid-packet.XXXXXX)"
   TMP_DIRS+=("$stub_dir")
   cat > "$stub_dir/codex" <<'EOF'
 #!/usr/bin/env bash
@@ -1195,44 +1259,41 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 cat >/dev/null
-cat > "$output" <<'MARKDOWN'
-### Pass Results
-- regression_hunt: PASS
-- convention_check: PASS
-- dark_patterns: PASS
+python3 - "$output" <<'PY'
+import json
+import sys
 
-### Regression Hunt
-- **high** `app.txt:1` — unbucketed adversarial finding.
-
-### Convention Check
-No issues found — checked AGENTS.md and CONVENTIONS.md.
-
-### Dark Patterns
-No issues found — checked hardcodes and null handling in app.txt.
-
-### Blocking
-None.
-
-### Non-blocking
-None.
-
-### Verdict
-fail
-MARKDOWN
+packet = {
+    "schema_version": "review_packet.v1",
+    "review_summary": "Invalid packet fixture.",
+    "verdict": "fail",
+    "pass_results": {
+        "regression_hunt": "pass",
+        "convention_check": "pass",
+        "dark_patterns": "pass",
+    },
+    "checked_surfaces": [
+        {"pass_id": "regression_hunt", "targets": ["app.txt:1"], "summary": "callers of app.txt", "limitations": []},
+        {"pass_id": "convention_check", "targets": ["AGENTS.md#review"], "summary": "AGENTS.md rules", "limitations": []},
+        {"pass_id": "dark_patterns", "targets": ["app.txt:1"], "summary": "hardcodes in app.txt", "limitations": []},
+    ],
+    "findings": [],
+}
+open(sys.argv[1], "w", encoding="utf-8").write(json.dumps(packet))
+PY
 EOF
   chmod +x "$stub_dir/codex"
 
   if capture output bash -lc "cd '$repo' && PATH='$stub_dir:$CLI_ROOT':\"\$PATH\" scafld review '$task_id' --provider codex"; then
-    fail "downstream-invalid external artifact should fail review"
+    fail "invalid ReviewPacket should fail review"
   fi
-  diagnostic="$repo/.ai/runs/$task_id/diagnostics/external-review-artifact-attempt-1.md"
-  assert_contains "$output" "external reviewer produced an invalid review artifact" "downstream-invalid external artifact should be rejected"
-  assert_contains "$output" "diagnostic: .ai/runs/$task_id/diagnostics/external-review-artifact-attempt-1.md" "downstream-invalid external artifact should report diagnostics"
+  diagnostic="$repo/.ai/runs/$task_id/diagnostics/external-review-attempt-1.txt"
+  assert_contains "$output" "invalid ReviewPacket" "invalid ReviewPacket should be rejected"
+  assert_contains "$output" "diagnostic: .ai/runs/$task_id/diagnostics/external-review-attempt-1.txt" "invalid ReviewPacket should report diagnostics"
   [ -f "$diagnostic" ] || fail "downstream-invalid external artifact should persist diagnostics"
-  assert_contains_file "$diagnostic" "## Raw External Output" "artifact diagnostic should include raw external output"
-  assert_contains_file "$diagnostic" "## Candidate Review Artifact" "artifact diagnostic should include candidate review artifact"
+  assert_contains_file "$diagnostic" "## Raw Output" "invalid packet diagnostic should include raw output"
   session_json="$(cat "$repo/.ai/runs/$task_id/session.json")"
-  assert_json "$session_json" "data['entries'][-1]['type'] == 'provider_invocation' and data['entries'][-1]['status'] == 'invalid_artifact' and data['entries'][-1]['diagnostic_path'].endswith('external-review-artifact-attempt-1.md')" "downstream-invalid external artifact should record invalid_artifact telemetry"
+  assert_json "$session_json" "data['entries'][-1]['type'] == 'provider_invocation' and data['entries'][-1]['status'] == 'invalid_output' and data['entries'][-1]['diagnostic_path'].endswith('external-review-attempt-1.txt')" "invalid ReviewPacket should record invalid_output telemetry"
 
   repo="$(new_repo)"
   task_id="external-runner-timeout-diagnostic"
@@ -1311,30 +1372,25 @@ while [ "$#" -gt 0 ]; do
 done
 cat >/dev/null
 echo "model: gpt-codex-inferred" >&2
-cat > "$output" <<'MARKDOWN'
-### Pass Results
-- regression_hunt: PASS
-- convention_check: PASS
-- dark_patterns: PASS
+python3 - "$output" <<'PY'
+import json
+import sys
 
-### Regression Hunt
-No issues found — checked callers of app.txt.
-
-### Convention Check
-No issues found — checked AGENTS.md and CONVENTIONS.md.
-
-### Dark Patterns
-No issues found — checked hardcodes and null handling in app.txt.
-
-### Blocking
-None.
-
-### Non-blocking
-None.
-
-### Verdict
-pass
-MARKDOWN
+passes = ["regression_hunt", "convention_check", "dark_patterns"]
+packet = {
+    "schema_version": "review_packet.v1",
+    "review_summary": "Checked app.txt callers, conventions, and dark-pattern paths.",
+    "verdict": "pass",
+    "pass_results": {pass_id: "pass" for pass_id in passes},
+    "checked_surfaces": [
+        {"pass_id": "regression_hunt", "targets": ["app.txt:1"], "summary": "callers of app.txt", "limitations": []},
+        {"pass_id": "convention_check", "targets": ["AGENTS.md#review"], "summary": "AGENTS.md and CONVENTIONS.md rules", "limitations": []},
+        {"pass_id": "dark_patterns", "targets": ["app.txt:1"], "summary": "hardcodes and null handling in app.txt", "limitations": []},
+    ],
+    "findings": [],
+}
+open(sys.argv[1], "w", encoding="utf-8").write(json.dumps(packet))
+PY
 EOF
   chmod +x "$stub_dir/codex"
 
@@ -1373,30 +1429,25 @@ while [ "$#" -gt 0 ]; do
 done
 cat >/dev/null
 echo "model: User" >&2
-cat > "$output" <<'MARKDOWN'
-### Pass Results
-- regression_hunt: PASS
-- convention_check: PASS
-- dark_patterns: PASS
+python3 - "$output" <<'PY'
+import json
+import sys
 
-### Regression Hunt
-No issues found — checked callers of app.txt.
-
-### Convention Check
-No issues found — checked AGENTS.md and CONVENTIONS.md.
-
-### Dark Patterns
-No issues found — checked hardcodes and null handling in app.txt.
-
-### Blocking
-None.
-
-### Non-blocking
-None.
-
-### Verdict
-pass
-MARKDOWN
+passes = ["regression_hunt", "convention_check", "dark_patterns"]
+packet = {
+    "schema_version": "review_packet.v1",
+    "review_summary": "Checked app.txt callers, conventions, and dark-pattern paths.",
+    "verdict": "pass",
+    "pass_results": {pass_id: "pass" for pass_id in passes},
+    "checked_surfaces": [
+        {"pass_id": "regression_hunt", "targets": ["app.txt:1"], "summary": "callers of app.txt", "limitations": []},
+        {"pass_id": "convention_check", "targets": ["AGENTS.md#review"], "summary": "AGENTS.md and CONVENTIONS.md rules", "limitations": []},
+        {"pass_id": "dark_patterns", "targets": ["app.txt:1"], "summary": "hardcodes and null handling in app.txt", "limitations": []},
+    ],
+    "findings": [],
+}
+open(sys.argv[1], "w", encoding="utf-8").write(json.dumps(packet))
+PY
 EOF
   chmod +x "$stub_dir/codex"
 
@@ -1423,29 +1474,19 @@ printf '%s\n' "${CLAUDE_CODE_MAX_OUTPUT_TOKENS:-}" > "${SCAFLD_CLAUDE_ENV_CAPTUR
 cat > "${SCAFLD_REVIEW_PROMPT_CAPTURE:?}"
 python3 - <<'PY'
 import json
-result = """### Pass Results
-- regression_hunt: PASS
-- convention_check: PASS
-- dark_patterns: PASS
-
-### Regression Hunt
-No issues found — checked callers of app.txt.
-
-### Convention Check
-No issues found — checked AGENTS.md and CONVENTIONS.md.
-
-### Dark Patterns
-No issues found — checked hardcodes and null handling in app.txt.
-
-### Blocking
-None.
-
-### Non-blocking
-None.
-
-### Verdict
-pass
-"""
+passes = ["regression_hunt", "convention_check", "dark_patterns"]
+result = json.dumps({
+    "schema_version": "review_packet.v1",
+    "review_summary": "Checked app.txt callers, conventions, and dark-pattern paths.",
+    "verdict": "pass",
+    "pass_results": {pass_id: "pass" for pass_id in passes},
+    "checked_surfaces": [
+        {"pass_id": "regression_hunt", "targets": ["app.txt:1"], "summary": "callers of app.txt", "limitations": []},
+        {"pass_id": "convention_check", "targets": ["AGENTS.md#review"], "summary": "AGENTS.md and CONVENTIONS.md rules", "limitations": []},
+        {"pass_id": "dark_patterns", "targets": ["app.txt:1"], "summary": "hardcodes and null handling in app.txt", "limitations": []},
+    ],
+    "findings": [],
+})
 print(json.dumps({
     "type": "result",
     "session_id": "00000000-0000-4000-8000-000000000001",
@@ -1491,7 +1532,7 @@ PY
   session_json="$(cat "$repo/.ai/runs/$task_id/session.json")"
   assert_json "$session_json" "data['entries'][-1]['type'] == 'provider_invocation' and data['entries'][-1]['status'] == 'completed' and data['entries'][-1]['model_observed'] == 'claude-feedback-observed' and data['entries'][-1]['confidence'] == 'observed' and 'claude reported a different session id:' in data['entries'][-1]['warning']" "claude provider telemetry should record observed model confidence and session mismatch warning"
   assert_contains_file "$prompt_capture" "numeric citations must use one line only" "review runner prompt should forbid line-range findings"
-  assert_contains_file "$prompt_capture" "doc.md#heading" "review runner prompt should allow YAML/Markdown anchor findings"
+  assert_contains_file "$prompt_capture" "config.yaml#review.external" "review runner prompt should allow YAML/Markdown anchor findings"
   assert_contains_file "$prompt_capture" "at most 10 total findings" "review runner prompt should cap review verbosity"
 
   repo="$(new_repo)"
@@ -1634,7 +1675,7 @@ EOF
   if capture output bash -lc "cd '$repo' && PATH='$stub_dir:$CLI_ROOT':\"\$PATH\" scafld review '$task_id' --provider codex"; then
     fail "malformed external review prose should fail review"
   fi
-  assert_contains "$output" "missing ### Pass Results" "malformed external output should be rejected before completion"
+  assert_contains "$output" "invalid ReviewPacket JSON" "malformed external output should be rejected before completion"
   assert_not_contains "$output" "next: scafld complete" "invalid external output should not suggest completion"
 
   repo="$(new_repo)"
@@ -1691,7 +1732,7 @@ EOF
   if capture output bash -lc "cd '$repo' && PATH='$stub_dir:$CLI_ROOT':\"\$PATH\" scafld review '$task_id' --provider codex"; then
     fail "unexpected external pass result ids should fail review"
   fi
-  assert_contains "$output" "unexpected adversarial pass results" "external output should reject unexpected pass ids"
+  assert_contains "$output" "invalid ReviewPacket JSON" "legacy markdown output should be rejected before pass-id validation"
 
   repo="$(new_repo)"
   task_id="external-runner-invalid-pass-label"
@@ -1746,7 +1787,7 @@ EOF
   if capture output bash -lc "cd '$repo' && PATH='$stub_dir:$CLI_ROOT':\"\$PATH\" scafld review '$task_id' --provider codex"; then
     fail "non-exact external pass result labels should fail review"
   fi
-  assert_contains "$output" "invalid adversarial pass result values" "external output should reject non-exact pass result labels"
+  assert_contains "$output" "invalid ReviewPacket JSON" "legacy markdown output should be rejected before pass-label validation"
 
   repo="$(new_repo)"
   task_id="external-runner-unexpected-section"
@@ -1804,7 +1845,7 @@ EOF
   if capture output bash -lc "cd '$repo' && PATH='$stub_dir:$CLI_ROOT':\"\$PATH\" scafld review '$task_id' --provider codex"; then
     fail "unexpected external review sections should fail review"
   fi
-  assert_contains "$output" "unexpected review section" "external output should reject unexpected sections"
+  assert_contains "$output" "invalid ReviewPacket JSON" "legacy markdown output should be rejected before section validation"
 
   repo="$(new_repo)"
   task_id="external-runner-malformed-bucket"
@@ -1859,7 +1900,7 @@ EOF
   if capture output bash -lc "cd '$repo' && PATH='$stub_dir:$CLI_ROOT':\"\$PATH\" scafld review '$task_id' --provider codex"; then
     fail "malformed external blocking prose should fail review"
   fi
-  assert_contains "$output" "invalid Blocking content" "external output should reject malformed blocking prose"
+  assert_contains "$output" "invalid ReviewPacket JSON" "legacy markdown output should be rejected before blocking prose validation"
 
   repo="$(new_repo)"
   task_id="external-runner-malformed-verdict"
@@ -1914,7 +1955,7 @@ EOF
   if capture output bash -lc "cd '$repo' && PATH='$stub_dir:$CLI_ROOT':\"\$PATH\" scafld review '$task_id' --provider codex"; then
     fail "non-exact external verdict prose should fail review"
   fi
-  assert_contains "$output" "invalid verdict" "external output should reject non-exact verdict prose"
+  assert_contains "$output" "invalid ReviewPacket JSON" "legacy markdown output should be rejected before verdict validation"
 
   repo="$(new_repo)"
   task_id="external-runner-unbucketed-finding"
@@ -1969,7 +2010,7 @@ EOF
   if capture output bash -lc "cd '$repo' && PATH='$stub_dir:$CLI_ROOT':\"\$PATH\" scafld review '$task_id' --provider codex"; then
     fail "external unbucketed adversarial findings should fail review"
   fi
-  assert_contains "$output" "adversarial findings" "external output should reject unbucketed adversarial findings"
+  assert_contains "$output" "invalid ReviewPacket JSON" "legacy markdown output should be rejected before unbucketed finding validation"
 }
 
 case_external_runner_json_overrides() {
@@ -2400,6 +2441,7 @@ main() {
     external-runner-provenance) case_external_runner ;;
     external-runner-prose) case_external_runner ;;
     external-runner-isolation) case_external_runner ;;
+    external-runner-structured-packet) case_external_runner ;;
     external-runner-timeout) case_external_runner_timeout ;;
     external-runner-observability) case_external_runner_observability ;;
     external-runner-attribution-precision) case_external_runner_observed_model_truth ;;

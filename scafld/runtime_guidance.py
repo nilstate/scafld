@@ -129,6 +129,28 @@ def existing_review_handoff(root, task_id, review_state):
     return payload
 
 
+def existing_review_repair_handoff(root, task_id, review_state):
+    if not isinstance(review_state, dict):
+        return None
+    provenance = review_state.get("review_provenance")
+    if not isinstance(provenance, dict):
+        return None
+    handoff_file = provenance.get("repair_handoff")
+    if not isinstance(handoff_file, str) or not handoff_file:
+        return None
+    json_file = provenance.get("repair_handoff_json")
+    if not isinstance(json_file, str) or not json_file:
+        json_file = handoff_file[:-3] + ".json" if handoff_file.endswith(".md") else None
+    return {
+        "role": "executor",
+        "gate": "review_repair",
+        "selector": "review_repair",
+        "command": None,
+        "handoff_file": handoff_file,
+        "handoff_json_file": json_file,
+    }
+
+
 def review_gate_snapshot(root, task_id):
     review_file = root / REVIEWS_DIR / f"{task_id}.md"
     try:
@@ -296,11 +318,14 @@ def derive_task_guidance(root, task_id, spec_path, spec_data, status, session, r
             }
 
         if review_state.get("verdict") == "fail":
-            current_handoff = existing_review_handoff(root, task_id, review_state)
+            current_handoff = (
+                existing_review_repair_handoff(root, task_id, review_state)
+                or existing_review_handoff(root, task_id, review_state)
+            )
             next_action = _guidance(
                 "address_review_findings",
                 command=current_handoff["command"] if current_handoff else None,
-                message="Fix the blocking review findings, rerun build if needed, then rerun review.",
+                message="Read the review repair handoff, fix the blocking findings, rerun build if needed, then rerun review.",
                 followup_command=f"scafld review {task_id}",
                 blocked=True,
                 reason=review_gate.get("gate_reason"),

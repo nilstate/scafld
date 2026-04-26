@@ -10,6 +10,12 @@ from scafld.acceptance import evaluate_acceptance_criterion
 from scafld.errors import ScafldError
 from scafld.git_state import capture_review_git_state
 from scafld.handoff_renderer import render_handoff
+from scafld.review_packet import (
+    repair_handoff_rels,
+    review_packet_artifact_rel,
+    write_executor_repair_handoff,
+    write_review_packet_artifact,
+)
 from scafld.reviewing import (
     build_review_topology,
     build_review_metadata,
@@ -585,6 +591,16 @@ def complete_review_round_from_result(root, review_file, task_id, spec_text, top
     for pass_id, value in (runner_result.pass_results or {}).items():
         pass_results[pass_id] = value
 
+    review_count = review_data.get("review_count") or 1
+    packet = getattr(runner_result, "packet", None)
+    review_provenance = dict(runner_result.provenance or {})
+    if packet:
+        packet_rel = review_packet_artifact_rel(root, task_id, review_count)
+        repair_handoff_rel, repair_handoff_json_rel = repair_handoff_rels(root, task_id)
+        review_provenance["review_packet"] = packet_rel
+        review_provenance["repair_handoff"] = repair_handoff_rel
+        review_provenance["repair_handoff_json"] = repair_handoff_json_rel
+
     completed_metadata = build_review_metadata(
         topology,
         reviewer_mode=runner_result.reviewer_mode,
@@ -595,14 +611,13 @@ def complete_review_round_from_result(root, review_file, task_id, spec_text, top
         review_git_state=review_git_state,
         review_handoff=metadata.get("review_handoff"),
         reviewer_isolation=runner_result.reviewer_isolation,
-        review_provenance=runner_result.provenance,
+        review_provenance=review_provenance,
     )
 
     section_bodies = {}
     for definition in review_passes_by_kind(topology, "adversarial"):
         section_bodies[definition["id"]] = runner_result.sections.get(definition["id"], "").rstrip()
 
-    review_count = review_data.get("review_count") or 1
     ensure_review_file_header(review_file, task_id, spec_text)
     existing_text = review_file.read_text()
     round_text = render_review_round_text(
@@ -655,6 +670,12 @@ def complete_review_round_from_result(root, review_file, task_id, spec_text, top
             "external reviewer produced an invalid review artifact",
             [*visible_details, f"diagnostic: {diagnostic_path}"],
         )
+
+    if packet:
+        packet_rel = write_review_packet_artifact(root, task_id, review_count, packet)
+        write_executor_repair_handoff(root, task_id, review_count, packet, packet_rel)
+        runner_result.provenance.clear()
+        runner_result.provenance.update(review_provenance)
 
     review_file.write_text(candidate_text)
     return parse_review_file(review_file, topology)

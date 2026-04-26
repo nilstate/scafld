@@ -68,6 +68,7 @@ Current role×gate handoffs:
 
 - `executor × phase`
 - `executor × recovery`
+- `executor × review_repair`
 - `challenger × review`
 
 Hard rules:
@@ -81,6 +82,9 @@ Defaults:
 - `scafld handoff <task-id>` returns the active phase handoff
 - if no phase is active yet, it returns `phase1`
 - after completion, it returns the archived review handoff
+- after a structured external review finds issues, read
+  `.ai/runs/{task-id}/handoffs/executor-review-repair.md` before repairing; it
+  is packet-derived review context, not lifecycle state
 
 ## Execution
 

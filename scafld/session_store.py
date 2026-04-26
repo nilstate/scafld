@@ -466,6 +466,9 @@ def record_provider_invocation(
     timeout_seconds=None,
     diagnostic_path=None,
     warning="",
+    review_packet="",
+    repair_handoff="",
+    repair_handoff_json="",
     spec_path=None,
 ):
     if confidence is None:
@@ -519,6 +522,12 @@ def record_provider_invocation(
             fields["diagnostic_path"] = diagnostic_path
         if warning:
             fields["warning"] = warning
+        if review_packet:
+            fields["review_packet"] = review_packet
+        if repair_handoff:
+            fields["repair_handoff"] = repair_handoff
+        if repair_handoff_json:
+            fields["repair_handoff_json"] = repair_handoff_json
         append_entry(session, "provider_invocation", **fields)
 
     return mutate_session(root, task_id, apply, spec_path=spec_path)

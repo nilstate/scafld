@@ -33,6 +33,13 @@ The handoff lives at:
 - `.ai/runs/{task-id}/handoffs/challenger-review.md`
 - `.ai/runs/{task-id}/handoffs/challenger-review.json`
 
+Successful external reviews also persist the normalized review transport and the
+executor-facing repair projection:
+
+- `.ai/runs/{task-id}/review-packets/review-N.json`
+- `.ai/runs/{task-id}/handoffs/executor-review-repair.md`
+- `.ai/runs/{task-id}/handoffs/executor-review-repair.json`
+
 If the latest review round is still `in_progress`, rerunning `scafld review
 <task-id>` refreshes that same round in place. It does not append a second
 round until the challenger has actually finished the current one.
@@ -87,10 +94,31 @@ Its job is to:
 The challenger does not edit code.
 
 When scafld runs an external challenger itself, it still owns the canonical
-review artifact. The subprocess returns prose markdown sections; scafld writes a
-candidate latest review round, parses it with the same gate as a manual review,
-and only persists it if the artifact is valid. Invalid external output fails
-`scafld review` and does not print a completion command.
+review artifact. The subprocess returns one `ReviewPacket` JSON object. Scafld
+normalizes that packet, rejects scafld-owned provenance fields from the model,
+renders the human markdown review round from the normalized content, and parses
+that projection with the same gate as a manual review. Invalid external output
+fails `scafld review` and does not print a completion command.
+
+`ReviewPacket` is the provider content contract, not the provenance contract.
+The provider supplies:
+
+- pass results
+- checked surfaces for every adversarial pass
+- findings with severity, blocking status, target, summary, failure mode,
+  impact, evidence, suggested fix, tests to add, and spec-update suggestions
+- the final verdict
+
+Scafld supplies and records provider, model, timing, session, isolation, hashes,
+diagnostics, and artifact paths. Markdown review files and executor repair
+handoffs are projections from the normalized packet.
+
+The executor repair handoff is intentionally dense. It is written for the next
+implementation agent, so it carries the reviewer's evidence, failure model,
+suggested repair path, test ideas, and spec-update proposals without requiring
+the executor to rediscover the review. Spec suggestions are proposals only; the
+executor must reconcile them with the approved task contract before editing the
+spec.
 
 Failed external attempts, timeouts, and malformed external output write raw
 provider diagnostics under `.ai/runs/<task-id>/diagnostics/`. The command error
@@ -105,6 +133,9 @@ Finding format:
 
 - `- **high** \`path/file.py:88\` — the exact failure mode and why it matters`
 - `- **medium** \`docs/review.md#provider-isolation\` — stable anchor for doc/config findings`
+
+External providers do not write those bullets directly. They write packet
+findings, and scafld renders the bullets into the markdown review projection.
 
 `Blocking` and `Non-blocking` accept only finding bullets or `None.`.
 `Verdict` accepts only `pass`, `fail`, or `pass_with_issues`.
@@ -199,4 +230,4 @@ The review gate writes typed session entries such as:
 
 - completed challenger rounds
 - grounded findings
-- clean reviews that still record what was checked
+- format-compliant clean reviews that still record concrete checked targets
