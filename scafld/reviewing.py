@@ -10,6 +10,7 @@ REVIEWER_MODES = {"challenger", "fresh_agent", "auto", "executor", "human_overri
 FINDING_SEVERITIES = ("critical", "high", "medium", "low")
 FINDING_TARGET = r"(?:[^`\n]+:\d+|[^`\n]+\.(?:ya?ml|md|markdown)#[A-Za-z0-9_.:/-]+)"
 FINDING_FORMAT_DESCRIPTION = "`file:line` or `doc.md#anchor`"
+FINDING_TARGET_RE = re.compile(rf"^{FINDING_TARGET}$", re.IGNORECASE)
 FINDING_LINE_RE = re.compile(
     rf"^- \*\*(critical|high|medium|low)\*\* `{FINDING_TARGET}` (?:—|--) .+$",
     re.IGNORECASE,

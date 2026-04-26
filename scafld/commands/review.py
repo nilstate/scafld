@@ -70,6 +70,9 @@ def record_external_review_invocation(root, task_id, provenance, *, status, diag
         timeout_seconds=provenance.get("timeout_seconds"),
         diagnostic_path=diagnostic_path,
         warning=provenance.get("warning") or "",
+        review_packet=provenance.get("review_packet") or "",
+        repair_handoff=provenance.get("repair_handoff") or "",
+        repair_handoff_json=provenance.get("repair_handoff_json") or "",
     )
 
 
@@ -647,6 +650,10 @@ def cmd_review(args):
         elif runner_result.provenance.get("model_requested"):
             print(f"  model requested: {c(C_DIM, runner_result.provenance['model_requested'])}")
         print(f"  isolation: {c(C_DIM, runner_result.provenance.get('isolation_level', 'unknown'))}")
+        if runner_result.provenance.get("review_packet"):
+            print(f"  review packet: {c(C_DIM, runner_result.provenance['review_packet'])}")
+        if runner_result.provenance.get("repair_handoff"):
+            print(f"  repair handoff: {c(C_DIM, runner_result.provenance['repair_handoff'])}")
         for runner_warning in runner_result.provenance.get("warnings") or []:
             if runner_warning == "provider=auto fell back to weaker Claude isolation":
                 continue

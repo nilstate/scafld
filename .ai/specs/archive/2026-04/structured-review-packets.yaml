@@ -1,0 +1,340 @@
+spec_version: "1.1"
+task_id: "structured-review-packets"
+created: "2026-04-26T14:51:57Z"
+updated: "2026-04-26T16:04:21Z"
+status: "completed"
+harden_status: "passed"
+
+task:
+  title: "Structured review packets"
+  summary: >
+    External adversarial review should become a structured LLM-to-LLM repair
+    transport without returning to verdict-only JSON theater. The provider must
+    return a rich ReviewPacket that carries pass results, checked surfaces,
+    findings, evidence, fix guidance, tests, and spec update suggestions.
+    Scafld owns provenance and renders the canonical human markdown review plus
+    an executor repair handoff from the normalized packet.
+  size: "large"
+  risk_level: "high"
+  context:
+    packages:
+      - "scafld"
+      - "tests"
+      - "docs"
+    files_impacted:
+      - path: "scafld/review_packet.py"
+        lines: "new"
+        reason: "ReviewPacket schema normalization, validation, markdown projection, packet persistence, and repair-handoff rendering live here."
+      - path: "scafld/review_runner.py"
+        lines: "task-selected"
+        reason: "External provider prompt, JSON extraction, packet validation, hashes, and runner result assembly live here."
+      - path: "scafld/review_workflow.py"
+        lines: "task-selected"
+        reason: "Completed review rounds must be rendered from packets and invalid packet artifacts need diagnostics."
+      - path: "scafld/runtime_contracts.py"
+        lines: "task-selected"
+        reason: "Review packet artifacts need a stable run directory."
+      - path: "scafld/runtime_guidance.py"
+        lines: "task-selected"
+        reason: "Status/current_handoff must route failed structured reviews to the packet-derived executor repair handoff."
+      - path: "scafld/commands/review.py"
+        lines: "task-selected"
+        reason: "Review command should expose packet and repair-handoff paths after external review."
+      - path: "scafld/reviewing.py"
+        lines: "task-selected"
+        reason: "Finding target validation constants should be reusable by ReviewPacket validation."
+      - path: "tests/review_packet_smoke.sh"
+        lines: "new"
+        reason: "Focused coverage for packet validation, markdown projection, and repair handoff content."
+      - path: "tests/review_gate_smoke.sh"
+        lines: "task-selected"
+        reason: "External runner smoke stubs must return ReviewPacket JSON and assert packet artifacts."
+      - path: "docs/review.md"
+        lines: "task-selected"
+        reason: "Operator docs should explain ReviewPacket as canonical structured transport and markdown/repair handoff as projections."
+      - path: "docs/run-artifacts.md"
+        lines: "task-selected"
+        reason: "Run artifact docs should list review-packets and repair handoffs."
+      - path: "AGENTS.md"
+        lines: "task-selected"
+        reason: "The canonical agent guide must list the new executor review_repair handoff and explain when agents consume it."
+      - path: "tests/run_contracts_smoke.sh"
+        lines: "task-selected"
+        reason: "Runtime contract smoke should lock the review_repair handoff path and agent guide inventory."
+    invariants:
+      - "scafld_owns_provenance"
+      - "markdown_review_gate_remains_authoritative_for_completion"
+      - "structured_output_must_carry_repair_context_not_just_verdicts"
+      - "invalid_provider_output_must_leave_diagnostics"
+      - "packet_artifacts_must_not_be_blindly_applied_to_specs"
+      - "rejected_review_packet_projections_must_not_create_normal_repair_artifacts"
+  objectives:
+    - "Define ReviewPacket v1 as the canonical provider review content contract."
+    - "Require rich repair context for every finding: failure mode, why it matters, evidence, suggested fix, tests to add, and spec update suggestions."
+    - "Require checked-surface context for clean passes so executors can understand what the challenger actually attacked."
+    - "Render the existing markdown review artifact from the normalized packet instead of parsing provider-authored markdown."
+    - "Persist normalized packets under `.ai/runs/{task-id}/review-packets/review-N.json`."
+    - "Generate an executor repair handoff from the packet under `.ai/runs/{task-id}/handoffs/executor-review-repair.md`."
+    - "Expose that repair handoff through status/current_handoff when structured review blocks completion."
+    - "Keep scafld-owned metadata and provider provenance out of the model-returned schema."
+    - "Preserve diagnostics for invalid JSON, invalid packet shape, and invalid markdown projection."
+  touchpoints:
+    - area: "external challenger contract"
+      description: "Provider output becomes structured ReviewPacket JSON with strict machine fields and rich prose fields."
+    - area: "review artifact projection"
+      description: "Scafld renders markdown reviews and repair handoffs from normalized packet content."
+    - area: "LLM handoff ecosystem"
+      description: "The reviewer output must be useful to the next executor agent as a dense repair brief, including spec-update guidance."
+  acceptance:
+    definition_of_done:
+      - id: "dod1"
+        description: "External providers are prompted to return ReviewPacket JSON only, and scafld rejects legacy prose as invalid external output."
+        status: "done"
+      - id: "dod2"
+        description: "ReviewPacket validation enforces exact pass ids/results, a closed top-level schema, exactly one checked surface per pass, checked surfaces for clean passes, repository-grounded file:line and Markdown/YAML anchor targets, the 10-finding cap, single-line markdown-projected and repair-handoff-rendered fields, severity, blocking status, and rich repair fields."
+        status: "done"
+      - id: "dod3"
+        description: "Completed external review rounds are rendered from normalized ReviewPacket content and still pass the existing markdown review parser."
+        status: "done"
+      - id: "dod4"
+        description: "Normalized packet artifacts and executor repair handoffs are persisted and referenced in review provenance/command output only after the markdown review projection passes the canonical review parser, and failed structured reviews surface the repair handoff through status/current_handoff."
+        status: "done"
+      - id: "dod5"
+        description: "Docs explain ReviewPacket as the canonical structured transport, with markdown and repair handoffs as projections."
+        status: "done"
+    validation:
+      - id: "v1"
+        type: "compile"
+        description: "Python sources compile after packet contract changes."
+        command: "python3 -m compileall scafld cli scripts"
+        expected: "exit code 0"
+      - id: "v2"
+        type: "integration"
+        description: "Focused packet smoke validates schema, projection, persistence, and repair handoff rendering."
+        command: "bash tests/review_packet_smoke.sh"
+        expected: "exit code 0"
+      - id: "v3"
+        type: "integration"
+        description: "External runner smoke proves both provider stubs return ReviewPacket JSON and produce packet artifacts."
+        command: "bash tests/review_gate_smoke.sh external-runner-structured-packet"
+        expected: "exit code 0"
+      - id: "v4"
+        type: "integration"
+        description: "External runner observability smoke still persists diagnostics for invalid output."
+        command: "bash tests/review_gate_smoke.sh external-runner-observability"
+        expected: "exit code 0"
+
+planning_log:
+  - timestamp: "2026-04-26T14:51:57Z"
+    actor: "user"
+    summary: "Spec created via scafld plan"
+  - timestamp: "2026-04-26T15:02:00Z"
+    actor: "assistant"
+    summary: >
+      Converted the structured review direction into a ReviewPacket v1 plan:
+      provider returns canonical structured content, scafld owns provenance,
+      markdown and executor repair handoffs are projections, and the packet is
+      explicitly optimized for LLM-to-LLM repair transfer.
+
+  - timestamp: "2026-04-26T14:55:35Z"
+    actor: "cli"
+    summary: "Spec approved"
+  - timestamp: "2026-04-26T15:19:00Z"
+    actor: "cli"
+    summary: "Execution started"
+  - timestamp: "2026-04-26T15:42:00Z"
+    actor: "assistant"
+    summary: >
+      Incorporated the structured review packet findings into the spec: duplicate
+      checked surfaces are rejected, markdown-projected packet strings are
+      single-line, repair-handoff-rendered fields cannot inject multiline
+      markdown, and packet/repair artifacts are written only after the rendered
+      markdown review projection passes the canonical parser.
+  - timestamp: "2026-04-26T15:52:00Z"
+    actor: "assistant"
+    summary: >
+      Incorporated the later convention finding: AGENTS.md now lists
+      executor × review_repair as a current handoff and tells agents to read the
+      packet-derived repair brief when structured external review finds issues.
+  - timestamp: "2026-04-26T16:00:00Z"
+    actor: "assistant"
+    summary: >
+      Incorporated the grounded-target finding: external ReviewPacket validation
+      now checks file:line targets against repository files and line counts
+      while preserving stable Markdown/YAML anchor citations.
+  - timestamp: "2026-04-26T16:06:00Z"
+    actor: "assistant"
+    summary: >
+      Incorporated the schema-boundary findings: packet validation now rejects
+      unexpected or scafld-owned top-level fields and enforces the trusted
+      10-finding cap before projection.
+  - timestamp: "2026-04-26T16:12:00Z"
+    actor: "assistant"
+    summary: >
+      Incorporated the repair-routing and anchor-grounding findings: failed
+      structured reviews now expose executor × review_repair through status,
+      and packet validation rejects missing Markdown/YAML anchor files.
+  - timestamp: "2026-04-26T16:04:21Z"
+    actor: "cli"
+    summary: "Spec completed"
+phases:
+  - id: "phase1"
+    name: "ReviewPacket contract and projections"
+    objective: "Add the canonical packet schema, validation, markdown projection, packet artifact persistence, and executor repair handoff rendering."
+    changes:
+      - file: "scafld/review_packet.py"
+        action: "create"
+        content_spec: >
+          Implement ReviewPacket v1 normalization and validation, including
+          exact pass ids, duplicate checked-surface rejection, checked surfaces,
+          closed top-level schema enforcement, repository-grounded file:line
+          and Markdown/YAML anchor targets, the 10-finding cap, single-line
+          markdown-projected and repair-handoff-rendered fields, finding object
+          validation, rich repair fields, markdown projection, packet artifact writes, and
+          executor repair handoff rendering.
+      - file: "scafld/runtime_contracts.py"
+        action: "update"
+        content_spec: "Add review-packets run directory helpers."
+      - file: "scafld/review_workflow.py"
+        action: "update"
+        content_spec: "Render completed review rounds from ReviewPacket projection and persist packet/repair artifacts before writing the review."
+      - file: "scafld/reviewing.py"
+        action: "update"
+        content_spec: "Expose finding target validation for packet validation without loosening the markdown gate."
+      - file: "tests/review_packet_smoke.sh"
+        action: "create"
+        content_spec: "Cover packet validation errors, markdown projection, persisted packet JSON, and executor repair handoff content."
+    acceptance_criteria:
+      - id: "ac1_1"
+        type: "compile"
+        description: "Python sources compile after packet module and workflow changes."
+        command: "python3 -m compileall scafld cli scripts"
+        expected: "exit code 0"
+        result: "pass"
+        executed_at: "2026-04-26T15:19:03Z"
+        result_output: "Listing 'scafld'... Listing 'scafld/commands'... Listing 'cli'... Listing 'scripts'..."
+      - id: "ac1_2"
+        type: "integration"
+        description: "Focused ReviewPacket smoke passes, including duplicate checked-surface rejection, scafld-owned field rejection, finding-cap enforcement, multiline repair-field rejection, repository-grounded file and anchor target validation, and rejected-projection artifact safety."
+        command: "bash tests/review_packet_smoke.sh"
+        expected: "exit code 0"
+        result: "pass"
+        executed_at: "2026-04-26T15:19:12Z"
+        result_output: "[1/3] valid packets normalize and project to gate-readable markdown [2/3] rich finding packets carry executor repair context [3/3] invalid packets are rejected before projection PASS: review packet sm"
+    status: "completed"
+  - id: "phase2"
+    name: "External runner packet cutover"
+    objective: "Cut external providers over to ReviewPacket JSON while preserving diagnostics and existing gate semantics."
+    changes:
+      - file: "scafld/review_runner.py"
+        action: "update"
+        content_spec: >
+          Replace provider-authored markdown contract with ReviewPacket JSON,
+          parse/extract structured JSON from Codex and Claude outputs, validate
+          packet content, derive canonical hashes from normalized packet data,
+          and keep invalid-output diagnostics.
+      - file: "scafld/commands/review.py"
+        action: "update"
+        content_spec: "Print packet and repair-handoff artifact paths after successful external review."
+      - file: "tests/review_gate_smoke.sh"
+        action: "update"
+        content_spec: "Update external provider stubs to emit ReviewPacket JSON and assert packet artifact and repair handoff behavior."
+    acceptance_criteria:
+      - id: "ac2_1"
+        type: "integration"
+        description: "External runner structured packet smoke passes."
+        command: "bash tests/review_gate_smoke.sh external-runner-structured-packet"
+        expected: "exit code 0"
+        result: "pass"
+        executed_at: "2026-04-26T15:20:23Z"
+      - id: "ac2_2"
+        type: "integration"
+        description: "External runner observability smoke still passes."
+        command: "bash tests/review_gate_smoke.sh external-runner-observability"
+        expected: "exit code 0"
+        result: "pass"
+        executed_at: "2026-04-26T15:21:26Z"
+    status: "completed"
+  - id: "phase3"
+    name: "Docs and ecosystem surfaces"
+    objective: "Document ReviewPacket as the structured review transport and make downstream LLM repair flow explicit."
+    changes:
+      - file: "docs/review.md"
+        action: "update"
+        content_spec: "Explain ReviewPacket, markdown review projection, repair handoff projection, and scafld-owned metadata boundaries."
+      - file: "docs/run-artifacts.md"
+        action: "update"
+        content_spec: "Document review-packets artifacts and executor-review-repair handoff files."
+      - file: "AGENTS.md"
+        action: "update"
+        content_spec: "Document executor × review_repair as a current role×gate handoff and tell agents when to read the packet-derived repair brief."
+      - file: "tests/run_contracts_smoke.sh"
+        action: "update"
+        content_spec: "Assert the runtime contract and canonical agent guide both expose executor × review_repair."
+      - file: "scafld/runtime_guidance.py"
+        action: "update"
+        content_spec: "When structured external review fails and provenance has a repair handoff, expose executor × review_repair as status/current_handoff."
+    acceptance_criteria:
+      - id: "ac3_1"
+        type: "compile"
+        description: "Python sources still compile after docs and final integration."
+        command: "python3 -m compileall scafld cli scripts"
+        expected: "exit code 0"
+        result: "pass"
+        executed_at: "2026-04-26T15:21:42Z"
+        result_output: "Listing 'scafld'... Listing 'scafld/commands'... Listing 'cli'... Listing 'scripts'..."
+      - id: "ac3_2"
+        type: "integration"
+        description: "Review packet, structured external runner, and run contract smokes pass together."
+        command: "bash tests/review_packet_smoke.sh && bash tests/review_gate_smoke.sh external-runner-structured-packet && bash tests/run_contracts_smoke.sh"
+        expected: "exit code 0"
+        result: "pass"
+        executed_at: "2026-04-26T15:22:34Z"
+        result_output: "[1/3] valid packets normalize and project to gate-readable markdown [2/3] rich finding packets carry executor repair context [3/3] invalid packets are rejected before projection PASS: review packet sm"
+    status: "completed"
+
+rollback:
+  strategy: "per_phase"
+  commands:
+    phase1: "git checkout HEAD -- scafld/review_packet.py scafld/runtime_contracts.py scafld/review_workflow.py scafld/reviewing.py tests/review_packet_smoke.sh"
+    phase2: "git checkout HEAD -- scafld/review_runner.py scafld/commands/review.py tests/review_gate_smoke.sh"
+    phase3: "git checkout HEAD -- docs/review.md docs/run-artifacts.md"
+
+harden_rounds:
+  - round: 1
+    started_at: "2026-04-26T14:51:57Z"
+    outcome: "passed"
+    questions:
+      - q: "Should ReviewPacket be the canonical provider artifact, with markdown and repair handoffs rendered by scafld?"
+        recommended_answer: "Yes. This prevents dual-source reconciliation and keeps scafld in charge of provenance, validation, and durable projections."
+        grounded_in: "code:scafld/review_workflow.py:577"
+      - q: "Should the packet optimize for executor repair, not just gate verdicts?"
+        recommended_answer: "Yes. Each finding should carry failure mode, evidence, fix direction, tests, and spec-update suggestions so the next LLM can repair without rediscovering the review."
+        grounded_in: "spec_gap:objectives"
+
+review:
+  timestamp: "2026-04-26T16:04:07Z"
+  verdict: "pass"
+  review_rounds: 5
+  reviewer_mode: "fresh_agent"
+  reviewer_session: ""
+  round_status: "completed"
+  override_applied: false
+  override_reason: null
+  override_confirmed_at: null
+  reviewed_head: "809e95e7b648a1f32e951221a4e550c2b2e4ac2c"
+  reviewed_dirty: true
+  reviewed_diff: "6b8e4b529ddfc58fa1cb2e2376b08474782b4c9727628a93ceecb97e43bc3ad8"
+  passes:
+    - id: spec_compliance
+      result: "pass"
+    - id: scope_drift
+      result: "pass"
+    - id: regression_hunt
+      result: "pass"
+    - id: convention_check
+      result: "pass"
+    - id: dark_patterns
+      result: "pass"
+  blocking_count: 0
+  non_blocking_count: 0
