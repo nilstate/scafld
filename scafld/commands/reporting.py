@@ -9,7 +9,14 @@ from scafld.reviewing import parse_review_file, review_git_gate_reason
 from scafld.review_workflow import capture_bound_review_git_state, load_review_topology
 from scafld.runtime_bundle import REVIEWS_DIR
 from scafld.session_store import load_session, session_summary_payload
-from scafld.spec_parsing import count_phases, extract_self_eval_score, parse_acceptance_criteria, parse_iso8601_timestamp
+from scafld.spec_parsing import (
+    active_done_open,
+    count_phases,
+    extract_self_eval_score,
+    parse_acceptance_criteria,
+    parse_iso8601_timestamp,
+    supersession_payload,
+)
 from scafld.spec_store import find_all_specs, yaml_read_field, yaml_read_nested
 from scafld.terminal import C_BOLD, C_DIM, C_GREEN, C_RED, C_YELLOW, STATUS_COLORS, c
 
@@ -36,6 +43,18 @@ def print_report_triage_section(title, items, formatter, empty_message="none"):
         print(f"    - {formatter(item)}")
     if len(items) > 5:
         print(f"    {c(C_DIM, f'+ {len(items) - 5} more')}")
+
+
+def format_stale_active_entry(item):
+    age = f"{item['age_days']}d" if item.get("age_days") is not None else "age unknown"
+    return f"{item['task_id']} ({age}) — all phases done but still active; {item['path']}"
+
+
+def format_superseded_entry(item):
+    rendered = f"{item['task_id']} -> {item['superseded_by']} — {item['path']}"
+    if item.get("reason"):
+        rendered = f"{rendered} ({item['reason']})"
+    return rendered
 
 
 def cmd_report(args):
@@ -72,6 +91,8 @@ def cmd_report(args):
     specs_with_rounds = 0
     stale_drafts = []
     approved_waiting = []
+    stale_active = []
+    superseded_specs = []
     active_without_exec = []
     review_drift = []
     runtime_sessions = 0
@@ -110,9 +131,20 @@ def cmd_report(args):
 
         status = yaml_read_field(text, "status") or "unknown"
         triage_entry = report_triage_entry(root, spec_path, text)
+        is_active_done_open = active_done_open(text, status)
+        supersession = supersession_payload(text)
         session = load_session(root, triage_entry["task_id"], spec_path=spec_path)
         if runtime_only and session is None:
             continue
+        if is_active_done_open:
+            stale_active.append(triage_entry)
+        if supersession.get("superseded"):
+            superseded_specs.append({
+                **triage_entry,
+                "superseded_by": supersession.get("superseded_by"),
+                "superseded_at": supersession.get("superseded_at"),
+                "reason": supersession.get("reason"),
+            })
 
         total += 1
         harden_status = yaml_read_field(text, "harden_status")
@@ -148,7 +180,7 @@ def cmd_report(args):
             specs_with_exec += 1
         else:
             specs_without_exec += 1
-            if status == "in_progress":
+            if status == "in_progress" and not is_active_done_open:
                 active_without_exec.append(triage_entry)
 
         total_phases, _, _, _ = count_phases(text)
@@ -344,6 +376,8 @@ def cmd_report(args):
                 "triage": {
                     "stale_drafts": stale_drafts,
                     "approved_waiting": approved_waiting,
+                    "stale_active": stale_active,
+                    "superseded": superseded_specs,
                     "active_without_exec": active_without_exec,
                     "review_drift": review_drift,
                 },
@@ -503,6 +537,16 @@ def cmd_report(args):
         "Approved waiting to start",
         approved_waiting,
         lambda item: f"{item['task_id']} — {item['path']}",
+    )
+    print_report_triage_section(
+        "Stale active specs",
+        stale_active,
+        format_stale_active_entry,
+    )
+    print_report_triage_section(
+        "Superseded specs",
+        superseded_specs,
+        format_superseded_entry,
     )
     print_report_triage_section(
         "Active with no exec evidence",

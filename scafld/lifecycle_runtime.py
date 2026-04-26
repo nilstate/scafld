@@ -10,7 +10,7 @@ from scafld.projections import origin_payload, phase_counts
 from scafld.runtime_bundle import CONFIG_LOCAL_PATH, CONFIG_PATH, DRAFTS_DIR, FRAMEWORK_CONFIG_PATH, resolve_schema_path
 from scafld.runtime_guidance import derive_task_guidance, review_gate_snapshot
 from scafld.session_store import ensure_session, ensure_workspace_baseline, load_session, record_approval, session_summary_payload
-from scafld.spec_parsing import count_phases, now_iso, parse_phase_status_entries
+from scafld.spec_parsing import active_done_open, count_phases, now_iso, parse_phase_status_entries, supersession_payload
 from scafld.spec_store import (
     find_spec,
     load_spec_document,
@@ -258,6 +258,10 @@ def status_snapshot(root, spec, task_id):
         "title": yaml_read_nested(text, "task", "title") or "",
         "phase_statuses": parse_phase_status_entries(text),
         "phase_counts": phase_counts(*count_phases(text)),
+        "lifecycle_flags": {
+            "active_done_open": active_done_open(text, status),
+        },
+        "supersession": supersession_payload(text),
     }
 
     origin = origin_payload(data)

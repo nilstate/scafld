@@ -24,7 +24,7 @@ from scafld.runtime_bundle import (
     sync_framework_bundle,
 )
 from scafld.runtime_contracts import archive_run_artifacts
-from scafld.spec_parsing import count_phases, now_iso
+from scafld.spec_parsing import active_done_open, count_phases, now_iso, supersession_payload
 from scafld.spec_store import (
     find_all_specs,
     load_spec_document,
@@ -51,6 +51,40 @@ def move_result_payload(root, move_result):
     }
 
 
+def record_cancel_metadata(spec_path, *, reason=None, superseded_by=None):
+    reason = (reason or "").strip()
+    superseded_by = (superseded_by or "").strip()
+    timestamp = now_iso()
+    data = load_spec_document(spec_path)
+    data["updated"] = timestamp
+    data["cancelled_at"] = timestamp
+    if reason:
+        data["cancel_reason"] = reason
+    if superseded_by:
+        data["superseded_by"] = superseded_by
+        data["superseded_at"] = timestamp
+        if reason:
+            data["superseded_reason"] = reason
+        summary = f"Spec superseded by {superseded_by}"
+        if reason:
+            summary = f"{summary}: {reason}"
+    elif reason:
+        summary = f"Spec cancelled: {reason}"
+    else:
+        summary = None
+    if summary:
+        planning_log = data.setdefault("planning_log", [])
+        if isinstance(planning_log, list):
+            planning_log.append({"timestamp": timestamp, "actor": "cli", "summary": summary})
+    write_spec_document(spec_path, data)
+    text = spec_path.read_text(encoding="utf-8")
+    return {
+        "cancelled_at": timestamp,
+        "reason": reason,
+        "supersession": supersession_payload(text),
+    }
+
+
 def filter_specs(specs, filter_text):
     if not filter_text:
         return specs
@@ -64,6 +98,20 @@ def filter_specs(specs, filter_text):
         return [(spec_path, label) for spec_path, label in specs if label == "active"]
     if flt in ("archive", "archived", "completed", "done"):
         return [(spec_path, label) for spec_path, label in specs if label.startswith("archive")]
+    if flt in ("stale", "stale-active", "active-done", "done-open", "ready-review", "ready-for-review"):
+        matches = []
+        for spec_path, label in specs:
+            text = spec_path.read_text(encoding="utf-8")
+            if active_done_open(text, yaml_read_field(text, "status")):
+                matches.append((spec_path, label))
+        return matches
+    if flt in ("superseded", "superseded-by"):
+        matches = []
+        for spec_path, label in specs:
+            text = spec_path.read_text(encoding="utf-8")
+            if supersession_payload(text).get("superseded"):
+                matches.append((spec_path, label))
+        return matches
     return [(spec_path, label) for spec_path, label in specs if flt in spec_path.stem.lower()]
 
 
@@ -236,6 +284,8 @@ def cmd_status(args):
     next_action = result.get("next_action") or {}
     current_handoff = result.get("current_handoff") or {}
     block_reason = result.get("block_reason")
+    lifecycle_flags = result.get("lifecycle_flags") or {}
+    supersession = result.get("supersession") or {}
     color = STATUS_COLORS.get(status, "")
     print(f"{c(C_BOLD, title)}")
     print(f"     id: {args.task_id}")
@@ -259,6 +309,14 @@ def cmd_status(args):
         if pending > 0:
             phase_parts.append(c(C_DIM, f"{pending} pending"))
         print(f" phases: {' / '.join(phase_parts)}  ({total} total)")
+    if lifecycle_flags.get("active_done_open"):
+        print(f"  stale: {c(C_YELLOW, 'all phases done but spec is still active')}")
+    if supersession.get("superseded"):
+        print(f"superseded by: {supersession.get('superseded_by')}")
+        if supersession.get("reason"):
+            print(f" reason: {supersession['reason']}")
+        if supersession.get("superseded_at"):
+            print(f"     at: {c(C_DIM, supersession['superseded_at'])}")
     source_summary = summarize_origin_source(origin)
     source = origin.get("source") if isinstance(origin.get("source"), dict) else {}
     repo_binding = origin.get("repo") if isinstance(origin.get("repo"), dict) else {}
@@ -333,10 +391,17 @@ def cmd_list(args):
             color = STATUS_COLORS.get(status, "")
             total, completed, _, _ = count_phases(text)
             phase_str = f" [{completed}/{total}]" if total > 0 else ""
+            markers = []
+            supersession = supersession_payload(text)
+            if supersession.get("superseded"):
+                markers.append(f"superseded by {supersession['superseded_by']}")
+            elif active_done_open(text, status):
+                markers.append("stale active")
+            marker_str = f" {c(C_YELLOW, '(' + '; '.join(markers) + ')')}" if markers else ""
             max_title = 50
             if len(title) > max_title:
                 title = title[:max_title - 1] + "…"
-            print(f"  {c(color, f'{status:14s}')} {spec_path.stem:30s} {c(C_DIM, title)}{phase_str}")
+            print(f"  {c(color, f'{status:14s}')} {spec_path.stem:30s} {c(C_DIM, title)}{phase_str}{marker_str}")
         print()
 
 
@@ -511,8 +576,25 @@ def cmd_fail(args):
 def cmd_cancel(args):
     """Move spec to archive (cancelled)."""
     root = require_root()
+    reason = (getattr(args, "reason", None) or "").strip()
+    superseded_by = (getattr(args, "superseded_by", None) or "").strip()
+    if superseded_by:
+        if superseded_by == args.task_id:
+            raise ScafldError(
+                "a spec cannot supersede itself",
+                ["choose the replacement task id or omit --superseded-by"],
+                code=EC.INVALID_ARGUMENTS,
+            )
+        if not reason:
+            raise ScafldError(
+                "--reason is required with --superseded-by",
+                ["record why the old active spec is being retired"],
+                code=EC.INVALID_ARGUMENTS,
+            )
+        require_spec(root, superseded_by)
     spec = require_spec(root, args.task_id)
     move_result = move_spec(root, spec, "cancelled")
+    cancel_metadata = record_cancel_metadata(move_result.dest, reason=reason, superseded_by=superseded_by)
     archive_month = move_result.dest.parent.name
     archived_run_dir = archive_run_artifacts(root, args.task_id, archive_month)
     if getattr(args, "json", False):
@@ -522,10 +604,18 @@ def cmd_cancel(args):
             state={"status": move_result.new_status},
             result={
                 "transition": move_result_payload(root, move_result),
+                "cancelled_at": cancel_metadata["cancelled_at"],
+                "reason": cancel_metadata["reason"],
+                "supersession": cancel_metadata["supersession"],
                 "run_archive_dir": str(archived_run_dir.relative_to(root)) if archived_run_dir else None,
             },
         )
         return
     print_move_result(root, move_result)
+    supersession = cancel_metadata["supersession"]
+    if supersession.get("superseded"):
+        print(f"  superseded by: {supersession['superseded_by']}")
+    if cancel_metadata["reason"]:
+        print(f"  reason: {cancel_metadata['reason']}")
     if archived_run_dir:
         print(f"  run archive: {c(C_DIM, str(archived_run_dir.relative_to(root)))}")
