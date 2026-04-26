@@ -1,9 +1,11 @@
 import hashlib
 import json
+import math
 import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import uuid
 from dataclasses import dataclass
@@ -24,10 +26,16 @@ EXTERNAL_FALLBACK_POLICY_VALUES = ("warn", "allow", "disable")
 EXTERNAL_REVIEW_VERDICTS = {"pass", "fail", "pass_with_issues"}
 DEFAULT_EXTERNAL_TIMEOUT_SECONDS = 600
 DEFAULT_EXTERNAL_FALLBACK_POLICY = "warn"
+DEFAULT_CLAUDE_MAX_OUTPUT_TOKENS = "12000"
 UNTRUSTED_HANDOFF_BEGIN = "SCAFLD_UNTRUSTED_REVIEW_HANDOFF_BEGIN"
 UNTRUSTED_HANDOFF_END = "SCAFLD_UNTRUSTED_REVIEW_HANDOFF_END"
 ESCAPED_UNTRUSTED_HANDOFF_BEGIN = "SCAFLD_UNTRUSTED_REVIEW_HANDOFF_[BEGIN]"
 ESCAPED_UNTRUSTED_HANDOFF_END = "SCAFLD_UNTRUSTED_REVIEW_HANDOFF_[END]"
+MODEL_HINT_RE = re.compile(
+    r"(?im)\bmodel(?:[_ -]?id)?\s*[:=]\s*[\"']?([A-Za-z0-9][A-Za-z0-9._:/+-]{1,127})"
+)
+MODEL_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/+-]{1,127}$")
+MAX_PROVIDER_JSON_DEPTH = 12
 
 
 @dataclass(frozen=True)
@@ -447,10 +455,34 @@ def _validate_external_result(text, topology):
     }
 
 
-def _external_review_warning(provider_requested, provider, fallback_policy):
+def _external_review_warnings(provider_requested, provider, fallback_policy):
     if provider_requested == "auto" and provider == "claude" and fallback_policy == "warn":
-        return "provider=auto fell back to weaker Claude isolation"
-    return ""
+        return ["provider=auto fell back to weaker Claude isolation"]
+    return []
+
+
+def _warning_text(warnings):
+    return "; ".join(warnings or [])
+
+
+def _emit_external_warnings(warnings):
+    for warning in warnings or []:
+        print(f"warning: {warning}", file=sys.stderr)
+
+
+def _model_source(model_requested, model_observed):
+    if model_observed:
+        return "observed"
+    if model_requested:
+        return "requested"
+    return "unknown"
+
+
+def _provider_subprocess_env(provider):
+    env = os.environ.copy()
+    if provider == "claude":
+        env.setdefault("CLAUDE_CODE_MAX_OUTPUT_TOKENS", DEFAULT_CLAUDE_MAX_OUTPUT_TOKENS)
+    return env
 
 
 def _provider_bin_display(provider_bin):
@@ -500,6 +532,8 @@ def _write_external_diagnostic(
     exit_code,
     timed_out,
     timeout_seconds,
+    prompt_sha256,
+    prompt_preview,
     stdout,
     stderr,
     raw_output,
@@ -518,7 +552,11 @@ def _write_external_diagnostic(
         f"exit_code: {exit_code if exit_code is not None else ''}",
         f"timed_out: {str(bool(timed_out)).lower()}",
         f"timeout_seconds: {timeout_seconds}",
+        f"prompt_sha256: {prompt_sha256}",
         f"error: {error}",
+        "",
+        "## Prompt Preview",
+        prompt_preview or "",
         "",
         "## Raw Output",
         raw_output or "",
@@ -532,6 +570,95 @@ def _write_external_diagnostic(
     ]
     diagnostic_path.write_text("\n".join(body), encoding="utf-8")
     return relative_path(root, diagnostic_path)
+
+
+def _prompt_preview(prompt, limit=4000):
+    if len(prompt) <= limit:
+        return prompt
+    return prompt[:limit] + "\n...[truncated]"
+
+
+def _model_hint_from_text(text):
+    match = MODEL_HINT_RE.search(text or "")
+    if not match:
+        return ""
+    candidate = match.group(1).rstrip(".,;)")
+    return _valid_model_id(candidate)
+
+
+def _valid_model_id(value):
+    candidate = str(value or "").strip()
+    return candidate if MODEL_ID_RE.fullmatch(candidate) else ""
+
+
+def _first_json_value(data, keys, *, depth=0):
+    if depth > MAX_PROVIDER_JSON_DEPTH:
+        return ""
+    if isinstance(data, dict):
+        for key in keys:
+            value = data.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        for value in data.values():
+            found = _first_json_value(value, keys, depth=depth + 1)
+            if found:
+                return found
+    elif isinstance(data, list):
+        for value in data:
+            found = _first_json_value(value, keys, depth=depth + 1)
+            if found:
+                return found
+    return ""
+
+
+def _model_from_model_usage(payload):
+    if not isinstance(payload, dict):
+        return ""
+    usage = payload.get("modelUsage")
+    if not isinstance(usage, dict) or not usage:
+        return ""
+    if len(usage) == 1:
+        return _valid_model_id(next(iter(usage.keys())))
+    best_model = ""
+    best_cost = -1.0
+    first_model = ""
+    for model_name, model_usage in usage.items():
+        model_name = _valid_model_id(model_name)
+        if not first_model and model_name:
+            first_model = model_name
+        if not isinstance(model_usage, dict):
+            continue
+        try:
+            cost = float(model_usage.get("costUSD") or 0)
+        except (TypeError, ValueError):
+            cost = 0
+        if not math.isfinite(cost):
+            cost = 0
+        if model_name and cost > best_cost:
+            best_cost = cost
+            best_model = model_name
+    return best_model or first_model
+
+
+def _extract_claude_stdout(stdout):
+    try:
+        payload = json.loads(stdout)
+    except (TypeError, json.JSONDecodeError):
+        return stdout or "", _model_hint_from_text(stdout or ""), ""
+    if not isinstance(payload, dict):
+        return stdout or "", _model_hint_from_text(stdout or ""), ""
+    raw_output = _first_json_value(payload, ("result", "output", "response", "text", "content")) or stdout or ""
+    model_observed = (
+        _valid_model_id(_first_json_value(payload, ("model", "model_id", "modelId")))
+        or _model_from_model_usage(payload)
+        or _model_hint_from_text(stdout or "")
+    )
+    session_observed = _first_json_value(payload, ("session_id", "sessionId"))
+    return raw_output, model_observed, session_observed
+
+
+def _extract_codex_observed_model(stdout, stderr):
+    return _model_hint_from_text("\n".join(part for part in (stdout, stderr) if part))
 
 
 def build_external_review_prompt(review_prompt, topology):
@@ -560,7 +687,10 @@ def build_external_review_prompt(review_prompt, topology):
         "Trusted attack vectors, all required:\n"
         f"{attack_vectors}\n\n"
         "Trusted evidence rules:\n"
+        "- return only the requested review body; do not write prelude, scratch work, or analysis outside the sections\n"
+        "- keep the review concise: at most 10 total findings and short explanations\n"
         "- every finding must cite a real file and line number\n"
+        "- finding citations must use one numeric line only, not line ranges\n"
         "- explain the failure mode and why it matters\n"
         "- do not invent violations you did not verify\n"
         "- clean sections must name the concrete target checked, not generic claims such as checked everything or checked the diff\n"
@@ -582,7 +712,8 @@ def build_external_review_prompt(review_prompt, topology):
         f"- pass result ids must be exactly: {pass_ids}\n"
         "- pass result values must be PASS, FAIL, or PASS WITH ISSUES\n"
         "- if a section is clean, write one concrete line: No issues found — checked <specific files, callers, rules, or paths attacked>\n"
-        "- blocking and non-blocking findings must use '- **severity** `file:line` — explanation'\n"
+        "- blocking and non-blocking findings must use '- **severity** `file:line` — explanation' with one numeric line, never a range\n"
+        "- do not include scratch work, planning notes, or prose before ### Pass Results\n"
         "- verdict must be pass, fail, or pass_with_issues\n"
     )
 
@@ -607,15 +738,27 @@ def _codex_args(root, output_path, model):
     return args
 
 
+def _fresh_claude_session_id():
+    return str(uuid.uuid4())
+
+
+def _normalize_claude_session_id(session_id):
+    try:
+        return str(uuid.UUID(str(session_id)))
+    except (TypeError, ValueError, AttributeError) as exc:
+        raise ValueError("Claude reviewer session_id must be a UUID") from exc
+
+
 def _claude_args(model, session_id):
+    session_id = _normalize_claude_session_id(session_id)
     args = [
         "-p",
         "--output-format",
-        "text",
+        "json",
         "--allowedTools",
         "Read,Grep,Glob",
         "--mcp-config",
-        "{}",
+        '{"mcpServers":{}}',
         "--strict-mcp-config",
         "--session-id",
         session_id,
@@ -626,6 +769,12 @@ def _claude_args(model, session_id):
 
 
 def run_external_review(root, task_id, review_prompt, topology, resolved_runner):
+    """Run the provider and return a normalized review result.
+
+    Provider execution failures are recorded here before raising because no caller
+    receives a result. Successful runs are recorded by the review command after
+    the candidate review artifact has passed the normal review parser.
+    """
     provider_requested = resolved_runner.provider or "auto"
     provider, provider_bin, env_name = resolve_external_provider(
         provider_requested,
@@ -634,16 +783,21 @@ def run_external_review(root, task_id, review_prompt, topology, resolved_runner)
     provider_bin_record = _provider_bin_display(provider_bin)
     model = resolved_runner.model or configured_provider_model(root, provider)
     prompt = build_external_review_prompt(review_prompt, topology)
+    prompt_sha256 = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+    prompt_preview = _prompt_preview(prompt)
     started_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     raw_output = ""
     return_code = 0
     reviewer_session = ""
     isolation_level = "codex_read_only_ephemeral" if provider == "codex" else "claude_restricted_tools_fresh_session"
     isolation_downgraded = provider_requested == "auto" and provider == "claude"
-    warning = _external_review_warning(provider_requested, provider, resolved_runner.fallback_policy)
+    warnings = _external_review_warnings(provider_requested, provider, resolved_runner.fallback_policy)
+    warning = _warning_text(warnings)
+    model_observed = ""
     argv = []
     stdout = ""
     stderr = ""
+    _emit_external_warnings(warnings)
 
     with tempfile.NamedTemporaryFile(prefix=f"scafld-review-{task_id}-", suffix=".txt", delete=False) as tmp:
         output_path = Path(tmp.name)
@@ -658,14 +812,16 @@ def run_external_review(root, task_id, review_prompt, topology, resolved_runner)
                 errors="replace",
                 capture_output=True,
                 cwd=str(root),
+                env=_provider_subprocess_env(provider),
                 timeout=resolved_runner.timeout_seconds,
             )
             return_code = proc.returncode
             stdout = proc.stdout or ""
             stderr = proc.stderr or ""
             raw_output = output_path.read_text(encoding="utf-8", errors="replace") if output_path.exists() else stdout
+            model_observed = _extract_codex_observed_model(stdout, stderr)
         else:
-            reviewer_session = str(uuid.uuid4())
+            reviewer_session = _fresh_claude_session_id()
             argv = [provider_bin, *_claude_args(model, reviewer_session)]
             proc = subprocess.run(
                 argv,
@@ -675,12 +831,13 @@ def run_external_review(root, task_id, review_prompt, topology, resolved_runner)
                 errors="replace",
                 capture_output=True,
                 cwd=str(root),
+                env=_provider_subprocess_env(provider),
                 timeout=resolved_runner.timeout_seconds,
             )
             return_code = proc.returncode
             stdout = proc.stdout or ""
             stderr = proc.stderr or ""
-            raw_output = stdout
+            raw_output, model_observed, _session_observed = _extract_claude_stdout(stdout)
         completed_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         if return_code != 0:
             diagnostic_path = _write_external_diagnostic(
@@ -694,6 +851,8 @@ def run_external_review(root, task_id, review_prompt, topology, resolved_runner)
                 exit_code=return_code,
                 timed_out=False,
                 timeout_seconds=resolved_runner.timeout_seconds,
+                prompt_sha256=prompt_sha256,
+                prompt_preview=prompt_preview,
                 stdout=stdout,
                 stderr=stderr,
                 raw_output=raw_output,
@@ -708,8 +867,8 @@ def run_external_review(root, task_id, review_prompt, topology, resolved_runner)
                 provider_bin=provider_bin_record,
                 provider_requested=provider_requested,
                 model_requested=model,
-                model_observed="",
-                model_source="requested" if model else "unknown",
+                model_observed=model_observed,
+                model_source=_model_source(model, model_observed),
                 isolation_level=isolation_level,
                 isolation_downgraded=isolation_downgraded,
                 fallback_policy=resolved_runner.fallback_policy,
@@ -741,6 +900,11 @@ def run_external_review(root, task_id, review_prompt, topology, resolved_runner)
             partial_stdout = partial_stdout.decode("utf-8", errors="replace")
         if isinstance(partial_stderr, bytes):
             partial_stderr = partial_stderr.decode("utf-8", errors="replace")
+        partial_model_observed = (
+            _extract_claude_stdout(partial_stdout)[1]
+            if provider == "claude"
+            else _extract_codex_observed_model(partial_stdout, partial_stderr)
+        )
         diagnostic_path = _write_external_diagnostic(
             root,
             task_id,
@@ -752,6 +916,8 @@ def run_external_review(root, task_id, review_prompt, topology, resolved_runner)
             exit_code=None,
             timed_out=True,
             timeout_seconds=resolved_runner.timeout_seconds,
+            prompt_sha256=prompt_sha256,
+            prompt_preview=prompt_preview,
             stdout=partial_stdout,
             stderr=partial_stderr,
             raw_output=partial_stdout,
@@ -766,8 +932,8 @@ def run_external_review(root, task_id, review_prompt, topology, resolved_runner)
             provider_bin=provider_bin_record,
             provider_requested=provider_requested,
             model_requested=model,
-            model_observed="",
-            model_source="requested" if model else "unknown",
+            model_observed=partial_model_observed,
+            model_source=_model_source(model, partial_model_observed),
             isolation_level=isolation_level,
             isolation_downgraded=isolation_downgraded,
             fallback_policy=resolved_runner.fallback_policy,
@@ -802,6 +968,8 @@ def run_external_review(root, task_id, review_prompt, topology, resolved_runner)
             exit_code=None,
             timed_out=False,
             timeout_seconds=resolved_runner.timeout_seconds,
+            prompt_sha256=prompt_sha256,
+            prompt_preview=prompt_preview,
             stdout=stdout,
             stderr=stderr,
             raw_output=raw_output,
@@ -816,8 +984,8 @@ def run_external_review(root, task_id, review_prompt, topology, resolved_runner)
             provider_bin=provider_bin_record,
             provider_requested=provider_requested,
             model_requested=model,
-            model_observed="",
-            model_source="requested" if model else "unknown",
+            model_observed=model_observed,
+            model_source=_model_source(model, model_observed),
             isolation_level=isolation_level,
             isolation_downgraded=isolation_downgraded,
             fallback_policy=resolved_runner.fallback_policy,
@@ -859,6 +1027,8 @@ def run_external_review(root, task_id, review_prompt, topology, resolved_runner)
             exit_code=return_code,
             timed_out=False,
             timeout_seconds=resolved_runner.timeout_seconds,
+            prompt_sha256=prompt_sha256,
+            prompt_preview=prompt_preview,
             stdout=stdout,
             stderr=stderr,
             raw_output=raw_output,
@@ -873,8 +1043,8 @@ def run_external_review(root, task_id, review_prompt, topology, resolved_runner)
             provider_bin=provider_bin_record,
             provider_requested=provider_requested,
             model_requested=model,
-            model_observed="",
-            model_source="requested" if model else "unknown",
+            model_observed=model_observed,
+            model_source=_model_source(model, model_observed),
             isolation_level=isolation_level,
             isolation_downgraded=isolation_downgraded,
             fallback_policy=resolved_runner.fallback_policy,
@@ -900,20 +1070,21 @@ def run_external_review(root, task_id, review_prompt, topology, resolved_runner)
         "provider_env": env_name,
         "model": model,
         "model_requested": model,
-        "model_observed": "",
-        "model_source": "requested" if model else "unknown",
+        "model_observed": model_observed,
+        "model_source": _model_source(model, model_observed),
         "started_at": started_at,
         "completed_at": completed_at,
         "exit_code": return_code,
         "timed_out": False,
         "timeout_seconds": resolved_runner.timeout_seconds,
+        "prompt_sha256": prompt_sha256,
         "fallback_policy": resolved_runner.fallback_policy,
         "isolation_level": isolation_level,
         "isolation_downgraded": isolation_downgraded,
+        "warnings": warnings,
         "warning": warning,
         "raw_response_sha256": hashlib.sha256(raw_output.encode("utf-8")).hexdigest(),
         "canonical_response_sha256": hashlib.sha256(canonical_payload.encode("utf-8")).hexdigest(),
-        "response_sha256": hashlib.sha256(canonical_payload.encode("utf-8")).hexdigest(),
     }
     return ExternalReviewResult(
         reviewer_mode="fresh_agent",

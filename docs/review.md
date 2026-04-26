@@ -41,7 +41,7 @@ The default runner is `external`:
 
 - resolve `codex` first
 - fall back to `claude` when codex is unavailable, with a visible weaker
-  isolation warning
+  isolation warning before the Claude subprocess starts
 - fail cleanly if neither exists
 - stop after `review.external.timeout_seconds` instead of hanging indefinitely
 
@@ -96,6 +96,9 @@ Failed external attempts, timeouts, and malformed external output write raw
 provider diagnostics under `.ai/runs/<task-id>/diagnostics/`. The command error
 prints the diagnostic path so the paid model output remains inspectable even
 when it cannot be accepted as a review round.
+Diagnostics include the prompt sha256 and a bounded prompt preview so the
+operator can connect a rejected provider response to the exact challenger prompt
+that produced it.
 
 Finding format:
 
@@ -125,6 +128,16 @@ Provider invocation session entries also carry status, timing, timeout, exit,
 diagnostic, and attribution confidence fields. Observed provider facts can
 coexist with unknown model facts; reports keep requested-only and unknown model
 attribution separate from proven model separation.
+When a provider exposes its billed model in a parseable envelope or stable output
+hint, scafld records `model_observed` and marks confidence as `observed`. If the
+provider only exposes the requested model, the entry stays `requested_only`; if
+neither is available, it stays `unknown`.
+
+Reports distinguish auto fallback downgrades from weaker challenger review
+isolation. `isolation downgrades` counts `provider: auto` runs that fell through
+to Claude. `weaker review isolation` also counts explicit Claude challenger
+review runs because they do not use the Codex read-only ephemeral subprocess
+path.
 
 The report's clean-review count is a format-compliance signal. It means the
 review used accepted no-issues phrasing with concrete checked targets; it does

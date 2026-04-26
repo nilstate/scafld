@@ -1285,6 +1285,232 @@ EOF
   assert_json "$session_json" "data['entries'][-1]['type'] == 'provider_invocation' and data['entries'][-1]['provider'] == 'claude' and data['entries'][-1]['status'] == 'failed' and data['entries'][-1]['warning'] == 'provider=auto fell back to weaker Claude isolation'" "failed claude fallback should record warning telemetry"
 }
 
+case_external_runner_observed_model_truth() {
+  local repo task_id output stub_dir review_text session_json diagnostic output_file args_capture env_capture prompt_capture
+
+  repo="$(new_repo)"
+  task_id="external-runner-codex-model-observed"
+  write_changed_file "$repo"
+  write_active_spec "$repo" "$task_id" "grep -q '^changed$' app.txt" "exit code 0" "pass"
+  stub_dir="$(mktemp -d /tmp/scafld-review-runner-codex-model.XXXXXX)"
+  TMP_DIRS+=("$stub_dir")
+  cat > "$stub_dir/codex" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+output=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o|--output-last-message)
+      output="$2"
+      shift 2
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+cat >/dev/null
+echo "model: gpt-codex-observed" >&2
+cat > "$output" <<'MARKDOWN'
+### Pass Results
+- regression_hunt: PASS
+- convention_check: PASS
+- dark_patterns: PASS
+
+### Regression Hunt
+No issues found — checked callers of app.txt.
+
+### Convention Check
+No issues found — checked AGENTS.md and CONVENTIONS.md.
+
+### Dark Patterns
+No issues found — checked hardcodes and null handling in app.txt.
+
+### Blocking
+None.
+
+### Non-blocking
+None.
+
+### Verdict
+pass
+MARKDOWN
+EOF
+  chmod +x "$stub_dir/codex"
+
+  capture output bash -lc "cd '$repo' && PATH='$stub_dir:$CLI_ROOT':\"\$PATH\" scafld review '$task_id' --provider codex"
+  assert_contains "$output" "model observed:" "codex review should print observed model when provider output exposes it"
+  review_text="$(cat "$repo/.ai/reviews/$task_id.md")"
+  assert_contains "$review_text" '"model_observed": "gpt-codex-observed"' "codex provenance should store observed model"
+  assert_contains "$review_text" '"model_source": "observed"' "codex provenance should mark observed model source"
+  assert_contains "$review_text" '"prompt_sha256":' "codex provenance should store prompt sha256"
+  assert_contains "$review_text" '"raw_response_sha256":' "codex provenance should keep raw response hash"
+  assert_contains "$review_text" '"canonical_response_sha256":' "codex provenance should keep canonical response hash"
+  assert_not_contains "$review_text" '"response_sha256"' "codex provenance should not keep duplicate response hash alias"
+  session_json="$(cat "$repo/.ai/runs/$task_id/session.json")"
+  assert_json "$session_json" "data['entries'][-1]['type'] == 'provider_invocation' and data['entries'][-1]['status'] == 'completed' and data['entries'][-1]['model_observed'] == 'gpt-codex-observed' and data['entries'][-1]['confidence'] == 'observed'" "codex provider telemetry should record observed model confidence"
+
+  repo="$(new_repo)"
+  task_id="external-runner-claude-model-observed"
+  write_changed_file "$repo"
+  write_active_spec "$repo" "$task_id" "grep -q '^changed$' app.txt" "exit code 0" "pass"
+  stub_dir="$(mktemp -d /tmp/scafld-review-runner-claude-model.XXXXXX)"
+  TMP_DIRS+=("$stub_dir")
+  cat > "$stub_dir/claude" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$@" > "${SCAFLD_CLAUDE_ARGS_CAPTURE:?}"
+printf '%s\n' "${CLAUDE_CODE_MAX_OUTPUT_TOKENS:-}" > "${SCAFLD_CLAUDE_ENV_CAPTURE:?}"
+cat > "${SCAFLD_REVIEW_PROMPT_CAPTURE:?}"
+python3 - <<'PY'
+import json
+result = """### Pass Results
+- regression_hunt: PASS
+- convention_check: PASS
+- dark_patterns: PASS
+
+### Regression Hunt
+No issues found — checked callers of app.txt.
+
+### Convention Check
+No issues found — checked AGENTS.md and CONVENTIONS.md.
+
+### Dark Patterns
+No issues found — checked hardcodes and null handling in app.txt.
+
+### Blocking
+None.
+
+### Non-blocking
+None.
+
+### Verdict
+pass
+"""
+print(json.dumps({
+    "type": "result",
+    "session_id": "claude-json-session",
+    "modelUsage": {
+        "claude-feedback-observed": {
+            "inputTokens": 1,
+            "outputTokens": 1,
+            "costUSD": 0.01,
+        }
+    },
+    "result": result,
+}))
+PY
+EOF
+  chmod +x "$stub_dir/claude"
+
+  args_capture="$repo/claude.args"
+  env_capture="$repo/claude.env"
+  prompt_capture="$repo/claude.prompt"
+  capture output bash -lc "cd '$repo' && PATH='$stub_dir:$CLI_ROOT':\"\$PATH\" env -u CLAUDE_CODE_MAX_OUTPUT_TOKENS SCAFLD_CLAUDE_ARGS_CAPTURE='$args_capture' SCAFLD_CLAUDE_ENV_CAPTURE='$env_capture' SCAFLD_REVIEW_PROMPT_CAPTURE='$prompt_capture' scafld review '$task_id' --provider claude"
+  assert_contains_file "$args_capture" "--mcp-config" "claude runner should pass an explicit MCP config"
+  assert_contains_file "$args_capture" '{"mcpServers":{}}' "claude runner should pass a schema-valid empty MCP config"
+  assert_contains_file "$env_capture" "12000" "claude runner should set a default output-token budget"
+  python3 - "$args_capture" <<'PY'
+from pathlib import Path
+import sys
+import uuid
+
+args = Path(sys.argv[1]).read_text().splitlines()
+try:
+    session_id = args[args.index("--session-id") + 1]
+except (ValueError, IndexError) as exc:
+    raise SystemExit("missing --session-id") from exc
+uuid.UUID(session_id)
+PY
+  assert_contains "$output" "model observed:" "claude review should print observed model from json envelope"
+  review_text="$(cat "$repo/.ai/reviews/$task_id.md")"
+  assert_contains "$review_text" '"model_observed": "claude-feedback-observed"' "claude provenance should store observed model"
+  assert_contains "$review_text" '"model_source": "observed"' "claude provenance should mark observed model source"
+  assert_contains "$review_text" '"provider": "claude"' "claude provenance should store provider"
+  session_json="$(cat "$repo/.ai/runs/$task_id/session.json")"
+  assert_json "$session_json" "data['entries'][-1]['type'] == 'provider_invocation' and data['entries'][-1]['status'] == 'completed' and data['entries'][-1]['model_observed'] == 'claude-feedback-observed' and data['entries'][-1]['confidence'] == 'observed'" "claude provider telemetry should record observed model confidence"
+  assert_contains_file "$prompt_capture" "one numeric line only" "review runner prompt should forbid line-range findings"
+  assert_contains_file "$prompt_capture" "at most 10 total findings" "review runner prompt should cap review verbosity"
+
+  repo="$(new_repo)"
+  task_id="external-runner-pre-run-warning"
+  write_changed_file "$repo"
+  write_active_spec "$repo" "$task_id" "grep -q '^changed$' app.txt" "exit code 0" "pass"
+  stub_dir="$(mktemp -d /tmp/scafld-review-runner-prewarn.XXXXXX)"
+  TMP_DIRS+=("$stub_dir")
+  cat > "$stub_dir/claude" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+echo "provider-started" >&2
+cat >/dev/null
+exit 7
+EOF
+  chmod +x "$stub_dir/claude"
+
+  if capture output bash -lc "cd '$repo' && PATH='$stub_dir:$CLI_ROOT':\"\$PATH\" SCAFLD_CODEX_BIN='definitely-missing-codex' scafld review '$task_id'"; then
+    fail "failed claude fallback should fail review"
+  fi
+  output_file="$repo/pre-run-warning.output"
+  printf '%s\n' "$output" > "$output_file"
+  assert_file_order "$output_file" "warning: provider=auto fell back to weaker Claude isolation" "provider-started" "fallback warning should print before provider subprocess starts"
+
+  repo="$(new_repo)"
+  task_id="external-runner-prompt-diagnostic"
+  write_changed_file "$repo"
+  write_active_spec "$repo" "$task_id" "grep -q '^changed$' app.txt" "exit code 0" "pass"
+  stub_dir="$(mktemp -d /tmp/scafld-review-runner-prompt-diagnostic.XXXXXX)"
+  TMP_DIRS+=("$stub_dir")
+  cat > "$stub_dir/codex" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+output=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o|--output-last-message)
+      output="$2"
+      shift 2
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+cat >/dev/null
+echo "model: gpt-diagnostic-observed" >&2
+printf 'looks good to me\n' > "$output"
+EOF
+  chmod +x "$stub_dir/codex"
+
+  if capture output bash -lc "cd '$repo' && PATH='$stub_dir:$CLI_ROOT':\"\$PATH\" scafld review '$task_id' --provider codex"; then
+    fail "malformed external output should fail review"
+  fi
+  diagnostic="$repo/.ai/runs/$task_id/diagnostics/external-review-attempt-1.txt"
+  [ -f "$diagnostic" ] || fail "malformed external output should persist diagnostics"
+  assert_contains_file "$diagnostic" "prompt_sha256:" "external diagnostic should include prompt sha256"
+  assert_contains_file "$diagnostic" "## Prompt Preview" "external diagnostic should include prompt context"
+  session_json="$(cat "$repo/.ai/runs/$task_id/session.json")"
+  assert_json "$session_json" "data['entries'][-1]['type'] == 'provider_invocation' and data['entries'][-1]['status'] == 'invalid_output' and data['entries'][-1]['model_observed'] == 'gpt-diagnostic-observed'" "invalid output telemetry should still keep observed model"
+
+  PYTHONPATH="$REPO_ROOT" python3 - <<'PY'
+import json
+from scafld.review_runner import _extract_claude_stdout
+
+assert _extract_claude_stdout(json.dumps({
+    "result": "ok",
+    "model": "x" * 200,
+    "modelUsage": {"claude-safe": {"costUSD": "NaN"}},
+}))[1] == "claude-safe"
+
+nested = {"result": "ok"}
+cursor = nested
+for _ in range(20):
+    cursor["next"] = {}
+    cursor = cursor["next"]
+cursor["model"] = "claude-too-deep"
+assert _extract_claude_stdout(json.dumps(nested))[1] == ""
+PY
+}
+
 case_external_runner_malformed_prose() {
   local repo task_id output stub_dir
   repo="$(new_repo)"
@@ -2050,6 +2276,7 @@ case_all() {
   case_external_runner
   case_external_runner_timeout
   case_external_runner_observability
+  case_external_runner_observed_model_truth
   case_external_runner_malformed_prose
   case_external_runner_json_overrides
   case_exec_resume_nested_results
@@ -2084,6 +2311,7 @@ main() {
     external-runner-isolation) case_external_runner ;;
     external-runner-timeout) case_external_runner_timeout ;;
     external-runner-observability) case_external_runner_observability ;;
+    external-runner-observed-model-truth) case_external_runner_observed_model_truth ;;
     external-runner-malformed-prose) case_external_runner_malformed_prose ;;
     external-runner-json-overrides) case_external_runner_json_overrides ;;
     exec-resume-nested-results) case_exec_resume_nested_results ;;

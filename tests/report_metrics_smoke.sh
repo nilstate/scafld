@@ -117,6 +117,33 @@ record_provider_invocation(
     isolation_downgraded=True,
     fallback_policy="warn",
 )
+try:
+    record_provider_invocation(
+        root,
+        "report-task",
+        role="challenger",
+        gate="review",
+        provider="codex",
+        status="sort_of_okay",
+    )
+except ValueError as exc:
+    assert "provider invocation status" in str(exc)
+else:
+    raise AssertionError("invalid provider invocation status should fail")
+
+try:
+    record_provider_invocation(
+        root,
+        "report-task",
+        role="challenger",
+        gate="review",
+        provider="codex",
+        confidence="maybe",
+    )
+except ValueError as exc:
+    assert "provider invocation confidence" in str(exc)
+else:
+    raise AssertionError("invalid provider invocation confidence should fail")
 
 def separation_state(entries):
     return session_summary_payload({"entries": entries, "attempts": []})["provider_model_separation"]["state"]
@@ -140,6 +167,22 @@ assert separation_state([
     {"type": "provider_invocation", "role": "executor", "model_observed": "gpt-a"},
     {"type": "provider_invocation", "role": "challenger", "model_observed": "gpt-b"},
 ]) == "separated"
+legacy_summary = session_summary_payload({
+    "entries": [
+        {
+            "type": "provider_invocation",
+            "role": "challenger",
+            "gate": "review",
+            "status": "legacy_status",
+            "confidence": "legacy_confidence",
+            "isolation_level": "claude_restricted_tools_fresh_session",
+        }
+    ],
+    "attempts": [],
+})
+assert legacy_summary["provider_statuses"]["legacy_status"] == 1
+assert legacy_summary["provider_confidence"]["legacy_confidence"] == 1
+assert legacy_summary["provider_weaker_review_isolation"] == 1
 PY
 
 echo "[3/5] human report shows the LLM execution signals section"
@@ -152,6 +195,7 @@ assert_contains "$output" "provider invocations: 2" "report should show provider
 assert_contains "$output" "provider confidence: requested_only=1, unknown=1" "report should show provider confidence counts"
 assert_contains "$output" "provider statuses: completed=2" "report should show provider invocation statuses"
 assert_contains "$output" "isolation downgrades: 1/2" "report should show provider isolation downgrade denominator"
+assert_contains "$output" "weaker review isolation: 1/2" "report should show weaker review isolation denominator"
 assert_contains "$output" "model separation: unknown_both=1" "report should show unknown model separation"
 assert_contains "$output" "Per-task metrics" "report should show per-task runtime metrics"
 
@@ -167,9 +211,11 @@ assert_json "$output" "data['result']['llm_runtime']['provider_telemetry']['conf
 assert_json "$output" "data['result']['llm_runtime']['provider_telemetry']['statuses']['completed'] == 2" "json report should expose provider status counts"
 assert_json "$output" "data['result']['llm_runtime']['provider_telemetry']['models_unknown'] == 2" "json report should expose unknown provider model counts"
 assert_json "$output" "data['result']['llm_runtime']['provider_telemetry']['isolation_downgrades'] == 1" "json report should expose isolation downgrade counts"
+assert_json "$output" "data['result']['llm_runtime']['provider_telemetry']['weaker_review_isolation'] == 1" "json report should expose weaker review isolation counts"
 assert_json "$output" "data['result']['llm_runtime']['provider_telemetry']['model_separation']['unknown_both'] == 1" "json report should expose unknown model separation"
 assert_json "$output" "data['result']['llm_runtime']['per_task']['report-task']['recovery_convergence_rate']['recovered'] == 1" "json report should expose per-task runtime metrics"
 assert_json "$output" "data['result']['llm_runtime']['per_task']['report-task']['provider_telemetry']['isolation_downgrades'] == 1" "json report should expose per-task provider telemetry"
+assert_json "$output" "data['result']['llm_runtime']['per_task']['report-task']['provider_telemetry']['weaker_review_isolation'] == 1" "json report should expose per-task weaker isolation telemetry"
 assert_json "$output" "'review_signal' in data['result'] and 'format_compliant_clean_reviews' in data['result']['review_signal'] and 'clean_reviews_with_evidence' in data['result']['review_signal']" "json report should expose renamed review signal metrics and legacy alias"
 
 echo "[5/5] runtime-only report filters to the session cohort"

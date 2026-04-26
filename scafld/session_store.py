@@ -15,6 +15,18 @@ from scafld.runtime_contracts import (
 from scafld.spec_parsing import now_iso
 
 
+PROVIDER_INVOCATION_STATUSES = (
+    "completed",
+    "failed",
+    "timed_out",
+    "spawn_failed",
+    "invalid_output",
+    "invalid_artifact",
+)
+PROVIDER_CONFIDENCE_VALUES = ("observed", "requested_only", "unknown")
+STRONG_REVIEW_ISOLATION_LEVELS = {"codex_read_only_ephemeral"}
+
+
 def default_session(task_id, *, model_profile):
     timestamp = now_iso()
     return {
@@ -463,6 +475,18 @@ def record_provider_invocation(
             confidence = "requested_only"
         else:
             confidence = "unknown"
+    status = _normalize_provider_invocation_value(
+        status,
+        allowed=PROVIDER_INVOCATION_STATUSES,
+        field="provider invocation status",
+        default="completed",
+    )
+    confidence = _normalize_provider_invocation_value(
+        confidence,
+        allowed=PROVIDER_CONFIDENCE_VALUES,
+        field="provider invocation confidence",
+        default="unknown",
+    )
 
     def apply(session):
         fields = {
@@ -496,6 +520,13 @@ def record_provider_invocation(
         append_entry(session, "provider_invocation", **fields)
 
     return mutate_session(root, task_id, apply, spec_path=spec_path)
+
+
+def _normalize_provider_invocation_value(value, *, allowed, field, default):
+    normalized = str(value or default).strip() or default
+    if normalized not in allowed:
+        raise ValueError(f"{field} must be one of: {', '.join(allowed)}")
+    return normalized
 
 
 def _provider_model_separation(provider_invocations):
@@ -641,10 +672,18 @@ def session_summary_payload(session):
     provider_invocations_by_role = defaultdict(int)
     provider_confidence = defaultdict(int)
     provider_statuses = defaultdict(int)
+    provider_weaker_review_isolation = 0
     for entry in provider_invocations:
         provider_invocations_by_role[entry.get("role") or "unknown"] += 1
         provider_confidence[entry.get("confidence") or "unknown"] += 1
         provider_statuses[entry.get("status") or "unknown"] += 1
+        if (
+            entry.get("role") == "challenger"
+            and entry.get("gate") == "review"
+            and entry.get("isolation_level")
+            and entry.get("isolation_level") not in STRONG_REVIEW_ISOLATION_LEVELS
+        ):
+            provider_weaker_review_isolation += 1
     provider_model_separation = _provider_model_separation(provider_invocations) if provider_invocations else {
         "state": "none",
         "executor_model_observed": "",
@@ -682,6 +721,7 @@ def session_summary_payload(session):
         "provider_models_observed": sum(1 for entry in provider_invocations if entry.get("model_observed")),
         "provider_models_unknown": sum(1 for entry in provider_invocations if not entry.get("model_observed")),
         "provider_isolation_downgrades": sum(1 for entry in provider_invocations if entry.get("isolation_downgraded")),
+        "provider_weaker_review_isolation": provider_weaker_review_isolation,
         "provider_model_separation": provider_model_separation,
         "usage": usage,
     }
