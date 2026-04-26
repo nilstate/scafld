@@ -80,7 +80,7 @@ Its job is to:
 
 - attack the diff
 - attack the contract
-- cite exact file and line
+- cite an exact file line or a stable YAML/Markdown anchor
 - separate blocking vs non-blocking findings
 - use explicit severity: `critical`, `high`, `medium`, or `low`
 
@@ -98,11 +98,13 @@ prints the diagnostic path so the paid model output remains inspectable even
 when it cannot be accepted as a review round.
 Diagnostics include the prompt sha256 and a bounded prompt preview so the
 operator can connect a rejected provider response to the exact challenger prompt
-that produced it.
+that produced it. Long prompt previews keep the trusted header and the tail of
+the task handoff so the changing task evidence is preserved.
 
 Finding format:
 
 - `- **high** \`path/file.py:88\` — the exact failure mode and why it matters`
+- `- **medium** \`docs/review.md#provider-isolation\` — stable anchor for doc/config findings`
 
 `Blocking` and `Non-blocking` accept only finding bullets or `None.`.
 `Verdict` accepts only `pass`, `fail`, or `pass_with_issues`.
@@ -126,12 +128,19 @@ Codex to Claude is marked as weaker isolation.
 
 Provider invocation session entries also carry status, timing, timeout, exit,
 diagnostic, and attribution confidence fields. Observed provider facts can
-coexist with unknown model facts; reports keep requested-only and unknown model
-attribution separate from proven model separation.
-When a provider exposes its billed model in a parseable envelope or stable output
-hint, scafld records `model_observed` and marks confidence as `observed`. If the
-provider only exposes the requested model, the entry stays `requested_only`; if
-neither is available, it stays `unknown`.
+coexist with unknown model facts; reports keep inferred, requested-only, and
+unknown model attribution separate from trusted model separation.
+When Claude exposes its billed model in the JSON envelope, scafld records
+`model_observed` and marks confidence as `observed`. Codex does not currently
+return a structured envelope here; any plausible model id found in stdout/stderr
+is recorded as `inferred`, not observed. Inferred model ids are counted in
+reports but are not used to declare same-model or separated-model outcomes. If
+the provider only exposes the requested model, the entry stays `requested_only`;
+if neither is available, it stays `unknown`.
+
+Claude review runs request a fresh UUID session id. If Claude reports a different
+session id in its JSON envelope, scafld records the observed session in review
+provenance and emits a warning.
 
 Reports distinguish auto fallback downgrades from weaker challenger review
 isolation. `isolation downgrades` counts `provider: auto` runs that fell through
@@ -160,7 +169,7 @@ scafld complete <task-id> --human-reviewed --reason "manual audit"
 - review exists
 - latest round is structurally valid
 - configured adversarial sections are filled
-- adversarial findings use grounded severity plus `file:line`
+- adversarial findings use grounded severity plus `file:line` or `doc.md#anchor`
 - verdict is not blocking
 - reviewed git state still matches the workspace
 

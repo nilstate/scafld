@@ -1,0 +1,300 @@
+spec_version: '1.1'
+task_id: external-review-attribution-precision
+created: '2026-04-26T13:38:45Z'
+updated: "2026-04-26T14:05:43Z"
+status: "completed"
+harden_status: passed
+task:
+  title: External review attribution precision
+  summary: 'The external review runner now records observed model ids, but the attribution
+    surface still conflates structured provider facts with unstructured regex hints.
+    Claude model ids come from a real JSON envelope; Codex model ids are inferred
+    from stdout/stderr text and have a false-positive risk. Tighten that distinction,
+    preserve useful diagnostics, and tune the remaining review-format surfaces without
+    weakening the strict review gate.
+
+    '
+  size: small
+  risk_level: medium
+  context:
+    packages:
+    - scafld
+    - tests
+    - docs
+    files_impacted:
+    - path: scafld/review_runner.py
+      lines: task-selected
+      reason: Provider model extraction, Claude session echo checks, prompt diagnostics,
+        and review prompt rules live here.
+    - path: scafld/session_store.py
+      lines: task-selected
+      reason: Provider telemetry confidence and model-separation aggregation must
+        distinguish observed from inferred attribution.
+    - path: scafld/commands/review.py
+      lines: task-selected
+      reason: Review command output should label inferred model ids honestly.
+    - path: scafld/commands/reporting.py
+      lines: task-selected
+      reason: Report output and JSON should show inferred model counts separately
+        from observed model counts.
+    - path: scafld/reviewing.py
+      lines: task-selected
+      reason: Finding citation validation should accept stable YAML/Markdown anchors
+        in addition to numeric code lines.
+    - path: scafld/review_workflow.py
+      lines: task-selected
+      reason: Manual challenger handoff instructions should match the accepted finding
+        citation format.
+    - path: scafld/review_signal.py
+      lines: task-selected
+      reason: The legacy clean-review alias should be explicitly deprecated rather
+        than presented as an evidence claim.
+    - path: scripts/real_standard.py
+      lines: task-selected
+      reason: Cohort reporting should continue using format-compliant wording and
+        avoid the deprecated clean-review alias where possible.
+    - path: tests/review_gate_smoke.sh
+      lines: task-selected
+      reason: External runner smoke coverage should prove inferred-vs-observed model
+        source semantics and prompt diagnostic truncation.
+    - path: tests/report_metrics_smoke.sh
+      lines: task-selected
+      reason: Provider telemetry aggregation should prove inferred model counts and
+        trusted model separation.
+    - path: tests/review_signal_corpus_smoke.sh
+      lines: task-selected
+      reason: Review parser corpus should protect YAML/Markdown citation support
+        and clean-review signal wording.
+    - path: docs/review.md
+      lines: task-selected
+      reason: Operator docs should explain observed vs inferred attribution and deprecated
+        clean-review alias semantics.
+    invariants:
+    - provider_telemetry_must_not_overclaim
+    - review_gate_verdict_semantics_do_not_change
+    - diagnostics_must_remain_debuggable
+    - packaged_cli_is_the_truth_surface
+  objectives:
+  - Treat Claude JSON envelope model ids as structurally observed, but treat Codex
+    stdout/stderr model hints as inferred.
+  - Keep inferred model ids out of trusted same-model/separated model-separation
+    decisions.
+  - 'Restrict unstructured model hints enough to avoid obvious `model: User` and
+    `model_id: legacy` false positives.'
+  - Check Claude's reported session id against scafld's requested UUID and record
+    a warning when they diverge.
+  - Make diagnostic prompt previews keep both trusted header and untrusted task tail.
+  - Accept stable YAML/Markdown anchor citations for document/config findings while
+    preserving strict numeric line citations for code.
+  - Mark `clean_reviews_with_evidence` as a deprecated compatibility alias; keep
+    human-facing and preferred JSON surfaces on format-compliant wording.
+  touchpoints:
+  - area: external review attribution
+    description: Provider provenance and session telemetry must separate structured
+      observations from unstructured hints.
+  - area: review parser strictness
+    description: The review gate should allow non-code anchors where line numbers
+      are not the stable citation form, without accepting loose prose bullets.
+  - area: diagnostics and reports
+    description: Debug artifacts and aggregate reports should expose attribution
+      precision and avoid overstating clean-review evidence.
+  acceptance:
+    definition_of_done:
+    - id: dod1
+      description: 'Codex unstructured model hints record `model_source: inferred`
+        and confidence `inferred`, while Claude JSON envelope model ids remain observed.'
+      status: pending
+    - id: dod2
+      description: Model-separation telemetry only treats observed model ids as trusted;
+        inferred ids are counted separately.
+      status: pending
+    - id: dod3
+      description: Claude session id mismatches emit telemetry warnings and prompt
+        diagnostics keep both the header and the handoff tail.
+      status: pending
+    - id: dod4
+      description: 'Review findings can cite YAML/Markdown anchors such as `config.yaml#review.external`
+        while unanchored prose findings remain invalid.'
+      status: pending
+    - id: dod5
+      description: 'Clean-review report/docs use format-compliant wording, with `clean_reviews_with_evidence`
+        documented and emitted only as a deprecated compatibility alias.'
+      status: pending
+    validation:
+    - id: v1
+      type: compile
+      description: Compile Python sources after runner/session/parser changes.
+      command: python3 -m compileall scafld cli scripts
+      expected: exit code 0
+    - id: v2
+      type: integration
+      description: External review runner smoke proves inferred attribution and diagnostics.
+      command: bash tests/review_gate_smoke.sh external-runner-attribution-precision
+      expected: exit code 0
+    - id: v3
+      type: integration
+      description: Report metrics smoke proves inferred counts and trusted model separation.
+      command: bash tests/report_metrics_smoke.sh
+      expected: exit code 0
+    - id: v4
+      type: integration
+      description: Review signal corpus proves YAML/Markdown finding citations and clean-review wording.
+      command: bash tests/review_signal_corpus_smoke.sh
+      expected: exit code 0
+planning_log:
+- timestamp: '2026-04-26T13:38:45Z'
+  actor: user
+  summary: Spec created via scafld plan
+- timestamp: '2026-04-26T13:40:00Z'
+  actor: assistant
+  summary: Converted the next adversarial feedback batch into attribution precision,
+    citation-format, diagnostics, and clean-review wording work. Verified that the
+    duplicate `response_sha256` item was already fixed in the previous commit.
+- timestamp: "2026-04-26T13:42:23Z"
+  actor: "cli"
+  summary: "Spec approved"
+- timestamp: "2026-04-26T13:57:04Z"
+  actor: "cli"
+  summary: "Execution started"
+- timestamp: "2026-04-26T14:05:43Z"
+  actor: "cli"
+  summary: "Spec completed"
+phases:
+- id: phase1
+  name: Model attribution precision
+  objective: Split structured observed model facts from unstructured inferred hints
+    and keep trusted model-separation metrics honest.
+  changes:
+  - file: scafld/review_runner.py
+    action: update
+    content_spec: Return model source/confidence with provider extraction, mark Codex
+      regex hints as inferred, restrict unstructured model hints to plausible model
+      prefixes, check Claude reported session ids, and preserve prompt head plus tail
+      in diagnostics.
+  - file: scafld/session_store.py
+    action: update
+    content_spec: Add inferred provider confidence, count inferred models separately,
+      and make model-separation states use observed-confidence models only.
+  - file: scafld/commands/review.py
+    action: update
+    content_spec: Print inferred model labels distinctly from observed model labels.
+  - file: scafld/commands/reporting.py
+    action: update
+    content_spec: Add inferred model counts to human and JSON provider telemetry.
+  - file: tests/review_gate_smoke.sh
+    action: update
+    content_spec: Add smoke coverage for Codex inferred model hints, false-positive
+      rejection, Claude session mismatch warnings, and prompt preview head/tail truncation.
+  - file: tests/report_metrics_smoke.sh
+    action: update
+    content_spec: Assert inferred model aggregation and trusted model separation behavior.
+  acceptance_criteria:
+  - id: ac1_1
+    type: integration
+    description: External-runner attribution precision smoke passes.
+    command: bash tests/review_gate_smoke.sh external-runner-attribution-precision
+    expected: exit code 0
+    result: "pass"
+    executed_at: "2026-04-26T13:57:12Z"
+  - id: ac1_2
+    type: integration
+    description: Report metrics smoke passes with inferred attribution counts.
+    command: bash tests/report_metrics_smoke.sh
+    expected: exit code 0
+    result: "pass"
+    executed_at: "2026-04-26T13:57:14Z"
+    result_output: "[1/5] create one failure followed by one recovery [2/5] record provider telemetry for attribution reporting [3/5] human report shows the LLM execution signals section [4/5] json report exposes the sam"
+  status: "completed"
+- id: phase2
+  name: Parser and wording precision
+  objective: Keep review parsing strict while accepting stable YAML/Markdown citations
+    and retiring evidence-overclaim wording from preferred surfaces.
+  changes:
+  - file: scafld/reviewing.py
+    action: update
+    content_spec: 'Extend finding citation validation to allow `*.yaml#anchor` and
+      `*.md#heading` citations while preserving severity and bullet format.'
+  - file: scafld/review_runner.py
+    action: update
+    content_spec: Update external reviewer instructions to allow YAML/Markdown anchors
+      and continue forbidding line ranges.
+  - file: scafld/review_workflow.py
+    action: update
+    content_spec: Update manual challenger handoff instructions to allow YAML/Markdown
+      anchors alongside numeric file lines.
+  - file: scafld/review_signal.py
+    action: update
+    content_spec: Emit preferred format-compliant clean-review keys and mark the legacy
+      clean_reviews_with_evidence alias as deprecated compatibility metadata.
+  - file: scripts/real_standard.py
+    action: update
+    content_spec: Prefer the format-compliant clean-review key and avoid evidence
+      wording in cohort output.
+  - file: tests/review_signal_corpus_smoke.sh
+    action: update
+    content_spec: Add corpus assertions for YAML/Markdown anchor finding citations
+      and deprecated clean-review alias semantics.
+  - file: docs/review.md
+    action: update
+    content_spec: Document observed vs inferred attribution, YAML/Markdown anchors,
+      and the deprecated clean-review compatibility alias.
+  acceptance_criteria:
+  - id: ac2_1
+    type: integration
+    description: Review signal corpus smoke passes.
+    command: bash tests/review_signal_corpus_smoke.sh
+    expected: exit code 0
+    result: "pass"
+    executed_at: "2026-04-26T13:57:29Z"
+    result_output: "[1/3] grounded clean reviews pass the stronger parser [2/3] YAML and Markdown anchor citations stay valid [3/3] low-signal uncited reviews fail the stronger parser PASS: review signal corpus smoke"
+  - id: ac2_2
+    type: compile
+    description: Python sources compile after parser/report changes.
+    command: python3 -m compileall scafld cli scripts
+    expected: exit code 0
+    result: "pass"
+    executed_at: "2026-04-26T13:57:30Z"
+    result_output: "Listing 'scafld'... Listing 'scafld/commands'... Listing 'cli'... Listing 'scripts'..."
+  status: "completed"
+rollback:
+  strategy: per_phase
+  commands:
+    phase1: git checkout HEAD -- scafld/review_runner.py scafld/session_store.py scafld/commands/review.py scafld/commands/reporting.py tests/review_gate_smoke.sh tests/report_metrics_smoke.sh
+    phase2: git checkout HEAD -- scafld/reviewing.py scafld/review_workflow.py scafld/review_signal.py scripts/real_standard.py tests/review_signal_corpus_smoke.sh docs/review.md
+harden_rounds:
+- round: 1
+  started_at: '2026-04-26T13:38:45Z'
+  outcome: passed
+  questions:
+  - q: Should regex-grepped Codex model hints count the same as Claude JSON envelope
+      observations?
+    recommended_answer: No. Mark Codex hints as inferred and keep trusted model-separation
+      metrics based on observed structured provider data only.
+    grounded_in: code:scafld/review_runner.py:661
+
+review:
+  timestamp: "2026-04-26T14:05:37Z"
+  verdict: "pass"
+  review_rounds: 2
+  reviewer_mode: "fresh_agent"
+  reviewer_session: "a5e5847e-6ff6-40f2-a1c3-b686f279f4bb"
+  round_status: "completed"
+  override_applied: false
+  override_reason: null
+  override_confirmed_at: null
+  reviewed_head: "d3de99d586f168c879a953c9c9fb77cce978b21f"
+  reviewed_dirty: true
+  reviewed_diff: "2e71430248b5d69c1e074f6817900f513be7ff13318223d2e2f7a3c2712610c0"
+  passes:
+    - id: spec_compliance
+      result: "pass"
+    - id: scope_drift
+      result: "pass"
+    - id: regression_hunt
+      result: "pass"
+    - id: convention_check
+      result: "pass"
+    - id: dark_patterns
+      result: "pass"
+  blocking_count: 0
+  non_blocking_count: 0

@@ -14,7 +14,7 @@ from pathlib import Path
 
 from scafld.error_codes import ErrorCode as EC
 from scafld.errors import ScafldError
-from scafld.reviewing import FINDING_LINE_RE, review_pass_ids, review_passes_by_kind
+from scafld.reviewing import FINDING_FORMAT_DESCRIPTION, FINDING_LINE_RE, review_pass_ids, review_passes_by_kind
 from scafld.runtime_contracts import diagnostics_dir, relative_path
 from scafld.runtime_bundle import CONFIG_PATH, load_runtime_config
 from scafld.session_store import record_provider_invocation
@@ -35,6 +35,23 @@ MODEL_HINT_RE = re.compile(
     r"(?im)\bmodel(?:[_ -]?id)?\s*[:=]\s*[\"']?([A-Za-z0-9][A-Za-z0-9._:/+-]{1,127})"
 )
 MODEL_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/+-]{1,127}$")
+UNSTRUCTURED_MODEL_PREFIX_RE = re.compile(
+    r"^(?:"
+    r"gpt-[A-Za-z0-9]|"
+    r"claude-[A-Za-z0-9]|"
+    r"gemini-[A-Za-z0-9]|"
+    r"llama[-_:/+]?[A-Za-z0-9]|"
+    r"mistral[-_:/+]?[A-Za-z0-9]|"
+    r"deepseek[-_:/+]?[A-Za-z0-9]|"
+    r"qwen[-_:/+]?[A-Za-z0-9]|"
+    r"grok[-_:/+]?[A-Za-z0-9]|"
+    r"codestral[-_:/+]?[A-Za-z0-9]|"
+    r"command-[A-Za-z0-9]|"
+    r"o(?:1|3)(?:-(?:mini|preview|pro))?(?:$|[-_.:/+])|"
+    r"o4-mini(?:$|[-_.:/+])"
+    r")",
+    re.IGNORECASE,
+)
 MAX_PROVIDER_JSON_DEPTH = 12
 
 
@@ -370,7 +387,7 @@ def _validate_external_findings(findings, heading):
         if not FINDING_LINE_RE.fullmatch(finding):
             raise ScafldError(
                 f"external reviewer returned invalid {heading} finding format",
-                ["expected '- **severity** `file:line` — explanation'"],
+                [f"expected '- **severity** {FINDING_FORMAT_DESCRIPTION} — explanation'"],
                 code=EC.COMMAND_FAILED,
             )
 
@@ -470,7 +487,9 @@ def _emit_external_warnings(warnings):
         print(f"warning: {warning}", file=sys.stderr)
 
 
-def _model_source(model_requested, model_observed):
+def _model_source(model_requested, model_observed, extracted_source=""):
+    if model_observed and extracted_source in {"observed", "inferred"}:
+        return extracted_source
     if model_observed:
         return "observed"
     if model_requested:
@@ -572,23 +591,29 @@ def _write_external_diagnostic(
     return relative_path(root, diagnostic_path)
 
 
-def _prompt_preview(prompt, limit=4000):
+def _prompt_preview(prompt, limit=4000, head=1000):
     if len(prompt) <= limit:
         return prompt
-    return prompt[:limit] + "\n...[truncated]"
+    tail = max(limit - head, 1000)
+    return prompt[:head] + "\n...[truncated middle]...\n" + prompt[-tail:]
 
 
 def _model_hint_from_text(text):
     match = MODEL_HINT_RE.search(text or "")
     if not match:
-        return ""
+        return "", ""
     candidate = match.group(1).rstrip(".,;)")
-    return _valid_model_id(candidate)
+    model = _valid_model_id(candidate, require_known_prefix=True)
+    return (model, "inferred") if model else ("", "")
 
 
-def _valid_model_id(value):
+def _valid_model_id(value, *, require_known_prefix=False):
     candidate = str(value or "").strip()
-    return candidate if MODEL_ID_RE.fullmatch(candidate) else ""
+    if not MODEL_ID_RE.fullmatch(candidate):
+        return ""
+    if require_known_prefix and not UNSTRUCTURED_MODEL_PREFIX_RE.match(candidate):
+        return ""
+    return candidate
 
 
 def _first_json_value(data, keys, *, depth=0):
@@ -611,6 +636,16 @@ def _first_json_value(data, keys, *, depth=0):
     return ""
 
 
+def _top_level_json_value(data, keys):
+    if not isinstance(data, dict):
+        return ""
+    for key in keys:
+        value = data.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
 def _model_from_model_usage(payload):
     if not isinstance(payload, dict):
         return ""
@@ -622,7 +657,8 @@ def _model_from_model_usage(payload):
     best_model = ""
     best_cost = -1.0
     first_model = ""
-    for model_name, model_usage in usage.items():
+    for model_name in sorted(usage):
+        model_usage = usage[model_name]
         model_name = _valid_model_id(model_name)
         if not first_model and model_name:
             first_model = model_name
@@ -644,21 +680,35 @@ def _extract_claude_stdout(stdout):
     try:
         payload = json.loads(stdout)
     except (TypeError, json.JSONDecodeError):
-        return stdout or "", _model_hint_from_text(stdout or ""), ""
+        model, source = _model_hint_from_text(stdout or "")
+        return stdout or "", model, source, ""
     if not isinstance(payload, dict):
-        return stdout or "", _model_hint_from_text(stdout or ""), ""
+        model, source = _model_hint_from_text(stdout or "")
+        return stdout or "", model, source, ""
     raw_output = _first_json_value(payload, ("result", "output", "response", "text", "content")) or stdout or ""
     model_observed = (
-        _valid_model_id(_first_json_value(payload, ("model", "model_id", "modelId")))
+        _valid_model_id(_top_level_json_value(payload, ("model", "model_id", "modelId")))
         or _model_from_model_usage(payload)
-        or _model_hint_from_text(stdout or "")
     )
-    session_observed = _first_json_value(payload, ("session_id", "sessionId"))
-    return raw_output, model_observed, session_observed
+    model_source = "observed" if model_observed else ""
+    if not model_observed:
+        model_observed, model_source = _model_hint_from_text(stdout or "")
+    session_observed = _top_level_json_value(payload, ("session_id", "sessionId"))
+    return raw_output, model_observed, model_source, session_observed
 
 
 def _extract_codex_observed_model(stdout, stderr):
     return _model_hint_from_text("\n".join(part for part in (stdout, stderr) if part))
+
+
+def _normalize_observed_claude_session_id(session_id):
+    value = str(session_id or "").strip()
+    if not value:
+        return ""
+    try:
+        return str(uuid.UUID(value))
+    except ValueError:
+        return value
 
 
 def build_external_review_prompt(review_prompt, topology):
@@ -689,12 +739,12 @@ def build_external_review_prompt(review_prompt, topology):
         "Trusted evidence rules:\n"
         "- return only the requested review body; do not write prelude, scratch work, or analysis outside the sections\n"
         "- keep the review concise: at most 10 total findings and short explanations\n"
-        "- every finding must cite a real file and line number\n"
-        "- finding citations must use one numeric line only, not line ranges\n"
+        "- every finding must cite a real file and one numeric line, or a stable YAML/Markdown anchor such as config.yaml#review.external\n"
+        "- numeric citations must use one line only, not line ranges\n"
         "- explain the failure mode and why it matters\n"
         "- do not invent violations you did not verify\n"
         "- clean sections must name the concrete target checked, not generic claims such as checked everything or checked the diff\n"
-        "- blocking and non-blocking findings must use '- **severity** `file:line` — explanation'\n\n"
+        f"- blocking and non-blocking findings must use '- **severity** {FINDING_FORMAT_DESCRIPTION} — explanation'\n\n"
         f"{UNTRUSTED_HANDOFF_BEGIN}\n"
         f"{escaped_review_prompt}\n"
         f"{UNTRUSTED_HANDOFF_END}\n\n"
@@ -712,7 +762,7 @@ def build_external_review_prompt(review_prompt, topology):
         f"- pass result ids must be exactly: {pass_ids}\n"
         "- pass result values must be PASS, FAIL, or PASS WITH ISSUES\n"
         "- if a section is clean, write one concrete line: No issues found — checked <specific files, callers, rules, or paths attacked>\n"
-        "- blocking and non-blocking findings must use '- **severity** `file:line` — explanation' with one numeric line, never a range\n"
+        "- blocking and non-blocking findings must use '- **severity** `file:line` — explanation' or '- **severity** `doc.md#heading` — explanation'; never use line ranges\n"
         "- do not include scratch work, planning notes, or prose before ### Pass Results\n"
         "- verdict must be pass, fail, or pass_with_issues\n"
     )
@@ -794,6 +844,8 @@ def run_external_review(root, task_id, review_prompt, topology, resolved_runner)
     warnings = _external_review_warnings(provider_requested, provider, resolved_runner.fallback_policy)
     warning = _warning_text(warnings)
     model_observed = ""
+    model_observed_source = ""
+    session_observed = ""
     argv = []
     stdout = ""
     stderr = ""
@@ -819,7 +871,7 @@ def run_external_review(root, task_id, review_prompt, topology, resolved_runner)
             stdout = proc.stdout or ""
             stderr = proc.stderr or ""
             raw_output = output_path.read_text(encoding="utf-8", errors="replace") if output_path.exists() else stdout
-            model_observed = _extract_codex_observed_model(stdout, stderr)
+            model_observed, model_observed_source = _extract_codex_observed_model(stdout, stderr)
         else:
             reviewer_session = _fresh_claude_session_id()
             argv = [provider_bin, *_claude_args(model, reviewer_session)]
@@ -837,7 +889,13 @@ def run_external_review(root, task_id, review_prompt, topology, resolved_runner)
             return_code = proc.returncode
             stdout = proc.stdout or ""
             stderr = proc.stderr or ""
-            raw_output, model_observed, _session_observed = _extract_claude_stdout(stdout)
+            raw_output, model_observed, model_observed_source, session_observed = _extract_claude_stdout(stdout)
+            session_observed = _normalize_observed_claude_session_id(session_observed)
+            if session_observed and session_observed != reviewer_session:
+                warnings.append(
+                    f"claude reported a different session id: requested {reviewer_session}, observed {session_observed}"
+                )
+            warning = _warning_text(warnings)
         completed_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         if return_code != 0:
             diagnostic_path = _write_external_diagnostic(
@@ -868,7 +926,7 @@ def run_external_review(root, task_id, review_prompt, topology, resolved_runner)
                 provider_requested=provider_requested,
                 model_requested=model,
                 model_observed=model_observed,
-                model_source=_model_source(model, model_observed),
+                model_source=_model_source(model, model_observed, model_observed_source),
                 isolation_level=isolation_level,
                 isolation_downgraded=isolation_downgraded,
                 fallback_policy=resolved_runner.fallback_policy,
@@ -900,11 +958,13 @@ def run_external_review(root, task_id, review_prompt, topology, resolved_runner)
             partial_stdout = partial_stdout.decode("utf-8", errors="replace")
         if isinstance(partial_stderr, bytes):
             partial_stderr = partial_stderr.decode("utf-8", errors="replace")
-        partial_model_observed = (
-            _extract_claude_stdout(partial_stdout)[1]
-            if provider == "claude"
-            else _extract_codex_observed_model(partial_stdout, partial_stderr)
-        )
+        if provider == "claude":
+            _, partial_model_observed, partial_model_source, _ = _extract_claude_stdout(partial_stdout)
+        else:
+            partial_model_observed, partial_model_source = _extract_codex_observed_model(
+                partial_stdout,
+                partial_stderr,
+            )
         diagnostic_path = _write_external_diagnostic(
             root,
             task_id,
@@ -933,7 +993,7 @@ def run_external_review(root, task_id, review_prompt, topology, resolved_runner)
             provider_requested=provider_requested,
             model_requested=model,
             model_observed=partial_model_observed,
-            model_source=_model_source(model, partial_model_observed),
+            model_source=_model_source(model, partial_model_observed, partial_model_source),
             isolation_level=isolation_level,
             isolation_downgraded=isolation_downgraded,
             fallback_policy=resolved_runner.fallback_policy,
@@ -985,7 +1045,7 @@ def run_external_review(root, task_id, review_prompt, topology, resolved_runner)
             provider_requested=provider_requested,
             model_requested=model,
             model_observed=model_observed,
-            model_source=_model_source(model, model_observed),
+            model_source=_model_source(model, model_observed, model_observed_source),
             isolation_level=isolation_level,
             isolation_downgraded=isolation_downgraded,
             fallback_policy=resolved_runner.fallback_policy,
@@ -1044,7 +1104,7 @@ def run_external_review(root, task_id, review_prompt, topology, resolved_runner)
             provider_requested=provider_requested,
             model_requested=model,
             model_observed=model_observed,
-            model_source=_model_source(model, model_observed),
+            model_source=_model_source(model, model_observed, model_observed_source),
             isolation_level=isolation_level,
             isolation_downgraded=isolation_downgraded,
             fallback_policy=resolved_runner.fallback_policy,
@@ -1071,7 +1131,8 @@ def run_external_review(root, task_id, review_prompt, topology, resolved_runner)
         "model": model,
         "model_requested": model,
         "model_observed": model_observed,
-        "model_source": _model_source(model, model_observed),
+        "model_source": _model_source(model, model_observed, model_observed_source),
+        "provider_session_observed": session_observed,
         "started_at": started_at,
         "completed_at": completed_at,
         "exit_code": return_code,

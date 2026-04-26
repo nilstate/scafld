@@ -110,7 +110,7 @@ fallback.
 Review provenance separates requested and observed model fields. An empty
 observed model means scafld could not verify what the provider actually billed.
 Provider invocation session entries include `confidence`: `observed`,
-`requested_only`, or `unknown`.
+`inferred`, `requested_only`, or `unknown`.
 Reports use conservative separation states: `separated`, `same_model`,
 `unknown_executor`, `unknown_challenger`, and `unknown_both`.
 
