@@ -105,6 +105,7 @@ def cmd_report(args):
     provider_invocations = 0
     provider_invocations_by_role = defaultdict(int)
     provider_confidence = defaultdict(int)
+    provider_statuses = defaultdict(int)
     provider_models_observed = 0
     provider_models_unknown = 0
     provider_isolation_downgrades = 0
@@ -116,6 +117,7 @@ def cmd_report(args):
         "completed_rounds": 0,
         "blocking_verdicts": 0,
         "pass_with_issues_verdicts": 0,
+        "format_compliant_clean_reviews": 0,
         "clean_reviews_with_evidence": 0,
         "grounded_findings": 0,
     }
@@ -224,6 +226,8 @@ def cmd_report(args):
                 review_signal["blocking_verdicts"] += 1
             if signal["verdict"] == "pass_with_issues":
                 review_signal["pass_with_issues_verdicts"] += 1
+            if signal["format_compliant_clean_review"]:
+                review_signal["format_compliant_clean_reviews"] += 1
             if signal["clean_review_with_evidence"]:
                 review_signal["clean_reviews_with_evidence"] += 1
             review_signal["grounded_findings"] += signal["grounded_findings"]
@@ -263,6 +267,7 @@ def cmd_report(args):
                     "invocations": runtime["provider_invocations"],
                     "by_role": runtime["provider_invocations_by_role"],
                     "confidence": runtime["provider_confidence"],
+                    "statuses": runtime["provider_statuses"],
                     "models_observed": runtime["provider_models_observed"],
                     "models_unknown": runtime["provider_models_unknown"],
                     "isolation_downgrades": runtime["provider_isolation_downgrades"],
@@ -286,6 +291,8 @@ def cmd_report(args):
                 provider_invocations_by_role[role] += count
             for confidence, count in runtime["provider_confidence"].items():
                 provider_confidence[confidence] += count
+            for status_key, count in runtime["provider_statuses"].items():
+                provider_statuses[status_key] += count
             for phase_id, count in runtime["attempts_per_phase"].items():
                 attempts_per_phase[phase_id] += count
             usage = runtime.get("usage") if isinstance(runtime.get("usage"), dict) else {}
@@ -361,6 +368,7 @@ def cmd_report(args):
                         "invocations": provider_invocations,
                         "by_role": dict(sorted(provider_invocations_by_role.items())),
                         "confidence": dict(sorted(provider_confidence.items())),
+                        "statuses": dict(sorted(provider_statuses.items())),
                         "models_observed": provider_models_observed,
                         "models_unknown": provider_models_unknown,
                         "isolation_downgrades": provider_isolation_downgrades,
@@ -495,7 +503,10 @@ def cmd_report(args):
                     f"{key}={value}" for key, value in sorted(provider_confidence.items())
                 )
                 print(f"  provider confidence: {rendered_confidence}")
-            print(f"  isolation downgrades: {provider_isolation_downgrades}")
+            if provider_statuses:
+                rendered_statuses = ", ".join(f"{key}={value}" for key, value in sorted(provider_statuses.items()))
+                print(f"  provider statuses: {rendered_statuses}")
+            print(f"  isolation downgrades: {provider_isolation_downgrades}/{provider_invocations}")
             print(f"  model separation: {separation}")
         print()
 
@@ -523,7 +534,7 @@ def cmd_report(args):
         print(f"  completed rounds: {review_signal['completed_rounds']}")
         print(f"  blocking verdicts: {review_signal['blocking_verdicts']}")
         print(f"  pass_with_issues verdicts: {review_signal['pass_with_issues_verdicts']}")
-        print(f"  clean reviews with evidence: {review_signal['clean_reviews_with_evidence']}")
+        print(f"  format-compliant clean reviews: {review_signal['format_compliant_clean_reviews']}")
         print(f"  grounded findings: {review_signal['grounded_findings']}")
         print()
 

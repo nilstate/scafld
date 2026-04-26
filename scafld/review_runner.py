@@ -13,6 +13,7 @@ from pathlib import Path
 from scafld.error_codes import ErrorCode as EC
 from scafld.errors import ScafldError
 from scafld.reviewing import FINDING_LINE_RE, review_pass_ids, review_passes_by_kind
+from scafld.runtime_contracts import diagnostics_dir, relative_path
 from scafld.runtime_bundle import CONFIG_PATH, load_runtime_config
 from scafld.session_store import record_provider_invocation
 
@@ -58,6 +59,7 @@ class ExternalReviewResult:
     non_blocking: list[str]
     verdict: str
     provenance: dict
+    raw_output: str = ""
 
 
 def _review_config(root):
@@ -445,6 +447,93 @@ def _validate_external_result(text, topology):
     }
 
 
+def _external_review_warning(provider_requested, provider, fallback_policy):
+    if provider_requested == "auto" and provider == "claude" and fallback_policy == "warn":
+        return "provider=auto fell back to weaker Claude isolation"
+    return ""
+
+
+def _provider_bin_display(provider_bin):
+    value = str(provider_bin or "")
+    path = Path(value)
+    if path.is_absolute() or path.parent != Path("."):
+        return path.name
+    return value
+
+
+def _redacted_argv(root, argv):
+    redacted = []
+    path_value_flags = {"--cd", "--output-last-message", "-o"}
+    redact_next = False
+    root_text = str(root)
+    for index, arg in enumerate(argv):
+        value = str(arg)
+        if index == 0:
+            redacted.append(_provider_bin_display(value))
+            continue
+        if redact_next:
+            redacted.append("<path>")
+            redact_next = False
+            continue
+        redacted.append("<path>" if value.startswith("/") or root_text in value else value)
+        if value in path_value_flags:
+            redact_next = True
+    return " ".join(redacted)
+
+
+def _external_diagnostic_path(root, task_id):
+    diagnostic_root = diagnostics_dir(root, task_id)
+    diagnostic_root.mkdir(parents=True, exist_ok=True)
+    existing = sorted(diagnostic_root.glob("external-review-attempt-*.txt"))
+    return diagnostic_root / f"external-review-attempt-{len(existing) + 1}.txt"
+
+
+def _write_external_diagnostic(
+    root,
+    task_id,
+    *,
+    provider,
+    provider_requested,
+    argv,
+    started_at,
+    completed_at,
+    exit_code,
+    timed_out,
+    timeout_seconds,
+    stdout,
+    stderr,
+    raw_output,
+    error,
+):
+    diagnostic_path = _external_diagnostic_path(root, task_id)
+    safe_argv = _redacted_argv(root, argv)
+    body = [
+        "External review attempt diagnostic",
+        "",
+        f"provider_requested: {provider_requested}",
+        f"provider: {provider}",
+        f"argv: {safe_argv}",
+        f"started_at: {started_at}",
+        f"completed_at: {completed_at}",
+        f"exit_code: {exit_code if exit_code is not None else ''}",
+        f"timed_out: {str(bool(timed_out)).lower()}",
+        f"timeout_seconds: {timeout_seconds}",
+        f"error: {error}",
+        "",
+        "## Raw Output",
+        raw_output or "",
+        "",
+        "## Stdout",
+        stdout or "",
+        "",
+        "## Stderr",
+        stderr or "",
+        "",
+    ]
+    diagnostic_path.write_text("\n".join(body), encoding="utf-8")
+    return relative_path(root, diagnostic_path)
+
+
 def build_external_review_prompt(review_prompt, topology):
     adversarial = review_passes_by_kind(topology, "adversarial")
     escaped_review_prompt = _escape_untrusted_handoff_boundaries(review_prompt.rstrip())
@@ -510,7 +599,7 @@ def _codex_args(root, output_path, model):
         "--ignore-user-config",
         "--color",
         "never",
-        "-o",
+        "--output-last-message",
         str(output_path),
     ]
     if model:
@@ -542,6 +631,7 @@ def run_external_review(root, task_id, review_prompt, topology, resolved_runner)
         provider_requested,
         resolved_runner.fallback_policy,
     )
+    provider_bin_record = _provider_bin_display(provider_bin)
     model = resolved_runner.model or configured_provider_model(root, provider)
     prompt = build_external_review_prompt(review_prompt, topology)
     started_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -549,6 +639,11 @@ def run_external_review(root, task_id, review_prompt, topology, resolved_runner)
     return_code = 0
     reviewer_session = ""
     isolation_level = "codex_read_only_ephemeral" if provider == "codex" else "claude_restricted_tools_fresh_session"
+    isolation_downgraded = provider_requested == "auto" and provider == "claude"
+    warning = _external_review_warning(provider_requested, provider, resolved_runner.fallback_policy)
+    argv = []
+    stdout = ""
+    stderr = ""
 
     with tempfile.NamedTemporaryFile(prefix=f"scafld-review-{task_id}-", suffix=".txt", delete=False) as tmp:
         output_path = Path(tmp.name)
@@ -559,12 +654,16 @@ def run_external_review(root, task_id, review_prompt, topology, resolved_runner)
                 argv,
                 input=(prompt if prompt.endswith("\n") else prompt + "\n"),
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 capture_output=True,
                 cwd=str(root),
                 timeout=resolved_runner.timeout_seconds,
             )
             return_code = proc.returncode
-            raw_output = output_path.read_text() if output_path.exists() else proc.stdout
+            stdout = proc.stdout or ""
+            stderr = proc.stderr or ""
+            raw_output = output_path.read_text(encoding="utf-8", errors="replace") if output_path.exists() else stdout
         else:
             reviewer_session = str(uuid.uuid4())
             argv = [provider_bin, *_claude_args(model, reviewer_session)]
@@ -572,33 +671,172 @@ def run_external_review(root, task_id, review_prompt, topology, resolved_runner)
                 argv,
                 input=(prompt if prompt.endswith("\n") else prompt + "\n"),
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 capture_output=True,
                 cwd=str(root),
                 timeout=resolved_runner.timeout_seconds,
             )
             return_code = proc.returncode
-            raw_output = proc.stdout
-        stderr = (proc.stderr or "").strip()
+            stdout = proc.stdout or ""
+            stderr = proc.stderr or ""
+            raw_output = stdout
+        completed_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         if return_code != 0:
-            details = [stderr] if stderr else []
+            diagnostic_path = _write_external_diagnostic(
+                root,
+                task_id,
+                provider=provider,
+                provider_requested=provider_requested,
+                argv=argv,
+                started_at=started_at,
+                completed_at=completed_at,
+                exit_code=return_code,
+                timed_out=False,
+                timeout_seconds=resolved_runner.timeout_seconds,
+                stdout=stdout,
+                stderr=stderr,
+                raw_output=raw_output,
+                error=f"provider exited with {return_code}",
+            )
+            record_provider_invocation(
+                root,
+                task_id,
+                role="challenger",
+                gate="review",
+                provider=provider,
+                provider_bin=provider_bin_record,
+                provider_requested=provider_requested,
+                model_requested=model,
+                model_observed="",
+                model_source="requested" if model else "unknown",
+                isolation_level=isolation_level,
+                isolation_downgraded=isolation_downgraded,
+                fallback_policy=resolved_runner.fallback_policy,
+                status="failed",
+                started_at=started_at,
+                completed_at=completed_at,
+                exit_code=return_code,
+                timed_out=False,
+                timeout_seconds=resolved_runner.timeout_seconds,
+                diagnostic_path=diagnostic_path,
+                warning=warning,
+            )
+            details = []
+            if warning:
+                details.append(f"warning: {warning}")
+            if stderr.strip():
+                details.append(stderr.strip())
+            details.append(f"diagnostic: {diagnostic_path}")
             raise ScafldError(
                 f"external review runner failed via {provider}",
                 details,
                 code=EC.COMMAND_FAILED,
             )
     except subprocess.TimeoutExpired as exc:
+        completed_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         partial_stdout = exc.stdout or ""
         partial_stderr = exc.stderr or ""
         if isinstance(partial_stdout, bytes):
             partial_stdout = partial_stdout.decode("utf-8", errors="replace")
         if isinstance(partial_stderr, bytes):
             partial_stderr = partial_stderr.decode("utf-8", errors="replace")
+        diagnostic_path = _write_external_diagnostic(
+            root,
+            task_id,
+            provider=provider,
+            provider_requested=provider_requested,
+            argv=argv,
+            started_at=started_at,
+            completed_at=completed_at,
+            exit_code=None,
+            timed_out=True,
+            timeout_seconds=resolved_runner.timeout_seconds,
+            stdout=partial_stdout,
+            stderr=partial_stderr,
+            raw_output=partial_stdout,
+            error="provider timed out",
+        )
+        record_provider_invocation(
+            root,
+            task_id,
+            role="challenger",
+            gate="review",
+            provider=provider,
+            provider_bin=provider_bin_record,
+            provider_requested=provider_requested,
+            model_requested=model,
+            model_observed="",
+            model_source="requested" if model else "unknown",
+            isolation_level=isolation_level,
+            isolation_downgraded=isolation_downgraded,
+            fallback_policy=resolved_runner.fallback_policy,
+            status="timed_out",
+            started_at=started_at,
+            completed_at=completed_at,
+            timed_out=True,
+            timeout_seconds=resolved_runner.timeout_seconds,
+            diagnostic_path=diagnostic_path,
+            warning=warning,
+        )
+        details = [f"timeout_seconds={resolved_runner.timeout_seconds}"]
+        if warning:
+            details.append(f"warning: {warning}")
+        details.append(partial_stderr.strip() or partial_stdout.strip() or "provider produced no partial output")
+        details.append(f"diagnostic: {diagnostic_path}")
         raise ScafldError(
             f"external review runner timed out via {provider}",
-            [
-                f"timeout_seconds={resolved_runner.timeout_seconds}",
-                partial_stderr.strip() or partial_stdout.strip() or "provider produced no partial output",
-            ],
+            details,
+            code=EC.COMMAND_FAILED,
+        ) from exc
+    except OSError as exc:
+        completed_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        diagnostic_path = _write_external_diagnostic(
+            root,
+            task_id,
+            provider=provider,
+            provider_requested=provider_requested,
+            argv=argv,
+            started_at=started_at,
+            completed_at=completed_at,
+            exit_code=None,
+            timed_out=False,
+            timeout_seconds=resolved_runner.timeout_seconds,
+            stdout=stdout,
+            stderr=stderr,
+            raw_output=raw_output,
+            error=str(exc),
+        )
+        record_provider_invocation(
+            root,
+            task_id,
+            role="challenger",
+            gate="review",
+            provider=provider,
+            provider_bin=provider_bin_record,
+            provider_requested=provider_requested,
+            model_requested=model,
+            model_observed="",
+            model_source="requested" if model else "unknown",
+            isolation_level=isolation_level,
+            isolation_downgraded=isolation_downgraded,
+            fallback_policy=resolved_runner.fallback_policy,
+            status="spawn_failed",
+            started_at=started_at,
+            completed_at=completed_at,
+            timed_out=False,
+            timeout_seconds=resolved_runner.timeout_seconds,
+            diagnostic_path=diagnostic_path,
+            warning=warning,
+        )
+        details = []
+        if warning:
+            details.append(f"warning: {warning}")
+        details.append(str(exc))
+        details.append(f"diagnostic: {diagnostic_path}")
+        raise ScafldError(
+            f"external review runner could not start via {provider}",
+            details,
             code=EC.COMMAND_FAILED,
         ) from exc
     finally:
@@ -607,14 +845,58 @@ def run_external_review(root, task_id, review_prompt, topology, resolved_runner)
         except OSError:
             pass
 
-    completed_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-    normalized = _validate_external_result(raw_output, topology)
+    try:
+        normalized = _validate_external_result(raw_output, topology)
+    except ScafldError as exc:
+        diagnostic_path = _write_external_diagnostic(
+            root,
+            task_id,
+            provider=provider,
+            provider_requested=provider_requested,
+            argv=argv,
+            started_at=started_at,
+            completed_at=completed_at,
+            exit_code=return_code,
+            timed_out=False,
+            timeout_seconds=resolved_runner.timeout_seconds,
+            stdout=stdout,
+            stderr=stderr,
+            raw_output=raw_output,
+            error=exc.message,
+        )
+        record_provider_invocation(
+            root,
+            task_id,
+            role="challenger",
+            gate="review",
+            provider=provider,
+            provider_bin=provider_bin_record,
+            provider_requested=provider_requested,
+            model_requested=model,
+            model_observed="",
+            model_source="requested" if model else "unknown",
+            isolation_level=isolation_level,
+            isolation_downgraded=isolation_downgraded,
+            fallback_policy=resolved_runner.fallback_policy,
+            status="invalid_output",
+            started_at=started_at,
+            completed_at=completed_at,
+            exit_code=return_code,
+            timed_out=False,
+            timeout_seconds=resolved_runner.timeout_seconds,
+            diagnostic_path=diagnostic_path,
+            warning=warning,
+        )
+        if warning:
+            exc.details.append(f"warning: {warning}")
+        exc.details.append(f"diagnostic: {diagnostic_path}")
+        raise
     canonical_payload = json.dumps(normalized["canonical"], sort_keys=True, separators=(",", ":"))
     provenance = {
         "runner": "external",
         "provider_requested": provider_requested,
         "provider": provider,
-        "provider_bin": provider_bin,
+        "provider_bin": provider_bin_record,
         "provider_env": env_name,
         "model": model,
         "model_requested": model,
@@ -627,26 +909,12 @@ def run_external_review(root, task_id, review_prompt, topology, resolved_runner)
         "timeout_seconds": resolved_runner.timeout_seconds,
         "fallback_policy": resolved_runner.fallback_policy,
         "isolation_level": isolation_level,
-        "isolation_downgraded": provider_requested == "auto" and provider == "claude",
+        "isolation_downgraded": isolation_downgraded,
+        "warning": warning,
         "raw_response_sha256": hashlib.sha256(raw_output.encode("utf-8")).hexdigest(),
         "canonical_response_sha256": hashlib.sha256(canonical_payload.encode("utf-8")).hexdigest(),
         "response_sha256": hashlib.sha256(canonical_payload.encode("utf-8")).hexdigest(),
     }
-    record_provider_invocation(
-        root,
-        task_id,
-        role="challenger",
-        gate="review",
-        provider=provider,
-        provider_bin=provider_bin,
-        provider_requested=provider_requested,
-        model_requested=model,
-        model_observed="",
-        model_source="requested" if model else "unknown",
-        isolation_level=isolation_level,
-        isolation_downgraded=provider_requested == "auto" and provider == "claude",
-        fallback_policy=resolved_runner.fallback_policy,
-    )
     return ExternalReviewResult(
         reviewer_mode="fresh_agent",
         reviewer_session=reviewer_session,
@@ -657,4 +925,5 @@ def run_external_review(root, task_id, review_prompt, topology, resolved_runner)
         non_blocking=normalized["non_blocking"],
         verdict=normalized["verdict"],
         provenance=provenance,
+        raw_output=raw_output,
     )

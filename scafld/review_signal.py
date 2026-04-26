@@ -14,7 +14,7 @@ def review_signal_payload(review_data):
         if section.get("state") == "no_issues" and section.get("checked") and section.get("evidence", True)
     )
     finding_sections = sum(1 for section in sections.values() if section.get("state") == "findings")
-    clean_review_with_evidence = bool(
+    format_compliant_clean_review = bool(
         completed_round
         and review_data.get("verdict") == "pass"
         and sections
@@ -35,7 +35,8 @@ def review_signal_payload(review_data):
         "finding_sections": finding_sections,
         "no_issue_sections": no_issue_sections,
         "checked_no_issue_sections": checked_sections,
-        "clean_review_with_evidence": clean_review_with_evidence,
+        "format_compliant_clean_review": format_compliant_clean_review,
+        "clean_review_with_evidence": format_compliant_clean_review,
     }
 
 

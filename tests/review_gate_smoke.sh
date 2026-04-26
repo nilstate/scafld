@@ -1039,11 +1039,250 @@ sleep 2
 EOF
   chmod +x "$stub_dir/codex"
 
-  if capture output bash -lc "cd '$repo' && PATH='$stub_dir:$CLI_ROOT':\"\$PATH\" scafld review '$task_id' --provider codex"; then
+  if capture output bash -lc "cd '$repo' && PATH='$stub_dir:$CLI_ROOT':\"\$PATH\" SCAFLD_CODEX_BIN='$stub_dir/codex' scafld review '$task_id' --provider codex"; then
     fail "external runner timeout should fail review"
   fi
   assert_contains "$output" "timed out" "timeout failure should explain the provider timed out"
+  assert_contains "$output" "diagnostic: .ai/runs/$task_id/diagnostics/external-review-attempt-1.txt" "timeout failure should report the diagnostic path"
+  [ -f "$repo/.ai/runs/$task_id/diagnostics/external-review-attempt-1.txt" ] || fail "timeout failure should persist diagnostics"
+  assert_json "$(cat "$repo/.ai/runs/$task_id/session.json")" "data['entries'][-1]['type'] == 'provider_invocation' and data['entries'][-1]['status'] == 'timed_out' and data['entries'][-1]['timed_out'] is True and data['entries'][-1]['diagnostic_path'].endswith('external-review-attempt-1.txt')" "timeout failure should record provider telemetry"
   assert_contains "$output" "--runner local" "timeout failure should print degraded fallback guidance"
+}
+
+case_external_runner_observability() {
+  local repo task_id output stub_dir diagnostic session_json
+
+  repo="$(new_repo)"
+  task_id="external-runner-nonzero"
+  write_changed_file "$repo"
+  write_active_spec "$repo" "$task_id" "grep -q '^changed$' app.txt" "exit code 0" "pass"
+  stub_dir="$(mktemp -d /tmp/scafld-review-runner-nonzero.XXXXXX)"
+  TMP_DIRS+=("$stub_dir")
+  cat > "$stub_dir/codex" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+cat >/dev/null
+echo "provider stderr marker" >&2
+exit 42
+EOF
+  chmod +x "$stub_dir/codex"
+
+  if capture output bash -lc "cd '$repo' && PATH='$stub_dir:$CLI_ROOT':\"\$PATH\" scafld review '$task_id' --provider codex"; then
+    fail "nonzero external runner should fail review"
+  fi
+  diagnostic="$repo/.ai/runs/$task_id/diagnostics/external-review-attempt-1.txt"
+  assert_contains "$output" "external review runner failed via codex" "nonzero external runner should report provider failure"
+  assert_contains "$output" "diagnostic: .ai/runs/$task_id/diagnostics/external-review-attempt-1.txt" "nonzero external runner should report diagnostics"
+  [ -f "$diagnostic" ] || fail "nonzero external runner should persist diagnostics"
+  assert_contains_file "$diagnostic" "provider stderr marker" "nonzero diagnostic should include stderr"
+  assert_not_contains "$(cat "$diagnostic")" "$repo" "nonzero diagnostic should redact workspace paths"
+  assert_not_contains "$(cat "$diagnostic")" "/tmp/scafld-review" "nonzero diagnostic should redact temp output paths"
+  session_json="$(cat "$repo/.ai/runs/$task_id/session.json")"
+  assert_json "$session_json" "data['entries'][-1]['type'] == 'provider_invocation' and data['entries'][-1]['status'] == 'failed' and data['entries'][-1]['exit_code'] == 42 and data['entries'][-1]['diagnostic_path'].endswith('external-review-attempt-1.txt')" "nonzero external runner should record failed provider telemetry"
+
+  repo="$(new_repo)"
+  task_id="external-runner-spawn-failed"
+  write_changed_file "$repo"
+  write_active_spec "$repo" "$task_id" "grep -q '^changed$' app.txt" "exit code 0" "pass"
+  stub_dir="$(mktemp -d /tmp/scafld-review-runner-spawn-failed.XXXXXX)"
+  TMP_DIRS+=("$stub_dir")
+  printf '#!/definitely/missing/scafld-test-interpreter\n' > "$stub_dir/codex"
+  chmod +x "$stub_dir/codex"
+
+  if capture output bash -lc "cd '$repo' && PATH='$stub_dir:$CLI_ROOT':\"\$PATH\" SCAFLD_CODEX_BIN='$stub_dir/codex' scafld review '$task_id' --provider codex"; then
+    fail "unlaunchable external runner should fail review"
+  fi
+  diagnostic="$repo/.ai/runs/$task_id/diagnostics/external-review-attempt-1.txt"
+  assert_not_contains "$output" "Traceback" "unlaunchable external runner should not crash with a traceback"
+  assert_contains "$output" "could not start via codex" "unlaunchable external runner should report spawn failure"
+  assert_contains "$output" "diagnostic: .ai/runs/$task_id/diagnostics/external-review-attempt-1.txt" "unlaunchable external runner should report diagnostics"
+  [ -f "$diagnostic" ] || fail "unlaunchable external runner should persist diagnostics"
+  session_json="$(cat "$repo/.ai/runs/$task_id/session.json")"
+  assert_json "$session_json" "data['entries'][-1]['type'] == 'provider_invocation' and data['entries'][-1]['status'] == 'spawn_failed' and data['entries'][-1]['diagnostic_path'].endswith('external-review-attempt-1.txt')" "unlaunchable external runner should record spawn_failed telemetry"
+
+  repo="$(new_repo)"
+  task_id="external-runner-invalid-diagnostic"
+  write_changed_file "$repo"
+  write_active_spec "$repo" "$task_id" "grep -q '^changed$' app.txt" "exit code 0" "pass"
+  stub_dir="$(mktemp -d /tmp/scafld-review-runner-invalid-diagnostic.XXXXXX)"
+  TMP_DIRS+=("$stub_dir")
+  cat > "$stub_dir/codex" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+output=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o|--output-last-message)
+      output="$2"
+      shift 2
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+cat >/dev/null
+printf 'looks good to me\n' > "$output"
+EOF
+  chmod +x "$stub_dir/codex"
+
+  if capture output bash -lc "cd '$repo' && PATH='$stub_dir:$CLI_ROOT':\"\$PATH\" scafld review '$task_id' --provider codex"; then
+    fail "malformed external runner output should fail review"
+  fi
+  diagnostic="$repo/.ai/runs/$task_id/diagnostics/external-review-attempt-1.txt"
+  assert_contains "$output" "missing ### Pass Results" "malformed external output should be rejected"
+  assert_contains "$output" "diagnostic: .ai/runs/$task_id/diagnostics/external-review-attempt-1.txt" "malformed external output should report diagnostics"
+  [ -f "$diagnostic" ] || fail "malformed external output should persist diagnostics"
+  assert_contains_file "$diagnostic" "looks good to me" "malformed diagnostic should include raw output"
+  session_json="$(cat "$repo/.ai/runs/$task_id/session.json")"
+  assert_json "$session_json" "data['entries'][-1]['type'] == 'provider_invocation' and data['entries'][-1]['status'] == 'invalid_output' and data['entries'][-1]['diagnostic_path'].endswith('external-review-attempt-1.txt')" "malformed external output should record invalid_output telemetry"
+
+  repo="$(new_repo)"
+  task_id="external-runner-invalid-bytes"
+  write_changed_file "$repo"
+  write_active_spec "$repo" "$task_id" "grep -q '^changed$' app.txt" "exit code 0" "pass"
+  stub_dir="$(mktemp -d /tmp/scafld-review-runner-invalid-bytes.XXXXXX)"
+  TMP_DIRS+=("$stub_dir")
+  cat > "$stub_dir/codex" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+output=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o|--output-last-message)
+      output="$2"
+      shift 2
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+cat >/dev/null
+printf '\377\376' > "$output"
+EOF
+  chmod +x "$stub_dir/codex"
+
+  if capture output bash -lc "cd '$repo' && PATH='$stub_dir:$CLI_ROOT':\"\$PATH\" scafld review '$task_id' --provider codex"; then
+    fail "invalid-byte external output should fail review"
+  fi
+  diagnostic="$repo/.ai/runs/$task_id/diagnostics/external-review-attempt-1.txt"
+  assert_not_contains "$output" "Traceback" "invalid-byte external output should not crash with a traceback"
+  assert_contains "$output" "diagnostic: .ai/runs/$task_id/diagnostics/external-review-attempt-1.txt" "invalid-byte external output should report diagnostics"
+  [ -f "$diagnostic" ] || fail "invalid-byte external output should persist diagnostics"
+  session_json="$(cat "$repo/.ai/runs/$task_id/session.json")"
+  assert_json "$session_json" "data['entries'][-1]['type'] == 'provider_invocation' and data['entries'][-1]['status'] == 'invalid_output'" "invalid-byte external output should record invalid_output telemetry"
+
+  repo="$(new_repo)"
+  task_id="external-runner-invalid-artifact"
+  write_changed_file "$repo"
+  write_active_spec "$repo" "$task_id" "grep -q '^changed$' app.txt" "exit code 0" "pass"
+  stub_dir="$(mktemp -d /tmp/scafld-review-runner-invalid-artifact.XXXXXX)"
+  TMP_DIRS+=("$stub_dir")
+  cat > "$stub_dir/codex" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+output=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o|--output-last-message)
+      output="$2"
+      shift 2
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+cat >/dev/null
+cat > "$output" <<'MARKDOWN'
+### Pass Results
+- regression_hunt: PASS
+- convention_check: PASS
+- dark_patterns: PASS
+
+### Regression Hunt
+- **high** `app.txt:1` — unbucketed adversarial finding.
+
+### Convention Check
+No issues found — checked AGENTS.md and CONVENTIONS.md.
+
+### Dark Patterns
+No issues found — checked hardcodes and null handling in app.txt.
+
+### Blocking
+None.
+
+### Non-blocking
+None.
+
+### Verdict
+fail
+MARKDOWN
+EOF
+  chmod +x "$stub_dir/codex"
+
+  if capture output bash -lc "cd '$repo' && PATH='$stub_dir:$CLI_ROOT':\"\$PATH\" scafld review '$task_id' --provider codex"; then
+    fail "downstream-invalid external artifact should fail review"
+  fi
+  diagnostic="$repo/.ai/runs/$task_id/diagnostics/external-review-artifact-attempt-1.md"
+  assert_contains "$output" "external reviewer produced an invalid review artifact" "downstream-invalid external artifact should be rejected"
+  assert_contains "$output" "diagnostic: .ai/runs/$task_id/diagnostics/external-review-artifact-attempt-1.md" "downstream-invalid external artifact should report diagnostics"
+  [ -f "$diagnostic" ] || fail "downstream-invalid external artifact should persist diagnostics"
+  assert_contains_file "$diagnostic" "## Raw External Output" "artifact diagnostic should include raw external output"
+  assert_contains_file "$diagnostic" "## Candidate Review Artifact" "artifact diagnostic should include candidate review artifact"
+  session_json="$(cat "$repo/.ai/runs/$task_id/session.json")"
+  assert_json "$session_json" "data['entries'][-1]['type'] == 'provider_invocation' and data['entries'][-1]['status'] == 'invalid_artifact' and data['entries'][-1]['diagnostic_path'].endswith('external-review-artifact-attempt-1.md')" "downstream-invalid external artifact should record invalid_artifact telemetry"
+
+  repo="$(new_repo)"
+  task_id="external-runner-timeout-diagnostic"
+  write_changed_file "$repo"
+  write_active_spec "$repo" "$task_id" "grep -q '^changed$' app.txt" "exit code 0" "pass"
+  cat > "$repo/.ai/config.local.yaml" <<'EOF'
+review:
+  external:
+    timeout_seconds: 1
+EOF
+  stub_dir="$(mktemp -d /tmp/scafld-review-runner-timeout-diagnostic.XXXXXX)"
+  TMP_DIRS+=("$stub_dir")
+  cat > "$stub_dir/codex" <<'EOF'
+#!/usr/bin/env bash
+sleep 2
+EOF
+  chmod +x "$stub_dir/codex"
+
+  if capture output bash -lc "cd '$repo' && PATH='$stub_dir:$CLI_ROOT':\"\$PATH\" scafld review '$task_id' --provider codex"; then
+    fail "timed out external runner should fail review"
+  fi
+  diagnostic="$repo/.ai/runs/$task_id/diagnostics/external-review-attempt-1.txt"
+  assert_contains "$output" "timed out" "timeout diagnostic case should report timeout"
+  assert_contains "$output" "diagnostic: .ai/runs/$task_id/diagnostics/external-review-attempt-1.txt" "timeout diagnostic case should report diagnostics"
+  [ -f "$diagnostic" ] || fail "timeout diagnostic case should persist diagnostics"
+  session_json="$(cat "$repo/.ai/runs/$task_id/session.json")"
+  assert_json "$session_json" "data['entries'][-1]['type'] == 'provider_invocation' and data['entries'][-1]['status'] == 'timed_out' and data['entries'][-1]['timed_out'] is True and data['entries'][-1]['timeout_seconds'] == 1" "timeout diagnostic case should record timeout telemetry"
+
+  repo="$(new_repo)"
+  task_id="external-runner-fallback-failure-warning"
+  write_changed_file "$repo"
+  write_active_spec "$repo" "$task_id" "grep -q '^changed$' app.txt" "exit code 0" "pass"
+  stub_dir="$(mktemp -d /tmp/scafld-review-runner-fallback-failure.XXXXXX)"
+  TMP_DIRS+=("$stub_dir")
+  cat > "$stub_dir/claude" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+cat >/dev/null
+echo "claude fallback failed" >&2
+exit 7
+EOF
+  chmod +x "$stub_dir/claude"
+
+  if capture output bash -lc "cd '$repo' && PATH='$stub_dir:$CLI_ROOT':\"\$PATH\" SCAFLD_CODEX_BIN='definitely-missing-codex' scafld review '$task_id'"; then
+    fail "failed claude fallback should fail review"
+  fi
+  assert_contains "$output" "warning: provider=auto fell back to weaker Claude isolation" "failed claude fallback should still surface weaker-isolation warning"
+  assert_contains "$output" "diagnostic: .ai/runs/$task_id/diagnostics/external-review-attempt-1.txt" "failed claude fallback should report diagnostics"
+  session_json="$(cat "$repo/.ai/runs/$task_id/session.json")"
+  assert_json "$session_json" "data['entries'][-1]['type'] == 'provider_invocation' and data['entries'][-1]['provider'] == 'claude' and data['entries'][-1]['status'] == 'failed' and data['entries'][-1]['warning'] == 'provider=auto fell back to weaker Claude isolation'" "failed claude fallback should record warning telemetry"
 }
 
 case_external_runner_malformed_prose() {
@@ -1810,6 +2049,7 @@ case_all() {
   case_non_mutating_review
   case_external_runner
   case_external_runner_timeout
+  case_external_runner_observability
   case_external_runner_malformed_prose
   case_external_runner_json_overrides
   case_exec_resume_nested_results
@@ -1843,6 +2083,7 @@ main() {
     external-runner-prose) case_external_runner ;;
     external-runner-isolation) case_external_runner ;;
     external-runner-timeout) case_external_runner_timeout ;;
+    external-runner-observability) case_external_runner_observability ;;
     external-runner-malformed-prose) case_external_runner_malformed_prose ;;
     external-runner-json-overrides) case_external_runner_json_overrides ;;
     exec-resume-nested-results) case_exec_resume_nested_results ;;

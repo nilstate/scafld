@@ -2,6 +2,7 @@ import os
 import shutil
 import subprocess
 import sys
+from datetime import datetime, timezone
 
 from scafld.handoff_renderer import render_handoff
 from scafld.handoff_renderer import current_phase_id
@@ -132,6 +133,15 @@ def run_provider(root, provider, mode, task_id, provider_args):
         raise ValueError(f"unknown mode '{mode}'")
 
     print(f"scafld: feeding {handoff_file or 'generated handoff'} to {provider_label}", file=sys.stderr)
+    started_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    proc = subprocess.run(
+        [provider_bin, *provider_args],
+        input=(prompt if prompt.endswith("\n") else prompt + "\n"),
+        text=True,
+        cwd=str(root),
+    )
+    completed_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    requested_model = model_arg(provider_args)
     record_provider_invocation(
         root,
         task_id,
@@ -139,15 +149,13 @@ def run_provider(root, provider, mode, task_id, provider_args):
         gate=mode,
         provider=provider_label,
         provider_bin=provider_bin,
-        model_requested=model_arg(provider_args),
+        model_requested=requested_model,
         model_observed="",
-        model_source="requested" if model_arg(provider_args) else "unknown",
+        model_source="requested" if requested_model else "unknown",
         isolation_level="provider_adapter",
-    )
-    proc = subprocess.run(
-        [provider_bin, *provider_args],
-        input=(prompt if prompt.endswith("\n") else prompt + "\n"),
-        text=True,
-        cwd=str(root),
+        status="completed" if proc.returncode == 0 else "failed",
+        started_at=started_at,
+        completed_at=completed_at,
+        exit_code=proc.returncode,
     )
     return proc.returncode

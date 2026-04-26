@@ -92,6 +92,11 @@ candidate latest review round, parses it with the same gate as a manual review,
 and only persists it if the artifact is valid. Invalid external output fails
 `scafld review` and does not print a completion command.
 
+Failed external attempts, timeouts, and malformed external output write raw
+provider diagnostics under `.ai/runs/<task-id>/diagnostics/`. The command error
+prints the diagnostic path so the paid model output remains inspectable even
+when it cannot be accepted as a review round.
+
 Finding format:
 
 - `- **high** \`path/file.py:88\` — the exact failure mode and why it matters`
@@ -116,9 +121,14 @@ read-only ephemeral subprocess path. Claude uses restricted tools and a fresh
 session, but its CLI does not expose an equivalent sandbox here, so fallback from
 Codex to Claude is marked as weaker isolation.
 
-Provider invocation session entries also carry attribution confidence. Observed
-provider facts can coexist with unknown model facts; reports keep requested-only
-and unknown model attribution separate from proven model separation.
+Provider invocation session entries also carry status, timing, timeout, exit,
+diagnostic, and attribution confidence fields. Observed provider facts can
+coexist with unknown model facts; reports keep requested-only and unknown model
+attribution separate from proven model separation.
+
+The report's clean-review count is a format-compliance signal. It means the
+review used accepted no-issues phrasing with concrete checked targets; it does
+not prove the reviewer actually inspected those targets.
 
 The external runner prompt keeps trusted challenger instructions outside the
 untrusted handoff boundary. The generated handoff, spec text, automated results,
