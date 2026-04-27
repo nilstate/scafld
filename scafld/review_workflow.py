@@ -269,7 +269,7 @@ def render_adversarial_review_prompt(task_id, spec_path_rel, review_path_rel, re
         section_titles.append(f"`{definition['id']}` / `### {title}`")
         attack_vectors.append(
             f"    {cc(C_CYAN, f'{idx}. {title}')} — {prompt}\n"
-            f"       {cc(C_DIM, f'Write findings under ### {title}')}"
+            f"       {cc(C_DIM, f'Write findings or no-issues evidence under ### {title}')}"
         )
     attack_vectors_text = "\n\n".join(attack_vectors)
     section_titles_text = ", ".join(section_titles)
@@ -652,10 +652,7 @@ def complete_review_round_from_result(root, review_file, task_id, spec_text, top
     if candidate.get("empty_adversarial") or candidate.get("errors"):
         details = []
         if candidate.get("empty_adversarial"):
-            details.append(
-                "missing adversarial section content: "
-                + ", ".join(candidate["empty_adversarial"])
-            )
+            details.extend(empty_adversarial_details(candidate["empty_adversarial"]))
         details.extend(candidate.get("errors") or [])
         visible_details = details[:7]
         diagnostic_path = external_review_artifact_diagnostic(
@@ -691,6 +688,7 @@ def evaluate_review_gate(root, review_file, review_data):
         gate_reason = "no review found"
     elif review_data["empty_adversarial"]:
         gate_reason = f"configured review sections incomplete — missing: {', '.join(review_data['empty_adversarial'])}"
+        gate_errors.extend(empty_adversarial_details(review_data["empty_adversarial"]))
     elif gate_errors:
         gate_reason = "latest review round is malformed or incomplete"
     elif review_data["verdict"] == "fail":
@@ -715,6 +713,19 @@ def evaluate_review_gate(root, review_file, review_data):
         "current_git_state": current_git_state,
         "review_metadata": review_metadata,
     }
+
+
+def empty_adversarial_details(section_names):
+    names = [str(name) for name in (section_names or []) if str(name).strip()]
+    if not names:
+        return []
+    return [
+        "missing adversarial section content: " + ", ".join(names),
+        (
+            "clean reviews do not need findings, but every adversarial section must record "
+            "`No issues found — checked <specific files, callers, rules, or paths attacked>`"
+        ),
+    ]
 
 
 def apply_human_override(root, task_id, text, topology, review_file, review_data, pass_results, override_reason, current_git_state=None):

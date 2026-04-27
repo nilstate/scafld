@@ -100,6 +100,7 @@ class ProviderProcessResult:
     stdout: str
     stderr: str
     timed_out: bool = False
+    pid: int | None = None
 
 
 def _review_config(root):
@@ -495,7 +496,7 @@ def _timeout_text(value):
     return str(value)
 
 
-def _run_provider_subprocess(argv, *, prompt, root, provider, timeout_seconds):
+def _run_provider_subprocess(argv, *, prompt, root, provider, timeout_seconds, on_start=None):
     stdin_payload = prompt if prompt.endswith("\n") else prompt + "\n"
     proc = subprocess.Popen(
         argv,
@@ -509,6 +510,20 @@ def _run_provider_subprocess(argv, *, prompt, root, provider, timeout_seconds):
         env=_provider_subprocess_env(provider),
         **_provider_start_new_session_kwargs(),
     )
+    if on_start is not None:
+        try:
+            on_start(proc)
+        except Exception:
+            _terminate_provider_process_group(proc)
+            try:
+                proc.communicate(timeout=2)
+            except subprocess.TimeoutExpired:
+                _kill_provider_process_group(proc)
+                try:
+                    proc.communicate(timeout=2)
+                except subprocess.TimeoutExpired:
+                    pass
+            raise
     try:
         stdout, stderr = proc.communicate(stdin_payload, timeout=timeout_seconds)
         return ProviderProcessResult(
@@ -516,6 +531,7 @@ def _run_provider_subprocess(argv, *, prompt, root, provider, timeout_seconds):
             stdout=stdout or "",
             stderr=stderr or "",
             timed_out=False,
+            pid=proc.pid,
         )
     except subprocess.TimeoutExpired:
         _terminate_provider_process_group(proc)
@@ -540,6 +556,7 @@ def _run_provider_subprocess(argv, *, prompt, root, provider, timeout_seconds):
             stdout=stdout or "",
             stderr=stderr or "",
             timed_out=True,
+            pid=proc.pid,
         )
 
 
@@ -803,7 +820,7 @@ def _claude_args(model, session_id):
     return args
 
 
-def run_external_review(root, task_id, review_prompt, topology, resolved_runner):
+def run_external_review(root, task_id, review_prompt, topology, resolved_runner, on_start=None):
     """Run the provider and return a normalized review result.
 
     Provider execution failures are recorded here before raising because no caller
@@ -821,6 +838,7 @@ def run_external_review(root, task_id, review_prompt, topology, resolved_runner)
     prompt_sha256 = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
     prompt_preview = _prompt_preview(prompt)
     started_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    invocation_id = str(uuid.uuid4())
     raw_output = ""
     return_code = 0
     reviewer_session = ""
@@ -834,6 +852,8 @@ def run_external_review(root, task_id, review_prompt, topology, resolved_runner)
     argv = []
     stdout = ""
     stderr = ""
+    process_pid = None
+    command_display = ""
     workspace_before, workspace_before_error = _external_workspace_state(root)
     if workspace_before_error:
         warnings.append(f"workspace mutation guard unavailable before provider run: {workspace_before_error}")
@@ -842,6 +862,52 @@ def run_external_review(root, task_id, review_prompt, topology, resolved_runner)
 
     with tempfile.NamedTemporaryFile(prefix=f"scafld-review-{task_id}-", suffix=".txt", delete=False) as tmp:
         output_path = Path(tmp.name)
+
+    def _command_display():
+        return command_display or (_redacted_argv(root, argv) if argv else "")
+
+    def _record_running_provider(proc):
+        nonlocal process_pid, command_display
+        process_pid = proc.pid
+        command_display = _redacted_argv(root, argv)
+        record_provider_invocation(
+            root,
+            task_id,
+            invocation_id=invocation_id,
+            role="challenger",
+            gate="review",
+            provider=provider,
+            provider_bin=provider_bin_record,
+            provider_requested=provider_requested,
+            model_requested=model,
+            model_source=_model_source(model, "", ""),
+            isolation_level=isolation_level,
+            isolation_downgraded=isolation_downgraded,
+            fallback_policy=resolved_runner.fallback_policy,
+            status="running",
+            started_at=started_at,
+            timeout_seconds=resolved_runner.timeout_seconds,
+            pid=process_pid,
+            provider_session_requested=reviewer_session,
+            command=command_display,
+            warning=warning,
+        )
+        if on_start is not None:
+            on_start(
+                {
+                    "invocation_id": invocation_id,
+                    "provider": provider,
+                    "provider_requested": provider_requested,
+                    "provider_bin": provider_bin_record,
+                    "model_requested": model,
+                    "pid": process_pid,
+                    "provider_session_requested": reviewer_session,
+                    "timeout_seconds": resolved_runner.timeout_seconds,
+                    "started_at": started_at,
+                    "command": command_display,
+                }
+            )
+
     try:
         if provider == "codex":
             argv = [provider_bin, *_codex_args(root, output_path, model)]
@@ -851,6 +917,7 @@ def run_external_review(root, task_id, review_prompt, topology, resolved_runner)
                 root=root,
                 provider=provider,
                 timeout_seconds=resolved_runner.timeout_seconds,
+                on_start=_record_running_provider,
             )
             return_code = proc.returncode
             stdout = proc.stdout or ""
@@ -866,6 +933,7 @@ def run_external_review(root, task_id, review_prompt, topology, resolved_runner)
                 root=root,
                 provider=provider,
                 timeout_seconds=resolved_runner.timeout_seconds,
+                on_start=_record_running_provider,
             )
             return_code = proc.returncode
             stdout = proc.stdout or ""
@@ -907,6 +975,7 @@ def run_external_review(root, task_id, review_prompt, topology, resolved_runner)
             record_provider_invocation(
                 root,
                 task_id,
+                invocation_id=invocation_id,
                 role="challenger",
                 gate="review",
                 provider=provider,
@@ -924,6 +993,10 @@ def run_external_review(root, task_id, review_prompt, topology, resolved_runner)
                 exit_code=return_code,
                 timed_out=False,
                 timeout_seconds=resolved_runner.timeout_seconds,
+                pid=process_pid,
+                provider_session_requested=reviewer_session,
+                provider_session_observed=session_observed,
+                command=_command_display(),
                 diagnostic_path=diagnostic_path,
                 warning=warning,
             )
@@ -967,6 +1040,7 @@ def run_external_review(root, task_id, review_prompt, topology, resolved_runner)
                 record_provider_invocation(
                     root,
                     task_id,
+                    invocation_id=invocation_id,
                     role="challenger",
                     gate="review",
                     provider=provider,
@@ -984,6 +1058,10 @@ def run_external_review(root, task_id, review_prompt, topology, resolved_runner)
                     exit_code=return_code,
                     timed_out=False,
                     timeout_seconds=resolved_runner.timeout_seconds,
+                    pid=process_pid,
+                    provider_session_requested=reviewer_session,
+                    provider_session_observed=session_observed,
+                    command=_command_display(),
                     diagnostic_path=diagnostic_path,
                     warning=warning,
                 )
@@ -1034,6 +1112,7 @@ def run_external_review(root, task_id, review_prompt, topology, resolved_runner)
         record_provider_invocation(
             root,
             task_id,
+            invocation_id=invocation_id,
             role="challenger",
             gate="review",
             provider=provider,
@@ -1050,6 +1129,10 @@ def run_external_review(root, task_id, review_prompt, topology, resolved_runner)
             completed_at=completed_at,
             timed_out=True,
             timeout_seconds=resolved_runner.timeout_seconds,
+            pid=process_pid,
+            provider_session_requested=reviewer_session,
+            provider_session_observed=session_observed,
+            command=_command_display(),
             diagnostic_path=diagnostic_path,
             warning=warning,
         )
@@ -1086,6 +1169,7 @@ def run_external_review(root, task_id, review_prompt, topology, resolved_runner)
         record_provider_invocation(
             root,
             task_id,
+            invocation_id=invocation_id,
             role="challenger",
             gate="review",
             provider=provider,
@@ -1102,6 +1186,10 @@ def run_external_review(root, task_id, review_prompt, topology, resolved_runner)
             completed_at=completed_at,
             timed_out=False,
             timeout_seconds=resolved_runner.timeout_seconds,
+            pid=process_pid,
+            provider_session_requested=reviewer_session,
+            provider_session_observed=session_observed,
+            command=_command_display(),
             diagnostic_path=diagnostic_path,
             warning=warning,
         )
@@ -1145,6 +1233,7 @@ def run_external_review(root, task_id, review_prompt, topology, resolved_runner)
         record_provider_invocation(
             root,
             task_id,
+            invocation_id=invocation_id,
             role="challenger",
             gate="review",
             provider=provider,
@@ -1162,6 +1251,10 @@ def run_external_review(root, task_id, review_prompt, topology, resolved_runner)
             exit_code=return_code,
             timed_out=False,
             timeout_seconds=resolved_runner.timeout_seconds,
+            pid=process_pid,
+            provider_session_requested=reviewer_session,
+            provider_session_observed=session_observed,
+            command=_command_display(),
             diagnostic_path=diagnostic_path,
             warning=warning,
         )
@@ -1172,6 +1265,7 @@ def run_external_review(root, task_id, review_prompt, topology, resolved_runner)
     canonical_payload = json.dumps(normalized["canonical"], sort_keys=True, separators=(",", ":"))
     provenance = {
         "runner": "external",
+        "invocation_id": invocation_id,
         "provider_requested": provider_requested,
         "provider": provider,
         "provider_bin": provider_bin_record,
@@ -1180,12 +1274,15 @@ def run_external_review(root, task_id, review_prompt, topology, resolved_runner)
         "model_requested": model,
         "model_observed": model_observed,
         "model_source": _model_source(model, model_observed, model_observed_source),
+        "provider_session_requested": reviewer_session,
         "provider_session_observed": session_observed,
         "started_at": started_at,
         "completed_at": completed_at,
         "exit_code": return_code,
         "timed_out": False,
         "timeout_seconds": resolved_runner.timeout_seconds,
+        "pid": process_pid,
+        "command": _command_display(),
         "prompt_sha256": prompt_sha256,
         "fallback_policy": resolved_runner.fallback_policy,
         "isolation_level": isolation_level,

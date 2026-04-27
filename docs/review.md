@@ -129,6 +129,14 @@ operator can connect a rejected provider response to the exact challenger prompt
 that produced it. Long prompt previews keep the trusted header and the tail of
 the task handoff so the changing task evidence is preserved.
 
+External runner startup is recorded before scafld blocks on the provider. The
+session ledger gets a `provider_invocation` entry with `status: running`,
+`invocation_id`, subprocess `pid`, timeout, and any provider session id scafld
+requested. `scafld status <task-id> --json` reports that entry as
+`runtime.active_provider_invocation` and sets `next_action.type` to
+`review_running`. On completion or failure, scafld updates the same invocation
+entry in place with the final status and artifacts.
+
 Finding format:
 
 - `- **high** \`path/file.py:88\` — the exact failure mode and why it matters`
@@ -149,6 +157,10 @@ If an adversarial section is clean, it must still say what was checked:
 - `No additional issues found — checked callers of path/file.py`
 - `No issues found — checked AGENTS.md and CONVENTIONS.md`
 
+Clean reviews do not need adversarial findings. They do need concrete
+no-issues evidence for every adversarial section, otherwise the gate treats the
+review as incomplete rather than clean.
+
 Generic clean notes such as `checked everything` or `checked the diff` are not
 evidence.
 
@@ -158,7 +170,7 @@ session, but its CLI does not expose an equivalent sandbox here, so fallback fro
 Codex to Claude is marked as weaker isolation.
 
 Provider invocation session entries also carry status, timing, timeout, exit,
-diagnostic, and attribution confidence fields. Observed provider facts can
+diagnostic, process, session, and attribution confidence fields. Observed provider facts can
 coexist with unknown model facts; reports keep inferred, requested-only, and
 unknown model attribution separate from trusted model separation.
 When Claude exposes its billed model in the JSON envelope, scafld records

@@ -118,6 +118,11 @@ Important typed entries in v1:
 Successful external review `provider_invocation` entries may point at
 `review_packet`, `repair_handoff`, and `repair_handoff_json` so reports and
 agents can locate the packet-derived repair material from the session ledger.
+Long-running external review calls first write the same entry with
+`status: running`, `invocation_id`, subprocess `pid`, and timeout metadata.
+Completion, timeout, provider failure, invalid output, or workspace mutation
+updates that invocation in place, leaving stale `running` entries visible only
+when the scafld process itself is interrupted before it can finalize telemetry.
 
 ## Retention
 

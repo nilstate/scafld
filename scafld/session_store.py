@@ -16,6 +16,7 @@ from scafld.spec_parsing import now_iso
 
 
 PROVIDER_INVOCATION_STATUSES = (
+    "running",
     "completed",
     "failed",
     "timed_out",
@@ -447,6 +448,7 @@ def record_provider_invocation(
     root,
     task_id,
     *,
+    invocation_id=None,
     role,
     gate,
     provider,
@@ -465,6 +467,10 @@ def record_provider_invocation(
     exit_code=None,
     timed_out=False,
     timeout_seconds=None,
+    pid=None,
+    provider_session_requested="",
+    provider_session_observed="",
+    command="",
     diagnostic_path=None,
     warning="",
     review_packet="",
@@ -496,6 +502,7 @@ def record_provider_invocation(
 
     def apply(session):
         fields = {
+            "invocation_id": invocation_id or "",
             "role": role,
             "gate": gate,
             "provider": provider,
@@ -511,6 +518,8 @@ def record_provider_invocation(
             "status": status or "completed",
             "timed_out": bool(timed_out),
         }
+        if not fields["invocation_id"]:
+            fields.pop("invocation_id")
         if started_at:
             fields["started_at"] = started_at
         if completed_at:
@@ -519,6 +528,14 @@ def record_provider_invocation(
             fields["exit_code"] = exit_code
         if timeout_seconds is not None:
             fields["timeout_seconds"] = timeout_seconds
+        if pid is not None:
+            fields["pid"] = pid
+        if provider_session_requested:
+            fields["provider_session_requested"] = provider_session_requested
+        if provider_session_observed:
+            fields["provider_session_observed"] = provider_session_observed
+        if command:
+            fields["command"] = command
         if diagnostic_path:
             fields["diagnostic_path"] = diagnostic_path
         if warning:
@@ -529,7 +546,8 @@ def record_provider_invocation(
             fields["repair_handoff"] = repair_handoff
         if repair_handoff_json:
             fields["repair_handoff_json"] = repair_handoff_json
-        append_entry(session, "provider_invocation", **fields)
+        replace_keys = {"invocation_id": invocation_id} if invocation_id else None
+        append_entry(session, "provider_invocation", replace_keys=replace_keys, **fields)
 
     return mutate_session(root, task_id, apply, spec_path=spec_path)
 
@@ -641,6 +659,61 @@ def prior_phase_summary(session, ordered_phase_ids, current_phase_id):
     return None
 
 
+def provider_invocation_process_alive(entry):
+    if not isinstance(entry, dict) or entry.get("status") != "running":
+        return None
+    try:
+        pid = int(entry.get("pid"))
+    except (TypeError, ValueError):
+        return None
+    if pid <= 0:
+        return None
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def provider_invocation_status_payload(entry):
+    if not isinstance(entry, dict):
+        return None
+    keys = (
+        "invocation_id",
+        "role",
+        "gate",
+        "provider",
+        "provider_requested",
+        "model_requested",
+        "model_observed",
+        "model_source",
+        "confidence",
+        "status",
+        "started_at",
+        "completed_at",
+        "pid",
+        "provider_session_requested",
+        "provider_session_observed",
+        "command",
+        "timeout_seconds",
+        "timed_out",
+        "exit_code",
+        "diagnostic_path",
+        "warning",
+        "review_packet",
+        "repair_handoff",
+        "repair_handoff_json",
+    )
+    payload = {key: entry[key] for key in keys if key in entry}
+    if entry.get("status") == "running":
+        payload["process_alive"] = provider_invocation_process_alive(entry)
+    return payload
+
+
 def session_summary_payload(session):
     attempts = session.get("attempts", [])
     entries = session.get("entries", []) if isinstance(session.get("entries"), list) else []
@@ -691,6 +764,13 @@ def session_summary_payload(session):
     }
     override_entries = [entry for entry in entries if entry.get("type") == "human_override"]
     provider_invocations = [entry for entry in entries if entry.get("type") == "provider_invocation"]
+    running_provider_invocations = [entry for entry in provider_invocations if entry.get("status") == "running"]
+    latest_provider_invocation = provider_invocations[-1] if provider_invocations else None
+    active_provider_invocation = (
+        latest_provider_invocation
+        if latest_provider_invocation and latest_provider_invocation.get("status") == "running"
+        else None
+    )
     provider_invocations_by_role = defaultdict(int)
     provider_confidence = defaultdict(int)
     provider_statuses = defaultdict(int)
@@ -746,9 +826,12 @@ def session_summary_payload(session):
             else None
         ),
         "provider_invocations": len(provider_invocations),
+        "running_provider_invocations": len(running_provider_invocations),
         "provider_invocations_by_role": dict(sorted(provider_invocations_by_role.items())),
         "provider_confidence": dict(sorted(provider_confidence.items())),
         "provider_statuses": dict(sorted(provider_statuses.items())),
+        "latest_provider_invocation": provider_invocation_status_payload(latest_provider_invocation),
+        "active_provider_invocation": provider_invocation_status_payload(active_provider_invocation),
         "provider_models_observed": provider_models_observed,
         "provider_models_inferred": provider_models_inferred,
         "provider_models_unknown": provider_models_unknown,

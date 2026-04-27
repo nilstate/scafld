@@ -508,6 +508,7 @@ EOF
     fail "complete should reject review files that miss configured section titles"
   fi
   assert_contains "$output" "configured review sections incomplete — missing: Defect Sweep" "complete should validate configured section headings"
+  assert_contains "$output" "clean reviews do not need findings" "complete should explain clean reviews need no-issues evidence, not findings"
 
   cat > "$repo/.ai/reviews/$task_id.md" <<'EOF'
 # Review: review-complete-topology
@@ -600,7 +601,7 @@ case_review_git_binding() {
   fi
   assert_contains "$output" "current workspace no longer matches the reviewed git state" "complete should block when the reviewed diff no longer matches"
 
-  capture output bash -lc "cd '$repo' && printf '%s\n' '$task_id' | script -qefc 'PATH='\''$CLI_ROOT'\'':\"\$PATH\" scafld complete '\''$task_id'\'' --human-reviewed --reason '\''manual audit'\''' /dev/null"
+  capture output complete_human_review_pty "$repo" "$task_id" "manual audit"
   archive_path="$(archive_spec_path "$repo" "$task_id")"
   [ -n "$archive_path" ] || fail "override should archive a git-bound review"
   spec_text="$(cat "$archive_path")"
@@ -707,7 +708,7 @@ case_human_override() {
   fi
   assert_contains "$output" "interactive terminal" "piped override should mention the TTY requirement"
 
-  capture output bash -lc "cd '$repo' && printf '%s\n' '$task_id' | script -qefc 'PATH='\''$CLI_ROOT'\'':\"\$PATH\" scafld complete '\''$task_id'\'' --human-reviewed --reason '\''manual audit'\''' /dev/null"
+  capture output complete_human_review_pty "$repo" "$task_id" "manual audit"
   archive_path="$(archive_spec_path "$repo" "$task_id")"
   [ -n "$archive_path" ] || fail "interactive override should archive the spec"
   spec_text="$(cat "$archive_path")"
@@ -821,7 +822,7 @@ case_provenance_and_results() {
     '- **high** `app.txt:1` — blocker' \
     "None."
 
-  capture output bash -lc "cd '$repo' && printf '%s\n' '$task_id' | script -qefc 'PATH='\''$CLI_ROOT'\'':\"\$PATH\" scafld complete '\''$task_id'\'' --human-reviewed --reason '\''manual audit'\''' /dev/null"
+  capture output complete_human_review_pty "$repo" "$task_id" "manual audit"
   archive_path="$(archive_spec_path "$repo" "$task_id")"
   [ -n "$archive_path" ] || fail "override should archive the spec"
   spec_text="$(cat "$archive_path")"
@@ -2109,6 +2110,117 @@ EOF
   assert_json "$output" "data['result']['review_runner']['model'] == 'smoke-model'" "review --json should honor model override"
   assert_json "$output" "data['result']['review_runner']['fallback_policy'] == 'warn'" "review --json should expose fallback policy"
   assert_json "$output" "data['result']['review_runner']['snapshot_only'] is True" "review --json should report snapshot-only mode"
+  assert_json "$output" "data['result']['provider_invoked'] is False" "review --json should make non-invocation explicit"
+  assert_json "$output" "'without --json' in data['result']['snapshot_note']" "review --json should tell operators how to execute the runner"
+}
+
+case_external_runner_tracking() {
+  local repo task_id output stub_dir review_log review_pid session_json saw_running
+  repo="$(new_repo)"
+  task_id="external-runner-tracking"
+  write_changed_file "$repo"
+  write_active_spec "$repo" "$task_id" "grep -q '^changed$' app.txt" "exit code 0" "pass"
+
+  stub_dir="$(mktemp -d /tmp/scafld-review-runner-tracking.XXXXXX)"
+  TMP_DIRS+=("$stub_dir")
+  cat > "$stub_dir/codex" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+output=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o|--output-last-message)
+      output="$2"
+      shift 2
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+cat >/dev/null
+sleep 3
+python3 - "$output" <<'PY'
+import json
+import sys
+
+passes = ["regression_hunt", "convention_check", "dark_patterns"]
+packet = {
+    "schema_version": "review_packet.v1",
+    "review_summary": "Tracked external runner checked the changed app marker.",
+    "verdict": "pass",
+    "pass_results": {pass_id: "pass" for pass_id in passes},
+    "checked_surfaces": [
+        {"pass_id": "regression_hunt", "targets": ["app.txt:1"], "summary": "callers of app.txt", "limitations": []},
+        {"pass_id": "convention_check", "targets": ["AGENTS.md#review"], "summary": "AGENTS.md and CONVENTIONS.md", "limitations": []},
+        {"pass_id": "dark_patterns", "targets": ["app.txt:1"], "summary": "hardcodes and null handling in app.txt", "limitations": []},
+    ],
+    "findings": [],
+}
+open(sys.argv[1], "w", encoding="utf-8").write(json.dumps(packet))
+PY
+EOF
+  chmod +x "$stub_dir/codex"
+
+  review_log="$stub_dir/review.log"
+  (
+    cd "$repo"
+    PATH="$stub_dir:$CLI_ROOT:$PATH" scafld review "$task_id" --provider codex >"$review_log" 2>&1
+  ) &
+  review_pid="$!"
+  saw_running=0
+
+  for _ in $(seq 1 50); do
+    if [ -f "$repo/.ai/runs/$task_id/session.json" ] && python3 - "$repo/.ai/runs/$task_id/session.json" <<'PY'
+import json
+import sys
+
+session = json.loads(open(sys.argv[1], encoding="utf-8").read())
+running = [
+    entry
+    for entry in session.get("entries", [])
+    if entry.get("type") == "provider_invocation" and entry.get("status") == "running"
+]
+raise SystemExit(0 if running else 1)
+PY
+    then
+      saw_running=1
+      break
+    fi
+    sleep 0.1
+  done
+  if [ "$saw_running" -ne 1 ]; then
+    cat "$review_log" >&2 || true
+    fail "external review should record running telemetry before blocking"
+  fi
+
+  capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld status '$task_id' --json"
+  assert_json "$output" "data['result']['runtime']['active_provider_invocation']['status'] == 'running'" "status --json should expose the active external reviewer"
+  assert_json "$output" "data['result']['runtime']['active_provider_invocation']['provider'] == 'codex'" "active reviewer should include provider"
+  assert_json "$output" "data['result']['runtime']['active_provider_invocation']['process_alive'] is True" "active reviewer should expose process liveness"
+  assert_json "$output" "'codex' in data['result']['runtime']['active_provider_invocation']['command']" "active reviewer should expose the redacted runner command"
+  assert_json "$output" "data['result']['next_action']['type'] == 'review_running'" "status should tell operators the review is running"
+  assert_json "$output" "data['result']['next_action']['pid'] == data['result']['runtime']['active_provider_invocation']['pid']" "next action should carry the runner pid"
+
+  capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld status '$task_id'"
+  assert_contains "$output" "review: running" "text status should show the active external reviewer"
+  assert_contains "$output" "pid" "text status should show the runner pid"
+
+  if ! wait "$review_pid"; then
+    cat "$review_log" >&2
+    fail "tracked external review should complete"
+  fi
+  assert_contains_file "$review_log" "external runner:" "review should print the external runner start"
+  assert_contains_file "$review_log" "subprocess pid:" "review should print the subprocess pid"
+  assert_contains_file "$review_log" "track: scafld status $task_id --json" "review should print a tracking command"
+
+  session_json="$(cat "$repo/.ai/runs/$task_id/session.json")"
+  assert_json "$session_json" "len([entry for entry in data['entries'] if entry.get('type') == 'provider_invocation']) == 1" "running telemetry should be updated in place"
+  assert_json "$session_json" "data['entries'][-1]['status'] == 'completed' and data['entries'][-1]['pid']" "completed telemetry should retain the subprocess pid"
+
+  capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld status '$task_id' --json"
+  assert_json "$output" "data['result']['runtime']['active_provider_invocation'] is None" "completed review should clear the active provider"
+  assert_json "$output" "data['result']['runtime']['latest_provider_invocation']['status'] == 'completed'" "status should retain latest provider telemetry"
 }
 
 case_exec_resume_nested_results() {
@@ -2486,6 +2598,7 @@ case_all() {
   case_external_runner_observed_model_truth
   case_external_runner_malformed_prose
   case_external_runner_json_overrides
+  case_external_runner_tracking
   case_exec_resume_nested_results
   case_exec_timeout_override
   case_complete_nested_exec_and_self_eval
@@ -2523,6 +2636,7 @@ main() {
     external-runner-observed-model-truth) case_external_runner_observed_model_truth ;;
     external-runner-malformed-prose) case_external_runner_malformed_prose ;;
     external-runner-json-overrides) case_external_runner_json_overrides ;;
+    external-runner-tracking) case_external_runner_tracking ;;
     exec-resume-nested-results) case_exec_resume_nested_results ;;
     exec-timeout-override) case_exec_timeout_override ;;
     complete-nested-exec-and-self-eval) case_complete_nested_exec_and_self_eval ;;

@@ -108,7 +108,7 @@ COMMAND_SPECS = (
             ArgumentSpec(("--runner",), {"choices": REVIEW_RUNNER_VALUES, "help": "Review runner mode override"}),
             ArgumentSpec(("--provider",), {"choices": REVIEW_PROVIDER_VALUES, "help": "External review provider override"}),
             ArgumentSpec(("--model",), {"help": "External review model override"}),
-            ArgumentSpec(("--json",), {"action": "store_true", "help": "Emit machine-readable review handoff JSON"}),
+            ArgumentSpec(("--json",), {"action": "store_true", "help": "Emit a machine-readable snapshot without spawning the external reviewer"}),
         ),
     ),
     CommandSpec(

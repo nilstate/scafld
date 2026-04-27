@@ -1,3 +1,5 @@
+import shlex
+
 from scafld.error_codes import ErrorCode as EC
 from scafld.errors import ScafldError
 from scafld.output import error_payload
@@ -8,6 +10,17 @@ from scafld.review_workflow import (
     run_automated_review_suite,
 )
 from scafld.spec_store import require_spec, yaml_read_field
+
+
+def _review_execute_command(task_id, resolved_runner):
+    parts = ["scafld", "review", task_id]
+    if resolved_runner.runner:
+        parts.extend(["--runner", resolved_runner.runner])
+    if resolved_runner.runner == "external" and resolved_runner.provider:
+        parts.extend(["--provider", resolved_runner.provider])
+    if resolved_runner.runner == "external" and resolved_runner.model:
+        parts.extend(["--model", resolved_runner.model])
+    return " ".join(shlex.quote(str(part)) for part in parts)
 
 
 def review_snapshot(
@@ -118,6 +131,12 @@ def review_snapshot(
         "handoff_file": review_round["review_handoff_rel"],
         "handoff_json_file": review_round["review_handoff_json_rel"],
     }
+    execute_command = _review_execute_command(task_id, resolved_runner)
+    snapshot_message = (
+        "JSON mode is snapshot-only and did not spawn the external reviewer; rerun the command without --json to execute it."
+        if resolved_runner.runner == "external"
+        else "JSON mode emitted the handoff snapshot; give the handoff to the reviewer and wait for a verdict."
+    )
     return ({
         "ok": True,
         "command": "review",
@@ -144,7 +163,14 @@ def review_snapshot(
                 "timeout_seconds": resolved_runner.timeout_seconds,
                 "fallback_policy": resolved_runner.fallback_policy,
                 "snapshot_only": True,
+                "execution_mode": "snapshot_only",
+                "provider_invoked": False,
+                "execute_command": execute_command if resolved_runner.runner == "external" else None,
             },
+            "snapshot_only": True,
+            "provider_invoked": False,
+            "execute_command": execute_command if resolved_runner.runner == "external" else None,
+            "snapshot_note": snapshot_message,
             "review_prompt": review_round["review_prompt"],
             "automated_passes": automated_results,
             "required_sections": review_round["required_sections"],
@@ -152,8 +178,8 @@ def review_snapshot(
             "current_handoff": current_handoff,
             "next_action": {
                 "type": "challenge_handoff",
-                "command": None,
-                "message": "Give the challenger the emitted handoff and wait for a review verdict.",
+                "command": execute_command if resolved_runner.runner == "external" else None,
+                "message": snapshot_message,
                 "followup_command": f"scafld complete {task_id}",
                 "blocked": False,
             },

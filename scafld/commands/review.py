@@ -51,6 +51,7 @@ def record_external_review_invocation(root, task_id, provenance, *, status, diag
     record_provider_invocation(
         root,
         task_id,
+        invocation_id=provenance.get("invocation_id") or None,
         role="challenger",
         gate="review",
         provider=provenance.get("provider") or "unknown",
@@ -68,6 +69,10 @@ def record_external_review_invocation(root, task_id, provenance, *, status, diag
         exit_code=provenance.get("exit_code"),
         timed_out=bool(provenance.get("timed_out")),
         timeout_seconds=provenance.get("timeout_seconds"),
+        pid=provenance.get("pid"),
+        provider_session_requested=provenance.get("provider_session_requested") or "",
+        provider_session_observed=provenance.get("provider_session_observed") or "",
+        command=provenance.get("command") or "",
         diagnostic_path=diagnostic_path,
         warning=provenance.get("warning") or "",
         review_packet=provenance.get("review_packet") or "",
@@ -599,6 +604,26 @@ def cmd_review(args):
         review_file = root / result["review_file"]
         spec = require_spec(root, args.task_id)
         review_data = parse_review_file(review_file, topology)
+
+        def print_external_start(event):
+            provider = event.get("provider") or "unknown"
+            pid = event.get("pid")
+            timeout = event.get("timeout_seconds")
+            session_id = event.get("provider_session_requested") or ""
+            invocation_id = event.get("invocation_id") or ""
+            print()
+            print(f"  external runner: {c(C_DIM, provider)}")
+            if pid:
+                print(f"  subprocess pid: {c(C_DIM, str(pid))}")
+            if session_id:
+                print(f"  provider session: {c(C_DIM, session_id)}")
+            if invocation_id:
+                print(f"  invocation id: {c(C_DIM, invocation_id)}")
+            if timeout:
+                print(f"  timeout: {c(C_DIM, str(timeout) + 's')}")
+            print(f"  track: {c(C_BOLD, f'scafld status {args.task_id} --json')}  ({c(C_DIM, f'.ai/runs/{args.task_id}/session.json')})")
+            sys.stdout.flush()
+
         try:
             runner_result = run_external_review(
                 root,
@@ -606,6 +631,7 @@ def cmd_review(args):
                 result["review_prompt"],
                 topology,
                 resolved_runner,
+                on_start=print_external_start,
             )
         except ScafldError as exc:
             print()

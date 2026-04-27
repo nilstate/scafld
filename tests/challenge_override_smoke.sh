@@ -148,7 +148,7 @@ Challenge override smoke fixture
 No issues found — checked AGENTS.md and CONVENTIONS.md.
 
 ### Dark Patterns
-No issues found — checked obvious failure modes.
+No issues found — checked hardcodes and null handling in app.txt.
 
 ### Blocking
 - **high** `app.txt:1` — downstream caller contract broken.
@@ -190,7 +190,7 @@ fi
 assert_contains "$output" "latest review failed" "complete should explain the blocking challenger verdict"
 
 echo "[4/5] override records challenge and override entries in session"
-capture output bash -lc "cd '$repo' && printf '%s\n' 'override-task' | script -qefc 'PATH='\''$CLI_ROOT'\'':\"\$PATH\" scafld complete '\''override-task'\'' --human-reviewed --reason '\''manual audit'\''' /dev/null"
+capture output complete_human_review_pty "$repo" "override-task" "manual audit"
 assert_contains "$output" "override applied" "complete should report the human override"
 REPO="$repo" python3 - <<'PY'
 import json
