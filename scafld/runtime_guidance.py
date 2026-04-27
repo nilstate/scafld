@@ -3,6 +3,7 @@ from scafld.review_workflow import evaluate_review_gate, load_review_topology
 from scafld.reviewing import load_review_state, parse_review_file
 from scafld.runtime_bundle import REVIEWS_DIR
 from scafld.runtime_contracts import handoff_json_path, handoff_path, relative_path
+from scafld.session_store import provider_invocation_process_alive
 
 
 def criterion_result_value(criterion):
@@ -44,6 +45,23 @@ def _criterion_states(session):
         return {}
     states = session.get("criterion_states")
     return states if isinstance(states, dict) else {}
+
+
+def active_review_provider_invocation(session):
+    if not isinstance(session, dict):
+        return None
+    entries = session.get("entries")
+    if not isinstance(entries, list):
+        return None
+    for entry in reversed(entries):
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("type") != "provider_invocation":
+            continue
+        if entry.get("role") != "challenger" or entry.get("gate") != "review":
+            continue
+        return entry if entry.get("status") == "running" else None
+    return None
 
 
 def first_recovery_selector(spec_data, session):
@@ -297,6 +315,53 @@ def derive_task_guidance(root, task_id, spec_path, spec_data, status, session, r
             followup_command=f"scafld build {task_id}",
             phase_id=open_phase_id,
             handoff_command=current_handoff["command"],
+        )
+        return {
+            "next_action": next_action,
+            "current_handoff": current_handoff,
+            "block_reason": None,
+        }
+
+    active_review = active_review_provider_invocation(session)
+    if active_review:
+        process_alive = provider_invocation_process_alive(active_review)
+        current_handoff = existing_review_handoff(root, task_id, review_state) or predicted_handoff(
+            root,
+            task_id,
+            spec_path,
+            role="challenger",
+            gate="review",
+            selector="review",
+        )
+        common = {
+            "provider": active_review.get("provider"),
+            "pid": active_review.get("pid"),
+            "process_alive": process_alive,
+            "invocation_id": active_review.get("invocation_id"),
+            "started_at": active_review.get("started_at"),
+            "provider_session_requested": active_review.get("provider_session_requested"),
+        }
+        if process_alive is False:
+            next_action = _guidance(
+                "review_stale",
+                command=f"scafld review {task_id}",
+                message="An external review was recorded as running, but its subprocess is no longer alive; rerun review.",
+                blocked=True,
+                reason="external_review_process_not_alive",
+                **common,
+            )
+            return {
+                "next_action": next_action,
+                "current_handoff": current_handoff,
+                "block_reason": "external review process not alive",
+            }
+
+        next_action = _guidance(
+            "review_running",
+            command=f"scafld status {task_id} --json",
+            message="External review is running; wait for the original review command to finish.",
+            followup_command=f"scafld complete {task_id}",
+            **common,
         )
         return {
             "next_action": next_action,

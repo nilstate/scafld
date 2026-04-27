@@ -141,14 +141,23 @@ Default text-mode behavior:
 - run automated passes
 - append or refresh the latest review round
 - resolve the configured review runner
-- if `external`, execute a fresh external challenger, parse its prose review
-  body, and let scafld write the completed review round only after validation
+- if `external`, execute a fresh external challenger, validate its
+  `ReviewPacket`, and let scafld write the completed review round only after
+  validation
 - if `local` or `manual`, emit the challenger prompt and leave the round
   `in_progress`
 
 `--json` stays machine-facing snapshot mode: it returns the review prompt,
 handoff paths, required sections, and resolved runner/provider/model metadata
-without spawning the external reviewer.
+without spawning the external reviewer. The JSON payload sets
+`snapshot_only: true`, `provider_invoked: false`, and `execute_command` when an
+external runner is configured, so automation can distinguish "handoff snapshot"
+from "reviewer executed".
+
+When text-mode review starts an external runner, scafld prints the provider,
+subprocess pid, invocation id, timeout, and a tracking command. While that
+subprocess is running, `status --json` exposes
+`runtime.active_provider_invocation` and `next_action.type: review_running`.
 
 External provider calls fail rather than hang when `review.external.timeout_seconds`
 is reached. Invalid external output also fails the review command; it leaves the

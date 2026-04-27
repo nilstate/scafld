@@ -15,7 +15,7 @@ class CommandRuntimeTest(unittest.TestCase):
             (workspace / ".ai" / "config.yaml").write_text("modes: {}\n", encoding="utf-8")
             nested.mkdir(parents=True)
 
-            self.assertEqual(find_root(nested), workspace)
+            self.assertEqual(find_root(nested), workspace.resolve())
 
     def test_require_root_raises_structured_error_when_missing(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -34,7 +34,7 @@ class CommandRuntimeTest(unittest.TestCase):
             nested.mkdir(parents=True)
 
             context = CommandContext.from_cwd(nested)
-            self.assertEqual(context.root, workspace)
+            self.assertEqual(context.root, workspace.resolve())
 
 
 if __name__ == "__main__":

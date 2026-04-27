@@ -156,7 +156,7 @@ No issues found — checked callers of app.txt.
 No issues found — checked AGENTS.md and CONVENTIONS.md.
 
 ### Dark Patterns
-No issues found — checked obvious failure modes.
+No issues found — checked hardcodes and null handling in app.txt.
 
 ### Blocking
 None.

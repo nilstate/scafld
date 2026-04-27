@@ -286,6 +286,8 @@ def cmd_status(args):
     block_reason = result.get("block_reason")
     lifecycle_flags = result.get("lifecycle_flags") or {}
     supersession = result.get("supersession") or {}
+    runtime = result.get("runtime") or {}
+    active_provider = runtime.get("active_provider_invocation") or {}
     color = STATUS_COLORS.get(status, "")
     print(f"{c(C_BOLD, title)}")
     print(f"     id: {args.task_id}")
@@ -357,6 +359,19 @@ def cmd_status(args):
         label = f"{role} x {gate}" if role and gate else "handoff"
         if handoff_file:
             print(f"handoff: {c(C_DIM, handoff_file)}  ({label})")
+    if active_provider:
+        provider = active_provider.get("provider") or "unknown"
+        pid = active_provider.get("pid")
+        alive = active_provider.get("process_alive")
+        alive_label = "alive" if alive is True else "not alive" if alive is False else "unknown"
+        bits = [f"via {provider}"]
+        if pid:
+            bits.append(f"pid {pid}")
+        bits.append(f"process {alive_label}")
+        print(f" review: {c(C_CYAN, 'running')}  {' / '.join(bits)}")
+        session_id = active_provider.get("provider_session_requested")
+        if session_id:
+            print(f"session: {c(C_DIM, session_id)}")
     if next_action:
         command = next_action.get("command")
         message = next_action.get("message")

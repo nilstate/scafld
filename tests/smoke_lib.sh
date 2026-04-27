@@ -60,3 +60,21 @@ assert_json() {
   local message="$3"
   JSON_PAYLOAD="$payload" python3 "$JSON_ASSERT_PY" "$expression" "$message" || fail "$message"
 }
+
+run_pty_command() {
+  local command="$1"
+  SCAFLD_SMOKE_PTY_COMMAND="$command" python3 "$SMOKE_LIB_DIR/pty_run.py"
+}
+
+complete_human_review_pty() {
+  local repo="$1"
+  local task_id="$2"
+  local reason="$3"
+  (
+    cd "$repo"
+    export PATH="$CLI_ROOT:$PATH"
+    export SCAFLD_SMOKE_TASK_ID="$task_id"
+    export SCAFLD_SMOKE_OVERRIDE_REASON="$reason"
+    printf '%s\n' "$task_id" | run_pty_command 'scafld complete "$SCAFLD_SMOKE_TASK_ID" --human-reviewed --reason "$SCAFLD_SMOKE_OVERRIDE_REASON"'
+  )
+}
