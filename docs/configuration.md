@@ -71,22 +71,27 @@ review:
     timeout_seconds: 600
     fallback_policy: "warn" # warn | allow | disable
     codex:
-      model: ""
+      model: "gpt-5.5"
     claude:
-      model: ""
+      model: "claude-opus-4-7"
 ```
 
 Meaning:
 
 - `runner`: default review execution mode
 - `external.provider`: provider selection for external review; `auto` prefers
-  `codex` first, then `claude`
+  another installed provider when the current agent is detected as Codex,
+  otherwise `codex` first, then `claude`
 - `external.timeout_seconds`: maximum provider subprocess runtime before
   `scafld review` fails with fallback guidance
 - `external.fallback_policy`: behavior when `provider: auto` cannot find
-  Codex but can find Claude; `warn` allows fallback with a warning, `allow`
-  records the weaker isolation without warning, and `disable` requires Codex
-- `external.<provider>.model`: optional provider-specific model pin
+  the preferred provider but can find the alternate provider; `warn` allows
+  fallback or Codex self-review avoidance with a warning, `allow` records the
+  weaker isolation without warning, and `disable` requires Codex
+- `external.<provider>.model`: optional provider-specific model pin. Codex
+  review defaults to `gpt-5.5` for the strongest available Codex review path.
+  Claude review defaults to `claude-opus-4-7`; override it if that Claude model
+  is not enabled for the operator account.
 
 CLI overrides are explicit:
 
@@ -106,6 +111,10 @@ tools plus fresh session, which is weaker than the Codex sandbox unless the
 installed Claude CLI grows an equivalent control. Set
 `review.external.fallback_policy: "disable"` to prevent automatic Claude
 fallback.
+
+Current-agent detection is automatic for Codex environment variables. Tests,
+CI, and wrapper scripts can override it with
+`SCAFLD_CURRENT_AGENT_PROVIDER=codex|claude|unknown`.
 
 Review provenance separates requested and observed model fields. An empty
 observed model means scafld could not verify what the provider actually billed.

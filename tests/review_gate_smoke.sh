@@ -901,7 +901,7 @@ EOF
   chmod +x "$stub_dir/codex"
 
   prompt_capture="$stub_dir/external-review.prompt"
-  capture output bash -lc "cd '$repo' && PATH='$stub_dir:$CLI_ROOT':\"\$PATH\" PYTHONPATH='$REPO_ROOT' python3 -c \"from scafld.review_runner import resolve_external_provider; assert resolve_external_provider('auto')[0] == 'codex'; print('ok')\""
+  capture output bash -lc "cd '$repo' && PATH='$stub_dir:$CLI_ROOT':\"\$PATH\" SCAFLD_CURRENT_AGENT_PROVIDER=unknown PYTHONPATH='$REPO_ROOT' python3 -c \"from scafld.review_runner import resolve_external_provider; assert resolve_external_provider('auto')[0] == 'codex'; print('ok')\""
   assert_contains "$output" "ok" "auto provider resolution should prefer codex when it is available"
 
   capture output bash -lc "cd '$repo' && PATH='$stub_dir:$CLI_ROOT':\"\$PATH\" SCAFLD_REVIEW_PROMPT_CAPTURE='$prompt_capture' scafld review '$task_id' --provider codex"
@@ -932,6 +932,7 @@ PY
   assert_contains "$review_text" '"reviewer_mode": "fresh_agent"' "external review should complete the round with fresh_agent provenance"
   assert_not_contains "$review_text" 'codex-review-session' "external review should not trust model-self-reported session values"
   assert_contains "$review_text" '"provider": "codex"' "external review provenance should record the codex provider"
+  assert_contains "$review_text" '"model_requested": "gpt-5.5"' "codex provenance should request the default review model"
   assert_contains "$review_text" '"isolation_level": "codex_read_only_ephemeral"' "external review provenance should record codex isolation"
   assert_contains "$review_text" '"canonical_response_sha256":' "external review provenance should hash the canonical response"
   assert_contains "$review_text" '"review_packet": ".ai/runs/' "external review provenance should store packet artifact path"
@@ -1044,7 +1045,7 @@ PY
 EOF
   chmod +x "$stub_dir/claude"
   prompt_capture="$stub_dir/external-review-fallback.prompt"
-  capture output bash -lc "cd '$repo' && PATH='$stub_dir:$CLI_ROOT':\"\$PATH\" SCAFLD_CODEX_BIN='definitely-missing-codex' SCAFLD_REVIEW_PROMPT_CAPTURE='$prompt_capture' scafld review '$task_id'"
+  capture output bash -lc "cd '$repo' && PATH='$stub_dir:$CLI_ROOT':\"\$PATH\" SCAFLD_CURRENT_AGENT_PROVIDER=unknown SCAFLD_CODEX_BIN='definitely-missing-codex' SCAFLD_REVIEW_PROMPT_CAPTURE='$prompt_capture' scafld review '$task_id'"
   assert_contains "$output" "provider:" "review should report the fallback provider"
   assert_contains "$output" "weaker Claude isolation" "review should warn when auto falls back to weaker claude isolation"
   assert_contains "$(cat "$repo/.ai/reviews/$task_id.md")" '"provider": "claude"' "external review should fall back to claude when codex is absent"
@@ -1060,7 +1061,7 @@ review:
     fallback_policy: "disable"
 EOF
   prompt_capture="$stub_dir/external-review-fallback-disable.prompt"
-  if capture output bash -lc "cd '$repo' && PATH='$stub_dir:$CLI_ROOT':\"\$PATH\" SCAFLD_CODEX_BIN='definitely-missing-codex' SCAFLD_REVIEW_PROMPT_CAPTURE='$prompt_capture' scafld review '$task_id'"; then
+  if capture output bash -lc "cd '$repo' && PATH='$stub_dir:$CLI_ROOT':\"\$PATH\" SCAFLD_CURRENT_AGENT_PROVIDER=unknown SCAFLD_CODEX_BIN='definitely-missing-codex' SCAFLD_REVIEW_PROMPT_CAPTURE='$prompt_capture' scafld review '$task_id'"; then
     fail "disabled external fallback should fail when codex is missing"
   fi
   assert_contains "$output" "Claude fallback is disabled" "disabled fallback should explain why claude was not used"
@@ -1082,6 +1083,59 @@ EOF
   capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld review '$task_id' --runner manual"
   assert_contains "$output" "manual" "manual runner should report handoff-only mode"
   assert_contains "$output" "ADVERSARIAL REVIEW" "manual runner should still emit the challenger prompt"
+}
+
+case_external_runner_avoids_codex_self_review() {
+  local repo task_id output stub_dir review_text session_json
+  repo="$(new_repo)"
+  task_id="external-runner-avoids-codex-self-review"
+  write_changed_file "$repo"
+  write_active_spec "$repo" "$task_id" "grep -q '^changed$' app.txt" "exit code 0" "pass"
+
+  stub_dir="$(mktemp -d /tmp/scafld-review-runner-cross-agent.XXXXXX)"
+  TMP_DIRS+=("$stub_dir")
+  cat > "$stub_dir/codex" <<'EOF'
+#!/usr/bin/env bash
+echo "codex should not be selected by default from a codex session" >&2
+exit 9
+EOF
+  chmod +x "$stub_dir/codex"
+
+  cat > "$stub_dir/claude" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+cat >/dev/null
+python3 - <<'PY'
+import json
+passes = ["regression_hunt", "convention_check", "dark_patterns"]
+print(json.dumps({
+    "schema_version": "review_packet.v1",
+    "review_summary": "Checked app.txt callers, conventions, and dark-pattern paths from the alternate provider.",
+    "verdict": "pass",
+    "pass_results": {pass_id: "pass" for pass_id in passes},
+    "checked_surfaces": [
+        {"pass_id": "regression_hunt", "targets": ["app.txt:1"], "summary": "callers of app.txt", "limitations": []},
+        {"pass_id": "convention_check", "targets": ["AGENTS.md#review"], "summary": "AGENTS.md and CONVENTIONS.md rules", "limitations": []},
+        {"pass_id": "dark_patterns", "targets": ["app.txt:1"], "summary": "hardcodes and null handling in app.txt", "limitations": []},
+    ],
+    "findings": [],
+}))
+PY
+EOF
+  chmod +x "$stub_dir/claude"
+
+  capture output bash -lc "cd '$repo' && PATH='$stub_dir:$CLI_ROOT':\"\$PATH\" SCAFLD_CURRENT_AGENT_PROVIDER=codex PYTHONPATH='$REPO_ROOT' python3 -c \"from scafld.review_runner import resolve_external_provider; assert resolve_external_provider('auto')[0] == 'claude'; print('ok')\""
+  assert_contains "$output" "ok" "auto provider resolution should prefer claude when the current agent is codex"
+
+  capture output bash -lc "cd '$repo' && PATH='$stub_dir:$CLI_ROOT':\"\$PATH\" SCAFLD_CURRENT_AGENT_PROVIDER=codex scafld review '$task_id'"
+  assert_contains "$output" "selected Claude to avoid Codex self-review" "codex sessions should explain the cross-agent default"
+  review_text="$(cat "$repo/.ai/reviews/$task_id.md")"
+  assert_contains "$review_text" '"provider": "claude"' "codex sessions should default auto review to claude when available"
+  assert_contains "$review_text" '"current_agent_provider": "codex"' "review provenance should record the detected current agent"
+  assert_contains "$review_text" '"provider_selection_reason": "avoid_codex_self_review"' "review provenance should explain the alternate-provider choice"
+  assert_contains "$review_text" '"isolation_downgraded": true' "alternate claude review should still record weaker isolation"
+  session_json="$(cat "$repo/.ai/runs/$task_id/session.json")"
+  assert_json "$session_json" "data['entries'][-1]['type'] == 'provider_invocation' and data['entries'][-1]['provider'] == 'claude' and 'selected Claude to avoid Codex self-review' in data['entries'][-1]['warning']" "alternate-provider telemetry should record the selection warning"
 }
 
 case_external_runner_timeout() {
@@ -1411,7 +1465,7 @@ exit 7
 EOF
   chmod +x "$stub_dir/claude"
 
-  if capture output bash -lc "cd '$repo' && PATH='$stub_dir:$CLI_ROOT':\"\$PATH\" SCAFLD_CODEX_BIN='definitely-missing-codex' scafld review '$task_id'"; then
+  if capture output bash -lc "cd '$repo' && PATH='$stub_dir:$CLI_ROOT':\"\$PATH\" SCAFLD_CURRENT_AGENT_PROVIDER=unknown SCAFLD_CODEX_BIN='definitely-missing-codex' scafld review '$task_id'"; then
     fail "failed claude fallback should fail review"
   fi
   assert_contains "$output" "warning: provider=auto fell back to weaker Claude isolation" "failed claude fallback should still surface weaker-isolation warning"
@@ -1530,9 +1584,9 @@ EOF
   assert_not_contains "$output" "model observed:" "codex review should not promote generic model hints"
   review_text="$(cat "$repo/.ai/reviews/$task_id.md")"
   assert_contains "$review_text" '"model_observed": ""' "codex provenance should leave rejected model hints empty"
-  assert_contains "$review_text" '"model_source": "unknown"' "codex provenance should mark rejected model hints unknown"
+  assert_contains "$review_text" '"model_source": "requested"' "codex provenance should fall back to the requested default model"
   session_json="$(cat "$repo/.ai/runs/$task_id/session.json")"
-  assert_json "$session_json" "data['entries'][-1]['type'] == 'provider_invocation' and data['entries'][-1]['status'] == 'completed' and data['entries'][-1]['model_observed'] == '' and data['entries'][-1]['confidence'] == 'unknown'" "codex telemetry should keep rejected model hints unknown"
+  assert_json "$session_json" "data['entries'][-1]['type'] == 'provider_invocation' and data['entries'][-1]['status'] == 'completed' and data['entries'][-1]['model_requested'] == 'gpt-5.5' and data['entries'][-1]['model_observed'] == '' and data['entries'][-1]['confidence'] == 'requested_only'" "codex telemetry should keep rejected model hints requested-only"
 
   repo="$(new_repo)"
   task_id="external-runner-claude-model-observed"
@@ -1597,16 +1651,23 @@ try:
 except (ValueError, IndexError) as exc:
     raise SystemExit("missing --session-id") from exc
 uuid.UUID(session_id)
+try:
+    model = args[args.index("--model") + 1]
+except (ValueError, IndexError) as exc:
+    raise SystemExit("missing --model for default claude review") from exc
+if model != "claude-opus-4-7":
+    raise SystemExit(f"expected default claude review model claude-opus-4-7, got {model!r}")
 PY
   assert_contains "$output" "model observed:" "claude review should print observed model from json envelope"
   assert_contains "$output" "warning: claude reported a different session id:" "claude review should warn when observed session differs from requested session"
   review_text="$(cat "$repo/.ai/reviews/$task_id.md")"
+  assert_contains "$review_text" '"model_requested": "claude-opus-4-7"' "claude provenance should request the default opus review model"
   assert_contains "$review_text" '"model_observed": "claude-feedback-observed"' "claude provenance should store observed model"
   assert_contains "$review_text" '"model_source": "observed"' "claude provenance should mark observed model source"
   assert_contains "$review_text" '"provider_session_observed": "00000000-0000-4000-8000-000000000001"' "claude provenance should store observed provider session"
   assert_contains "$review_text" '"provider": "claude"' "claude provenance should store provider"
   session_json="$(cat "$repo/.ai/runs/$task_id/session.json")"
-  assert_json "$session_json" "data['entries'][-1]['type'] == 'provider_invocation' and data['entries'][-1]['status'] == 'completed' and data['entries'][-1]['model_observed'] == 'claude-feedback-observed' and data['entries'][-1]['confidence'] == 'observed' and 'claude reported a different session id:' in data['entries'][-1]['warning']" "claude provider telemetry should record observed model confidence and session mismatch warning"
+  assert_json "$session_json" "data['entries'][-1]['type'] == 'provider_invocation' and data['entries'][-1]['status'] == 'completed' and data['entries'][-1]['model_requested'] == 'claude-opus-4-7' and data['entries'][-1]['model_observed'] == 'claude-feedback-observed' and data['entries'][-1]['confidence'] == 'observed' and 'claude reported a different session id:' in data['entries'][-1]['warning']" "claude provider telemetry should record observed model confidence and session mismatch warning"
   assert_contains_file "$prompt_capture" "numeric citations must use one line only" "review runner prompt should forbid line-range findings"
   assert_contains_file "$prompt_capture" "config.yaml#review.external" "review runner prompt should allow YAML/Markdown anchor findings"
   assert_contains_file "$prompt_capture" "at most 10 total findings" "review runner prompt should cap review verbosity"
@@ -1626,7 +1687,7 @@ exit 7
 EOF
   chmod +x "$stub_dir/claude"
 
-  if capture output bash -lc "cd '$repo' && PATH='$stub_dir:$CLI_ROOT':\"\$PATH\" SCAFLD_CODEX_BIN='definitely-missing-codex' scafld review '$task_id'"; then
+  if capture output bash -lc "cd '$repo' && PATH='$stub_dir:$CLI_ROOT':\"\$PATH\" SCAFLD_CURRENT_AGENT_PROVIDER=unknown SCAFLD_CODEX_BIN='definitely-missing-codex' scafld review '$task_id'"; then
     fail "failed claude fallback should fail review"
   fi
   output_file="$repo/pre-run-warning.output"
@@ -2104,6 +2165,14 @@ echo "provider should not be invoked in json mode" >&2
 exit 99
 EOF
   chmod +x "$stub_dir/claude"
+
+  capture output bash -lc "cd '$repo' && PATH='$stub_dir:$CLI_ROOT':\"\$PATH\" scafld review '$task_id' --json --provider codex"
+  assert_json "$output" "data['result']['review_runner']['provider'] == 'codex'" "review --json should honor codex provider override"
+  assert_json "$output" "data['result']['review_runner']['model'] == 'gpt-5.5'" "codex review should default to the best configured review model"
+
+  capture output bash -lc "cd '$repo' && PATH='$stub_dir:$CLI_ROOT':\"\$PATH\" scafld review '$task_id' --json --provider claude"
+  assert_json "$output" "data['result']['review_runner']['provider'] == 'claude'" "review --json should honor claude provider override"
+  assert_json "$output" "data['result']['review_runner']['model'] == 'claude-opus-4-7'" "claude review should default to Opus 4.7"
 
   capture output bash -lc "cd '$repo' && PATH='$stub_dir:$CLI_ROOT':\"\$PATH\" scafld review '$task_id' --json --provider claude --model smoke-model"
   assert_json "$output" "data['result']['review_runner']['provider'] == 'claude'" "review --json should honor provider override"
@@ -2593,6 +2662,7 @@ case_all() {
   case_provenance_and_results
   case_non_mutating_review
   case_external_runner
+  case_external_runner_avoids_codex_self_review
   case_external_runner_timeout
   case_external_runner_observability
   case_external_runner_observed_model_truth
@@ -2630,6 +2700,7 @@ main() {
     external-runner-prose) case_external_runner ;;
     external-runner-isolation) case_external_runner ;;
     external-runner-structured-packet) case_external_runner ;;
+    external-runner-avoids-codex-self-review) case_external_runner_avoids_codex_self_review ;;
     external-runner-timeout) case_external_runner_timeout ;;
     external-runner-observability) case_external_runner_observability ;;
     external-runner-attribution-precision) case_external_runner_observed_model_truth ;;

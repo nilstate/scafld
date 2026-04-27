@@ -200,13 +200,14 @@ rubric:
 review:
   runner: "external"
   external:
+    # auto avoids Codex self-review when another provider is available
     provider: "auto"
     timeout_seconds: 600
     fallback_policy: "warn"
     codex:
-      model: ""
+      model: "gpt-5.5"
     claude:
-      model: ""
+      model: "claude-opus-4-7"
 
   # Review pipeline is built from named built-in passes only.
   # Ordering is explicit; scafld sorts by `order`, not mapping insertion luck.

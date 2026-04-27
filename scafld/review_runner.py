@@ -30,8 +30,11 @@ from scafld.session_store import record_provider_invocation
 REVIEW_RUNNER_VALUES = ("external", "local", "manual")
 REVIEW_PROVIDER_VALUES = ("auto", "codex", "claude")
 EXTERNAL_FALLBACK_POLICY_VALUES = ("warn", "allow", "disable")
+CURRENT_AGENT_PROVIDER_VALUES = ("unknown", "codex", "claude")
 DEFAULT_EXTERNAL_TIMEOUT_SECONDS = 600
 DEFAULT_EXTERNAL_FALLBACK_POLICY = "warn"
+DEFAULT_CODEX_REVIEW_MODEL = "gpt-5.5"
+DEFAULT_CLAUDE_REVIEW_MODEL = "claude-opus-4-7"
 DEFAULT_CLAUDE_MAX_OUTPUT_TOKENS = "12000"
 UNTRUSTED_HANDOFF_BEGIN = "SCAFLD_UNTRUSTED_REVIEW_HANDOFF_BEGIN"
 UNTRUSTED_HANDOFF_END = "SCAFLD_UNTRUSTED_REVIEW_HANDOFF_END"
@@ -142,7 +145,14 @@ def _provider_model(external_config, provider):
     provider_entry = external_config.get(provider) or {}
     if provider_entry and not isinstance(provider_entry, dict):
         raise ValueError(f"{CONFIG_PATH}: review.external.{provider} must be a mapping")
-    return _normalize_model(provider_entry.get("model", ""))
+    configured_model = _normalize_model(provider_entry.get("model", ""))
+    if configured_model:
+        return configured_model
+    if provider == "codex":
+        return DEFAULT_CODEX_REVIEW_MODEL
+    if provider == "claude":
+        return DEFAULT_CLAUDE_REVIEW_MODEL
+    return ""
 
 
 def configured_provider_model(root, provider):
@@ -251,14 +261,48 @@ def _provider_binary(provider):
     return os.environ.get(env_name, provider), env_name
 
 
-def resolve_external_provider(provider, fallback_policy=DEFAULT_EXTERNAL_FALLBACK_POLICY):
+def current_agent_provider(env=None):
+    env = os.environ if env is None else env
+    override = str(env.get("SCAFLD_CURRENT_AGENT_PROVIDER", "") or "").strip().lower()
+    if override in CURRENT_AGENT_PROVIDER_VALUES:
+        return "" if override == "unknown" else override
+    if any(key.startswith("CODEX_") for key in env):
+        return "codex"
+    if any(key.startswith("CLAUDECODE") or key.startswith("CLAUDE_CODE") for key in env):
+        return "claude"
+    return ""
+
+
+def _auto_provider_candidates(fallback_policy, env=None):
+    if fallback_policy == "disable":
+        return ("codex",)
+    if current_agent_provider(env) == "codex":
+        return ("claude", "codex")
+    return ("codex", "claude")
+
+
+def _provider_selection_reason(provider_requested, provider, fallback_policy, env=None):
+    if provider_requested != "auto":
+        return ""
+    current_provider = current_agent_provider(env)
+    if current_provider == "codex":
+        if provider == "claude":
+            return "avoid_codex_self_review"
+        if provider == "codex" and fallback_policy != "disable":
+            return "no_alternate_provider"
+    if provider == "claude":
+        return "codex_unavailable"
+    return ""
+
+
+def resolve_external_provider(provider, fallback_policy=DEFAULT_EXTERNAL_FALLBACK_POLICY, *, env=None):
     fallback_policy = _normalize_choice(
         fallback_policy,
         allowed=EXTERNAL_FALLBACK_POLICY_VALUES,
         field="external.fallback_policy",
     )
     if provider == "auto":
-        candidates = ("codex",) if fallback_policy == "disable" else ("codex", "claude")
+        candidates = _auto_provider_candidates(fallback_policy, env)
     else:
         candidates = (provider,)
     for candidate in candidates:
@@ -305,7 +349,14 @@ def _validate_external_result(text, topology, *, root=None):
 
 
 def _external_review_warnings(provider_requested, provider, fallback_policy):
-    if provider_requested == "auto" and provider == "claude" and fallback_policy == "warn":
+    if provider_requested != "auto" or fallback_policy != "warn":
+        return []
+    selection_reason = _provider_selection_reason(provider_requested, provider, fallback_policy)
+    if selection_reason == "avoid_codex_self_review":
+        return ["provider=auto selected Claude to avoid Codex self-review; Claude isolation is weaker than Codex sandboxing"]
+    if selection_reason == "no_alternate_provider":
+        return ["provider=auto used Codex because no alternate review provider was available"]
+    if provider == "claude":
         return ["provider=auto fell back to weaker Claude isolation"]
     return []
 
@@ -832,6 +883,8 @@ def run_external_review(root, task_id, review_prompt, topology, resolved_runner,
         provider_requested,
         resolved_runner.fallback_policy,
     )
+    agent_provider = current_agent_provider()
+    selection_reason = _provider_selection_reason(provider_requested, provider, resolved_runner.fallback_policy)
     provider_bin_record = _provider_bin_display(provider_bin)
     model = resolved_runner.model or configured_provider_model(root, provider)
     prompt = build_external_review_prompt(review_prompt, topology)
@@ -1270,6 +1323,8 @@ def run_external_review(root, task_id, review_prompt, topology, resolved_runner,
         "provider": provider,
         "provider_bin": provider_bin_record,
         "provider_env": env_name,
+        "current_agent_provider": agent_provider,
+        "provider_selection_reason": selection_reason,
         "model": model,
         "model_requested": model,
         "model_observed": model_observed,
