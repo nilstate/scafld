@@ -163,9 +163,14 @@ External provider calls fail rather than hang when `review.external.timeout_seco
 is reached. Invalid external output also fails the review command; it leaves the
 latest round in progress and does not suggest `scafld complete`.
 
-For `provider: auto`, `review.external.fallback_policy` controls Codex to Claude
-fallback: `warn` allows it with a visible warning, `allow` allows it while
-recording the weaker isolation in provenance, and `disable` requires Codex.
+For `provider: auto`, scafld avoids Codex self-review by preferring Claude when
+the current agent is detected as Codex. Otherwise it prefers Codex, then Claude.
+`review.external.fallback_policy` controls alternate-provider selection:
+`warn` allows it with a visible warning, `allow` allows it while recording the
+weaker isolation in provenance, and `disable` requires Codex.
+Codex review requests `--model gpt-5.5` by default. Claude review requests
+`--model claude-opus-4-7` by default unless `review.external.<provider>.model`
+or `--model` provides another value.
 
 Important JSON fields:
 

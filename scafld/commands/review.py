@@ -681,13 +681,16 @@ def cmd_review(args):
         if runner_result.provenance.get("repair_handoff"):
             print(f"  repair handoff: {c(C_DIM, runner_result.provenance['repair_handoff'])}")
         for runner_warning in runner_result.provenance.get("warnings") or []:
-            if runner_warning == "provider=auto fell back to weaker Claude isolation":
+            if runner_warning.startswith("provider=auto "):
                 continue
             print(f"  {c(C_YELLOW, 'warning')}: {runner_warning}")
         if runner_result.provenance.get("isolation_downgraded"):
             fallback_policy = runner_result.provenance.get("fallback_policy") or "warn"
             if fallback_policy != "warn":
-                print(f"  {c(C_DIM, 'note')}: provider=auto fell back to weaker Claude isolation")
+                if runner_result.provenance.get("provider_selection_reason") == "avoid_codex_self_review":
+                    print(f"  {c(C_DIM, 'note')}: provider=auto selected Claude to avoid Codex self-review; Claude isolation is weaker than Codex sandboxing")
+                else:
+                    print(f"  {c(C_DIM, 'note')}: provider=auto fell back to weaker Claude isolation")
         print(f"  review file: {c(C_DIM, result['review_file'])}")
         print()
         if verdict == "fail":

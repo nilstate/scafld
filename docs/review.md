@@ -46,15 +46,22 @@ round until the challenger has actually finished the current one.
 
 The default runner is `external`:
 
-- resolve `codex` first
-- fall back to `claude` when codex is unavailable, with a visible weaker
-  isolation warning before the Claude subprocess starts
+- when the current agent is detected as Codex, resolve `claude` first so the
+  default challenger is a different agent
+- otherwise resolve `codex` first
+- fall back to the other provider when available, with a visible weaker
+  isolation or self-review warning before the subprocess starts
 - fail cleanly if neither exists
 - stop after `review.external.timeout_seconds` instead of hanging indefinitely
 
 Set `review.external.fallback_policy: "disable"` to require Codex for
-`provider: auto`. `warn` is the default and prints a warning on Claude fallback;
-`allow` records the downgrade in provenance without escalating the message.
+`provider: auto`. `warn` is the default and prints a warning on Claude fallback
+or Codex self-review avoidance; `allow` records the downgrade in provenance
+without escalating the message.
+
+Codex review defaults to `--model gpt-5.5`. Claude review defaults to
+`--model claude-opus-4-7`. Configure `review.external.<provider>.model` or pass
+`--model` to pin a different model.
 
 Explicit degraded modes stay available:
 
@@ -168,6 +175,10 @@ Provider isolation is recorded in review provenance. Codex runs with the
 read-only ephemeral subprocess path. Claude uses restricted tools and a fresh
 session, but its CLI does not expose an equivalent sandbox here, so fallback from
 Codex to Claude is marked as weaker isolation.
+When scafld itself appears to be running inside Codex, `provider: auto` prefers
+Claude if it is installed. The review provenance records
+`current_agent_provider: "codex"` and
+`provider_selection_reason: "avoid_codex_self_review"` for that default.
 
 Provider invocation session entries also carry status, timing, timeout, exit,
 diagnostic, process, session, and attribution confidence fields. Observed provider facts can
