@@ -5,7 +5,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from scafld.audit_scope import collect_changed_files
+from scafld.audit_scope import collect_changed_files, git_sync_excluded_paths
 from scafld.acceptance import evaluate_acceptance_criterion
 from scafld.errors import ScafldError
 from scafld.git_state import capture_review_git_state
@@ -85,12 +85,27 @@ def latest_review_round_number(review_file):
 
 
 def review_binding_excluded_rels(task_id, review_file_rel):
-    """Return task-scoped review control-plane paths excluded from review binding."""
+    """Return scafld control-plane paths excluded from review binding.
+
+    The review anchor must reflect engineering changes only. scafld's own
+    bookkeeping writes (archive moves under .ai/specs, .ai/reviews,
+    .ai/runs) happen between sequential complete calls and would
+    otherwise invalidate sibling reviews even when no code changed.
+    """
     excluded = []
     if review_file_rel:
         excluded.append(Path(review_file_rel).as_posix())
     excluded.append((Path(".ai") / "runs" / task_id).as_posix())
-    return excluded
+    for prefix in git_sync_excluded_paths():
+        excluded.append(prefix)
+    seen = set()
+    deduped = []
+    for entry in excluded:
+        if entry in seen:
+            continue
+        seen.add(entry)
+        deduped.append(entry)
+    return deduped
 
 
 def capture_bound_review_git_state(root, task_id, review_file_rel):
