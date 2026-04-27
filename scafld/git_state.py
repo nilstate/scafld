@@ -117,6 +117,52 @@ def review_git_pathspec(excluded_rel=None):
     return git_pathspec(excluded_rel)
 
 
+def _is_git_work_tree(root):
+    payload, _error = run_git_capture(root, ["rev-parse", "--is-inside-work-tree"])
+    return payload is not None and payload.decode("utf-8", errors="replace").strip() == "true"
+
+
+def _path_is_excluded(path, excluded_rels=None):
+    normalized = Path(path).as_posix().rstrip("/")
+    if not normalized:
+        return False
+    for excluded_rel in excluded_rels or []:
+        excluded = Path(excluded_rel).as_posix().rstrip("/")
+        if not excluded:
+            continue
+        if normalized == excluded or normalized.startswith(f"{excluded}/") or excluded.startswith(f"{normalized}/"):
+            return True
+    return False
+
+
+def list_submodule_paths(root):
+    """Return configured submodule paths for this work tree."""
+    gitmodules = Path(root) / ".gitmodules"
+    if not gitmodules.exists():
+        return [], None
+
+    payload, error = run_git_capture(
+        root,
+        ["config", "--file", ".gitmodules", "--get-regexp", r"^submodule\..*\.path$"],
+    )
+    if payload is None:
+        if error and "exited with code 1" not in error:
+            return None, error
+        return [], None
+
+    paths = []
+    for line in decode_text(payload).splitlines():
+        parts = line.split(None, 1)
+        if len(parts) != 2:
+            continue
+        raw_path = parts[1].strip()
+        submodule_path = Path(raw_path)
+        if submodule_path.is_absolute() or ".." in submodule_path.parts:
+            continue
+        paths.append(submodule_path.as_posix())
+    return sorted(set(paths)), None
+
+
 def ref_exists(root, ref_name):
     """Return True when a commit-ish ref exists locally."""
     payload, _error = run_git_capture(root, ["rev-parse", "--verify", "--quiet", f"{ref_name}^{{commit}}"])
@@ -453,6 +499,29 @@ def build_origin_sync_payload(root, origin=None, excluded_rels=None):
     }
 
 
+def _submodule_working_tree_changed_map(root, excluded_rels=None):
+    submodule_paths, error = list_submodule_paths(root)
+    if submodule_paths is None:
+        return None, error
+
+    changed = {}
+    for submodule_path in submodule_paths:
+        if _path_is_excluded(submodule_path, excluded_rels):
+            continue
+        submodule_root = Path(root) / submodule_path
+        if not _is_git_work_tree(submodule_root):
+            continue
+        nested_changed, error = list_working_tree_changed_files(submodule_root)
+        if nested_changed is None:
+            return None, f"submodule {submodule_path}: {error}"
+        if nested_changed:
+            changed[submodule_path] = [
+                f"{submodule_path}/{path}"
+                for path in nested_changed
+            ]
+    return changed, None
+
+
 def list_working_tree_changed_files(root, excluded_rels=None):
     """Return tracked and untracked file paths changed in the current workspace."""
     pathspec = git_pathspec(excluded_rels)
@@ -468,6 +537,13 @@ def list_working_tree_changed_files(root, excluded_rels=None):
         if payload is None:
             return None, error
         changed.update(decode_path_list(payload))
+
+    submodule_changed, error = _submodule_working_tree_changed_map(root, excluded_rels=excluded_rels)
+    if submodule_changed is None:
+        return None, error
+    for submodule_path, nested_paths in submodule_changed.items():
+        changed.discard(submodule_path)
+        changed.update(nested_paths)
 
     return sorted(changed), None
 
@@ -491,7 +567,40 @@ def list_changed_files_against_ref(root, base_ref, excluded_rels=None):
 
     changed = set(decode_path_list(diff_bytes))
     changed.update(decode_path_list(untracked_bytes))
+
+    submodule_changed, error = _submodule_working_tree_changed_map(root, excluded_rels=excluded_rels)
+    if submodule_changed is None:
+        return None, error
+    for submodule_path, nested_paths in submodule_changed.items():
+        changed.discard(submodule_path)
+        changed.update(nested_paths)
+
     return sorted(changed), None
+
+
+def _submodule_review_state(root, excluded_rel=None):
+    submodule_paths, error = list_submodule_paths(root)
+    if submodule_paths is None:
+        return None, False, error
+
+    fingerprint = bytearray()
+    dirty = False
+    for submodule_path in submodule_paths:
+        if _path_is_excluded(submodule_path, excluded_rel):
+            continue
+        submodule_root = Path(root) / submodule_path
+        if not _is_git_work_tree(submodule_root):
+            continue
+        state, error = capture_review_git_state(submodule_root)
+        if error:
+            return None, False, f"submodule {submodule_path}: {error}"
+        fingerprint.extend(submodule_path.encode("utf-8", errors="surrogateescape"))
+        fingerprint.extend(b"\0")
+        for key in ("reviewed_head", "reviewed_dirty", "reviewed_diff"):
+            fingerprint.extend(str(state.get(key)).encode("utf-8", errors="surrogateescape"))
+            fingerprint.extend(b"\0")
+        dirty = dirty or bool(state.get("reviewed_dirty"))
+    return bytes(fingerprint), dirty, None
 
 
 def capture_review_git_state(root, excluded_rel=None):
@@ -551,8 +660,14 @@ def capture_review_git_state(root, excluded_rel=None):
             fingerprint.extend(b"<missing-or-non-file>")
         fingerprint.extend(b"\0")
 
+    submodule_fingerprint, submodule_dirty, error = _submodule_review_state(root, excluded_rel)
+    if submodule_fingerprint is None:
+        return empty, error
+    fingerprint.extend(b"\0submodules\0")
+    fingerprint.extend(submodule_fingerprint)
+
     return {
         "reviewed_head": head_bytes.decode("utf-8", errors="replace").strip() or None,
-        "reviewed_dirty": bool(status_bytes.rstrip(b"\0")),
+        "reviewed_dirty": bool(status_bytes.rstrip(b"\0")) or submodule_dirty,
         "reviewed_diff": sha256_bytes(bytes(fingerprint)),
     }, None
