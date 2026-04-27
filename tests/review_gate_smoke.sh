@@ -899,7 +899,7 @@ PY
 EOF
   chmod +x "$stub_dir/codex"
 
-  prompt_capture="$repo/external-review.prompt"
+  prompt_capture="$stub_dir/external-review.prompt"
   capture output bash -lc "cd '$repo' && PATH='$stub_dir:$CLI_ROOT':\"\$PATH\" PYTHONPATH='$REPO_ROOT' python3 -c \"from scafld.review_runner import resolve_external_provider; assert resolve_external_provider('auto')[0] == 'codex'; print('ok')\""
   assert_contains "$output" "ok" "auto provider resolution should prefer codex when it is available"
 
@@ -1042,7 +1042,7 @@ print(json.dumps({
 PY
 EOF
   chmod +x "$stub_dir/claude"
-  prompt_capture="$repo/external-review-fallback.prompt"
+  prompt_capture="$stub_dir/external-review-fallback.prompt"
   capture output bash -lc "cd '$repo' && PATH='$stub_dir:$CLI_ROOT':\"\$PATH\" SCAFLD_CODEX_BIN='definitely-missing-codex' SCAFLD_REVIEW_PROMPT_CAPTURE='$prompt_capture' scafld review '$task_id'"
   assert_contains "$output" "provider:" "review should report the fallback provider"
   assert_contains "$output" "weaker Claude isolation" "review should warn when auto falls back to weaker claude isolation"
@@ -1058,7 +1058,7 @@ review:
   external:
     fallback_policy: "disable"
 EOF
-  prompt_capture="$repo/external-review-fallback-disable.prompt"
+  prompt_capture="$stub_dir/external-review-fallback-disable.prompt"
   if capture output bash -lc "cd '$repo' && PATH='$stub_dir:$CLI_ROOT':\"\$PATH\" SCAFLD_CODEX_BIN='definitely-missing-codex' SCAFLD_REVIEW_PROMPT_CAPTURE='$prompt_capture' scafld review '$task_id'"; then
     fail "disabled external fallback should fail when codex is missing"
   fi
@@ -1084,7 +1084,7 @@ EOF
 }
 
 case_external_runner_timeout() {
-  local repo task_id output stub_dir
+  local repo task_id output stub_dir pid_file child_pid child_gone i
   repo="$(new_repo)"
   task_id="external-runner-timeout"
   write_changed_file "$repo"
@@ -1099,12 +1099,29 @@ EOF
   TMP_DIRS+=("$stub_dir")
   cat > "$stub_dir/codex" <<'EOF'
 #!/usr/bin/env bash
-sleep 2
+set -euo pipefail
+(sleep 30) &
+echo "$!" > "${SCAFLD_CHILD_PID_CAPTURE:?}"
+sleep 30
 EOF
   chmod +x "$stub_dir/codex"
+  pid_file="$stub_dir/child.pid"
 
-  if capture output bash -lc "cd '$repo' && PATH='$stub_dir:$CLI_ROOT':\"\$PATH\" SCAFLD_CODEX_BIN='$stub_dir/codex' scafld review '$task_id' --provider codex"; then
+  if capture output bash -lc "cd '$repo' && PATH='$stub_dir:$CLI_ROOT':\"\$PATH\" SCAFLD_CODEX_BIN='$stub_dir/codex' SCAFLD_CHILD_PID_CAPTURE='$pid_file' scafld review '$task_id' --provider codex"; then
     fail "external runner timeout should fail review"
+  fi
+  child_pid="$(cat "$pid_file")"
+  child_gone=0
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    if ! kill -0 "$child_pid" 2>/dev/null; then
+      child_gone=1
+      break
+    fi
+    sleep 0.1
+  done
+  if [ "$child_gone" != "1" ]; then
+    kill "$child_pid" 2>/dev/null || true
+    fail "external runner timeout should kill provider child processes"
   fi
   assert_contains "$output" "timed out" "timeout failure should explain the provider timed out"
   assert_contains "$output" "diagnostic: .ai/runs/$task_id/diagnostics/external-review-attempt-1.txt" "timeout failure should report the diagnostic path"
@@ -1143,6 +1160,62 @@ EOF
   assert_not_contains "$(cat "$diagnostic")" "/tmp/scafld-review" "nonzero diagnostic should redact temp output paths"
   session_json="$(cat "$repo/.ai/runs/$task_id/session.json")"
   assert_json "$session_json" "data['entries'][-1]['type'] == 'provider_invocation' and data['entries'][-1]['status'] == 'failed' and data['entries'][-1]['exit_code'] == 42 and data['entries'][-1]['diagnostic_path'].endswith('external-review-attempt-1.txt')" "nonzero external runner should record failed provider telemetry"
+
+  repo="$(new_repo)"
+  task_id="external-runner-workspace-mutated"
+  write_changed_file "$repo"
+  write_active_spec "$repo" "$task_id" "grep -q '^changed$' app.txt" "exit code 0" "pass"
+  stub_dir="$(mktemp -d /tmp/scafld-review-runner-mutated.XXXXXX)"
+  TMP_DIRS+=("$stub_dir")
+  cat > "$stub_dir/codex" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+output=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o|--output-last-message)
+      output="$2"
+      shift 2
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+cat >/dev/null
+printf 'provider mutation\n' > provider-mutated.txt
+python3 - "$output" <<'PY'
+import json
+import sys
+
+passes = ["regression_hunt", "convention_check", "dark_patterns"]
+packet = {
+    "schema_version": "review_packet.v1",
+    "review_summary": "Checked app.txt callers, conventions, and dark-pattern paths.",
+    "verdict": "pass",
+    "pass_results": {pass_id: "pass" for pass_id in passes},
+    "checked_surfaces": [
+        {"pass_id": "regression_hunt", "targets": ["app.txt:1"], "summary": "callers of app.txt", "limitations": []},
+        {"pass_id": "convention_check", "targets": ["AGENTS.md#review"], "summary": "AGENTS.md and CONVENTIONS.md rules", "limitations": []},
+        {"pass_id": "dark_patterns", "targets": ["app.txt:1"], "summary": "hardcodes and null handling in app.txt", "limitations": []},
+    ],
+    "findings": [],
+}
+open(sys.argv[1], "w", encoding="utf-8").write(json.dumps(packet))
+PY
+EOF
+  chmod +x "$stub_dir/codex"
+
+  if capture output bash -lc "cd '$repo' && PATH='$stub_dir:$CLI_ROOT':\"\$PATH\" scafld review '$task_id' --provider codex"; then
+    fail "workspace-mutating external runner should fail review"
+  fi
+  diagnostic="$repo/.ai/runs/$task_id/diagnostics/external-review-attempt-1.txt"
+  assert_contains "$output" "mutated the workspace" "workspace mutation should be reported as a runner failure"
+  assert_contains "$output" "diagnostic: .ai/runs/$task_id/diagnostics/external-review-attempt-1.txt" "workspace mutation should report diagnostics"
+  [ -f "$diagnostic" ] || fail "workspace mutation should persist diagnostics"
+  assert_contains_file "$diagnostic" "provider-mutated.txt" "workspace mutation diagnostic should include changed paths"
+  session_json="$(cat "$repo/.ai/runs/$task_id/session.json")"
+  assert_json "$session_json" "data['entries'][-1]['type'] == 'provider_invocation' and data['entries'][-1]['status'] == 'workspace_mutated' and data['entries'][-1]['diagnostic_path'].endswith('external-review-attempt-1.txt')" "workspace mutation should record provider telemetry"
 
   repo="$(new_repo)"
   task_id="external-runner-spawn-failed"
@@ -1503,12 +1576,14 @@ PY
 EOF
   chmod +x "$stub_dir/claude"
 
-  args_capture="$repo/claude.args"
-  env_capture="$repo/claude.env"
-  prompt_capture="$repo/claude.prompt"
+  args_capture="$stub_dir/claude.args"
+  env_capture="$stub_dir/claude.env"
+  prompt_capture="$stub_dir/claude.prompt"
   capture output bash -lc "cd '$repo' && PATH='$stub_dir:$CLI_ROOT':\"\$PATH\" env -u CLAUDE_CODE_MAX_OUTPUT_TOKENS SCAFLD_CLAUDE_ARGS_CAPTURE='$args_capture' SCAFLD_CLAUDE_ENV_CAPTURE='$env_capture' SCAFLD_REVIEW_PROMPT_CAPTURE='$prompt_capture' scafld review '$task_id' --provider claude"
   assert_contains_file "$args_capture" "--mcp-config" "claude runner should pass an explicit MCP config"
   assert_contains_file "$args_capture" '{"mcpServers":{}}' "claude runner should pass a schema-valid empty MCP config"
+  assert_contains_file "$args_capture" "--permission-mode" "claude runner should request a read-only planning mode"
+  assert_contains_file "$args_capture" "--disallowedTools" "claude runner should explicitly deny write-capable tools"
   assert_contains_file "$env_capture" "12000" "claude runner should set a default output-token budget"
   python3 - "$args_capture" <<'PY'
 from pathlib import Path

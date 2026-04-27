@@ -6,6 +6,7 @@ from pathlib import Path
 from scafld.git_state import (
     bind_task_branch,
     build_origin_sync_payload,
+    capture_review_git_state,
     capture_workspace_git_state,
     list_changed_files_against_ref,
     list_working_tree_changed_files,
@@ -34,6 +35,27 @@ def init_repo(root):
     git(root, "commit", "-m", "chore: seed repo")
 
 
+def init_superproject_with_submodule(root):
+    source = root / "source"
+    superproject = root / "super"
+    source.mkdir()
+    superproject.mkdir()
+    init_repo(source)
+    init_repo(superproject)
+    git(
+        superproject,
+        "-c",
+        "protocol.file.allow=always",
+        "submodule",
+        "add",
+        str(source),
+        "modules/source",
+    )
+    git(superproject, "add", ".gitmodules", "modules/source")
+    git(superproject, "commit", "-m", "chore: add submodule")
+    return superproject, superproject / "modules" / "source"
+
+
 class GitStateTest(unittest.TestCase):
     def test_list_working_tree_changed_files_includes_unstaged_staged_and_untracked(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -49,6 +71,35 @@ class GitStateTest(unittest.TestCase):
 
             self.assertIsNone(error)
             self.assertEqual(set(changed), {"tracked.txt", "staged.txt", "untracked.txt"})
+
+    def test_list_working_tree_changed_files_expands_dirty_submodules(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            superproject, submodule = init_superproject_with_submodule(root)
+
+            (submodule / "tracked.txt").write_text("updated inside submodule\n", encoding="utf-8")
+
+            changed, error = list_working_tree_changed_files(superproject)
+
+            self.assertIsNone(error)
+            self.assertEqual(set(changed), {"modules/source/tracked.txt"})
+
+    def test_capture_review_git_state_fingerprints_dirty_submodule_contents(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            superproject, submodule = init_superproject_with_submodule(root)
+
+            (submodule / "tracked.txt").write_text("dirty one\n", encoding="utf-8")
+            before, error = capture_review_git_state(superproject)
+            self.assertIsNone(error)
+
+            (submodule / "tracked.txt").write_text("dirty two\n", encoding="utf-8")
+            after, error = capture_review_git_state(superproject)
+
+            self.assertIsNone(error)
+            self.assertTrue(before["reviewed_dirty"])
+            self.assertTrue(after["reviewed_dirty"])
+            self.assertNotEqual(before["reviewed_diff"], after["reviewed_diff"])
 
     def test_list_changed_files_against_ref_keeps_untracked_files_visible(self):
         with tempfile.TemporaryDirectory() as temp_dir:

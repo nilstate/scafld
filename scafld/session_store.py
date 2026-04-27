@@ -22,6 +22,7 @@ PROVIDER_INVOCATION_STATUSES = (
     "spawn_failed",
     "invalid_output",
     "invalid_artifact",
+    "workspace_mutated",
 )
 PROVIDER_CONFIDENCE_VALUES = ("observed", "inferred", "requested_only", "unknown")
 STRONG_REVIEW_ISOLATION_LEVELS = {"codex_read_only_ephemeral"}

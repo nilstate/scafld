@@ -3,6 +3,7 @@ import json
 import math
 import os
 import re
+import signal
 import shutil
 import subprocess
 import sys
@@ -14,6 +15,7 @@ from pathlib import Path
 
 from scafld.error_codes import ErrorCode as EC
 from scafld.errors import ScafldError
+from scafld.git_state import capture_review_git_state, run_git_text
 from scafld.review_packet import (
     REVIEW_PACKET_SCHEMA_VERSION,
     review_packet_from_text,
@@ -90,6 +92,14 @@ class ExternalReviewResult:
     provenance: dict
     raw_output: str = ""
     packet: dict | None = None
+
+
+@dataclass(frozen=True)
+class ProviderProcessResult:
+    returncode: int | None
+    stdout: str
+    stderr: str
+    timed_out: bool = False
 
 
 def _review_config(root):
@@ -378,6 +388,7 @@ def _write_external_diagnostic(
     stderr,
     raw_output,
     error,
+    workspace_status="",
 ):
     diagnostic_path = _external_diagnostic_path(root, task_id)
     safe_argv = _redacted_argv(root, argv)
@@ -408,8 +419,128 @@ def _write_external_diagnostic(
         stderr or "",
         "",
     ]
+    if workspace_status:
+        body.extend(
+            [
+                "## Workspace Status",
+                workspace_status,
+                "",
+            ]
+        )
     diagnostic_path.write_text("\n".join(body), encoding="utf-8")
     return relative_path(root, diagnostic_path)
+
+
+def _external_workspace_state(root):
+    state, error = capture_review_git_state(root)
+    return state, error
+
+
+def _external_workspace_status(root):
+    status, error = run_git_text(
+        root,
+        ["status", "--short", "--untracked-files=all"],
+        timeout=5,
+    )
+    if error:
+        return f"git status unavailable: {error}"
+    return status or "(clean)"
+
+
+def _provider_start_new_session_kwargs():
+    if os.name == "posix":
+        return {"start_new_session": True}
+    return {}
+
+
+def _terminate_provider_process_group(proc):
+    if proc.poll() is not None:
+        return
+    try:
+        if os.name == "posix":
+            os.killpg(proc.pid, signal.SIGTERM)
+        else:
+            proc.terminate()
+    except ProcessLookupError:
+        return
+    except OSError:
+        try:
+            proc.terminate()
+        except OSError:
+            pass
+
+
+def _kill_provider_process_group(proc):
+    if proc.poll() is not None:
+        return
+    try:
+        if os.name == "posix":
+            os.killpg(proc.pid, signal.SIGKILL)
+        else:
+            proc.kill()
+    except ProcessLookupError:
+        return
+    except OSError:
+        try:
+            proc.kill()
+        except OSError:
+            pass
+
+
+def _timeout_text(value):
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return str(value)
+
+
+def _run_provider_subprocess(argv, *, prompt, root, provider, timeout_seconds):
+    stdin_payload = prompt if prompt.endswith("\n") else prompt + "\n"
+    proc = subprocess.Popen(
+        argv,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        cwd=str(root),
+        env=_provider_subprocess_env(provider),
+        **_provider_start_new_session_kwargs(),
+    )
+    try:
+        stdout, stderr = proc.communicate(stdin_payload, timeout=timeout_seconds)
+        return ProviderProcessResult(
+            returncode=proc.returncode,
+            stdout=stdout or "",
+            stderr=stderr or "",
+            timed_out=False,
+        )
+    except subprocess.TimeoutExpired:
+        _terminate_provider_process_group(proc)
+        try:
+            stdout, stderr = proc.communicate(timeout=2)
+        except subprocess.TimeoutExpired as exc:
+            _kill_provider_process_group(proc)
+            try:
+                stdout, stderr = proc.communicate(timeout=2)
+            except subprocess.TimeoutExpired as kill_exc:
+                stdout = _timeout_text(kill_exc.stdout) or _timeout_text(exc.stdout)
+                stderr = _timeout_text(kill_exc.stderr) or _timeout_text(exc.stderr)
+                stderr = (stderr + "\n" if stderr else "") + "provider output capture abandoned after timeout"
+                for stream in (proc.stdin, proc.stdout, proc.stderr):
+                    try:
+                        if stream:
+                            stream.close()
+                    except OSError:
+                        pass
+        return ProviderProcessResult(
+            returncode=proc.returncode,
+            stdout=stdout or "",
+            stderr=stderr or "",
+            timed_out=True,
+        )
 
 
 def _prompt_preview(prompt, limit=4000, head=1000):
@@ -655,8 +786,12 @@ def _claude_args(model, session_id):
         "-p",
         "--output-format",
         "json",
+        "--permission-mode",
+        "plan",
         "--allowedTools",
         "Read,Grep,Glob",
+        "--disallowedTools",
+        "Bash,Edit,MultiEdit,Write,NotebookEdit",
         "--mcp-config",
         '{"mcpServers":{}}',
         "--strict-mcp-config",
@@ -699,6 +834,10 @@ def run_external_review(root, task_id, review_prompt, topology, resolved_runner)
     argv = []
     stdout = ""
     stderr = ""
+    workspace_before, workspace_before_error = _external_workspace_state(root)
+    if workspace_before_error:
+        warnings.append(f"workspace mutation guard unavailable before provider run: {workspace_before_error}")
+        warning = _warning_text(warnings)
     _emit_external_warnings(warnings)
 
     with tempfile.NamedTemporaryFile(prefix=f"scafld-review-{task_id}-", suffix=".txt", delete=False) as tmp:
@@ -706,16 +845,12 @@ def run_external_review(root, task_id, review_prompt, topology, resolved_runner)
     try:
         if provider == "codex":
             argv = [provider_bin, *_codex_args(root, output_path, model)]
-            proc = subprocess.run(
+            proc = _run_provider_subprocess(
                 argv,
-                input=(prompt if prompt.endswith("\n") else prompt + "\n"),
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                capture_output=True,
-                cwd=str(root),
-                env=_provider_subprocess_env(provider),
-                timeout=resolved_runner.timeout_seconds,
+                prompt=prompt,
+                root=root,
+                provider=provider,
+                timeout_seconds=resolved_runner.timeout_seconds,
             )
             return_code = proc.returncode
             stdout = proc.stdout or ""
@@ -725,16 +860,12 @@ def run_external_review(root, task_id, review_prompt, topology, resolved_runner)
         else:
             reviewer_session = _fresh_claude_session_id()
             argv = [provider_bin, *_claude_args(model, reviewer_session)]
-            proc = subprocess.run(
+            proc = _run_provider_subprocess(
                 argv,
-                input=(prompt if prompt.endswith("\n") else prompt + "\n"),
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                capture_output=True,
-                cwd=str(root),
-                env=_provider_subprocess_env(provider),
-                timeout=resolved_runner.timeout_seconds,
+                prompt=prompt,
+                root=root,
+                provider=provider,
+                timeout_seconds=resolved_runner.timeout_seconds,
             )
             return_code = proc.returncode
             stdout = proc.stdout or ""
@@ -747,6 +878,13 @@ def run_external_review(root, task_id, review_prompt, topology, resolved_runner)
                 )
             warning = _warning_text(warnings)
         completed_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        if proc.timed_out:
+            raise subprocess.TimeoutExpired(
+                argv,
+                resolved_runner.timeout_seconds,
+                output=stdout,
+                stderr=stderr,
+            )
         if return_code != 0:
             diagnostic_path = _write_external_diagnostic(
                 root,
@@ -800,6 +938,66 @@ def run_external_review(root, task_id, review_prompt, topology, resolved_runner)
                 details,
                 code=EC.COMMAND_FAILED,
             )
+        if not workspace_before_error:
+            workspace_after, workspace_after_error = _external_workspace_state(root)
+            if workspace_after_error:
+                warnings.append(f"workspace mutation guard unavailable after provider run: {workspace_after_error}")
+                warning = _warning_text(warnings)
+            elif workspace_before != workspace_after:
+                workspace_status = _external_workspace_status(root)
+                diagnostic_path = _write_external_diagnostic(
+                    root,
+                    task_id,
+                    provider=provider,
+                    provider_requested=provider_requested,
+                    argv=argv,
+                    started_at=started_at,
+                    completed_at=completed_at,
+                    exit_code=return_code,
+                    timed_out=False,
+                    timeout_seconds=resolved_runner.timeout_seconds,
+                    prompt_sha256=prompt_sha256,
+                    prompt_preview=prompt_preview,
+                    stdout=stdout,
+                    stderr=stderr,
+                    raw_output=raw_output,
+                    error="provider mutated workspace",
+                    workspace_status=workspace_status,
+                )
+                record_provider_invocation(
+                    root,
+                    task_id,
+                    role="challenger",
+                    gate="review",
+                    provider=provider,
+                    provider_bin=provider_bin_record,
+                    provider_requested=provider_requested,
+                    model_requested=model,
+                    model_observed=model_observed,
+                    model_source=_model_source(model, model_observed, model_observed_source),
+                    isolation_level=isolation_level,
+                    isolation_downgraded=isolation_downgraded,
+                    fallback_policy=resolved_runner.fallback_policy,
+                    status="workspace_mutated",
+                    started_at=started_at,
+                    completed_at=completed_at,
+                    exit_code=return_code,
+                    timed_out=False,
+                    timeout_seconds=resolved_runner.timeout_seconds,
+                    diagnostic_path=diagnostic_path,
+                    warning=warning,
+                )
+                details = [
+                    "external reviewers are read-only; provider output was discarded",
+                    f"diagnostic: {diagnostic_path}",
+                ]
+                if workspace_status:
+                    details.append(workspace_status)
+                raise ScafldError(
+                    f"external review runner mutated the workspace via {provider}",
+                    details,
+                    code=EC.COMMAND_FAILED,
+                )
     except subprocess.TimeoutExpired as exc:
         completed_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         partial_stdout = exc.stdout or ""
