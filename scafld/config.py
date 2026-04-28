@@ -35,7 +35,21 @@ def deep_merge(base, overlay):
 
 
 def simple_yaml_load(text):
-    """Minimal YAML loader for config files."""
+    """Load a config YAML document.
+
+    Prefers PyYAML when importable so list values, multi-line strings,
+    and other standard YAML constructs round-trip correctly. Falls back
+    to a hand-rolled indent-aware parser when PyYAML is unavailable.
+    The fallback handles `key: value`, nested dicts, and `key: [list]`
+    inline sequences but skips block sequences (`- item` lines).
+    """
+    try:
+        import yaml  # type: ignore
+        loaded = yaml.safe_load(text)
+        return loaded if isinstance(loaded, dict) else {}
+    except ModuleNotFoundError:
+        pass
+
     import re
 
     result = {}

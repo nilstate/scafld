@@ -3132,11 +3132,11 @@ printf '%s\n' "$attempt" > "$attempt_file"
 
 case "$attempt" in
   1)
-    echo "error: model '$model' not available on this account" >&2
+    echo "error: model not available ($model) on this account" >&2
     exit 7
     ;;
   2)
-    echo "error: unknown model '$model'" >&2
+    echo "error: unknown model: $model" >&2
     exit 7
     ;;
   3)
