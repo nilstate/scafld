@@ -270,8 +270,11 @@ def _normalize_checked_surfaces(packet, pass_ids, errors, *, root=None):
                 errors.append(f"{field}.targets[{target_index}] must name a concrete file, symbol, rule, path, or anchor")
             _validate_grounded_target(target, root, f"{field}.targets[{target_index}]", errors)
         summary = _as_nonempty_string(item.get("summary"), f"{field}.summary", errors)
+        limitations_raw = item.get("limitations", [])
+        if limitations_raw is None:
+            limitations_raw = []
         limitations = _as_string_list(
-            item.get("limitations", []),
+            limitations_raw,
             f"{field}.limitations",
             errors,
             require_nonempty=False,

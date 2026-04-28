@@ -10,7 +10,8 @@
     "review_summary",
     "verdict",
     "pass_results",
-    "checked_surfaces"
+    "checked_surfaces",
+    "findings"
   ],
   "properties": {
     "schema_version": {
@@ -40,7 +41,7 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["pass_id", "targets", "summary"],
+        "required": ["pass_id", "targets", "summary", "limitations"],
         "properties": {
           "pass_id": {
             "type": "string",
@@ -60,7 +61,7 @@
             "pattern": "^[^\\n\\r]+$"
           },
           "limitations": {
-            "type": "array",
+            "type": ["array", "null"],
             "items": {
               "type": "string",
               "minLength": 1,
@@ -87,7 +88,8 @@
           "why_it_matters",
           "evidence",
           "suggested_fix",
-          "tests_to_add"
+          "tests_to_add",
+          "spec_update_suggestions"
         ],
         "properties": {
           "id": {
@@ -150,11 +152,17 @@
             }
           },
           "spec_update_suggestions": {
-            "type": "array",
+            "type": ["array", "null"],
             "items": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["kind", "suggested_text"],
+              "required": [
+                "kind",
+                "suggested_text",
+                "reason",
+                "phase_id",
+                "validation_command"
+              ],
               "properties": {
                 "kind": {
                   "type": "string",
@@ -167,15 +175,15 @@
                   "pattern": "^[^\\n\\r]+$"
                 },
                 "reason": {
-                  "type": "string",
+                  "type": ["string", "null"],
                   "pattern": "^[^\\n\\r]*$"
                 },
                 "phase_id": {
-                  "type": "string",
+                  "type": ["string", "null"],
                   "pattern": "^[^\\n\\r]*$"
                 },
                 "validation_command": {
-                  "type": "string",
+                  "type": ["string", "null"],
                   "pattern": "^[^\\n\\r]*$"
                 }
               }

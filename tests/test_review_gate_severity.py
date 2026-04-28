@@ -258,5 +258,99 @@ class GateSnapshotPropagatesNewFieldsTest(unittest.TestCase):
         self.assertEqual(snapshot["review_gate"]["gate_advisory_count"], 1)
 
 
+class DeriveTaskGuidanceThresholdBlockedBranchTest(unittest.TestCase):
+    """1.7.1 adds a threshold-blocked branch in derive_task_guidance.
+    When gate_threshold > 'blocking' and verdict is pass/pass_with_issues
+    but the gate fires due to threshold, next_action should name the
+    threshold and suggest fix-or-relax — NOT 'rerun review' (which
+    just hits the same gate)."""
+
+    def _spec_data(self):
+        return {
+            "phases": [{
+                "id": "phase1",
+                "status": "completed",
+                "acceptance_criteria": [{"id": "ac1_1", "result": "pass"}],
+            }],
+        }
+
+    def _gate(self, *, gate_reason, threshold="medium"):
+        return {
+            "exists": True,
+            "gate_reason": gate_reason,
+            "gate_errors": [],
+            "gate_threshold": threshold,
+            "gate_blocking_count": 0,
+            "gate_advisory_count": 0,
+        }
+
+    def test_threshold_blocked_yields_threshold_blocked_action(self):
+        from scafld.runtime_guidance import derive_task_guidance
+        from pathlib import Path
+        from unittest import mock
+
+        review_state = {
+            "exists": True,
+            "verdict": "pass_with_issues",
+        }
+        review_gate = self._gate(
+            gate_reason="latest review has 1 non-blocking finding(s) at or above severity medium",
+            threshold="medium",
+        )
+
+        with mock.patch("scafld.runtime_guidance.active_review_provider_invocation", return_value=None), \
+             mock.patch("scafld.runtime_guidance.existing_review_handoff", return_value=None), \
+             mock.patch("scafld.runtime_guidance.existing_review_repair_handoff", return_value=None), \
+             mock.patch("scafld.runtime_guidance.predicted_handoff", return_value={"command": "scafld handoff foo --phase phase1", "path_rel": "x"}):
+            guidance = derive_task_guidance(
+                Path("/nonexistent"),
+                "task",
+                Path("/nonexistent/spec.yaml"),
+                self._spec_data(),
+                "in_progress",
+                {"entries": []},
+                review_state=review_state,
+                review_gate=review_gate,
+            )
+
+        self.assertEqual(guidance["next_action"]["type"], "threshold_blocked")
+        self.assertIn("severity medium", guidance["next_action"]["message"])
+        self.assertIn("gate_severity", guidance["next_action"]["message"])
+
+    def test_threshold_blocking_default_falls_through(self):
+        # When gate_threshold is "blocking" (default), no threshold
+        # branch should fire; we go to the "rerun review" fallback
+        # for malformed/incomplete cases.
+        from scafld.runtime_guidance import derive_task_guidance
+        from pathlib import Path
+        from unittest import mock
+
+        review_state = {
+            "exists": True,
+            "verdict": "pass_with_issues",
+        }
+        review_gate = self._gate(
+            gate_reason="latest review is incomplete",
+            threshold="blocking",
+        )
+
+        with mock.patch("scafld.runtime_guidance.active_review_provider_invocation", return_value=None), \
+             mock.patch("scafld.runtime_guidance.existing_review_handoff", return_value=None), \
+             mock.patch("scafld.runtime_guidance.existing_review_repair_handoff", return_value=None), \
+             mock.patch("scafld.runtime_guidance.predicted_handoff", return_value={"command": "scafld handoff foo --phase phase1", "path_rel": "x"}):
+            guidance = derive_task_guidance(
+                Path("/nonexistent"),
+                "task",
+                Path("/nonexistent/spec.yaml"),
+                self._spec_data(),
+                "in_progress",
+                {"entries": []},
+                review_state=review_state,
+                review_gate=review_gate,
+            )
+
+        self.assertEqual(guidance["next_action"]["type"], "review")
+
+
 if __name__ == "__main__":
     unittest.main()

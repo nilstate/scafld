@@ -3044,7 +3044,7 @@ EOF
 
   review_log="$stub_dir/review.log"
   (
-    env -i HOME="$HOME" PATH="$stub_dir:$CLI_ROOT:$PATH" SCAFLD_CURRENT_AGENT_PROVIDER=unknown bash -c "cd '$repo' && scafld review '$task_id' --provider codex" >"$review_log" 2>&1
+    cd "$repo" && exec env -i HOME="$HOME" PATH="$stub_dir:$CLI_ROOT:$PATH" SCAFLD_CURRENT_AGENT_PROVIDER=unknown scafld review "$task_id" --provider codex >"$review_log" 2>&1
   ) &
   review_pid="$!"
 
