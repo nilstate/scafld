@@ -2396,7 +2396,7 @@ Smoke fixture for advisory line on complete
 No issues found — checked AGENTS.md and CONVENTIONS.md.
 
 ### Dark Patterns
-No issues found — checked tests/ and scafld/.
+No issues found — checked scafld/foo.py:1 and tests/test_foo.py:1.
 
 ### Blocking
 None.
@@ -2474,7 +2474,7 @@ Smoke fixture for medium-threshold gate
 No issues found — checked AGENTS.md and CONVENTIONS.md.
 
 ### Dark Patterns
-No issues found — checked tests/ and scafld/.
+No issues found — checked scafld/foo.py:1 and tests/test_foo.py:1.
 
 ### Blocking
 None.
@@ -2507,18 +2507,45 @@ _seal_tamper_write_fixture() {
   "packet": {
     "schema_version": "review_packet.v1",
     "review_summary": "Smoke fixture for seal verification.",
-    "verdict": "pass",
+    "verdict": "pass_with_issues",
     "pass_results": {
-      "regression_hunt": "pass",
+      "regression_hunt": "pass_with_issues",
       "convention_check": "pass",
       "dark_patterns": "pass"
     },
     "checked_surfaces": [
-      {"pass_id": "regression_hunt", "targets": ["app.txt"], "summary": "Checked app."},
+      {"pass_id": "regression_hunt", "targets": ["app.txt:1"], "summary": "Checked app."},
       {"pass_id": "convention_check", "targets": ["AGENTS.md"], "summary": "Checked conventions."},
       {"pass_id": "dark_patterns", "targets": ["scafld/foo.py"], "summary": "Checked patterns."}
     ],
-    "findings": []
+    "findings": [
+      {
+        "id": "f1",
+        "pass_id": "regression_hunt",
+        "severity": "low",
+        "blocking": false,
+        "target": "app.txt:1",
+        "summary": "first advisory.",
+        "failure_mode": "first advisory failure mode.",
+        "why_it_matters": "first advisory why it matters.",
+        "evidence": ["app.txt:1"],
+        "suggested_fix": "fix first advisory.",
+        "tests_to_add": ["tests/foo:advisory"]
+      },
+      {
+        "id": "f2",
+        "pass_id": "regression_hunt",
+        "severity": "low",
+        "blocking": false,
+        "target": "app.txt:2",
+        "summary": "second advisory.",
+        "failure_mode": "second advisory failure mode.",
+        "why_it_matters": "second advisory why it matters.",
+        "evidence": ["app.txt:2"],
+        "suggested_fix": "fix second advisory.",
+        "tests_to_add": ["tests/foo:advisory2"]
+      }
+    ]
   }
 }
 EOF
@@ -2555,7 +2582,7 @@ Smoke fixture for seal verification on complete
   "pass_results": {
     "spec_compliance": "pass",
     "scope_drift": "pass",
-    "regression_hunt": "pass",
+    "regression_hunt": "pass_with_issues",
     "convention_check": "pass",
     "dark_patterns": "pass"
   },
@@ -2568,12 +2595,13 @@ Smoke fixture for seal verification on complete
 ### Pass Results
 - spec_compliance: PASS
 - scope_drift: PASS
-- regression_hunt: PASS
+- regression_hunt: PASS WITH ISSUES
 - convention_check: PASS
 - dark_patterns: PASS
 
 ### Regression Hunt
-No issues found — checked app.txt.
+- **low** \`app.txt:1\` — first advisory.
+- **low** \`app.txt:2\` — second advisory.
 
 ### Convention Check
 No issues found — checked AGENTS.md.
@@ -2585,10 +2613,11 @@ No issues found — checked scafld/foo.py.
 None.
 
 ### Non-blocking
-None.
+- **low** \`app.txt:1\` — first advisory.
+- **low** \`app.txt:2\` — second advisory.
 
 ### Verdict
-pass
+pass_with_issues
 EOF
   inject_review_git_state "$repo" "$task_id"
 }
@@ -2610,8 +2639,8 @@ case_plan_produces_slim_spec() {
   fi
   assert_not_contains "$spec_text" 'command: "TODO' "slim plan must not emit TODO command sentinels"
   assert_not_contains "$spec_text" 'file: "TODO' "slim plan must not emit TODO file sentinels"
-  assert_contains "$spec_text" 'expected_kind: "exit_code_zero"' "slim plan criterion must declare expected_kind explicitly"
-  assert_contains "$spec_text" 'file: "app.txt"' "slim plan must record the --files entry verbatim"
+  assert_contains "$spec_text" "expected_kind: exit_code_zero" "slim plan criterion must declare expected_kind explicitly"
+  assert_contains "$spec_text" "file: app.txt" "slim plan must record the --files entry verbatim"
 }
 
 case_plan_refuses_on_exclusive_conflict() {
@@ -2619,8 +2648,8 @@ case_plan_refuses_on_exclusive_conflict() {
   repo="$(new_repo)"
   task_id_other="other-exclusive-claim"
   task_id="slim-conflict-attempt"
+  mkdir -p "$repo/scafld"
   printf 'baseline\n' > "$repo/scafld/foo.py"
-  mkdir -p "$repo/scafld" 2>/dev/null || true
 
   # Pre-create an active spec that exclusively claims scafld/foo.py.
   mkdir -p "$repo/.ai/specs/active"
@@ -2702,24 +2731,24 @@ open(path, 'w').write(text)
   assert_contains "$output" "review seal check failed" "tampered seal must produce a named gate_reason"
 
   # Body-tamper run: a separate fresh repo with the seal intact but
-  # the markdown body claims an extra non-blocking finding the sealed
-  # packet doesn't have. The body cross-check must catch the count
-  # mismatch and refuse complete.
+  # the markdown body REMOVES the non-blocking finding bullet that
+  # the sealed packet records. The body cross-check must catch the
+  # count mismatch (packet=1, body=0) and refuse complete.
   repo="$(new_repo)"
   task_id="seal-tamper-body"
   write_changed_file "$repo"
   write_active_spec "$repo" "$task_id" "grep -q '^changed$' app.txt" "exit code 0" "pass"
   _seal_tamper_write_fixture "$repo" "$task_id"
-  # Add a fake non-blocking bullet to the body without touching the
-  # metadata block (which is what the seal binds to). The verified
-  # packet says findings=[]; the body now claims 1 non-blocking
-  # finding. Body cross-check should fire on body_non_blocking_mismatch.
+  # Remove ONE of the two non-blocking bullets without touching the
+  # metadata block. Packet claims 2 non-blocking findings; body now
+  # claims 1 (still parse-valid as pass_with_issues). Body
+  # cross-check should fire on body_non_blocking_mismatch.
   python3 -c "
 path = '$repo/.ai/reviews/$task_id.md'
 text = open(path).read()
 text = text.replace(
-    '### Non-blocking\nNone.\n',
-    '### Non-blocking\n- **low** \`app.txt:1\` — fake finding injected by hand-edit.\n',
+    '- **low** \`app.txt:2\` — second advisory.\n',
+    '',
 )
 open(path, 'w').write(text)
 "
