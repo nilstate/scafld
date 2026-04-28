@@ -3256,7 +3256,7 @@ phases:
         type: "test"
         description: "Already passed criterion"
         command: "printf '1 example, 0 failures\\n'"
-        expected: "All pass"
+        expected_kind: "exit_code_zero"
         result:
           status: "pass"
           timestamp: "2026-03-26T00:00:00Z"
@@ -3265,7 +3265,7 @@ phases:
         type: "test"
         description: "Generic pass phrase still succeeds"
         command: "printf '2 examples, 0 failures\\n'"
-        expected: "All pass"
+        expected_kind: "exit_code_zero"
 
 planning_log:
   - timestamp: "2026-03-26T00:00:00Z"
