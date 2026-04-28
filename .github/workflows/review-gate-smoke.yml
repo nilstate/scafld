@@ -44,7 +44,7 @@ jobs:
           bash -n tests/package_smoke.sh
 
       - name: Run review gate smoke matrix
-        run: bash tests/review_gate_smoke.sh all
+        run: bash -x tests/review_gate_smoke.sh all 2>&1 | head -150
 
       - name: Run harden smoke
         run: bash tests/harden_smoke.sh
