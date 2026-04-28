@@ -916,7 +916,7 @@ EOF
   assert_contains "$output" "provider:" "review should report the resolved provider"
   assert_contains "$output" "next: scafld complete $task_id" "review should point at complete after external review writes the round"
   assert_contains_file "$prompt_capture" "SCAFLD_UNTRUSTED_REVIEW_HANDOFF_BEGIN" "external review should fence the handoff as untrusted input"
-  assert_contains_file "$prompt_capture" "Return one ReviewPacket JSON object" "external review should use a structured packet output contract"
+  assert_contains_file "$prompt_capture" "produce the ReviewPacket as a JSON object" "external review should use a structured packet output contract"
   assert_contains_file "$prompt_capture" "Trusted attack vectors, all required" "external review should keep trusted attack instructions outside the handoff"
   assert_contains_file "$prompt_capture" "Read CONVENTIONS.md and AGENTS.md" "external review should keep convention-check instructions trusted"
   python3 - "$prompt_capture" <<'PY'
