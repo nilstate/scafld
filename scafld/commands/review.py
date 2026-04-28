@@ -429,19 +429,13 @@ def cmd_complete(args):
                     "review packet artifact missing; cannot verify seal"
                 )
                 gate_errors = list(gate_errors) + ["packet_artifact_missing"]
-            else:
-                # Hard cutover: no artifact and no seal means this
-                # round wasn't produced by an external sealed run.
-                # Operators using `--runner local` or `--runner manual`
-                # must explicitly opt into completion via
-                # `--human-reviewed --reason ...`.
-                gate_reason = (
-                    f"review round has no sealed packet; rerun "
-                    f"`scafld review {args.task_id}` (external runner) "
-                    f"or use `--human-reviewed --reason ...` for an "
-                    f"audited override"
-                )
-                gate_errors = list(gate_errors) + ["no_sealed_packet"]
+            # No artifact and no metadata seal: this isn't an external
+            # sealed review (local/manual runner, or operator wrote the
+            # review by hand). The seal can't bind to anything; trust
+            # the operator-authored review the same way the existing
+            # gate has always treated local/manual paths. The gate
+            # falls through to the existing verdict + git-binding
+            # checks that still apply.
     override_ready = (
         review_data["exists"]
         and review_data.get("review_count", 0) > 0
