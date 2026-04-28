@@ -1,0 +1,409 @@
+spec_version: "1.1"
+task_id: "runtime-rigor-clean-plan"
+created: "2026-04-28T13:30:00Z"
+updated: "2026-04-28T05:10:57Z"
+status: "completed"
+harden_status: "in_progress"
+
+task:
+  title: "Slim plan output, --command/--files flags, plan-time scope conflict detection"
+  summary: >
+    `scafld plan <id>` today produces a 50+ line scaffold filled
+    with `TODO: replace with...` placeholders. The operator (or
+    LLM) edits each TODO to a real value before approval. Plus
+    review-time `scope_drift` is the only audit_scope check, so
+    overlapping work between active specs only surfaces on first
+    review.
+
+    1.7.0 ships the slim plan path:
+
+      `scafld plan <id> -t "<title>" --command "<cmd>" --files "a.py,b.py"`
+
+    produces a complete ~30-line spec. No `TODO` sentinels (so
+    `validate_spec` at lifecycle_runtime.py:69-134 passes cleanly
+    without a manual fill round). One phase, one criterion with
+    explicit `expected_kind: exit_code_zero` (so
+    `evaluate_acceptance_criterion`'s strict-unset-reject at
+    acceptance.py:359-379 doesn't fire).
+
+    The verbose template path (current behavior) is preserved when
+    `--command` is omitted; multi-phase complex specs stay verbose
+    by default.
+
+    Plus: after the scaffold writes the slim spec,
+    `audit_scope.classify_active_overlap` (audit_scope.py:124)
+    runs against other active specs:
+      - Files declared `shared` by another spec: auto-tag the new
+        spec's change entry with `ownership: "shared"`.
+      - Files declared exclusive by another spec: refuse to plan
+        with `EC.SCOPE_DRIFT` and a one-line conflict message
+        naming the other task.
+
+    Schema-required fields not enforced by `validate_spec`
+    (`task.context`, `task.objectives`, `task.touchpoints`,
+    `task.acceptance`) are omitted by the slim template; renderers
+    in handoff_renderer.py:115, output.py:269, and projections.py:109
+    use `or []` fallbacks so missing fields render as empty
+    sections rather than crashes.
+
+    Hard cutover: existing 1.6.x specs (verbose, with TODO
+    sentinels) keep working because the verbose template path is
+    untouched. New slim specs are produced only when `--command`
+    is supplied.
+  size: "small"
+  risk_level: "medium"
+  context:
+    files_impacted:
+      - path: "scafld/spec_templates.py"
+        reason: "Add `build_slim_spec_scaffold` (slim template) called when --command is provided; verbose `build_new_spec_scaffold` retained for the no-flag path."
+      - path: "scafld/lifecycle_runtime.py"
+        reason: "`new_spec_snapshot` accepts `command`/`files` kwargs; routes to slim scaffold when set; calls `audit_scope.classify_active_overlap` after write and applies ownership tags or refuses."
+      - path: "scafld/workflow_runtime.py"
+        reason: "`plan_snapshot` pipes `command`/`files` through to `new_spec_snapshot`."
+      - path: "scafld/commands/workflow.py"
+        reason: "`cmd_plan` reads `args.command` and `args.files` and forwards to `plan_snapshot`."
+      - path: "scafld/commands/surface.py"
+        reason: "Add `--command` and `--files` ArgumentSpecs to the `plan` and `new` CommandSpec arg tuples."
+      - path: "scafld/audit_scope.py"
+        reason: "Add `apply_shared_ownership(spec_text, shared_paths)` that rewrites declared change entries to add `ownership: shared`. Existing classify_active_overlap is reused as-is."
+      - path: "tests/test_clean_plan.py"
+        reason: "Cover slim template line count, --command/--files insertion, default size/risk, plan-time auto-tag, plan-time exclusive refusal."
+      - path: "tests/review_gate_smoke.sh"
+        reason: "Smoke for slim plan output and plan-time conflict refusal."
+        ownership: "shared"
+      - path: "docs/configuration.md"
+        reason: "Document slim plan flags and plan-time conflict detection."
+    cwd: "."
+  acceptance:
+    validation_profile: "standard"
+    definition_of_done:
+      - id: "dod1"
+        description: "`scafld plan <id> --command \"<cmd>\"` produces a spec under 40 lines with no `TODO` placeholders that would trip `validate_spec`."
+        status: "done"
+      - id: "dod2"
+        description: "Slim spec criterion always carries explicit `expected_kind: exit_code_zero` so `evaluate_acceptance_criterion` doesn't strict-reject."
+        status: "done"
+      - id: "dod3"
+        description: "`--files \"a.py,b.py\"` produces one `changes[].file` entry per declared file; `phases[].changes` is non-empty."
+        status: "done"
+      - id: "dod4"
+        description: "Verbose template path (no `--command`) is unchanged; existing 1.6.x specs continue to plan/approve/build as before."
+        status: "done"
+      - id: "dod5"
+        description: "After scaffold, `classify_active_overlap` runs; overlapping shared files auto-tag `ownership: shared` in the new spec; exclusive conflicts refuse to plan with `EC.SCOPE_DRIFT`."
+        status: "done"
+      - id: "dod6"
+        description: "Operator docs cover `--command`, `--files`, and plan-time conflict behavior; smoke proves both slim shape and conflict refusal end-to-end."
+        status: "done"
+    validation:
+      - id: "v1"
+        type: "compile"
+        command: "python3 -m compileall scafld tests"
+        expected_kind: "exit_code_zero"
+      - id: "v2"
+        type: "test"
+        command: "python3 -m unittest tests.test_clean_plan tests.test_acceptance"
+        expected_kind: "exit_code_zero"
+      - id: "v3"
+        type: "boundary"
+        description: "--command flag wired."
+        command: "sh -c 'scafld plan --help 2>&1 | grep -q -- --command'"
+        expected_kind: "exit_code_zero"
+      - id: "v4"
+        type: "boundary"
+        description: "--files flag wired."
+        command: "sh -c 'scafld plan --help 2>&1 | grep -q -- --files'"
+        expected_kind: "exit_code_zero"
+
+planning_log:
+  - timestamp: "2026-04-28T13:30:00Z"
+    actor: "user"
+    summary: "1.7.0 spec 4: slim plan template + --command/--files flags + plan-time conflict detection. Folds in early-conflict-detection."
+  - timestamp: "2026-04-28T13:30:00Z"
+    actor: "agent"
+    summary: "Designed against verified code: validate_spec only checks TODO sentinels and task title/summary/size/risk_level (lifecycle_runtime.py:69-134); jsonschema is not imported anywhere; renderers fall back gracefully on missing optional blocks. Slim spec passes all gates without TODO scaffolding."
+  - timestamp: "2026-04-28T20:00:00Z"
+    actor: "agent"
+    summary: |
+      Review 1 verdict=fail. Resolved 1 blocking + 1 medium:
+      - F1 (high) Slim template interpolated resolved_title raw into
+        the objective field; titles containing quotes/backslashes
+        would produce malformed yaml. Fixed: wrapped in json.dumps.
+      - F2 (medium) cmd_new (the alternate `scafld new` entry point)
+        accepted --command/--files via surface registration but did
+        not forward them to new_spec_snapshot. Forwarded.
+      Deferred:
+      - F3 (low) lifecycle_runtime.py reimplements overlap logic
+        inline instead of reusing classify_active_overlap. The
+        divergence is deliberate: classify_active_overlap is
+        bilateral (BOTH sides must declare shared) and used at
+        review-time; plan-time is unilateral (look at OTHER specs and
+        decide what to do). 1.7.x patch could refactor
+        classify_active_overlap to accept a plan_time flag if
+        duplication becomes a maintenance pain.
+
+      - timestamp: "2026-04-28T05:10:57Z"
+        actor: "cli"
+        summary: "Spec completed"
+phases:
+  - id: "phase1"
+    name: "Slim spec scaffold + --command/--files flags"
+    objective: "`scafld plan <id> --command \"<cmd>\" --files \"a.py,b.py\"` produces a ~30-line slim spec ready to approve."
+    changes:
+      - file: "scafld/spec_templates.py"
+        action: "update"
+        content_spec: |
+          - Add `build_slim_spec_scaffold(root, task_id, *, timestamp,
+            title, command, files, size="small", risk_level="low")`.
+          - Returned `text` template: spec_version, task_id,
+            created, updated, status="draft", harden_status="in_progress",
+            task.{title, summary (= title), size, risk_level},
+            planning_log (one entry: "Spec created via scafld plan
+            --command"), phases (one phase: id=phase1, name=title,
+            objective="Implement <title>", changes (one per file with
+            action: update, content_spec: "See task summary."),
+            acceptance_criteria (one entry: id=ac1_1, command=<command>,
+            expected_kind: exit_code_zero), status: pending).
+          - No `task.context`, `task.objectives`, `task.touchpoints`,
+            `task.acceptance`, top-level `validation`, or `rollback`.
+            All omitted blocks degrade gracefully in renderers.
+          - Returned dict keeps the existing scaffold contract:
+            `{"text", "title", "size", "risk", "repo_context"}`.
+      - file: "scafld/lifecycle_runtime.py"
+        action: "update"
+        content_spec: |
+          `new_spec_snapshot` signature gains `command=None`, `files=None`.
+          When `command` is set, route to `build_slim_spec_scaffold`
+          (parsing comma-separated `files` into a list); else current
+          `build_new_spec_scaffold` path unchanged.
+      - file: "scafld/workflow_runtime.py"
+        action: "update"
+        content_spec: |
+          `plan_snapshot` accepts `command=None`, `files=None` and forwards
+          to `new_spec_snapshot`.
+      - file: "scafld/commands/workflow.py"
+        action: "update"
+        content_spec: |
+          `cmd_plan` reads `getattr(args, "command", None)` and
+          `getattr(args, "files", None)`, forwards via kwargs.
+      - file: "scafld/commands/surface.py"
+        action: "update"
+        content_spec: |
+          On the `plan` and `new` CommandSpec arg tuples, add:
+            ArgumentSpec(("--command",), {"help": "Acceptance command for the default criterion (slim spec)"}),
+            ArgumentSpec(("--files",), {"help": "Comma-separated list of files the slim spec touches"}).
+      - file: "tests/test_clean_plan.py"
+        action: "create"
+        content_spec: |
+          - `test_slim_scaffold_under_40_lines`: build_slim_spec_scaffold
+            returns text with line count < 40 (one phase, two files).
+          - `test_slim_scaffold_no_todo_sentinels`: text doesn't match
+            the validate_spec TODO regexes.
+          - `test_slim_scaffold_explicit_expected_kind`: criterion has
+            `expected_kind: exit_code_zero` written verbatim.
+          - `test_slim_scaffold_command_inserted`: criterion `command`
+            field equals what was passed.
+          - `test_slim_scaffold_one_change_per_file`: --files "a.py,b.py"
+            yields two changes entries.
+          - `test_slim_scaffold_validates`: passing the produced text
+            into validate_spec returns no errors.
+          - `test_verbose_path_unchanged_when_no_command`: omitting
+            command falls back to build_new_spec_scaffold (verify by
+            absence of slim-only marker e.g. summary one-liner).
+    acceptance_criteria:
+      - id: "ac1_1"
+        type: "compile"
+        command: "python3 -m compileall scafld tests"
+        expected_kind: "exit_code_zero"
+        result: "pass"
+        executed_at: "2026-04-28T04:52:47Z"
+        result_output: "Listing 'scafld'... Listing 'scafld/commands'... Listing 'tests'..."
+      - id: "ac1_2"
+        type: "test"
+        command: "python3 -m unittest tests.test_clean_plan"
+        expected_kind: "exit_code_zero"
+        result: "pass"
+        executed_at: "2026-04-28T04:53:33Z"
+        result_output: "...........s ---------------------------------------------------------------------- Ran 12 tests in 0.006s  OK (skipped=1)"
+      - id: "ac1_3"
+        type: "boundary"
+        description: "CLI flags wired."
+        command: "sh -c 'scafld plan --help 2>&1 | grep -q -- --command && scafld plan --help 2>&1 | grep -q -- --files'"
+        expected_kind: "exit_code_zero"
+        result: "pass"
+        executed_at: "2026-04-28T04:52:47Z"
+    status: "completed"
+
+  - id: "phase2"
+    name: "Plan-time conflict detection"
+    objective: "After scaffold, run audit_scope.classify_active_overlap; auto-tag shared, refuse on exclusive conflict."
+    dependencies:
+      - "phase1"
+    changes:
+      - file: "scafld/audit_scope.py"
+        action: "update"
+        content_spec: |
+          Add `apply_shared_ownership(spec_text, shared_paths) -> str`:
+          rewrites the slim spec text to add `ownership: "shared"` on
+          each `phases[].changes[]` entry whose `file` is in
+          `shared_paths`. Operates on text (not parsed yaml) so
+          existing comments / formatting survive. Pure function,
+          unit-testable.
+      - file: "scafld/lifecycle_runtime.py"
+        action: "update"
+        content_spec: |
+          In `new_spec_snapshot`, after `dest.write_text(scaffold["text"])`
+          and before returning:
+            - Re-read scaffold text via `dest.read_text()`.
+            - Call `collect_declared_change_map(text)` to get declared
+              files with ownership.
+            - Call `active_declared_changes(root, exclude_task_id=task_id)`
+              + `active_changes_by_file(...)`, then
+              `classify_active_overlap(declared, other_by_file)`.
+            - When `active_overlap` is non-empty (exclusive conflict):
+              `dest.unlink()` (so plan didn't write a half-baked spec)
+              and raise `ScafldError("plan refused: file <path> is exclusively owned by <other_task>", code=EC.SCOPE_DRIFT)`.
+            - When `shared_with_other_active` is non-empty: rewrite
+              text via `apply_shared_ownership` and `dest.write_text`.
+            - Skip the audit when `declared` is empty (verbose template
+              path with TODO file entries; audit_scope already filters
+              path != "TODO").
+      - file: "tests/test_clean_plan.py"
+        action: "update"
+        content_spec: |
+          - `test_plan_auto_tags_shared_overlap`: pre-create an active
+            spec declaring `tests/foo.py` as shared; new slim plan
+            with `--files tests/foo.py` ends up with `ownership:
+            shared` on the change entry.
+          - `test_plan_refuses_on_exclusive_conflict`: pre-create an
+            active spec declaring `scafld/foo.py` as exclusive; new
+            slim plan with `--files scafld/foo.py` raises ScafldError
+            with code SCOPE_DRIFT and the spec file is NOT written.
+          - `test_plan_skips_audit_when_no_declared_files`: verbose
+            template (no --command) plans cleanly even with active
+            overlapping work.
+          - `test_apply_shared_ownership_pure`: covers the text
+            rewriter independently.
+    acceptance_criteria:
+      - id: "ac2_1"
+        type: "compile"
+        command: "python3 -m compileall scafld tests"
+        expected_kind: "exit_code_zero"
+        result: "pass"
+        executed_at: "2026-04-28T04:56:02Z"
+        result_output: "Listing 'scafld'... Listing 'scafld/commands'... Listing 'tests'..."
+      - id: "ac2_2"
+        type: "test"
+        command: "python3 -m unittest tests.test_clean_plan"
+        expected_kind: "exit_code_zero"
+        result: "pass"
+        executed_at: "2026-04-28T04:56:14Z"
+        result_output: "......sss........s ---------------------------------------------------------------------- Ran 18 tests in 0.006s  OK (skipped=4)"
+    status: "completed"
+
+  - id: "phase3"
+    name: "Smoke + operator docs"
+    objective: "End-to-end smoke for slim plan + conflict refusal. Document the new flags and behavior."
+    dependencies:
+      - "phase2"
+    changes:
+      - file: "tests/review_gate_smoke.sh"
+        action: "update"
+        ownership: "shared"
+        content_spec: |
+          - `case_plan_produces_slim_spec`: `scafld plan slim-check
+            --command "true" --files "scafld/empty.py"` writes a spec
+            with line count < 40, no TODO sentinels, and approves
+            without a fill round.
+          - `case_plan_refuses_on_exclusive_conflict`: pre-create an
+            active spec claiming `scafld/foo.py` exclusive; `scafld
+            plan other --command "true" --files "scafld/foo.py"`
+            exits non-zero with SCOPE_DRIFT and the new spec file is
+            absent.
+      - file: "docs/configuration.md"
+        action: "update"
+        ownership: "shared"
+        content_spec: |
+          New "Slim plan" subsection:
+            - `scafld plan <id> -t "<title>" --command "<cmd>" --files "a.py,b.py"`
+              produces a complete ~30-line spec ready to approve.
+            - Slim specs always carry explicit
+              `expected_kind: exit_code_zero` on the criterion.
+            - Verbose template path (current behavior) is preserved
+              when `--command` is omitted.
+          New "Plan-time conflict detection" subsection:
+            - After scaffold, scafld runs
+              `audit_scope.classify_active_overlap`.
+            - Files claimed `shared` by another active spec auto-tag
+              the new spec's change entry with `ownership: shared`.
+            - Files claimed exclusive by another active spec refuse
+              the plan with `SCOPE_DRIFT` and name the other task.
+    acceptance_criteria:
+      - id: "ac3_1"
+        type: "boundary"
+        command: "bash -n tests/review_gate_smoke.sh"
+        expected_kind: "exit_code_zero"
+        result: "pass"
+        executed_at: "2026-04-28T04:57:21Z"
+      - id: "ac3_2"
+        type: "boundary"
+        description: "Slim plan smoke registered."
+        command: "grep -q 'case_plan_produces_slim_spec' tests/review_gate_smoke.sh"
+        expected_kind: "exit_code_zero"
+        result: "pass"
+        executed_at: "2026-04-28T04:57:21Z"
+      - id: "ac3_3"
+        type: "boundary"
+        description: "Conflict-at-plan smoke registered."
+        command: "grep -q 'case_plan_refuses_on_exclusive_conflict' tests/review_gate_smoke.sh"
+        expected_kind: "exit_code_zero"
+        result: "pass"
+        executed_at: "2026-04-28T04:57:21Z"
+      - id: "ac3_4"
+        type: "boundary"
+        description: "Docs cover slim plan."
+        command: "grep -qiE 'Slim plan|--command|--files' docs/configuration.md"
+        expected_kind: "exit_code_zero"
+        result: "pass"
+        executed_at: "2026-04-28T04:57:21Z"
+    status: "completed"
+
+rollback:
+  strategy: "per_phase"
+  commands:
+    phase1: "git checkout HEAD -- scafld/spec_templates.py scafld/lifecycle_runtime.py scafld/workflow_runtime.py scafld/commands/workflow.py scafld/commands/surface.py && rm -f tests/test_clean_plan.py"
+    phase2: "git checkout HEAD -- scafld/audit_scope.py scafld/lifecycle_runtime.py tests/test_clean_plan.py"
+    phase3: "git checkout HEAD -- tests/review_gate_smoke.sh docs/configuration.md"
+
+harden_rounds:
+  - round: 1
+    started_at: "2026-04-28T13:30:00Z"
+    outcome: "in_progress"
+    questions: []
+
+review:
+  timestamp: "2026-04-28T05:10:49Z"
+  verdict: "pass_with_issues"
+  review_rounds: 2
+  reviewer_mode: "fresh_agent"
+  reviewer_session: "6820bd31-85ac-4192-9f07-e44fc3eeb1d7"
+  round_status: "completed"
+  override_applied: false
+  override_reason: null
+  override_confirmed_at: null
+  reviewed_head: "769133d278b66fa48e3fd7072e39df576c37e051"
+  reviewed_dirty: true
+  reviewed_diff: "f03c168f9ff50c3e71855fe87a12ac37f80dc7de089d0f02b41a009757d3d706"
+  passes:
+    - id: spec_compliance
+      result: "pass"
+    - id: scope_drift
+      result: "pass"
+    - id: regression_hunt
+      result: "pass_with_issues"
+    - id: convention_check
+      result: "pass"
+    - id: dark_patterns
+      result: "pass_with_issues"
+  blocking_count: 0
+  non_blocking_count: 3

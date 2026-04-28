@@ -1,0 +1,360 @@
+spec_version: '1.1'
+task_id: runtime-rigor-watchdog-clock
+created: '2026-04-28T00:46:03Z'
+updated: '2026-04-28T01:33:05Z'
+status: cancelled
+harden_status: in_progress
+task:
+  title: Suspend-aware watchdog clock immune to laptop sleep
+  summary: 'The provider watchdog (added in `review-runner-watchdog-and-retry`) uses
+    `time.monotonic()` for the deadline. On macOS, Python''s `time.monotonic()` calls
+    `clock_gettime(CLOCK_UPTIME_RAW)`, which explicitly excludes time spent in suspend.
+    Symptom: laptop sleeps mid-review for two hours; on resume the watchdog''s elapsed
+    counter has barely moved, the deadline is never reached, and the provider process
+    keeps running until manually killed. Observed during cutover when a review hung
+    2h10m through a sleep+resume cycle.
+
+    `time.time()` (wall clock) has the opposite failure mode: NTP backward adjustments
+    or manual clock changes can rewind it, silently extending a deadline.
+
+    Neither clock alone is correct for "real time elapsed since I started." Together
+    they are. A small `WallClockMonotonic` helper holds both starting timestamps and
+    exposes one method, `elapsed()`, returning `max(wall_elapsed, monotonic_elapsed)`.
+    Wall-clock catches suspend; monotonic catches NTP regression. The max() resolves
+    any disagreement in favor of "more time has passed", which is exactly what a deadline
+    cares about.
+
+    Single helper, single method, single comparison. Replaces every direct `time.monotonic()`
+    call in `_provider_watchdog` and the transient-retry exponential backoff path.
+
+    '
+  size: small
+  risk_level: low
+  context:
+    packages:
+    - scafld
+    - tests
+    files_impacted:
+    - path: scafld/review_runner.py
+      lines: task-selected
+      reason: Adds the WallClockMonotonic helper class and rewires _provider_watchdog
+        plus the transient-retry backoff to use it.
+    - path: tests/test_review_runner.py
+      lines: task-selected
+      reason: Unit coverage for the helper under the suspend (wall jumps forward)
+        and NTP-rewind (wall rewinds) failure modes.
+    - path: docs/review.md
+      lines: task-selected
+      reason: Operator-facing note that the watchdog deadline is suspend-aware so
+        a laptop sleep counts toward the deadline.
+    invariants:
+    - deadline_must_fire_after_wall_clock_elapses_even_if_monotonic_did_not
+    - deadline_must_fire_after_monotonic_elapses_even_if_wall_clock_rewound
+    - elapsed_must_only_move_forward_under_all_clock_conditions
+    - watchdog_thread_remains_the_only_authoritative_force_kill_path
+    related_docs:
+    - plans/1.7.0-cutover.md
+    - .ai/specs/archive/2026-04/review-runner-watchdog-and-retry.yaml
+    - scafld/review_runner.py
+    cwd: .
+  objectives:
+  - Make the configured timeout the real upper bound on a provider run regardless
+    of laptop sleep or wall-clock adjustments.
+  - Replace direct time.monotonic() reads in the watchdog with a single helper whose
+    docstring explains the two-clock failure modes.
+  - Keep the watchdog thread as the only authoritative force-kill path; no new signal
+    handlers, no new processes.
+  scope:
+    in_scope:
+    - WallClockMonotonic helper class with start_wall, start_mono, elapsed().
+    - _provider_watchdog rewired to use the helper.
+    - Transient-retry backoff sleep replaced with a helper-aware bounded wait so it
+      also respects suspend.
+    - Unit tests for the suspend and NTP-rewind cases via mocked time functions.
+    - Operator docs entry.
+    out_of_scope:
+    - Replacing `subprocess.communicate(timeout=N)`'s internal timer (out of our control;
+      the watchdog is the safety net).
+    - Adding SIGALRM-based fallback (not thread-safe; conflicts with SIGINT cancel
+      handler; out of scope).
+    - External watcher process (heavy; not justified).
+    - Changing the watchdog's terminate-then-kill grace logic (already correct).
+  assumptions:
+  - Python's `time.time()` and `time.monotonic()` are both monotonic-relative-to-themselves
+    except for the documented failure modes; the max() across them gives a strictly
+    forward-moving elapsed counter.
+  - NTP backward steps are rare (typically slewed) and small (seconds, not hours);
+    the wall-clock arm of the helper handles the more common suspend case.
+  - A single helper instance per provider call is enough; no shared global clock needed.
+  touchpoints:
+  - area: watchdog timing
+    description: WallClockMonotonic is the canonical 'time elapsed since this provider
+      run started' source.
+  - area: transient retry backoff
+    description: Same helper bounds the inter-attempt sleep so a laptop sleep doesn't
+      deceive the retry loop into running indefinitely.
+  risks:
+  - description: max() of wall and monotonic produces unexpectedly large jumps after
+      sleep, firing the watchdog earlier than the operator expects.
+    impact: low
+    mitigation: "That IS the desired behavior \u2014 a 2h sleep means the deadline\
+      \ elapsed; firing immediately on resume is correct. Documented in the helper's\
+      \ docstring and in docs/review.md."
+  - description: Wall-clock at process start is recorded before monotonic; clock skew
+      could make elapsed() briefly negative on first call.
+    impact: low
+    mitigation: Helper takes both readings in adjacent statements (no syscalls between
+      them); skew is at most microseconds. elapsed() returns max(...) which is bounded
+      below by monotonic's start, so even pathological wall-clock readings can't go
+      negative.
+  - description: Tests using mocked time leak side effects into other tests.
+    impact: low
+    mitigation: Tests use unittest.mock.patch as a context manager scoped to each
+      method; no module-level monkey patches.
+  acceptance:
+    validation_profile: standard
+    definition_of_done:
+    - id: dod1
+      description: 'WallClockMonotonic.elapsed() returns max(wall_elapsed, monotonic_elapsed)
+        under all mocked clock combinations: synchronized, wall-jumps-forward (suspend),
+        wall-rewinds (NTP), monotonic-stalls (suspend on macOS).'
+      status: pending
+    - id: dod2
+      description: _provider_watchdog uses the helper exclusively; no direct time.monotonic()
+        reads remain in the watchdog body.
+      status: pending
+    - id: dod3
+      description: Transient-retry backoff in run_external_review uses the helper
+        to bound the sleep, so a suspend during backoff doesn't extend it beyond the
+        configured cap.
+      status: pending
+    - id: dod4
+      description: Unit test simulating a 2-hour wall-clock jump while monotonic stays
+        flat asserts the watchdog fires on resume (deadline already elapsed).
+      status: pending
+    - id: dod5
+      description: Unit test simulating a 30-second NTP rewind asserts the watchdog
+        still fires when monotonic crosses the deadline.
+      status: pending
+    - id: dod6
+      description: Operator doc explains the two-clock model and that suspend counts
+        toward the deadline.
+      status: pending
+    validation:
+    - id: v1
+      type: compile
+      description: Python sources compile.
+      command: python3 -m compileall scafld tests
+      expected_kind: exit_code_zero
+    - id: v2
+      type: test
+      description: Watchdog-clock unit tests pass.
+      command: python3 -m unittest tests.test_review_runner
+      expected_kind: exit_code_zero
+    - id: v3
+      type: boundary
+      description: WallClockMonotonic class exists and is importable.
+      command: python3 -c 'from scafld.review_runner import WallClockMonotonic; c
+        = WallClockMonotonic(); assert c.elapsed() >= 0'
+      expected_kind: exit_code_zero
+planning_log:
+- timestamp: '2026-04-28T00:46:03Z'
+  actor: user
+  summary: Spec created via scafld plan after a laptop sleep mid-review revealed the
+    macOS CLOCK_UPTIME_RAW failure mode in the existing watchdog deadline.
+- timestamp: '2026-04-28T00:46:03Z'
+  actor: agent
+  summary: 'Replaced placeholder with the suspend-aware watchdog clock plan: WallClockMonotonic
+    helper, rewire watchdog and retry backoff, mocked-clock tests for both failure
+    modes.'
+- timestamp: '2026-04-28T00:50:23Z'
+  actor: cli
+  summary: Spec approved
+- timestamp: '2026-04-28T00:51:06Z'
+  actor: cli
+  summary: Execution started
+- timestamp: '2026-04-28T01:33:05Z'
+  actor: cli
+  summary: Spec cancelled
+- timestamp: '2026-04-28T01:33:05Z'
+  actor: cli
+  summary: 'Spec cancelled: scoped down to a 6-line inline fix in _provider_watchdog;
+    no spec ceremony needed'
+phases:
+- id: phase1
+  name: WallClockMonotonic helper
+  objective: Add the helper class with elapsed() returning max(wall_elapsed, monotonic_elapsed).
+    Pure unit-testable; no callers yet.
+  changes:
+  - file: scafld/review_runner.py
+    action: update
+    ownership: shared
+    content_spec: "Add at module level near the existing watchdog constants:\n```python\n\
+      class WallClockMonotonic:\n    \"\"\"Elapsed-time clock immune to both macOS\
+      \ suspend (which\n    freezes time.monotonic via CLOCK_UPTIME_RAW) and NTP\n\
+      \    backward adjustments (which can rewind time.time).\n    elapsed() returns\
+      \ the larger of the two readings, which\n    is the correct semantic for a deadline:\
+      \ time only moves\n    forward.\n    \"\"\"\n\n    def __init__(self):\n   \
+      \     self._start_wall = time.time()\n        self._start_mono = time.monotonic()\n\
+      \n    def elapsed(self):\n        return max(\n            time.time() - self._start_wall,\n\
+      \            time.monotonic() - self._start_mono,\n        )\n```\nPlace near\
+      \ WATCHDOG_GRACE_SECONDS / WATCHDOG_POLL_SECONDS.\n"
+  - file: tests/test_review_runner.py
+    action: update
+    ownership: shared
+    content_spec: "New `WallClockMonotonicTest` class. Tests:\n  - Construction with\
+      \ no clock skew: elapsed() near 0.\n  - Synchronized advance: both clocks advance\
+      \ by 5s ->\n    elapsed() ~ 5s.\n  - Wall-jumps-forward (suspend): wall advances\
+      \ by 7200s,\n    monotonic stays at 0 -> elapsed() == 7200.\n  - Monotonic-advances\
+      \ (normal active session): monotonic\n    advances by 5s, wall stays at 0 ->\
+      \ elapsed() == 5.\n  - Wall-rewinds (NTP): wall rewinds by 30s, monotonic\n\
+      \    advances by 5s -> elapsed() == 5 (monotonic arm wins).\n  - Combined: wall\
+      \ advances 5s, monotonic advances 3s ->\n    elapsed() == 5 (max).\nAll tests\
+      \ use `unittest.mock.patch.object(scafld.review_runner.time,\n...)` scoped to\
+      \ the test method.\n"
+  acceptance_criteria:
+  - id: ac1_1
+    type: compile
+    description: Sources compile after helper added.
+    command: python3 -m compileall scafld tests
+    expected_kind: exit_code_zero
+    result: pass
+    executed_at: '2026-04-28T00:51:06Z'
+    result_output: Listing 'scafld'... Listing 'scafld/commands'... Listing 'tests'...
+  - id: ac1_2
+    type: test
+    description: WallClockMonotonic unit tests pass.
+    command: python3 -m unittest tests.test_review_runner
+    expected_kind: exit_code_zero
+    result: pass
+    executed_at: '2026-04-28T00:51:06Z'
+    result_output: '...................................................................................s.ss................
+      ---------------------------------------------------------------------- Ran 103
+      tests in 0.004s  '
+  - id: ac1_3
+    type: boundary
+    description: Class is importable and elapsed() returns a non-negative float.
+    command: python3 -c 'from scafld.review_runner import WallClockMonotonic; c =
+      WallClockMonotonic(); assert c.elapsed() >= 0'
+    expected_kind: exit_code_zero
+    result: pass
+    executed_at: '2026-04-28T00:51:06Z'
+  status: completed
+- id: phase2
+  name: Watchdog rewired to use the helper
+  objective: Replace the direct time.monotonic() reads in _provider_watchdog with
+    the helper. Behavior under non-suspend conditions is unchanged.
+  dependencies:
+  - phase1
+  changes:
+  - file: scafld/review_runner.py
+    action: update
+    ownership: shared
+    content_spec: "Modify `_provider_watchdog`:\n  - Replace `deadline = monotonic()\
+      \ + timeout_seconds` and\n    the loop's `monotonic() >= deadline` checks with\
+      \ a\n    `WallClockMonotonic` instance and\n    `clock.elapsed() >= timeout_seconds`.\n\
+      \  - Replace the grace-period `monotonic() < grace_deadline`\n    check with\
+      \ a sibling helper (or a second elapsed()\n    tracker) so the grace window\
+      \ also respects suspend.\n  - The function's `monotonic` and `sleep` keyword\n\
+      \    parameters stay for testability; tests can still inject\n    a mocked sleep.\n"
+  - file: tests/test_review_runner.py
+    action: update
+    ownership: shared
+    content_spec: "Update existing `ProviderWatchdogTest` cases:\n  - Mock `WallClockMonotonic`\
+      \ (or its underlying `time.time`\n    + `time.monotonic`) so the existing fast-fire\
+      \ and\n    healthy-exit cases keep working.\n  - New case: simulate suspend\
+      \ mid-watch by advancing wall\n    clock past the deadline while monotonic stays\
+      \ flat;\n    assert terminate-then-kill is called on the proc.\n  - New case:\
+      \ simulate normal active timeout (both clocks\n    advance synchronously past\
+      \ deadline); assert\n    terminate-then-kill is called.\n"
+  acceptance_criteria:
+  - id: ac2_1
+    type: compile
+    description: Sources compile after watchdog rewire.
+    command: python3 -m compileall scafld tests
+    expected_kind: exit_code_zero
+    result: pass
+    executed_at: '2026-04-28T00:52:29Z'
+    result_output: Listing 'scafld'... Listing 'scafld/commands'... Listing 'tests'...
+  - id: ac2_2
+    type: test
+    description: Watchdog and helper unit tests pass.
+    command: python3 -m unittest tests.test_review_runner
+    expected_kind: exit_code_zero
+    result: pass
+    executed_at: '2026-04-28T00:52:29Z'
+    result_output: '....................................................................................s.ss................
+      ---------------------------------------------------------------------- Ran 104
+      tests in 0.005s '
+  status: completed
+- id: phase3
+  name: Transient-retry backoff respects suspend
+  objective: The exponential backoff sleep in `run_external_review` between transient
+    retries also uses the helper, so a suspend during backoff doesn't silently extend
+    the wait.
+  dependencies:
+  - phase2
+  changes:
+  - file: scafld/review_runner.py
+    action: update
+    ownership: shared
+    content_spec: "Inside `run_external_review` where the transient retry\nbackoff\
+      \ lives:\n  - Replace the bare `time.sleep(min(2 ** transient_attempt, 8))`\n\
+      \    with a helper-bounded wait: spin the configured backoff\n    window using\
+      \ a `WallClockMonotonic` and `time.sleep(0.1)`\n    ticks, exiting early if\
+      \ elapsed() exceeds the backoff\n    window. So a suspend during backoff finishes\
+      \ the wait\n    \"immediately\" on resume rather than continuing to sleep\n\
+      \    for the remaining budget.\n  - Preserve the KeyboardInterrupt path (existing\
+      \ typed\n    cancel marker) inside the new wait loop.\n"
+  - file: docs/review.md
+    action: update
+    content_spec: "New \"Watchdog deadlines and laptop sleep\" subsection:\n  - The\
+      \ watchdog deadline is suspend-aware: time spent with\n    the laptop asleep\
+      \ counts toward the deadline.\n  - On resume after a long sleep, an in-flight\
+      \ review may\n    be force-killed immediately if the deadline already\n    elapsed.\
+      \ This is correct: the operator-configured\n    timeout is wall-clock based.\n\
+      \  - To run a review across a long expected sleep, set\n    `review.external.timeout_seconds`\
+      \ higher than the sleep\n    window OR run review on a non-suspending host.\n"
+  - file: tests/test_review_runner.py
+    action: update
+    ownership: shared
+    content_spec: "New `RunExternalReviewBackoffSuspendTest` class. Tests:\n  - Mock\
+      \ the inner `_run_external_review_with_model_fallback`\n    to raise a transient-tagged\
+      \ ScafldError once, succeed on\n    retry. Mock the helper so wall-clock jumps\
+      \ past the\n    backoff window during the wait. Assert sleep total was\n   \
+      \ roughly the elapsed window, not the configured budget.\n  - Sanity case: synchronized\
+      \ clocks; backoff is the\n    expected duration.\n"
+  acceptance_criteria:
+  - id: ac3_1
+    type: test
+    description: Backoff tests pass.
+    command: python3 -m unittest tests.test_review_runner
+    expected_kind: exit_code_zero
+    result: pass
+    executed_at: '2026-04-28T00:53:35Z'
+    result_output: '....................................................................................s.ss................
+      ---------------------------------------------------------------------- Ran 104
+      tests in 4.005s '
+  - id: ac3_2
+    type: boundary
+    description: Operator docs describe the suspend-aware deadline.
+    command: grep -qiE 'suspend-aware|laptop sleep|watchdog deadline' docs/review.md
+    expected_kind: exit_code_zero
+    result: pass
+    executed_at: '2026-04-28T00:53:35Z'
+  status: completed
+rollback:
+  strategy: per_phase
+  commands:
+    phase1: git checkout HEAD -- scafld/review_runner.py tests/test_review_runner.py
+    phase2: git checkout HEAD -- scafld/review_runner.py tests/test_review_runner.py
+    phase3: git checkout HEAD -- scafld/review_runner.py tests/test_review_runner.py
+      docs/review.md
+harden_rounds:
+- round: 1
+  started_at: '2026-04-28T00:46:03Z'
+  outcome: in_progress
+  questions: []
+cancelled_at: '2026-04-28T01:33:05Z'
+cancel_reason: scoped down to a 6-line inline fix in _provider_watchdog; no spec ceremony
+  needed

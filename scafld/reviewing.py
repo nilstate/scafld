@@ -10,11 +10,19 @@ REVIEWER_MODES = {"challenger", "fresh_agent", "auto", "executor", "human_overri
 FINDING_SEVERITIES = ("critical", "high", "medium", "low")
 FINDING_TARGET = r"(?:[^`\n]+:\d+|[^`\n]+\.(?:ya?ml|md|markdown)#[A-Za-z0-9_.:/-]+)"
 FINDING_FORMAT_DESCRIPTION = "`file:line` or `doc.md#anchor`"
-FINDING_TARGET_RE = re.compile(rf"^{FINDING_TARGET}$", re.IGNORECASE)
+FINDING_TARGET_RE = re.compile(rf"^{FINDING_TARGET}$")
 FINDING_LINE_RE = re.compile(
     rf"^- \*\*(critical|high|medium|low)\*\* `{FINDING_TARGET}` (?:—|--) .+$",
     re.IGNORECASE,
 )
+
+
+def parse_finding_severity(line):
+    """Return the severity string (lowercased) or None for malformed lines."""
+    match = FINDING_LINE_RE.match(line or "")
+    if not match:
+        return None
+    return match.group(1).lower()
 NO_ISSUES_RE = re.compile(
     r"^No(?: additional)? issues found(?: (?:—|--) checked (?P<checked>.+))?$",
     re.IGNORECASE,
@@ -422,6 +430,8 @@ def parse_review_file(review_path, topology):
         "verdict": None,
         "blocking": [],
         "non_blocking": [],
+        "blocking_findings": [],
+        "non_blocking_findings": [],
         "metadata": None,
         "pass_results": normalize_review_pass_results(topology),
         "round_status": None,
@@ -470,7 +480,12 @@ def parse_review_file(review_path, topology):
 
     blocking = []
     non_blocking = []
-    for heading, bucket in (("Blocking", blocking), ("Non-blocking", non_blocking)):
+    blocking_findings = []
+    non_blocking_findings = []
+    for heading, bucket, structured in (
+        ("Blocking", blocking, blocking_findings),
+        ("Non-blocking", non_blocking, non_blocking_findings),
+    ):
         body = sections.get(heading)
         if body is None:
             continue
@@ -485,6 +500,10 @@ def parse_review_file(review_path, topology):
                 stripped = "- " + stripped[2:].strip()
             if stripped.startswith("- "):
                 bucket.append(stripped)
+                structured.append({
+                    "line": stripped,
+                    "severity": parse_finding_severity(stripped),
+                })
                 continue
             parsed["quality_errors"].append(
                 f"{heading} contains malformed content; use finding bullets or None."
@@ -492,6 +511,8 @@ def parse_review_file(review_path, topology):
             break
     parsed["blocking"] = blocking
     parsed["non_blocking"] = non_blocking
+    parsed["blocking_findings"] = blocking_findings
+    parsed["non_blocking_findings"] = non_blocking_findings
 
     adversarial_findings = []
     for heading in adversarial_titles:

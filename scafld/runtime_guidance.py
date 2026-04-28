@@ -188,6 +188,9 @@ def review_gate_snapshot(root, task_id):
             "exists": bool(review_state.get("exists")),
             "gate_reason": gate.get("gate_reason"),
             "gate_errors": gate.get("gate_errors") or [],
+            "gate_threshold": gate.get("gate_threshold"),
+            "gate_blocking_count": gate.get("gate_blocking_count"),
+            "gate_advisory_count": gate.get("gate_advisory_count"),
         },
     }
 

@@ -6,7 +6,110 @@ from scafld.spec_parsing import now_iso, require_pyyaml
 
 
 DEFAULT_ACCEPTANCE_TIMEOUT_SECONDS = 600
-GENERIC_PASS_EXPECTATIONS = {"all pass", "all tests pass", "all specs pass"}
+
+EXPECTED_KINDS = (
+    "exit_code_zero",
+    "exit_code_nonzero",
+    "no_matches",
+)
+
+
+def _match_exit_code_zero(returncode, output, criterion):
+    if returncode == 0:
+        return True, ""
+    return False, f"expected exit code 0, got {returncode}"
+
+
+def _match_exit_code_nonzero(returncode, output, criterion):
+    expected = criterion.get("expected_exit_code")
+    if expected is not None:
+        try:
+            expected_int = int(expected)
+        except (TypeError, ValueError):
+            return False, f"criterion expected_exit_code is not an integer: {expected!r}"
+        if returncode == expected_int:
+            return True, ""
+        return False, f"expected exit code {expected_int}, got {returncode}"
+    if returncode != 0:
+        return True, ""
+    return False, "expected non-zero exit code, got 0"
+
+
+def _match_no_matches(returncode, output, criterion):
+    # `no matches` is satisfied when the command emits no output OR exits
+    # non-zero. Mirrors the legacy `check_expected('no matches')` contract
+    # so existing specs keep working under strict mode after auto-mapping.
+    if returncode != 0 or not (output or "").strip():
+        return True, ""
+    return False, "expected no matches, got output"
+
+
+_KIND_MATCHERS = {
+    "exit_code_zero": _match_exit_code_zero,
+    "exit_code_nonzero": _match_exit_code_nonzero,
+    "no_matches": _match_no_matches,
+}
+
+
+def _legacy_expected_to_kind(expected):
+    """Map a legacy `expected:` string into a (kind, fields) tuple.
+
+    Returns ("legacy_substring", {"expected_substring": <verbatim>}) for
+    strings not in the recognized set; that path falls through to
+    `check_expected` substring matching in lenient mode.
+
+    Returns ("unset", {}) when neither `expected_kind` nor `expected` is
+    declared. Strict mode treats this as a hard failure (the criterion
+    declares no contract for what passing looks like).
+    """
+    if not isinstance(expected, str) or not expected.strip():
+        return "unset", {}
+    exp_lower = expected.strip().lower()
+    if exp_lower == "exit code 0":
+        return "exit_code_zero", {}
+    match = re.fullmatch(r"exit\s+code\s+(\d+)", exp_lower)
+    if match:
+        code = int(match.group(1))
+        if code == 0:
+            return "exit_code_zero", {}
+        return "exit_code_nonzero", {"expected_exit_code": code}
+    if exp_lower == "no matches":
+        return "no_matches", {}
+    return "legacy_substring", {"expected_substring": expected}
+
+
+def resolve_kind(criterion):
+    """Return the (kind, derived_fields) for a criterion.
+
+    Explicit `expected_kind` wins. Otherwise the legacy `expected:` string
+    is mapped. Unrecognized legacy strings yield kind == "legacy_substring"
+    so callers can route them through the existing check_expected path
+    (lenient mode) or refuse them (strict mode).
+    """
+    if isinstance(criterion, dict):
+        explicit = criterion.get("expected_kind")
+        if isinstance(explicit, str) and explicit.strip():
+            kind = explicit.strip()
+            if kind in EXPECTED_KINDS:
+                return kind, {}
+            return "invalid_kind", {"declared_kind": kind}
+        return _legacy_expected_to_kind(criterion.get("expected", ""))
+    return _legacy_expected_to_kind("")
+
+
+def check_kind(returncode, output, criterion):
+    """Apply the structured matcher for the criterion's resolved kind.
+
+    Returns (passed: bool, reason: str). Does not handle the
+    `legacy_substring` / `invalid_kind` paths — callers route those.
+    """
+    kind, derived = resolve_kind(criterion)
+    if kind in _KIND_MATCHERS:
+        merged = dict(criterion)
+        for key, value in derived.items():
+            merged.setdefault(key, value)
+        return _KIND_MATCHERS[kind](returncode, output, merged)
+    return False, f"check_kind cannot evaluate kind={kind!r}"
 
 
 def record_exec_result(text, ac_id, passed, output_snippet=""):
@@ -165,42 +268,6 @@ def criterion_timeout_seconds(criterion):
     return seconds
 
 
-def check_expected(returncode, output, expected):
-    """Check command result against expected outcome."""
-    if not expected:
-        return returncode == 0
-
-    exp = expected.strip()
-    exp_lower = exp.lower()
-
-    if exp_lower == "no matches":
-        return returncode != 0 or not output
-
-    match = re.match(r"^exit\s+code\s+(\d+)$", exp_lower)
-    if match:
-        return returncode == int(match.group(1))
-
-    if exp_lower == "0 failures":
-        if returncode != 0:
-            return False
-        fail_match = re.search(r"(\d+)\s+failures?", output, re.IGNORECASE)
-        if fail_match and int(fail_match.group(1)) > 0:
-            return False
-        return True
-
-    if exp_lower in GENERIC_PASS_EXPECTATIONS:
-        if returncode != 0:
-            return False
-        fail_match = re.search(r"(\d+)\s+failures?", output, re.IGNORECASE)
-        if fail_match and int(fail_match.group(1)) > 0:
-            return False
-        return True
-
-    if returncode != 0:
-        return False
-    return exp_lower in output.lower()
-
-
 def evaluate_acceptance_criterion(root, criterion, spec_cwd=None):
     """Run one acceptance criterion and return a stable result payload."""
     ac_id = criterion["id"]
@@ -247,6 +314,43 @@ def evaluate_acceptance_criterion(root, criterion, spec_cwd=None):
             "full_output": str(exc),
         }
 
+    # Reject criteria whose kind we cannot evaluate BEFORE running the
+    # command. The command can have side effects (file writes, network
+    # calls); running it only to throw the result away is a footgun.
+    # Three pre-run rejection cases:
+    #   - unset: no expected_kind and no legacy `expected:` string
+    #   - legacy_substring: a legacy `expected:` string that doesn't
+    #     auto-map to one of the three kinds
+    #   - invalid_kind: an explicit `expected_kind` that's not in
+    #     EXPECTED_KINDS (typically a typo like `exit_cod_zero`)
+    kind, derived = resolve_kind(criterion)
+    if kind in ("legacy_substring", "unset", "invalid_kind"):
+        if kind == "unset":
+            reason = (
+                f"criterion {ac_id} has no expected_kind declared; "
+                f"add expected_kind: exit_code_zero (or one of "
+                f"exit_code_nonzero, no_matches) to the criterion"
+            )
+        elif kind == "invalid_kind":
+            declared = derived.get("declared_kind")
+            reason = (
+                f"criterion {ac_id} declares unknown expected_kind={declared!r}; "
+                f"valid kinds are: {', '.join(EXPECTED_KINDS)}"
+            )
+        else:
+            reason = (
+                f"criterion {ac_id} has only a legacy `expected: {expected!r}` string; "
+                f"add an explicit expected_kind"
+            )
+        return {
+            **base,
+            "status": "fail",
+            "exit_code": None,
+            "output": f"[acceptance] {reason}"[:200],
+            "full_output": f"[acceptance] {reason}",
+            "fail_reason": reason,
+        }
+
     try:
         result = subprocess.run(
             command,
@@ -274,10 +378,28 @@ def evaluate_acceptance_criterion(root, criterion, spec_cwd=None):
         }
 
     output = (result.stdout + result.stderr).strip()
+    stdout_only = (result.stdout or "").strip()
+    passed, reason = check_kind(result.returncode, output, criterion)
+
+    # `evidence_required: true` rejects criteria whose command exits 0 with
+    # empty stdout. Stops the "compile + unittest pass with no real work"
+    # pattern: a phase whose acceptance is `python -m unittest` against an
+    # empty test suite emits zero stdout and now fails.
+    if passed and criterion.get("evidence_required") and not stdout_only:
+        passed = False
+        reason = "evidence_required: command stdout is empty"
+
+    # Surface the failure reason in the recorded output so the spec,
+    # diagnostic, and live --json all carry the same explanation.
+    surfaced_output = output
+    if not passed and reason:
+        prefix = f"[acceptance] {reason}"
+        surfaced_output = f"{prefix}\n{output}" if output else prefix
     return {
         **base,
-        "status": "pass" if check_expected(result.returncode, output, expected) else "fail",
+        "status": "pass" if passed else "fail",
         "exit_code": result.returncode,
-        "output": output[:200],
-        "full_output": output,
+        "output": surfaced_output[:200],
+        "full_output": surfaced_output,
+        "fail_reason": "" if passed else reason,
     }

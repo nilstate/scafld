@@ -1,0 +1,342 @@
+spec_version: "1.1"
+task_id: "runtime-rigor-severity-gates"
+created: "2026-04-28T12:00:00Z"
+updated: "2026-04-28T03:23:32Z"
+status: "completed"
+harden_status: "in_progress"
+
+task:
+  title: "Severity-gated complete + single-round-by-default review semantics"
+  summary: >
+    Today `scafld review` returns verdict + findings.
+    `evaluate_review_gate` (review_workflow.py:696) blocks complete
+    when verdict is `fail`. `pass_with_issues` (non-blocking
+    findings only) ships through. That part already works. What
+    1.7.0 adds is explicit operator control over what "blocking"
+    means and the documented single-round-by-default contract.
+
+    Two changes:
+
+      1. `review.gate_severity` config setting (default `blocking`).
+         Reads via a small loader in review_workflow.py — config has
+         no allowlist mechanism, just deep-merged YAML. When
+         `medium`, non-blocking findings tagged `medium` or higher
+         become gate-blocking. When `low`, every finding blocks
+         (strict iteration). The default keeps current behavior.
+
+      2. `scafld complete` surfaces an `advisory: N finding(s)` line
+         when there are non-blocking findings under the gate
+         threshold, so the operator/agent knows what was deferred
+         without re-reading the review file.
+
+    Plus: doc + smoke promote the stopping rule from CLAUDE.md
+    discipline → CLI behavior. A `pass` or `pass_with_issues`
+    verdict means one round is enough. Iteration is bounded by
+    blocking severity, not finding count.
+
+    Hard cutover: existing review files keep gating as today under
+    the default. Operators who set `gate_severity: medium` need
+    findings with severity declarations (already required by
+    `FINDING_LINE_RE` in reviewing.py:14).
+  size: "small"
+  risk_level: "low"
+  context:
+    files_impacted:
+      - path: "scafld/reviewing.py"
+        reason: "Extract severity from FINDING_LINE_RE group 1; expose structured findings on parsed payload."
+      - path: "scafld/review_workflow.py"
+        reason: "Add gate_severity reader; evaluate_review_gate threshold check on non-blocking findings."
+      - path: "scafld/runtime_guidance.py"
+        reason: "review_gate_snapshot surfaces threshold + advisory count + severity breakdown to status/complete."
+      - path: "scafld/commands/review.py"
+        reason: "cmd_complete prints the `advisory: N finding(s)` line on the success path."
+      - path: "tests/test_review_gate_severity.py"
+        reason: "Cover default + medium + low gate thresholds + advisory output."
+      - path: "tests/review_gate_smoke.sh"
+        reason: "Smoke for severity-gated complete + advisory path."
+        ownership: "shared"
+      - path: "docs/configuration.md"
+        reason: "Document review.gate_severity and the single-round-by-default contract."
+      - path: "CLAUDE.md"
+        reason: "Trim the discipline section; point at the CLI behavior."
+        ownership: "shared"
+    cwd: "."
+  acceptance:
+    validation_profile: "standard"
+    definition_of_done:
+      - id: "dod1"
+        description: "Parsed findings carry structured severity (critical|high|medium|low) on the review_data payload."
+        status: "done"
+      - id: "dod2"
+        description: "`review.gate_severity` defaults to `blocking`; only Blocking-section findings gate complete."
+        status: "done"
+      - id: "dod3"
+        description: "Setting `review.gate_severity: medium` makes non-blocking medium-or-higher findings block complete with a named gate_reason."
+        status: "done"
+      - id: "dod4"
+        description: "`scafld complete` surfaces `advisory: N finding(s)` when non-blocking findings exist under the threshold."
+        status: "done"
+      - id: "dod5"
+        description: "Operator docs + smoke cover the threshold + advisory paths; CLAUDE.md discipline section points at CLI."
+        status: "done"
+    validation:
+      - id: "v1"
+        type: "compile"
+        command: "python3 -m compileall scafld tests"
+        expected_kind: "exit_code_zero"
+      - id: "v2"
+        type: "test"
+        command: "python3 -m unittest tests.test_review_gate_severity"
+        expected_kind: "exit_code_zero"
+      - id: "v3"
+        type: "boundary"
+        description: "Docs cover gate_severity."
+        command: "grep -q 'gate_severity' docs/configuration.md"
+        expected_kind: "exit_code_zero"
+
+planning_log:
+  - timestamp: "2026-04-28T12:00:00Z"
+    actor: "user"
+    summary: "1.7.0 spec 2: severity-gated complete + single-round-by-default. Promotes stopping rule from doc to CLI."
+  - timestamp: "2026-04-28T13:30:00Z"
+    actor: "agent"
+    summary: "Reshaped against verified code: dropped config.py (no allowlist) and commands/lifecycle.py (complete is in commands/review.py); added runtime_guidance.py for the snapshot surface."
+  - timestamp: "2026-04-28T15:10:00Z"
+    actor: "agent"
+    summary: |
+      Review 1 verdict=pass_with_issues. Two non-blocking mediums fixed
+      (real correctness + missing coverage); one low deferred:
+      - F1 (medium) cmd_complete advisory_findings was slicing the first
+        N non_blocking_findings instead of filtering below-threshold
+        entries. Fixed by surfacing `advisory_findings` on the gate dict
+        and reading from there in cmd_complete.
+      - F2 (medium) DoD-promised test for advisory payload was missing.
+        Added CompletePayloadAdvisoryTest covering the aggregation logic
+        + a regression test for the F1 slice bug.
+      - F3 (low) advisory print-string wording drifts from spec
+        content_spec. Cosmetic; deferred.
+
+      - timestamp: "2026-04-28T03:23:32Z"
+        actor: "cli"
+        summary: "Spec completed"
+phases:
+  - id: "phase1"
+    name: "Structured severity on findings + threshold-aware gate"
+    objective: "Parse severity into the review_data payload. evaluate_review_gate respects review.gate_severity. Default keeps current behavior (only Blocking-section findings gate)."
+    changes:
+      - file: "scafld/reviewing.py"
+        action: "update"
+        content_spec: |
+          - Add `parse_finding_severity(line)` that runs FINDING_LINE_RE
+            and returns the captured severity ("critical"|"high"|
+            "medium"|"low") lowercased, or None when the line doesn't
+            match the format.
+          - In `parse_review_file`, after appending a bullet to
+            `blocking` / `non_blocking`, attach a structured payload
+            (still keep the raw bullet string for back-compat in
+            renderers): `parsed["non_blocking_findings"] = [{"line":
+            <bullet>, "severity": <str|None>}, ...]` and same for
+            blocking. The existing `blocking` / `non_blocking` lists of
+            raw strings stay intact.
+      - file: "scafld/review_workflow.py"
+        action: "update"
+        content_spec: |
+          - Add `_load_gate_severity(root)` that reads
+            `review.gate_severity` from `load_config(...)` (paths
+            already in scope from existing review-config readers).
+            Returns one of "blocking", "medium", "low"; falls back to
+            "blocking" on any other value.
+          - Add `SEVERITY_RANK = {"critical": 4, "high": 3, "medium": 2,
+            "low": 1, "blocking": 0}` private to this module.
+          - In `evaluate_review_gate`: after the existing pass branch
+            (verdict pass / pass_with_issues), if `_load_gate_severity`
+            is not "blocking", scan
+            `review_data.get("non_blocking_findings", [])` and collect
+            those whose severity rank ≥ threshold rank. When any exist,
+            set `gate_reason = f"latest review has {n} non-blocking
+            finding(s) at or above severity {threshold}"` and append
+            them to `gate_errors`.
+          - Surface the threshold and counts on the returned dict:
+            `gate_threshold`, `gate_blocking_count`,
+            `gate_advisory_count` (count of non-blocking findings BELOW
+            the threshold; advisory only).
+      - file: "scafld/runtime_guidance.py"
+        action: "update"
+        content_spec: |
+          `review_gate_snapshot` propagates the new fields onto the
+          `review_gate` payload returned to status_snapshot and
+          cmd_complete: `gate_threshold`, `gate_blocking_count`,
+          `gate_advisory_count`. No semantics change for default callers.
+      - file: "tests/test_review_gate_severity.py"
+        action: "create"
+        content_spec: |
+          - `test_default_blocking_passes_pass_with_issues`: review with
+            non-blocking medium finding + default gate → gate_reason is
+            None.
+          - `test_threshold_medium_blocks_non_blocking_medium`:
+            gate_severity=medium + non-blocking medium finding →
+            gate_reason names "non-blocking finding(s) at or above
+            severity medium".
+          - `test_threshold_medium_passes_non_blocking_low`:
+            gate_severity=medium + non-blocking low only → gate_reason
+            is None.
+          - `test_threshold_low_blocks_any_non_blocking`: gate_severity=
+            low + non-blocking low → gate_reason set.
+          - `test_advisory_count_below_threshold`: gate_severity=medium
+            + 2 non-blocking low → gate_advisory_count == 2.
+    acceptance_criteria:
+      - id: "ac1_1"
+        type: "compile"
+        command: "python3 -m compileall scafld tests"
+        expected_kind: "exit_code_zero"
+        result: "pass"
+        executed_at: "2026-04-28T03:09:45Z"
+        result_output: "Listing 'scafld'... Listing 'scafld/commands'... Listing 'tests'..."
+      - id: "ac1_2"
+        type: "test"
+        command: "python3 -m unittest tests.test_review_gate_severity"
+        expected_kind: "exit_code_zero"
+        result: "pass"
+        executed_at: "2026-04-28T03:09:45Z"
+        result_output: "............. ---------------------------------------------------------------------- Ran 13 tests in 0.004s  OK"
+    status: "completed"
+
+  - id: "phase2"
+    name: "Advisory line on complete output"
+    objective: "cmd_complete prints `advisory: N finding(s)` when non-blocking findings exist under the threshold."
+    dependencies:
+      - "phase1"
+    changes:
+      - file: "scafld/commands/review.py"
+        action: "update"
+        ownership: "shared"
+        content_spec: |
+          In `cmd_complete`, on the success path (after the gate clears
+          and the spec is moved to archive), if
+          `review_gate.gate_advisory_count > 0`, print:
+            `  advisory: N finding(s) under threshold (use 'scafld report' for detail)`.
+          When non-zero severity breakdown exists, also print one line
+          per severity bucket: `    medium: 2 / low: 1` etc. JSON mode
+          surfaces `advisory_findings_count` and
+          `advisory_severity_breakdown` on the result payload.
+      - file: "tests/test_review_gate_severity.py"
+        action: "update"
+        content_spec: |
+          - `test_complete_payload_carries_advisory_count`: invoke
+            cmd_complete (or the snapshot helper) on a fixture spec
+            with a passed pass_with_issues review and verify
+            `result.advisory_findings_count` and
+            `advisory_severity_breakdown`.
+    acceptance_criteria:
+      - id: "ac2_1"
+        type: "compile"
+        command: "python3 -m compileall scafld tests"
+        expected_kind: "exit_code_zero"
+        result: "pass"
+        executed_at: "2026-04-28T03:11:27Z"
+        result_output: "Listing 'scafld'... Listing 'scafld/commands'... Compiling 'scafld/commands/review.py'... Listing 'tests'..."
+      - id: "ac2_2"
+        type: "test"
+        command: "python3 -m unittest tests.test_review_gate_severity"
+        expected_kind: "exit_code_zero"
+        result: "pass"
+        executed_at: "2026-04-28T03:11:27Z"
+        result_output: ".............. ---------------------------------------------------------------------- Ran 14 tests in 0.004s  OK"
+    status: "completed"
+
+  - id: "phase3"
+    name: "Smoke + docs (single-round-by-default)"
+    objective: "Smoke-prove threshold + advisory paths. Document single-round-by-default semantics. Trim CLAUDE.md discipline section."
+    dependencies:
+      - "phase2"
+    changes:
+      - file: "tests/review_gate_smoke.sh"
+        action: "update"
+        ownership: "shared"
+        content_spec: |
+          - `case_complete_advisory_findings_pass`: review fixture with
+            non-blocking medium findings + default gate → complete
+            succeeds and stdout contains `advisory:`.
+          - `case_complete_blocks_on_medium_when_threshold_set`: same
+            fixture + `review.gate_severity: medium` in `.ai/config.yaml`
+            → complete refuses and stdout names the gate_reason.
+      - file: "docs/configuration.md"
+        action: "update"
+        ownership: "shared"
+        content_spec: |
+          New "Review gate severity" subsection:
+            - `review.gate_severity` defaults to `blocking`.
+            - Single-round-by-default: `pass` and `pass_with_issues`
+              verdicts ship; only blocking findings drive iteration.
+            - Set `gate_severity: medium` for strict iteration. Findings
+              must declare severity (already enforced by review parser).
+      - file: "CLAUDE.md"
+        action: "update"
+        ownership: "shared"
+        content_spec: |
+          Replace the agent-discipline section with a short pointer to
+          CLI behavior: default is blocking-only iteration; opt into
+          strict iteration via `gate_severity: medium` in
+          `.ai/config.yaml`.
+    acceptance_criteria:
+      - id: "ac3_1"
+        type: "boundary"
+        command: "bash -n tests/review_gate_smoke.sh"
+        expected_kind: "exit_code_zero"
+        result: "pass"
+        executed_at: "2026-04-28T03:13:27Z"
+      - id: "ac3_2"
+        type: "boundary"
+        description: "Severity smokes registered."
+        command: "sh -c 'grep -q case_complete_advisory_findings_pass tests/review_gate_smoke.sh && grep -q case_complete_blocks_on_medium_when_threshold_set tests/review_gate_smoke.sh'"
+        expected_kind: "exit_code_zero"
+        result: "pass"
+        executed_at: "2026-04-28T03:13:27Z"
+      - id: "ac3_3"
+        type: "boundary"
+        description: "Docs cover gate_severity."
+        command: "grep -qiE 'gate_severity|Review gate severity' docs/configuration.md"
+        expected_kind: "exit_code_zero"
+        result: "pass"
+        executed_at: "2026-04-28T03:13:27Z"
+    status: "completed"
+
+rollback:
+  strategy: "per_phase"
+  commands:
+    phase1: "git checkout HEAD -- scafld/reviewing.py scafld/review_workflow.py scafld/runtime_guidance.py && rm -f tests/test_review_gate_severity.py"
+    phase2: "git checkout HEAD -- scafld/commands/review.py tests/test_review_gate_severity.py"
+    phase3: "git checkout HEAD -- tests/review_gate_smoke.sh docs/configuration.md CLAUDE.md"
+
+harden_rounds:
+  - round: 1
+    started_at: "2026-04-28T12:00:00Z"
+    outcome: "in_progress"
+    questions: []
+
+review:
+  timestamp: "2026-04-28T03:23:00Z"
+  verdict: "pass_with_issues"
+  review_rounds: 2
+  reviewer_mode: "fresh_agent"
+  reviewer_session: "a3648777-60ad-4560-8581-8d763da58a06"
+  round_status: "completed"
+  override_applied: false
+  override_reason: null
+  override_confirmed_at: null
+  reviewed_head: "769133d278b66fa48e3fd7072e39df576c37e051"
+  reviewed_dirty: true
+  reviewed_diff: "8825d61933958fd8a8f642a2403e7dcbe407131952caccac22fb37135fe33689"
+  passes:
+    - id: spec_compliance
+      result: "pass"
+    - id: scope_drift
+      result: "pass"
+    - id: regression_hunt
+      result: "pass_with_issues"
+    - id: convention_check
+      result: "pass"
+    - id: dark_patterns
+      result: "pass"
+  blocking_count: 0
+  non_blocking_count: 1

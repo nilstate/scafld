@@ -19,15 +19,18 @@ ARCHIVE_DIR = f"{SPECS_DIR}/archive"
 REVIEWS_DIR = f"{AI_DIR}/reviews"
 RUNS_DIR = f"{AI_DIR}/runs"
 SCHEMA_PATH = f"{AI_DIR}/schemas/spec.json"
+REVIEW_PACKET_SCHEMA_PATH = f"{AI_DIR}/schemas/review_packet.json"
 CONFIG_PATH = f"{AI_DIR}/config.yaml"
 CONFIG_LOCAL_PATH = f"{AI_DIR}/config.local.yaml"
 FRAMEWORK_CONFIG_PATH = f"{FRAMEWORK_DIR}/config.yaml"
 FRAMEWORK_SCHEMA_PATH = f"{FRAMEWORK_DIR}/schemas/spec.json"
+FRAMEWORK_REVIEW_PACKET_SCHEMA_PATH = f"{FRAMEWORK_DIR}/schemas/review_packet.json"
 FRAMEWORK_MANIFEST_PATH = f"{FRAMEWORK_DIR}/manifest.json"
 FRAMEWORK_MANIFEST_SCHEMA_VERSION = 1
 FRAMEWORK_BUNDLE_FILES = [
     (f"{AI_DIR}/config.yaml", FRAMEWORK_CONFIG_PATH),
     (f"{AI_DIR}/schemas/spec.json", FRAMEWORK_SCHEMA_PATH),
+    (f"{AI_DIR}/schemas/review_packet.json", FRAMEWORK_REVIEW_PACKET_SCHEMA_PATH),
     (f"{AI_DIR}/prompts/plan.md", f"{FRAMEWORK_DIR}/prompts/plan.md"),
     (f"{AI_DIR}/prompts/harden.md", f"{FRAMEWORK_DIR}/prompts/harden.md"),
     (f"{AI_DIR}/prompts/exec.md", f"{FRAMEWORK_DIR}/prompts/exec.md"),
@@ -88,6 +91,10 @@ def resolve_framework_asset(root, legacy_rel, managed_rel):
 
 def resolve_schema_path(root):
     return resolve_framework_asset(root, SCHEMA_PATH, "schemas/spec.json")
+
+
+def resolve_review_packet_schema_path(root):
+    return resolve_framework_asset(root, REVIEW_PACKET_SCHEMA_PATH, "schemas/review_packet.json")
 
 
 def resolve_prompt_path(root, name):

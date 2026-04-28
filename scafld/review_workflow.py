@@ -693,10 +693,56 @@ def complete_review_round_from_result(root, review_file, task_id, spec_text, top
     return parse_review_file(review_file, topology)
 
 
+_SEVERITY_RANK = {"critical": 4, "high": 3, "medium": 2, "low": 1}
+_GATE_SEVERITY_THRESHOLDS = {"blocking": 5, "medium": 2, "low": 1}
+
+
+def _load_gate_severity(root):
+    """Return the configured `review.gate_severity` value.
+
+    Default is "blocking" (only Blocking-section findings gate complete).
+    Operators set "medium" or "low" in `.ai/config.yaml` to opt into
+    strict iteration. Unrecognised values fall back to "blocking" so a
+    typo'd setting can never silently weaken the gate.
+    """
+    try:
+        config = load_runtime_config(root) or {}
+    except Exception:
+        return "blocking"
+    raw = ((config.get("review") or {}).get("gate_severity") or "blocking")
+    if not isinstance(raw, str):
+        return "blocking"
+    value = raw.strip().lower()
+    if value in _GATE_SEVERITY_THRESHOLDS:
+        return value
+    return "blocking"
+
+
+def _findings_at_or_above(findings, threshold_rank):
+    matched = []
+    for entry in findings or []:
+        severity = (entry.get("severity") or "").lower() if isinstance(entry, dict) else ""
+        rank = _SEVERITY_RANK.get(severity, 0)
+        if rank >= threshold_rank:
+            matched.append(entry)
+    return matched
+
+
 def evaluate_review_gate(root, review_file, review_data):
     gate_errors = list(review_data["errors"])
     current_git_state = None
     review_metadata = review_data.get("metadata") or {}
+
+    gate_threshold = _load_gate_severity(root)
+    threshold_rank = _GATE_SEVERITY_THRESHOLDS[gate_threshold]
+    non_blocking_findings = review_data.get("non_blocking_findings") or []
+    above = _findings_at_or_above(non_blocking_findings, threshold_rank)
+    advisory = [
+        entry for entry in non_blocking_findings
+        if entry not in above
+    ]
+    gate_blocking_count = len(review_data.get("blocking") or [])
+    gate_advisory_count = len(advisory)
 
     gate_reason = None
     if not review_data["exists"]:
@@ -710,6 +756,14 @@ def evaluate_review_gate(root, review_file, review_data):
         gate_reason = f"latest review failed with {len(review_data['blocking'])} blocking finding(s)"
     elif review_data["verdict"] in (None, "incomplete") or review_data["round_status"] == "in_progress":
         gate_reason = "latest review is incomplete"
+    elif above:
+        # gate_severity threshold (medium or low) elevates non-blocking
+        # findings to gate-blocking. Default "blocking" leaves above=[].
+        gate_reason = (
+            f"latest review has {len(above)} non-blocking finding(s) "
+            f"at or above severity {gate_threshold}"
+        )
+        gate_errors.extend(entry.get("line", "") for entry in above)
     else:
         current_git_state, current_git_error = capture_bound_review_git_state(
             root,
@@ -727,6 +781,10 @@ def evaluate_review_gate(root, review_file, review_data):
         "gate_errors": gate_errors,
         "current_git_state": current_git_state,
         "review_metadata": review_metadata,
+        "gate_threshold": gate_threshold,
+        "gate_blocking_count": gate_blocking_count,
+        "gate_advisory_count": gate_advisory_count,
+        "advisory_findings": advisory,
     }
 
 

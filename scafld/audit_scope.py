@@ -121,6 +121,59 @@ def active_changes_by_file(active_changes):
     return by_file
 
 
+def apply_shared_ownership(spec_text, shared_paths):
+    """Rewrite a slim spec text to add `ownership: "shared"` on declared
+    change entries whose `file:` path is in `shared_paths`.
+
+    Operates on text (not parsed YAML) so existing comments / formatting
+    survive. Only inserts `ownership` on entries that don't already
+    declare it. Idempotent.
+    """
+    if not shared_paths:
+        return spec_text
+    target_set = {str(path) for path in shared_paths}
+
+    lines = spec_text.splitlines(keepends=True)
+    out = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        match = re.match(r'^(\s+)-\s+file:\s*"?([^"\n]+)"?\s*$', line.rstrip("\n"))
+        if not match:
+            out.append(line)
+            i += 1
+            continue
+        indent = match.group(1)
+        path = match.group(2).strip().strip('"')
+        out.append(line)
+        i += 1
+        # Look ahead in the same change entry for an existing ownership
+        # field, while preserving the original lines unchanged.
+        entry_lines = []
+        already_owned = False
+        while i < len(lines):
+            field_line = lines[i]
+            stripped = field_line.lstrip()
+            if not stripped:
+                entry_lines.append(field_line)
+                i += 1
+                continue
+            field_indent = len(field_line) - len(stripped)
+            if field_indent <= len(indent):
+                break
+            entry_lines.append(field_line)
+            if re.match(r'^ownership:', stripped):
+                already_owned = True
+            i += 1
+        if path in target_set and not already_owned:
+            # Inject the ownership line at the same indent level as
+            # the action/content_spec siblings, after the `- file:` line.
+            ownership_indent = indent + "  "
+            out.append(f'{ownership_indent}ownership: "shared"\n')
+        out.extend(entry_lines)
+    return "".join(out)
+
+
 def classify_active_overlap(declared_changes, other_active_changes):
     """Split shared overlap from conflicting overlap across active specs."""
     other_by_file = active_changes_by_file(other_active_changes)

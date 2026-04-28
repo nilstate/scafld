@@ -84,6 +84,8 @@ def cmd_plan(args):
         title=getattr(args, "title", None),
         size=getattr(args, "size", None),
         risk=getattr(args, "risk", None),
+        command=getattr(args, "command", None),
+        files=getattr(args, "files", None),
     )
 
     if getattr(args, "json", False):

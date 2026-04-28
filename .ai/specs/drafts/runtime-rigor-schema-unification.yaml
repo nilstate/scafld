@@ -1,0 +1,309 @@
+spec_version: "1.1"
+task_id: "runtime-rigor-schema-unification"
+created: "2026-04-27T15:43:46Z"
+updated: "2026-04-27T15:43:46Z"
+status: "draft"
+harden_status: "in_progress"
+
+task:
+  title: "Adopt jsonschema as soft dependency for spec and review packet"
+  summary: >
+    `.ai/schemas/spec.json` exists as Draft-07 JSON Schema and
+    [lifecycle_runtime.py:69-134:validate_spec](../scafld/lifecycle_runtime.py)
+    is a hand-written Python validator that re-implements a subset of the
+    same rules. Drift is inevitable — confirmed by review findings during
+    this cutover where the schema and runtime checker disagreed on the
+    new acceptance fields.
+
+    Same pattern with the review packet:
+    [.ai/schemas/review_packet.json](../.ai/schemas/review_packet.json)
+    declares structure but
+    [review_packet.py:normalize_review_packet](../scafld/review_packet.py)
+    re-implements every rule in Python. The structured-output spec
+    surfaced repeated drift across prompt + schema + normalizer.
+
+    This spec adopts `jsonschema` as a soft dependency. When importable
+    (which it is in scafld's own venv), `validate_spec` and
+    `normalize_review_packet` delegate structural checks to
+    `jsonschema.validate(...)` against the canonical schema files. The
+    hand-written Python checks stay as fallback for constrained installs
+    that don't have `jsonschema`. Drift becomes one less degree of
+    freedom: schema files become the single source of structural truth.
+  size: "small"
+  risk_level: "low"
+  context:
+    packages:
+      - "scafld"
+      - "tests"
+    files_impacted:
+      - path: "scafld/lifecycle_runtime.py"
+        lines: "task-selected"
+        reason: "validate_spec delegates to jsonschema when importable; falls back to hand-written checks otherwise."
+      - path: "scafld/review_packet.py"
+        lines: "task-selected"
+        reason: "normalize_review_packet runs jsonschema.validate before its hand-written checks (which provide richer error messages)."
+      - path: "scafld/runtime_bundle.py"
+        lines: "task-selected"
+        reason: "Single helper `try_import_jsonschema()` so callers don't replicate the soft-import dance."
+      - path: "setup.py"
+        lines: "task-selected"
+        reason: "Declare `jsonschema>=4` as an extras_require entry (`pip install scafld[strict]`); leave install_requires unchanged."
+      - path: "tests/test_lifecycle_runtime.py"
+        lines: "task-selected"
+        reason: "Coverage for delegation when jsonschema is importable AND when it's not (monkey-patched)."
+      - path: "tests/test_review_packet.py"
+        lines: "task-selected"
+        reason: "Same coverage pattern for the review packet path."
+      - path: "docs/configuration.md"
+        lines: "task-selected"
+        reason: "Document the soft dependency and how to install it."
+    invariants:
+      - "jsonschema_must_be_optional_at_install_time"
+      - "behavior_when_jsonschema_is_absent_must_match_1_6_x"
+      - "schema_validation_errors_must_name_the_offending_path"
+      - "hand_written_checks_must_remain_as_fallback_not_be_retired"
+      - "single_source_of_structural_truth_lives_in_schema_files"
+    related_docs:
+      - "plans/1.7.0-cutover.md"
+      - ".ai/schemas/spec.json"
+      - ".ai/schemas/review_packet.json"
+    cwd: "."
+  objectives:
+    - "Eliminate spec/schema and packet/schema drift by making the schema files authoritative for structural rules."
+    - "Keep scafld installable on constrained Python environments without `jsonschema`."
+    - "Surface validation errors that name the offending JSON pointer / field path."
+  scope:
+    in_scope:
+      - "Soft import of `jsonschema` via a single helper."
+      - "Delegation in `validate_spec` and `normalize_review_packet`."
+      - "Fallback to existing hand-written checks when `jsonschema` is absent OR validation passes (the hand-written checks stay for richer messages on the new validation surface — they don't go away)."
+      - "extras_require entry for `jsonschema`."
+      - "Unit coverage for both code paths."
+      - "Operator docs for the soft dependency."
+    out_of_scope:
+      - "Removing the hand-written checks. They provide messages the schema can't (line/anchor citations, cross-field invariants like `verdict pass cannot include findings`). They run AFTER the schema."
+      - "Adding `jsonschema` to install_requires (would surprise constrained installs)."
+      - "Changing spec/packet schema content. Drift fixes happen in their own specs."
+      - "Validating other artifacts (handoffs, session.json) at this layer."
+  assumptions:
+    - "`jsonschema>=4` is what scafld's venv already pins; older versions support the same Draft-07 contract."
+    - "Operators on constrained installs are a small minority; their UX stays exactly as 1.6.x."
+    - "JSON Schema's error messages are good enough for the structural class of issues. Cross-field rules and citations stay in Python."
+  touchpoints:
+    - area: "spec validation"
+      description: "validate_spec runs schema check first (when available), then hand-written rules."
+    - area: "review packet validation"
+      description: "normalize_review_packet runs schema check first (when available), then runtime contracts."
+    - area: "soft dependency surface"
+      description: "Single import helper, single extras_require entry."
+  risks:
+    - description: "`jsonschema` raises differently than hand-written checks; operators see two different error styles."
+      impact: "medium"
+      mitigation: "Wrap the schema-validation error into the same ScafldError envelope the hand-written checks use. Format the JSON pointer as `field.subfield[0]` to match operator-facing language."
+    - description: "Soft import stays loaded across CLI invocations and inflates startup time."
+      impact: "low"
+      mitigation: "`try_import_jsonschema` caches the result via `functools.lru_cache`; no measurable impact for the existing CLI."
+    - description: "An older `jsonschema` (e.g., 3.x) is installed and Draft-07 support diverges."
+      impact: "low"
+      mitigation: "extras_require pins `>=4`; soft import path checks the exposed `Draft7Validator` exists; falls back if missing."
+  acceptance:
+    validation_profile: "standard"
+    definition_of_done:
+      - id: "dod1"
+        description: "`try_import_jsonschema()` returns the module when available, None otherwise; cached."
+        status: "pending"
+      - id: "dod2"
+        description: "`validate_spec` runs `Draft7Validator` checks against `.ai/schemas/spec.json` when available; falls back to hand-written checks otherwise. Both modes accept a known-good spec; both reject a known-bad spec."
+        status: "pending"
+      - id: "dod3"
+        description: "`normalize_review_packet` runs `Draft7Validator` checks against `.ai/schemas/review_packet.json` when available; structural errors surface with the JSON pointer named."
+        status: "pending"
+      - id: "dod4"
+        description: "Hand-written runtime contracts (cross-field invariants, citation rules) keep running on the post-schema-validated packet; they're not retired."
+        status: "pending"
+      - id: "dod5"
+        description: "`setup.py` declares `jsonschema>=4` in `extras_require[\"strict\"]`; `install_requires` is unchanged."
+        status: "pending"
+      - id: "dod6"
+        description: "Operator docs link the optional dependency and what it buys."
+        status: "pending"
+    validation:
+      - id: "v1"
+        type: "compile"
+        description: "Python sources compile."
+        command: "python3 -m compileall scafld tests"
+        expected_kind: "exit_code_zero"
+      - id: "v2"
+        type: "test"
+        description: "Lifecycle runtime tests pass (delegation + fallback)."
+        command: "python3 -m unittest tests.test_lifecycle_runtime"
+        expected_kind: "exit_code_zero"
+      - id: "v3"
+        type: "test"
+        description: "Review packet tests pass (delegation + fallback)."
+        command: "python3 -m unittest tests.test_review_packet"
+        expected_kind: "exit_code_zero"
+      - id: "v4"
+        type: "test"
+        description: "Existing acceptance tests still pass."
+        command: "python3 -m unittest tests.test_acceptance"
+        expected_kind: "exit_code_zero"
+      - id: "v5"
+        type: "boundary"
+        description: "extras_require entry present in setup.py."
+        command: "grep -qE 'jsonschema.*>=.*4' setup.py"
+        expected_kind: "exit_code_zero"
+
+planning_log:
+  - timestamp: "2026-04-27T15:43:46Z"
+    actor: "user"
+    summary: "Spec created via scafld plan as cutover #3 (per plans/1.7.0-cutover.md)."
+  - timestamp: "2026-04-27T15:43:46Z"
+    actor: "agent"
+    summary: "Replaced placeholder with the schema-unification plan: jsonschema as soft dep, schema-first validation, hand-written checks remain as the cross-field/citation layer."
+
+phases:
+  - id: "phase1"
+    name: "Soft import helper"
+    objective: "Single helper that returns the jsonschema module when importable, None otherwise. Cached."
+    changes:
+      - file: "scafld/runtime_bundle.py"
+        action: "update"
+        ownership: "shared"
+        content_spec: |
+          Add `try_import_jsonschema()` decorated with
+          `@functools.lru_cache(maxsize=1)`. Returns the imported
+          module when `from jsonschema import Draft7Validator`
+          succeeds; returns None otherwise. Operators call this from
+          validation paths to decide whether to delegate.
+      - file: "tests/test_lifecycle_runtime.py"
+        action: "create"
+        content_spec: |
+          New unittest module. Tests:
+            - `try_import_jsonschema` returns a module on this venv
+              (which has the dep installed).
+            - Test mode that monkey-patches `sys.modules["jsonschema"]
+              = None` and confirms the helper returns None gracefully.
+    acceptance_criteria:
+      - id: "ac1_1"
+        type: "compile"
+        description: "Sources compile."
+        command: "python3 -m compileall scafld tests"
+        expected_kind: "exit_code_zero"
+      - id: "ac1_2"
+        type: "test"
+        description: "Soft-import helper tests pass."
+        command: "python3 -m unittest tests.test_lifecycle_runtime"
+        expected_kind: "exit_code_zero"
+    status: "pending"
+
+  - id: "phase2"
+    name: "Spec validation delegation"
+    objective: "validate_spec delegates structural checks to Draft7Validator when available; hand-written checks run after."
+    dependencies:
+      - "phase1"
+    changes:
+      - file: "scafld/lifecycle_runtime.py"
+        action: "update"
+        content_spec: |
+          - At the top of `validate_spec`, call
+            `try_import_jsonschema()`. When the module is available,
+            load the schema from `resolve_schema_path(root)` and run
+            `Draft7Validator(schema).iter_errors(data)`. Convert each
+            error into a string `<json_pointer>: <message>` and
+            append to the errors list.
+          - When the module is not available, do nothing extra (the
+            existing hand-written checks already run).
+          - The hand-written cross-field checks always run afterward
+            for messages the schema can't produce (TODO patterns,
+            phase ordering rules, etc.).
+      - file: "tests/test_lifecycle_runtime.py"
+        action: "update"
+        content_spec: |
+          Add tests:
+            - `validate_spec` returns no errors for a known-good spec
+              from `.ai/specs/examples/`.
+            - `validate_spec` returns a Draft7 error message for a
+              spec missing a required top-level field (when
+              jsonschema is available).
+            - With jsonschema monkey-patched out, the hand-written
+              checks alone catch the same missing-required case.
+    acceptance_criteria:
+      - id: "ac2_1"
+        type: "test"
+        description: "Spec validation delegation tests pass."
+        command: "python3 -m unittest tests.test_lifecycle_runtime"
+        expected_kind: "exit_code_zero"
+    status: "pending"
+
+  - id: "phase3"
+    name: "Review packet validation delegation"
+    objective: "normalize_review_packet runs Draft7Validator before hand-written checks; cross-field rules stay."
+    dependencies:
+      - "phase2"
+    changes:
+      - file: "scafld/review_packet.py"
+        action: "update"
+        ownership: "shared"
+        content_spec: |
+          At the top of `normalize_review_packet` (after JSON parse,
+          before structural checks), call `try_import_jsonschema()`.
+          When available, load the schema from
+          `resolve_review_packet_schema_path(root)` and run
+          `Draft7Validator(schema).iter_errors(packet)`. Surface
+          errors via the existing `_packet_error` helper with
+          `<json_pointer>: <message>` formatting.
+      - file: "tests/test_review_packet.py"
+        action: "update"
+        ownership: "shared"
+        content_spec: |
+          Tests:
+            - Schema delegation accepts the canonical fixture.
+            - Schema delegation rejects a tampered fixture (e.g.,
+              non-enum verdict) with a Draft7 error message.
+            - With jsonschema monkey-patched out, hand-written checks
+              still catch the same tampered fixture.
+            - Cross-field invariants (verdict pass + findings list
+              non-empty) remain detected by the hand-written layer.
+      - file: "setup.py"
+        action: "update"
+        content_spec: |
+          Add `extras_require={"strict": ["jsonschema>=4"]}` to the
+          existing setup() call. Leave `install_requires` untouched.
+      - file: "docs/configuration.md"
+        action: "update"
+        content_spec: |
+          Add a "Strict schema validation" subsection: scafld can use
+          `jsonschema` for richer structural error messages on
+          validate / review. Optional: `pip install scafld[strict]`.
+          When absent, hand-written checks cover the same contract.
+    acceptance_criteria:
+      - id: "ac3_1"
+        type: "compile"
+        description: "Sources compile after delegation added."
+        command: "python3 -m compileall scafld tests"
+        expected_kind: "exit_code_zero"
+      - id: "ac3_2"
+        type: "test"
+        description: "Review packet delegation tests pass."
+        command: "python3 -m unittest tests.test_review_packet"
+        expected_kind: "exit_code_zero"
+      - id: "ac3_3"
+        type: "boundary"
+        description: "extras_require entry declared."
+        command: "grep -qE 'jsonschema.*>=.*4' setup.py"
+        expected_kind: "exit_code_zero"
+    status: "pending"
+
+rollback:
+  strategy: "per_phase"
+  commands:
+    phase1: "git checkout HEAD -- scafld/runtime_bundle.py && rm -f tests/test_lifecycle_runtime.py"
+    phase2: "git checkout HEAD -- scafld/lifecycle_runtime.py tests/test_lifecycle_runtime.py"
+    phase3: "git checkout HEAD -- scafld/review_packet.py setup.py docs/configuration.md tests/test_review_packet.py"
+
+harden_rounds:
+  - round: 1
+    started_at: "2026-04-27T15:43:46Z"
+    outcome: "in_progress"
+    questions: []

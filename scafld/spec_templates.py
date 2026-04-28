@@ -106,12 +106,12 @@ task:
         type: "compile"
         description: {json.dumps(compile_description)}
         command: {json.dumps(commands["compile_check"])}
-        expected: "exit code 0"
+        expected_kind: "exit_code_zero"
       - id: "v2"
         type: "test"
         description: {json.dumps(test_description)}
         command: {json.dumps(commands["targeted_tests"])}
-        expected: "exit code 0"
+        expected_kind: "exit_code_zero"
 
 planning_log:
   - timestamp: {json.dumps(timestamp)}
@@ -132,7 +132,7 @@ phases:
         type: "test"
         description: {json.dumps(phase_acceptance)}
         command: {json.dumps(commands["targeted_tests"])}
-        expected: "exit code 0"
+        expected_kind: "exit_code_zero"
     status: "pending"
 
 rollback:
@@ -156,5 +156,104 @@ rollback:
                 "linter_suite": commands["linter_suite"],
                 "typecheck": commands["typecheck"],
             },
+        },
+    }
+
+
+def build_slim_spec_scaffold(
+    root,
+    task_id,
+    *,
+    timestamp,
+    title,
+    command,
+    files,
+    size="small",
+    risk_level="low",
+):
+    """Build a slim, ~30-line spec scaffold.
+
+    Caller supplies real values for `title`, `command`, and `files`
+    (a list). The result has no `TODO` sentinels: every required
+    field is populated, so `validate_spec` passes immediately and
+    `scafld approve` can advance without a manual fill round.
+
+    The criterion always carries explicit `expected_kind:
+    exit_code_zero` so `evaluate_acceptance_criterion`'s
+    strict-unset-reject doesn't fire.
+
+    Optional task blocks (context.packages, invariants, objectives,
+    touchpoints, top-level acceptance.validation, rollback) are
+    omitted. Reviewers' renderers fall back gracefully on missing
+    fields. For complex multi-phase work, operators extend the spec
+    by hand or use the verbose `build_new_spec_scaffold`.
+    """
+    resolved_title = title or task_id.replace("-", " ").title()
+    resolved_size = size or "small"
+    resolved_risk = risk_level or "low"
+    file_paths = [str(path).strip() for path in (files or []) if str(path).strip()]
+    if not file_paths:
+        # Slim plan must declare at least one file so audit_scope and
+        # validate_spec stay meaningful.
+        raise ValueError(
+            "build_slim_spec_scaffold requires --files; the slim "
+            "criterion must declare which files the work touches"
+        )
+    if not command or not str(command).strip():
+        raise ValueError(
+            "build_slim_spec_scaffold requires --command; the slim "
+            "criterion must declare an executable verification command"
+        )
+
+    detection = detect_init_config(root)
+
+    changes_block = "\n".join(
+        f"      - file: {json.dumps(path)}\n"
+        f"        action: \"update\"\n"
+        f"        content_spec: \"See task summary.\""
+        for path in file_paths
+    )
+
+    template = f'''spec_version: "1.1"
+task_id: {json.dumps(task_id)}
+created: {json.dumps(timestamp)}
+updated: {json.dumps(timestamp)}
+status: "draft"
+harden_status: "in_progress"
+
+task:
+  title: {json.dumps(resolved_title)}
+  summary: {json.dumps(resolved_title)}
+  size: {json.dumps(resolved_size)}
+  risk_level: {json.dumps(resolved_risk)}
+
+planning_log:
+  - timestamp: {json.dumps(timestamp)}
+    actor: "user"
+    summary: "Spec created via scafld plan --command"
+
+phases:
+  - id: "phase1"
+    name: {json.dumps(resolved_title)}
+    objective: {json.dumps(f"Implement {resolved_title}")}
+    changes:
+{changes_block}
+    acceptance_criteria:
+      - id: "ac1_1"
+        type: "test"
+        command: {json.dumps(str(command))}
+        expected_kind: "exit_code_zero"
+    status: "pending"
+'''
+
+    return {
+        "text": template,
+        "title": resolved_title,
+        "size": resolved_size,
+        "risk": resolved_risk,
+        "repo_context": {
+            "summary": detection["summary"],
+            "markers": list(detection["markers"]),
+            "commands": {},
         },
     }

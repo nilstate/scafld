@@ -20,7 +20,7 @@ def scafld_error_to_payload(exc):
     )
 
 
-def plan_snapshot(root, task_id, *, title=None, size=None, risk=None):
+def plan_snapshot(root, task_id, *, title=None, size=None, risk=None, command=None, files=None):
     existing_spec = find_spec(root, task_id)
 
     if existing_spec is not None:
@@ -83,6 +83,8 @@ def plan_snapshot(root, task_id, *, title=None, size=None, risk=None):
             title=title,
             size=size,
             risk=risk,
+            command=command,
+            files=files,
             auto_initialized=False,
         )
     except ScafldError as exc:

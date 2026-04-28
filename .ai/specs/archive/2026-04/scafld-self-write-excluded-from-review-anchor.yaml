@@ -1,0 +1,191 @@
+spec_version: '1.1'
+task_id: scafld-self-write-excluded-from-review-anchor
+created: '2026-04-27T15:28:17Z'
+updated: "2026-04-27T15:32:49Z"
+status: "completed"
+harden_status: not_run
+task:
+  title: Exclude scafld control-plane writes from review-anchor diff
+  summary: >
+    `scafld review` pins a `reviewed_diff` hash over the working tree
+    and `scafld complete` validates the diff still matches. When you
+    complete spec A, scafld moves files (`.ai/specs/active/A.yaml →
+    archive/2026-04/A.yaml`, `.ai/runs/A → .ai/runs/archive/2026-04/A`),
+    which changes the working tree. The next `scafld review B` captures
+    the now-modified tree, and any subsequent reviewer activity that
+    triggers another scafld bookkeeping write breaks B's anchor — even
+    though no engineering code changed. The cause is asymmetric
+    exclusion. `audit_scope.git_sync_excluded_paths()` already excludes
+    `.ai/specs/`, `.ai/reviews/`, `.ai/runs/` from sync-drift, but
+    `review_workflow.review_binding_excluded_rels` only excludes the
+    review file and the active task's own runs directory — not sibling
+    archive moves. Fix the cause: add the same control-plane prefixes
+    to the review-binding exclusion list. The diff that anchors a
+    review should be the engineering diff, not engineering-plus-scafld-
+    bookkeeping.
+  size: small
+  risk_level: medium
+  context:
+    packages:
+    - scafld
+    - tests
+    files_impacted:
+    - path: scafld/review_workflow.py
+      lines: '87-98'
+      reason: >
+        `review_binding_excluded_rels` builds the exclusion list passed
+        to `capture_review_git_state`. It currently includes only the
+        review markdown for the task and the task's own runs directory.
+        Extend it with the same control-plane prefixes already used by
+        `audit_scope.git_sync_excluded_paths()`.
+    invariants:
+    - reviewer_diff_anchors_engineering_changes_not_scafld_bookkeeping
+    - sibling_complete_writes_do_not_break_review_anchor
+    - real_engineering_changes_after_review_still_invalidate_anchor
+    related_docs:
+    - docs/scope-auditing.md
+  objectives:
+  - Stop scafld's own bookkeeping moves from invalidating review anchors.
+  - Reuse the existing control-plane exclusion list rather than introducing a parallel one.
+  - Preserve the existing guard that real engineering changes between review and complete invalidate the anchor.
+  scope:
+    in_scope:
+    - Extend `review_binding_excluded_rels` to include `.ai/specs/`, `.ai/reviews/`, `.ai/runs/`.
+    - Tests covering the new exclusion (sibling complete does not break review anchor).
+    - Tests covering the preserved invariant (real engineering changes still invalidate anchor).
+    out_of_scope:
+    - Changing the review-round model itself.
+    - Touching audit-scope semantics.
+    - Changing any scafld write paths.
+  dependencies: []
+  assumptions:
+  - The `audit_scope.git_sync_excluded_paths()` list is the canonical scafld control-plane prefix list; review-binding can reuse it.
+  - The current per-task exclusion (review markdown + task runs dir) remains needed for the same-task review-write cycle.
+  touchpoints:
+  - area: scafld/review_workflow.py
+    description: Single function update to extend exclusion list.
+  risks:
+  - description: A real engineering change that lives under `.ai/` (e.g. operators editing scafld config) would be excluded from the anchor.
+    impact: low
+    mitigation: scafld already treats those paths as control-plane in audit-scope. Editing them is bookkeeping, not engineering. Operators who genuinely want to commit `.ai/` changes do it outside the review loop.
+  acceptance:
+    validation_profile: standard
+    definition_of_done:
+    - id: dod1
+      description: Completing one spec does not invalidate another spec's review anchor.
+      status: pending
+    - id: dod2
+      description: Real engineering changes (outside `.ai/`) between review and complete continue to invalidate the anchor.
+      status: pending
+    - id: dod3
+      description: Existing scafld test suite stays green.
+      status: pending
+    validation:
+    - id: v1
+      type: test
+      command: .venv/bin/python -m unittest discover tests/
+      expected: exit code 0
+    - id: v2
+      type: test
+      description: New review-anchor exclusion test passes.
+      command: .venv/bin/python -m unittest tests.test_review_anchor_exclusion
+      expected: exit code 0
+  constraints:
+    approvals_required: []
+    non_goals:
+    - Changing the review-round semantic.
+    - Audit-scope changes.
+  info_sources:
+  - scafld/review_workflow.py
+  - scafld/git_state.py
+  - scafld/audit_scope.py
+  - scafld/reviewing.py
+  notes: >
+    Surfaced during runx flagship-dogfood-wave audit on 2026-04-28.
+    Multiple sequential `scafld complete` calls in the same workspace
+    cascade-fail; manually re-running review opens a Round 2 even
+    though no engineering code changed. This unblocks runx
+    issue-to-pr lane phase 2 dogfood transitively.
+planning_log:
+- timestamp: '2026-04-27T15:28:17Z'
+  actor: claude
+  summary: Drafted under runx flagship-dogfood-wave audit; covers finding 5 (scafld review-gate cascade).
+- timestamp: "2026-04-27T15:29:07Z"
+  actor: "cli"
+  summary: "Spec approved"
+- timestamp: "2026-04-27T15:32:49Z"
+  actor: "cli"
+  summary: "Spec completed"
+phases:
+- id: phase1
+  name: Extend review-binding exclusion list
+  objective: >
+    Update `review_binding_excluded_rels` to include the same
+    control-plane prefixes already used by `git_sync_excluded_paths`,
+    so scafld's own archive moves do not invalidate review anchors.
+  changes:
+  - file: scafld/review_workflow.py
+    action: update
+    content_spec: |
+      In `review_binding_excluded_rels`, after appending the
+      task-specific review file and runs path, also append every
+      prefix returned by `audit_scope.git_sync_excluded_paths()`.
+      Avoid duplicates. Keep the function pure and deterministic.
+  - file: tests/test_review_anchor_exclusion.py
+    action: create
+    content_spec: |
+      Use a temp git work-tree. Initialize a scafld workspace, create
+      two specs A and B, approve and review both. Verify that
+      completing A (which moves A's archive files) does not change
+      the captured review-anchor diff for B. Verify that touching a
+      file outside .ai/ between review and complete DOES change the
+      anchor.
+  acceptance_criteria:
+  - id: ac1_1
+    type: test
+    description: Existing scafld pytest suite passes under the change.
+    command: .venv/bin/python -m unittest discover tests/
+    expected: exit code 0
+    result: "pass"
+    executed_at: "2026-04-27T15:31:27Z"
+    result_output: "......................................................................................................................... ---------------------------------------------------------------------- Ran 121"
+  - id: ac1_2
+    type: test
+    description: New review-anchor exclusion test passes.
+    command: .venv/bin/python -m unittest tests.test_review_anchor_exclusion
+    expected: exit code 0
+    result: "pass"
+    executed_at: "2026-04-27T15:31:28Z"
+    result_output: "...... ---------------------------------------------------------------------- Ran 6 tests in 0.349s  OK"
+  status: "completed"
+rollback:
+  strategy: per_phase
+  commands:
+    phase1: git checkout HEAD -- scafld/review_workflow.py tests/test_review_anchor_exclusion.py
+
+review:
+  timestamp: "2026-04-27T15:32:19Z"
+  verdict: "pass"
+  review_rounds: 1
+  reviewer_mode: "challenger"
+  reviewer_session: ""
+  round_status: "completed"
+  override_applied: false
+  override_reason: null
+  override_confirmed_at: null
+  reviewed_head: "769133d278b66fa48e3fd7072e39df576c37e051"
+  reviewed_dirty: true
+  reviewed_diff: "2964d135b685caa843694d0847c5dd501023a1c32485570b8b7acc3366e4daff"
+  passes:
+    - id: spec_compliance
+      result: "pass"
+    - id: scope_drift
+      result: "pass"
+    - id: regression_hunt
+      result: "pass"
+    - id: convention_check
+      result: "pass"
+    - id: dark_patterns
+      result: "pass"
+  blocking_count: 0
+  non_blocking_count: 0

@@ -60,3 +60,20 @@ Show the current task status.
 - `status` is the canonical next-step surface; read `next_action` and
   `current_handoff` instead of inferring lifecycle state yourself.
 - `complete` is expected to fail when the challenger blocks. That is normal; fix the issues or use the audited human override path only after a completed challenger review round when justified.
+
+## Review iteration: single-round-by-default
+
+`scafld complete` blocks only on blocking (high / critical) findings.
+Verdict `pass` or `pass_with_issues` ships in one review round.
+Medium and low findings are advisory output, not iteration triggers.
+
+To opt into strict iteration, set `review.gate_severity: medium` (or
+`low`) in `.ai/config.yaml`; non-blocking findings at or above that
+severity will start gating `complete` too. See
+`docs/configuration.md#review-gate-severity`.
+
+When iteration is bounded by blocking findings, the agent may still
+choose to address advisory findings — fix the cheap ones inline,
+defer marginal ones to follow-up specs. Record skipped findings +
+rationale in the spec's `planning_log` before `scafld complete` so
+the audit trail names what was deferred and why.
