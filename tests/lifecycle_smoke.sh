@@ -38,8 +38,12 @@ repo = pathlib.Path(os.environ["REVIEW_REPO"])
 task_id = os.environ["REVIEW_TASK_ID"]
 sys.path.insert(0, os.environ["REPO_ROOT"])
 from scafld.git_state import capture_review_git_state
+from scafld.review_workflow import review_binding_excluded_rels
 
-state, error = capture_review_git_state(repo, [f".ai/reviews/{task_id}.md", f".ai/runs/{task_id}"])
+# Match the runtime exclusion list so the captured baseline lines up
+# with what scafld complete recomputes.
+excluded = review_binding_excluded_rels(task_id, f".ai/reviews/{task_id}.md")
+state, error = capture_review_git_state(repo, excluded)
 if error:
     raise SystemExit(error)
 
