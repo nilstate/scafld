@@ -1646,7 +1646,7 @@ EOF
   assert_contains_file "$args_capture" '{"mcpServers":{}}' "claude runner should pass a schema-valid empty MCP config"
   assert_contains_file "$args_capture" "--permission-mode" "claude runner should request a read-only planning mode"
   assert_contains_file "$args_capture" "--disallowedTools" "claude runner should explicitly deny write-capable tools"
-  assert_contains_file "$env_capture" "12000" "claude runner should set a default output-token budget"
+  assert_contains_file "$env_capture" "32000" "claude runner should set a default output-token budget"
   python3 - "$args_capture" <<'PY'
 from pathlib import Path
 import sys
