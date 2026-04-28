@@ -3210,7 +3210,7 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 cat >/dev/null
-echo "error: model '$model' not available" >&2
+echo "error: model not available ($model)" >&2
 exit 7
 EOF
   chmod +x "$stub_dir/codex"
