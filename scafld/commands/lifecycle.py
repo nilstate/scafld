@@ -240,8 +240,8 @@ def cmd_new(args):
         title=getattr(args, "title", None),
         size=getattr(args, "size", None),
         risk=getattr(args, "risk", None),
-        command=getattr(args, "command", None),
-        files=getattr(args, "files", None),
+        command=getattr(args, "slim_command", None),
+        files=getattr(args, "slim_files", None),
         auto_initialized=auto_initialized,
     )
     rel = Path(snapshot["state"]["file"])
