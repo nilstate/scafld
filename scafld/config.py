@@ -34,67 +34,26 @@ def deep_merge(base, overlay):
     return result
 
 
-def simple_yaml_load(text):
-    """Load a config YAML document.
-
-    Prefers PyYAML when importable so list values, multi-line strings,
-    and other standard YAML constructs round-trip correctly. Falls back
-    to a hand-rolled indent-aware parser when PyYAML is unavailable.
-    The fallback handles `key: value`, nested dicts, and `key: [list]`
-    inline sequences but skips block sequences (`- item` lines).
-    """
-    try:
-        import yaml  # type: ignore
-        loaded = yaml.safe_load(text)
-        return loaded if isinstance(loaded, dict) else {}
-    except ModuleNotFoundError:
-        pass
-
-    import re
-
-    result = {}
-    stack = [(result, -1)]
-
-    for line in text.splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
-            continue
-
-        indent = len(line) - len(line.lstrip())
-        while len(stack) > 1 and stack[-1][1] >= indent:
-            stack.pop()
-        current_dict = stack[-1][0]
-
-        if stripped.startswith("- "):
-            continue
-
-        match = re.match(r"^(\s*)([\w_.-]+)\s*:\s*(.*?)$", line)
-        if not match:
-            continue
-
-        key = match.group(2)
-        raw_value = match.group(3).strip()
-        if raw_value == "" or raw_value.startswith("#"):
-            child = {}
-            current_dict[key] = child
-            stack.append((child, indent))
-        else:
-            current_dict[key] = parse_yaml_value(raw_value)
-
-    return result
-
-
 def load_config(root, framework_config_path, config_path, config_local_path):
-    """Load config with local overlay support."""
+    """Load config with local overlay support.
+
+    PyYAML is `install_requires`, so `yaml.safe_load` is available on
+    every supported runtime path. Each candidate file's parse failure
+    is swallowed so a corrupt overlay in one place doesn't kill the
+    overall config load — the previously-merged config still applies.
+    """
+    import yaml
+
     config = {}
     for candidate in [root / framework_config_path, root / config_path, root / config_local_path]:
         if not candidate.exists():
             continue
         try:
-            loaded = simple_yaml_load(candidate.read_text())
+            loaded = yaml.safe_load(candidate.read_text())
+        except yaml.YAMLError:
+            continue
+        if isinstance(loaded, dict):
             config = deep_merge(config, loaded)
-        except Exception:
-            pass
     return config
 
 

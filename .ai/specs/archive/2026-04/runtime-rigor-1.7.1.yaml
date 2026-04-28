@@ -1,0 +1,966 @@
+spec_version: "1.1"
+task_id: "runtime-rigor-1.7.1"
+created: "2026-04-28T17:30:00Z"
+updated: "2026-04-28T11:54:20Z"
+status: "completed"
+harden_status: "in_progress"
+
+task:
+  title: "1.7.1: scope-drift + severity tails + code quality + SIGINT + stream-aware review transport + schema strict-mode compliance"
+  summary: >
+    1.7.0 shipped the four structural changes. 1.7.1 closes the
+    deferred tails surfaced during the 1.7.0 review rounds, fixes the
+    multi-repo scope_drift bug surfaced during runx dogfooding, cleans
+    the three code-quality flags from the 1.7.0 ship audit, and
+    rebuilds the external-review transport so reviews don't false-
+    timeout on legitimately long runs.
+
+    Seven phases, ordered so each is independently reviewable but
+    they ship together as one tag:
+
+      1. Scope-drift path normalization. Multi-repo specs that declare
+         sibling-repo paths (`../cloud/...`) currently fail
+         `scope_drift` because path comparison normalizes one side and
+         not the other. Fix in audit_scope.py + the audit dispatch.
+
+      2. Severity-gate tails. Two pieces deferred from 1.7.0:
+           a. cmd_complete body cross-check verifies blocking and
+              non-blocking COUNTS but not per-finding severity, so
+              `gate_severity=medium` operators can be bypassed by
+              re-classifying a finding's severity in the body.
+           b. derive_task_guidance has no branch for the
+              threshold-blocked `pass_with_issues` case; next_action
+              currently falls through to "rerun review" which doesn't
+              help (rerunning the same review hits the same gate).
+
+      3. Code-quality cleanups (the "clean core" of the version):
+           a. Replace `apply_shared_ownership` text-line regex
+              rewriter with a YAML-aware injector. Slim spec output
+              is structured; we can parse, mutate, dump.
+           b. Unify plan-time and review-time overlap logic.
+              `lifecycle_runtime.new_spec_snapshot` reimplements the
+              overlap classification inline because
+              `classify_active_overlap` is bilateral (both sides must
+              declare shared) and plan-time is unilateral. Refactor
+              the helper to accept `plan_time=True` and reuse it.
+           c. Drop the `simple_yaml_load` hand-rolled fallback in
+              `scafld/config.py`. PyYAML is install_requires; every
+              supported runtime path has it. The fallback silently
+              drops list values, which has caused a smoke flake
+              already. Use `yaml.safe_load` unconditionally.
+
+      4. SIGINT handler investigation + fix. `case_review_cancel_signal_handler`
+         flakes on macOS local (CI Linux passes). The handler at
+         review_runner.py:1344 sets a cancel flag and calls
+         `_terminate_provider_process_group`, but on macOS the
+         subprocess group sometimes survives the signal and the
+         parent stays in `proc.communicate()`. Investigate the actual
+         signal flow, fix the root cause, confirm fix on macOS +
+         Linux.
+
+      5. Provider transport refactor. `_run_provider_subprocess` uses
+         `proc.communicate()` which blocks until end-of-process, and
+         `_provider_watchdog` is wall-clock-only. A long-but-
+         productive review (large spec, many tool calls) is
+         indistinguishable from a hung one and gets SIGTERM'd at the
+         wall deadline with no recovery. Replace communicate() with
+         a reader-thread pattern that drains stdout/stderr into
+         bounded buffers and advances `last_activity_at` on each
+         chunk. Replace the watchdog with activity-aware kill: idle
+         timeout (no new bytes for N seconds) OR absolute max wall-
+         clock. Both knobs land in `review.external` config; legacy
+         `timeout_seconds` aliases to `absolute_max_seconds` so
+         existing configs keep working. Provider-agnostic; both
+         claude and codex benefit.
+
+      6. Claude streaming output. Phase 5 makes the watchdog activity-
+         aware, but claude with `--output-format json` buffers the
+         entire response and emits zero stdout bytes until end-of-
+         process. Switch to `--output-format stream-json` so claude
+         emits NDJSON events (assistant deltas, tool_use, system,
+         result) as they happen. Rewrite `_extract_claude_stdout` to
+         consume NDJSON: scan for the final `type: "result"` event,
+         extract the structured packet from `result` (or
+         `structured_output` when --json-schema is attached); pull
+         session id and model from the `system.init` event. Codex is
+         already streaming-friendly via `codex exec` (stdout streams
+         human-readable progress; structured payload via
+         `--output-last-message`); no codex argv change required.
+
+      7. Liveness diagnostic on watchdog kill. Today's diagnostic
+         records `raw_output: empty`, `stdout: empty`, exit 143 with
+         no clue why. Extend the diagnostic dump (and the
+         _write_external_diagnostic call sites) so when the watchdog
+         fires the file records: kill_reason ("idle_timeout" or
+         "absolute_max"), time_since_last_byte, idle_timeout_seconds
+         and absolute_max_seconds in effect, last 16KB of stdout, and
+         (for claude stream-json) the last N parsed event types. The
+         operator gets an actionable trail instead of staring at
+         empty fields.
+
+      8. ReviewPacket schema strict-mode compliance. The new
+         transport surfaced a pre-existing schema bug that the old
+         broken watchdog was hiding: codex's `--output-schema` runs
+         in strict mode, which rejects any object where `properties`
+         lists keys that are not in `required` (when
+         `additionalProperties: false`). Affected fields:
+         `checked_surfaces[].limitations`,
+         `findings[].spec_update_suggestions`, and the
+         `spec_update_suggestions[]` item's optional `reason`,
+         `phase_id`, `validation_command`. Fix: list every property
+         in `required` and switch the optional ones to nullable
+         (`["array", "null"]` / `["string", "null"]`). Python
+         normalizers already default missing values to empty; extend
+         them to treat `null` the same. Update the prompt example so
+         the demonstrated shape matches the strict-mode schema.
+
+    Hard cutover: no behavior changes that break 1.7.0-shipped
+    contracts. All eight phases are additive/corrective only. Phase
+    5+6 together replace the broken transport; phase 7 is
+    observability; phase 8 is the schema fix the working transport
+    surfaced.
+
+    Final dogfood: the auto-runner review of 1.7.1 itself runs under
+    the new transport. If the watchdog/streaming code has a bug, this
+    review will surface it before tag.
+  size: "small"
+  risk_level: "medium"
+  context:
+    files_impacted:
+      - path: "scafld/audit_scope.py"
+        reason: "Phase 1 path normalization. Phase 3a YAML-aware apply_shared_ownership. Phase 3b classify_active_overlap unification."
+      - path: "scafld/commands/audit.py"
+        reason: "Phase 1: audit command consumes the normalized paths."
+      - path: "scafld/review_workflow.py"
+        reason: "Phase 1: scope_drift diagnostic surface."
+      - path: "scafld/commands/review.py"
+        reason: "Phase 2a: cmd_complete body cross-check adds per-severity multiset check on findings."
+        ownership: "shared"
+      - path: "scafld/runtime_guidance.py"
+        reason: "Phase 2b: derive_task_guidance gains a threshold-blocked branch."
+      - path: "scafld/lifecycle_runtime.py"
+        reason: "Phase 3b: switch from inline overlap reimpl to classify_active_overlap(plan_time=True)."
+      - path: "scafld/config.py"
+        reason: "Phase 3c: drop simple_yaml_load fallback; use yaml.safe_load directly."
+      - path: "scafld/review_runner.py"
+        reason: "Phase 4: SIGINT handler. Phase 5: reader-thread transport + activity watchdog. Phase 6: claude stream-json + NDJSON parser. Phase 7: liveness diagnostic dump. Phase 8: prompt example update (build_external_review_prompt)."
+        ownership: "shared"
+      - path: ".ai/schemas/review_packet.json"
+        reason: "Phase 8: every property in required; optional fields use [\"<type>\", \"null\"] for codex strict-mode acceptance."
+      - path: "scafld/review_packet.py"
+        reason: "Phase 8: normalizers handle null values as the empty default."
+      - path: ".ai/config.yaml"
+        reason: "Migrate scafld's own review config from legacy `timeout_seconds: 600` to the new `idle_timeout_seconds` + `absolute_max_seconds` keys so its review actually benefits from the activity-aware watchdog (180s idle catches hangs; 1800s ceiling won't false-kill substantive reviews)."
+        ownership: "shared"
+      - path: "tests/test_audit_scope.py"
+        reason: "Coverage for path normalization and the unified classify_active_overlap."
+      - path: "tests/test_review_packet.py"
+        reason: "Coverage for per-severity body cross-check (gate-integrity tail)."
+        ownership: "shared"
+      - path: "tests/test_review_gate_severity.py"
+        reason: "Coverage for derive_task_guidance threshold branch."
+      - path: "tests/test_review_runner.py"
+        reason: "Coverage for the SIGINT handler fix."
+        ownership: "shared"
+      - path: "tests/review_gate_smoke.sh"
+        reason: "Smokes for sibling-repo scope_drift path, body per-severity tamper, threshold-block guidance."
+        ownership: "shared"
+      - path: "tests/lifecycle_smoke.sh"
+        reason: "Smoke if needed for plan-time classify_active_overlap unified path."
+        ownership: "shared"
+      - path: "docs/configuration.md"
+        reason: "Document path normalization caveat and any user-visible change to gate_severity guidance."
+        ownership: "shared"
+      - path: "docs/scope-auditing.md"
+        reason: "Operator docs for sibling-repo scope_drift behavior."
+    cwd: "."
+  acceptance:
+    validation_profile: "standard"
+    definition_of_done:
+      - id: "dod1"
+        description: "scope_drift correctly handles sibling-repo declared paths (`../cloud/foo.py`); declared paths don't show as undeclared when they actually exist in the changed set."
+        status: "done"
+      - id: "dod2"
+        description: "cmd_complete body cross-check rejects body that re-classifies a finding's severity without changing count."
+        status: "done"
+      - id: "dod3"
+        description: "derive_task_guidance returns a threshold-blocked next_action that names the threshold and suggests fix-or-relax (instead of \"rerun review\")."
+        status: "done"
+      - id: "dod4"
+        description: "apply_shared_ownership uses YAML round-trip (or equivalent structural mutation) and stays idempotent."
+        status: "done"
+      - id: "dod5"
+        description: "lifecycle_runtime.new_spec_snapshot calls classify_active_overlap(plan_time=True); inline overlap loop is gone."
+        status: "done"
+      - id: "dod6"
+        description: "scafld/config.py uses yaml.safe_load unconditionally; simple_yaml_load is removed."
+        status: "done"
+      - id: "dod7"
+        description: "scafld review handles SIGINT promptly on macOS (case_review_cancel_signal_handler smoke passes locally on macOS within the existing 5-second wait window)."
+        status: "done"
+      - id: "dod8"
+        description: "Provider watchdog kills on idle_timeout (no new stdout bytes for N seconds) OR absolute_max wall-clock; existing wall-only behaviour gone. Legacy `timeout_seconds` config aliases to `absolute_max_seconds` with a deprecation note logged once."
+        status: "done"
+      - id: "dod9"
+        description: "claude review streams stdout incrementally via `--output-format stream-json`; `_extract_claude_stdout` consumes NDJSON events and returns the final `result` packet, session id, and model with parity to today's batch-mode behaviour."
+        status: "done"
+      - id: "dod10"
+        description: "When the watchdog fires, the diagnostic dump records kill_reason (idle_timeout|absolute_max), time_since_last_byte, the threshold values in effect, and the tail of stdout (last 16KB / last 200 lines). Today's empty-fields diagnostic shape is gone."
+        status: "done"
+      - id: "dod11"
+        description: "Auto-runner external review of `runtime-rigor-1.7.1` itself completes successfully under the new transport (final dogfood; failure here means phases 5-7 regress something)."
+        status: "done"
+      - id: "dod12"
+        description: "ReviewPacket schema is accepted by codex's structured-output strict mode (every key in `properties` listed in `required`; optional fields use `[\"<type>\", \"null\"]`); python normalizer treats null as the empty default; both codex and claude reviews complete with the same schema."
+        status: "done"
+    validation:
+      - id: "v1"
+        type: "compile"
+        command: "python3 -m compileall scafld tests"
+        expected_kind: "exit_code_zero"
+      - id: "v2"
+        type: "test"
+        command: "python3 -m unittest tests.test_acceptance tests.test_audit_scope tests.test_review_packet tests.test_review_gate_severity tests.test_review_runner"
+        expected_kind: "exit_code_zero"
+
+planning_log:
+  - timestamp: "2026-04-28T17:30:00Z"
+    actor: "user"
+    summary: "1.7.1 clean-core spec: rolls in scope-drift draft, severity-gate tails, code-quality cleanups, SIGINT fix."
+  - timestamp: "2026-04-28T18:30:00Z"
+    actor: "user"
+    summary: "Extend 1.7.1 with phases 5-7 (transport refactor, claude streaming, liveness diagnostic) after four straight 600s wall-watchdog kills on the original 1.7.1 review made it clear the broken transport, not the spec, was the failure mode. Roll into 1.7.1 instead of splitting to 1.7.2 to keep tag history clean."
+
+  - timestamp: "2026-04-28T11:54:20Z"
+    actor: "cli"
+    summary: "Spec completed"
+phases:
+  - id: "phase1"
+    name: "Scope-drift path normalization"
+    objective: "Multi-repo specs declaring sibling-repo paths no longer fail scope_drift."
+    changes:
+      - file: "scafld/audit_scope.py"
+        action: "update"
+        content_spec: |
+          - Add `_normalize_change_path(path)`: resolves declared
+            paths to their canonical posix form. Same normalization
+            applied to declared and actual changed paths so multi-
+            repo declarations like `../cloud/foo.py` compare cleanly.
+          - `collect_declared_change_map`, `filter_audit_paths`, and
+            `build_audit_file_payloads` route paths through the
+            normalizer so `Declared & changed` matching is symmetric.
+      - file: "scafld/commands/audit.py"
+        action: "update"
+        content_spec: |
+          The audit dispatch passes normalized paths into the
+          classifier and prints the canonical form in the diagnostic.
+      - file: "scafld/review_workflow.py"
+        action: "update"
+        content_spec: |
+          `run_scope_drift_check` consumes the normalized paths so
+          the review-time scope_drift verdict matches what `scafld
+          audit` reports.
+      - file: "tests/test_audit_scope.py"
+        action: "create"
+        content_spec: |
+          - `test_sibling_repo_paths_match_when_declared`: declared
+            path `../cloud/foo.py` matches an actual changed
+            `../cloud/foo.py`; classified as `matched`, not
+            `undeclared`.
+          - `test_relative_paths_normalized_to_posix`: backslashes
+            and double-slashes don't break matching.
+          - `test_normalized_paths_preserve_filtering`: the
+            AUDIT_IGNORED_PREFIXES filter still works after
+            normalization.
+      - file: "tests/review_gate_smoke.sh"
+        action: "update"
+        ownership: "shared"
+        content_spec: |
+          `case_scope_drift_sibling_repo_paths`: spec declares
+          `../sibling/foo.py`; create the file in the sibling repo
+          path; run `scafld audit` and assert the file is `matched`
+          rather than `undeclared`.
+    acceptance_criteria:
+      - id: "ac1_1"
+        type: "compile"
+        command: "python3 -m compileall scafld tests"
+        expected_kind: "exit_code_zero"
+        result: "pass"
+        executed_at: "2026-04-28T07:26:32Z"
+        result_output: "Listing 'scafld'... Listing 'scafld/commands'... Listing 'tests'..."
+      - id: "ac1_2"
+        type: "test"
+        command: "python3 -m unittest tests.test_audit_scope"
+        expected_kind: "exit_code_zero"
+        result: "pass"
+        executed_at: "2026-04-28T07:26:32Z"
+        result_output: "................... ---------------------------------------------------------------------- Ran 19 tests in 0.013s  OK"
+    status: "completed"
+
+  - id: "phase2"
+    name: "Severity-gate tails (per-severity body cross-check + threshold-blocked guidance)"
+    objective: "Close the two non-blocking tails deferred from 1.7.0 gate-integrity and severity-gates."
+    dependencies:
+      - "phase1"
+    changes:
+      - file: "scafld/commands/review.py"
+        action: "update"
+        ownership: "shared"
+        content_spec: |
+          In cmd_complete, after the existing verdict + count cross-
+          checks, compare per-severity multisets between the body
+          and the verified packet:
+            - body_severities = sorted([f["severity"] for f in
+              non_blocking_findings + blocking_findings])
+            - packet_severities = sorted([f["severity"] for f in
+              packet_findings])
+            - mismatch → gate_reason "review body tampered:
+              finding severity mismatch (body=<...>, packet=<...>)";
+              gate_errors += ["body_severity_mismatch"].
+          Identical counts but different severity distribution now
+          fails. Pure addition; existing fail paths unchanged.
+      - file: "scafld/runtime_guidance.py"
+        action: "update"
+        content_spec: |
+          In `derive_task_guidance`, after the verdict-fail branch
+          and before the fallback "Rerun review" branch, add:
+            - If gate_reason mentions threshold (or
+              gate_threshold != "blocking" and gate_blocking_count == 0
+              and review_state.verdict in {"pass", "pass_with_issues"}),
+              emit next_action with type="threshold_blocked":
+                command=None,
+                message=f"{N} non-blocking finding(s) at or above
+                  severity {threshold} are blocking complete. Fix
+                  them or relax `review.gate_severity` in
+                  `.ai/config.yaml`.",
+                blocked=True,
+                reason=gate_reason.
+          The fallback "Rerun review" branch stays for genuinely
+          incomplete/malformed reviews.
+      - file: "tests/test_review_packet.py"
+        action: "update"
+        ownership: "shared"
+        content_spec: |
+          `test_body_severity_mismatch_caught`: packet has 1
+          non-blocking medium + 1 non-blocking low; body has 2
+          non-blocking lows (counts match, severities don't); body
+          cross-check fires body_severity_mismatch.
+      - file: "tests/test_review_gate_severity.py"
+        action: "update"
+        content_spec: |
+          `test_derive_task_guidance_threshold_blocked_branch`:
+          gate_severity=medium + non-blocking medium → next_action
+          type=threshold_blocked, message names "gate_severity",
+          NOT type=review.
+      - file: "tests/review_gate_smoke.sh"
+        action: "update"
+        ownership: "shared"
+        content_spec: |
+          `case_complete_body_severity_tamper_rejected`: extends the
+          existing seal-tamper smoke with a per-severity tamper
+          variant; body changes a medium to low without changing
+          counts; complete refuses with "body_severity_mismatch".
+    acceptance_criteria:
+      - id: "ac2_1"
+        type: "compile"
+        command: "python3 -m compileall scafld tests"
+        expected_kind: "exit_code_zero"
+        result: "pass"
+        executed_at: "2026-04-28T07:28:32Z"
+        result_output: "Listing 'scafld'... Listing 'scafld/commands'... Compiling 'scafld/commands/review.py'... Listing 'tests'..."
+      - id: "ac2_2"
+        type: "test"
+        command: "python3 -m unittest tests.test_review_packet tests.test_review_gate_severity"
+        expected_kind: "exit_code_zero"
+        result: "pass"
+        executed_at: "2026-04-28T07:28:32Z"
+        result_output: "....................................... ---------------------------------------------------------------------- Ran 39 tests in 0.011s  OK"
+    status: "completed"
+
+  - id: "phase3"
+    name: "Code-quality cleanups (apply_shared_ownership + classify_active_overlap unification + simple_yaml_load removal)"
+    objective: "Replace text-rewriter and inline overlap with structural code; remove the lossy YAML fallback."
+    dependencies:
+      - "phase2"
+    changes:
+      - file: "scafld/audit_scope.py"
+        action: "update"
+        content_spec: |
+          - `apply_shared_ownership` rewritten using PyYAML
+            round-trip (yaml.safe_load + yaml.safe_dump). Walk
+            phases[].changes[], inject ownership: "shared" on
+            entries whose file is in `shared_paths`. Idempotent.
+            Returns the dumped text.
+          - `classify_active_overlap(declared_changes,
+            other_active_changes, *, plan_time=False)`. When
+            plan_time=False (default), bilateral semantics from
+            1.7.0 (both sides shared = shared, otherwise conflict).
+            When plan_time=True: a path other-spec declares as
+            shared classifies as shared (auto-tag); other-spec
+            declares exclusive classifies as conflict (refuse).
+            Same return shape (shared_with_other_active,
+            active_overlap, shared_details, conflict_details,
+            other_by_file).
+      - file: "scafld/lifecycle_runtime.py"
+        action: "update"
+        content_spec: |
+          new_spec_snapshot's plan-time conflict block calls
+          `classify_active_overlap(declared, other_changes,
+          plan_time=True)` instead of reimplementing the loop. The
+          refusal/auto-tag branches consume the helper's return.
+      - file: "scafld/config.py"
+        action: "update"
+        content_spec: |
+          - Drop `simple_yaml_load` (and its hand-rolled body).
+          - `load_config` calls `yaml.safe_load` directly. PyYAML is
+            install_requires; this path is always available. The
+            wrapper raises a clear ScafldError if PyYAML is somehow
+            missing, instead of silently degrading.
+      - file: "tests/test_audit_scope.py"
+        action: "update"
+        content_spec: |
+          - `test_apply_shared_ownership_yaml_aware`: input with
+            comments, varied indentation, multi-line content_spec;
+            output preserves the structural content and adds
+            ownership: "shared" only on the targeted entries.
+            (Comments / formatting may change since we round-trip;
+            verify structural content preserved.)
+          - `test_classify_active_overlap_plan_time_auto_tags_shared`:
+            other declares shared, ours unspecified, plan_time=True
+            → shared_with_other_active.
+          - `test_classify_active_overlap_plan_time_refuses_exclusive`:
+            other declares exclusive, ours unspecified,
+            plan_time=True → active_overlap with the conflicting
+            task_id.
+          - `test_classify_active_overlap_review_time_unchanged`:
+            existing bilateral semantics still hold when
+            plan_time=False (regression guard).
+      - file: "tests/test_clean_plan.py"
+        action: "update"
+        ownership: "shared"
+        content_spec: |
+          PlanTimeConflictTest cases still pass after the refactor;
+          add `test_plan_time_overlap_returns_shared_classification`
+          calling the helper directly to lock the new contract.
+    acceptance_criteria:
+      - id: "ac3_1"
+        type: "compile"
+        command: "python3 -m compileall scafld tests"
+        expected_kind: "exit_code_zero"
+        result: "pass"
+        executed_at: "2026-04-28T07:32:22Z"
+        result_output: "Listing 'scafld'... Listing 'scafld/commands'... Listing 'tests'..."
+      - id: "ac3_2"
+        type: "test"
+        command: "python3 -m unittest tests.test_audit_scope tests.test_clean_plan tests.test_acceptance"
+        expected_kind: "exit_code_zero"
+        result: "pass"
+        executed_at: "2026-04-28T07:32:22Z"
+        result_output: "......................................................................... ---------------------------------------------------------------------- Ran 73 tests in 0.038s  OK"
+      - id: "ac3_3"
+        type: "boundary"
+        description: "simple_yaml_load is gone."
+        command: "sh -c '! grep -q \"def simple_yaml_load\" scafld/config.py'"
+        expected_kind: "exit_code_zero"
+        result: "pass"
+        executed_at: "2026-04-28T07:32:22Z"
+    status: "completed"
+
+  - id: "phase4"
+    name: "SIGINT handler fix (macOS subprocess termination)"
+    objective: "scafld review exits promptly after SIGINT on macOS as well as Linux."
+    dependencies:
+      - "phase3"
+    changes:
+      - file: "scafld/review_runner.py"
+        action: "update"
+        ownership: "shared"
+        content_spec: |
+          Investigate first. Likely fix: when the SIGINT handler
+          calls `_terminate_provider_process_group(proc_holder[0])`,
+          it sends SIGTERM to the process group. macOS may not
+          propagate SIGTERM through bash to a `cat`/`sleep`
+          subprocess as cleanly as Linux. Fix candidates:
+            - Send SIGINT first, then SIGTERM after a short grace,
+              then SIGKILL. Mirror `_provider_watchdog`'s escalation.
+            - Ensure the subprocess is started with
+              `start_new_session=True` (it should be already; verify).
+            - If proc.communicate() doesn't return after the kill,
+              fall through to `proc.kill()` + `proc.wait(timeout=1)`.
+          Pick whichever is the actual root cause; document in
+          planning_log.
+      - file: "tests/test_review_runner.py"
+        action: "update"
+        ownership: "shared"
+        content_spec: |
+          `test_sigint_handler_terminates_subprocess_promptly`:
+          mock the subprocess as a long-running sleep; send the
+          handler's SIGINT logic; assert the subprocess is reaped
+          within a tight timeout. Validates the escalation path
+          deterministically (no real signals needed).
+      - file: "tests/review_gate_smoke.sh"
+        action: "update"
+        ownership: "shared"
+        content_spec: |
+          The existing case_review_cancel_signal_handler smoke
+          should pass on macOS local AND CI Linux after the fix. No
+          new smoke fixture; the existing one is the regression
+          guard.
+    acceptance_criteria:
+      - id: "ac4_1"
+        type: "compile"
+        command: "python3 -m compileall scafld tests"
+        expected_kind: "exit_code_zero"
+        result: "pass"
+        executed_at: "2026-04-28T07:39:35Z"
+        result_output: "Listing 'scafld'... Listing 'scafld/commands'... Listing 'tests'..."
+      - id: "ac4_2"
+        type: "test"
+        command: "python3 -m unittest tests.test_review_runner"
+        expected_kind: "exit_code_zero"
+        result: "pass"
+        executed_at: "2026-04-28T07:39:44Z"
+        result_output: "...................................................................................s.ss............... ---------------------------------------------------------------------- Ran 102 tests in 4.573s  O"
+      - id: "ac4_3"
+        type: "boundary"
+        description: "Cancel-signal smoke registered."
+        command: "grep -q 'case_review_cancel_signal_handler' tests/review_gate_smoke.sh"
+        expected_kind: "exit_code_zero"
+        result: "pass"
+        executed_at: "2026-04-28T07:39:45Z"
+    status: "completed"
+
+  - id: "phase5"
+    name: "Provider transport refactor (reader-thread architecture + activity-aware watchdog)"
+    objective: "Replace the wall-clock-only watchdog with an activity-aware one fed by stdout/stderr reader threads. Provider-agnostic; both claude and codex benefit."
+    dependencies:
+      - "phase4"
+    changes:
+      - file: "scafld/review_runner.py"
+        action: "update"
+        ownership: "shared"
+        content_spec: |
+          - Add a `_StreamPump` (or equivalent) helper: per-stream
+            reader thread that reads bytes/chunks from `proc.stdout`
+            and `proc.stderr`, appends to bounded in-memory buffers,
+            and updates a shared `last_activity_at` (`time.monotonic()`
+            wallclock pair, mirroring `_watchdog_elapsed`'s dual-clock
+            pattern). Buffer cap kept generous (e.g. 8 MiB per
+            stream) so legitimate reviews aren't truncated; overflow
+            drops the oldest bytes (with a single "[truncated N
+            bytes]" marker inserted at the head once).
+          - `_run_provider_subprocess` rewritten:
+              - Popen with stdout/stderr=PIPE as today.
+              - Start two _StreamPump threads (stdout, stderr).
+              - Write `stdin_payload` and close proc.stdin.
+              - Wait for proc.poll() in a loop with short sleep,
+                checking watchdog event each iteration.
+              - On exit, join the pump threads (short timeout) and
+                pull the collected stdout/stderr text from them.
+              - Same exception/cleanup paths as today (on_start
+                exception, watchdog kill, finally drain).
+            Replaces the `proc.communicate()` call entirely.
+          - `_provider_watchdog` rewritten with activity-aware logic:
+              - Inputs: proc, idle_timeout, absolute_max, activity
+                clock (the shared mutable updated by the pumps).
+              - Loop: every WATCHDOG_POLL_SECONDS, check
+                `done.is_set()`; check
+                `_watchdog_elapsed(start_wall, start_mono) >= absolute_max`
+                (kill_reason="absolute_max"); check
+                `(now - last_activity_at) >= idle_timeout`
+                (kill_reason="idle_timeout"). Trigger on whichever
+                fires first.
+              - Termination path identical to today: SIGTERM,
+                WATCHDOG_GRACE_SECONDS grace, SIGKILL escalation.
+              - Returned to the caller via a shared mutable (e.g.
+                `kill_state["reason"]` and `kill_state["last_activity_age"]`)
+                so phase 7's diagnostic can name the trigger.
+          - Config (`_normalize_timeout` and friends):
+              - Add `DEFAULT_IDLE_TIMEOUT_SECONDS = 120`,
+                `DEFAULT_ABSOLUTE_MAX_SECONDS = 1800`.
+              - Read `review.external.idle_timeout_seconds` and
+                `review.external.absolute_max_seconds` (positive int
+                normalisation, same shape as
+                `_normalize_timeout`).
+              - If both are absent and the legacy
+                `review.external.timeout_seconds` is set, alias it to
+                `absolute_max_seconds` and emit a one-time
+                deprecation note via `warnings.warn` /
+                `_emit_external_warnings` with a stable text the
+                smoke can grep for.
+              - `ReviewRunnerConfig` and `ResolvedReviewRunner`
+                gain `idle_timeout_seconds` and
+                `absolute_max_seconds` fields. `timeout_seconds`
+                stays for back-compat but becomes a property /
+                computed alias of `absolute_max_seconds` at the
+                dataclass surface — every internal consumer
+                migrates to the new fields.
+              - All call sites that pass
+                `timeout_seconds=resolved_runner.timeout_seconds`
+                to the subprocess runner change to pass both
+                `idle_timeout_seconds` and `absolute_max_seconds`.
+                Diagnostic body adds both values.
+          - SIGINT handler interaction (phase 4 carry): the new
+            transport must still escalate SIGTERM→SIGKILL on the
+            same grace window when the operator cancels mid-run.
+            Reader threads are daemon; they die with the main
+            thread. Verify the kill path closes pipes before pump
+            thread join.
+      - file: "tests/test_review_runner.py"
+        action: "update"
+        ownership: "shared"
+        content_spec: |
+          - `test_run_provider_subprocess_streams_stdout`: spawn a
+            fake binary that prints "tick\n" every 100 ms for ~5
+            iterations then exits 0. Assert the reader thread
+            captures all 5 lines and `last_activity_at` advances
+            monotonically. No watchdog kill.
+          - `test_provider_watchdog_kills_on_idle_timeout`: spawn a
+            fake binary that prints once then sleeps. With
+            idle_timeout=0.5s and absolute_max=10s, watchdog kills
+            within ~1s with kill_reason="idle_timeout".
+          - `test_provider_watchdog_kills_on_absolute_max`: spawn a
+            fake binary that streams a byte every 50 ms forever.
+            With idle_timeout=10s and absolute_max=1s, watchdog
+            kills within ~1.5s with kill_reason="absolute_max"
+            (proves activity does NOT extend past absolute_max).
+          - `test_provider_watchdog_does_not_kill_long_productive_run`:
+            fake binary streams a byte every 100 ms for 2s then
+            exits 0. With idle_timeout=0.5s and absolute_max=10s,
+            no kill (proves activity-based liveness works).
+          - `test_legacy_timeout_seconds_aliases_absolute_max`:
+            config with only `timeout_seconds: 900` produces a
+            ResolvedReviewRunner with absolute_max_seconds=900 and
+            idle_timeout_seconds=DEFAULT_IDLE_TIMEOUT_SECONDS. A
+            deprecation note is emitted (captured via
+            `_emit_external_warnings` or the warnings module).
+          - `test_new_config_keys_take_precedence`: config with
+            idle_timeout_seconds=60 + absolute_max_seconds=300 +
+            legacy timeout_seconds=900 → idle=60, abs_max=300,
+            legacy ignored.
+    acceptance_criteria:
+      - id: "ac5_1"
+        type: "compile"
+        command: "python3 -m compileall scafld tests"
+        expected_kind: "exit_code_zero"
+        result: "pass"
+        executed_at: "2026-04-28T19:05:00Z"
+        result_output: "Listing 'scafld'... Listing 'scafld/commands'... Listing 'tests'..."
+      - id: "ac5_2"
+        type: "test"
+        command: "python3 -m unittest tests.test_review_runner"
+        expected_kind: "exit_code_zero"
+        result: "pass"
+        executed_at: "2026-04-28T19:05:30Z"
+        result_output: "Ran 114 tests in 12.096s OK (skipped=3)"
+      - id: "ac5_3"
+        type: "boundary"
+        description: "Reader-thread transport is in place (_StreamPump class + activity-aware watchdog)."
+        command: "sh -c 'grep -q \"class _StreamPump\" scafld/review_runner.py && grep -q \"kill_state\\[.reason.\\] = .idle_timeout.\" scafld/review_runner.py && grep -q \"kill_state\\[.reason.\\] = .absolute_max.\" scafld/review_runner.py'"
+        expected_kind: "exit_code_zero"
+        result: "pass"
+        executed_at: "2026-04-28T19:06:00Z"
+    status: "completed"
+
+  - id: "phase6"
+    name: "Claude stream-json output + NDJSON parser"
+    objective: "Claude emits NDJSON events incrementally so the activity watchdog can see real liveness signals; parser extracts the structured packet from the final `result` event."
+    dependencies:
+      - "phase5"
+    changes:
+      - file: "scafld/review_runner.py"
+        action: "update"
+        ownership: "shared"
+        content_spec: |
+          - `_claude_args`: replace `--output-format json` with
+            `--output-format stream-json`. Add `--verbose` if the
+            current claude CLI requires it for stream-json (verify
+            during build by running `claude -p --output-format
+            stream-json --verbose --help` or equivalent; document
+            the requirement in a code comment if needed).
+          - `_extract_claude_stdout` rewrite: the input is now NDJSON
+            (one JSON object per line), not a single JSON object.
+              - Parse line-by-line; ignore parse failures on stray
+                non-JSON lines but keep their text in stdout for
+                diagnostics.
+              - For each event, look at `type`. Capture:
+                  - `system.init` (or whatever the init event type
+                    is in current claude stream-json schema):
+                    extract `model`, `session_id`.
+                  - `result` (final event): extract `result` field
+                    (free-text summary) AND `structured_output`
+                    (the schema-conformant ReviewPacket when
+                    `--json-schema` is attached).
+              - Return shape unchanged: (raw_output, model_observed,
+                model_source, session_observed). raw_output prefers
+                `structured_output` JSON dump (today's logic) over
+                free-text `result`.
+              - If no `result` event is found (truncated stream,
+                kill, etc.), return what we've got: stdout as
+                raw_output, model from any system.init seen,
+                model_source="" if nothing structured was
+                extracted. The downstream
+                `_validate_external_result` already handles
+                malformed packets.
+          - The model-rejection / transient-error signature matching
+            (`MODEL_REJECTION_SIGNATURES`,
+            `TRANSIENT_PROVIDER_SIGNATURES`) continues to operate on
+            stdout+stderr text. NDJSON event payloads include
+            stderr-style content for errors; signatures still match
+            because they're substring searches on the joined blob.
+      - file: "tests/test_review_runner.py"
+        action: "update"
+        ownership: "shared"
+        content_spec: |
+          - `test_extract_claude_stdout_ndjson_happy`: input is
+            three NDJSON lines (system.init with model+session,
+            assistant text delta, result with structured_output);
+            parser returns structured_output JSON, observed model,
+            "observed" source, observed session.
+          - `test_extract_claude_stdout_ndjson_truncated`: only the
+            init event present (no result); parser returns stdout
+            as raw_output, observed model, empty model_source.
+          - `test_extract_claude_stdout_ndjson_with_garbage_lines`:
+            stream contains a non-JSON line in the middle; parser
+            tolerates it and still finds the result event.
+          - `test_extract_claude_stdout_legacy_single_json_still_parses`:
+            for safety, if claude regresses to batch JSON, the
+            parser must still extract the structured packet (call
+            single-blob fallback after ndjson scan finds nothing).
+    acceptance_criteria:
+      - id: "ac6_1"
+        type: "compile"
+        command: "python3 -m compileall scafld tests"
+        expected_kind: "exit_code_zero"
+        result: "pass"
+        executed_at: "2026-04-28T19:30:00Z"
+        result_output: "Listing 'scafld'... Listing 'scafld/commands'... Listing 'tests'..."
+      - id: "ac6_2"
+        type: "test"
+        command: "python3 -m unittest tests.test_review_runner"
+        expected_kind: "exit_code_zero"
+        result: "pass"
+        executed_at: "2026-04-28T19:30:30Z"
+        result_output: "Ran 127 tests OK (skipped=3)"
+      - id: "ac6_3"
+        type: "boundary"
+        description: "claude argv switched to stream-json + verbose; NDJSON parser in place."
+        command: "sh -c 'grep -q \"\\\"stream-json\\\"\" scafld/review_runner.py && grep -q \"_extract_claude_stdout_ndjson\" scafld/review_runner.py && grep -q \"_claude_ndjson_event_inspector\" scafld/review_runner.py'"
+        expected_kind: "exit_code_zero"
+        result: "pass"
+        executed_at: "2026-04-28T19:30:45Z"
+    status: "completed"
+
+  - id: "phase7"
+    name: "Liveness diagnostic on watchdog kill"
+    objective: "When the watchdog fires, the diagnostic dump names the trigger and shows the last activity instead of empty fields."
+    dependencies:
+      - "phase6"
+    changes:
+      - file: "scafld/review_runner.py"
+        action: "update"
+        ownership: "shared"
+        content_spec: |
+          - `_write_external_diagnostic` signature gains optional
+            `kill_reason`, `time_since_last_byte`,
+            `idle_timeout_seconds`, `absolute_max_seconds`,
+            `parsed_event_summary` keyword arguments. When
+            `timed_out=True`, the dump includes a "## Watchdog
+            Kill" section with these values; when
+            `timed_out=False`, the section is omitted (existing
+            shape preserved for non-timeout failures).
+          - The transport (phase 5) hands its kill-state mutable
+            back to the call site so diagnostic emission can
+            populate the new fields. For idle kills: include the
+            tail of stdout (last 16KB, with a "[head trimmed N
+            bytes]" marker); for absolute_max kills: same plus a
+            note that activity was healthy until the wall ceiling.
+          - When provider is claude (phase 6) and the stream was
+            NDJSON, include a one-line summary of parsed events:
+            "events: 1× system.init, 14× assistant_delta, 3×
+            tool_use_start, 2× tool_use_end, 0× result" so the
+            operator can see "claude was clearly active but never
+            got to result" vs "claude only sent init".
+          - Diagnostic file format remains plain text; the new
+            section is appended after Stderr and before Workspace
+            Status.
+      - file: "tests/test_review_runner.py"
+        action: "update"
+        ownership: "shared"
+        content_spec: |
+          - `test_diagnostic_records_idle_kill_reason`: simulate a
+            timed_out=True call with kill_reason="idle_timeout",
+            time_since_last_byte=125.4, idle=120, abs_max=1800;
+            written file contains "kill_reason: idle_timeout",
+            "time_since_last_byte: 125.4", and the watchdog
+            section header.
+          - `test_diagnostic_records_absolute_max_kill_reason`:
+            same but kill_reason="absolute_max"; file contains
+            "kill_reason: absolute_max" and the wall-ceiling note.
+          - `test_diagnostic_omits_watchdog_section_when_not_timed_out`:
+            timed_out=False; file does NOT contain the "## Watchdog
+            Kill" header (regression guard for non-timeout
+            failures).
+          - `test_diagnostic_includes_claude_event_summary`:
+            parsed_event_summary={"system.init": 1,
+            "assistant_delta": 14, "result": 1}; file contains the
+            event-counts line.
+    acceptance_criteria:
+      - id: "ac7_1"
+        type: "compile"
+        command: "python3 -m compileall scafld tests"
+        expected_kind: "exit_code_zero"
+        result: "pass"
+        executed_at: "2026-04-28T19:55:00Z"
+        result_output: "Listing 'scafld'... Listing 'scafld/commands'... Listing 'tests'..."
+      - id: "ac7_2"
+        type: "test"
+        command: "python3 -m unittest tests.test_review_runner"
+        expected_kind: "exit_code_zero"
+        result: "pass"
+        executed_at: "2026-04-28T19:55:30Z"
+        result_output: "Ran 134 tests in 15.211s OK (skipped=3)"
+      - id: "ac7_3"
+        type: "boundary"
+        description: "Watchdog kill section header lands in diagnostic body."
+        command: "grep -q 'Watchdog Kill' scafld/review_runner.py"
+        expected_kind: "exit_code_zero"
+        result: "pass"
+        executed_at: "2026-04-28T19:56:00Z"
+    status: "completed"
+
+  - id: "phase8"
+    name: "ReviewPacket schema strict-mode compliance"
+    objective: "Make the JSON schema acceptable to codex's structured-output strict mode, which the new transport just surfaced as a previously-hidden failure mode."
+    dependencies:
+      - "phase7"
+    changes:
+      - file: ".ai/schemas/review_packet.json"
+        action: "update"
+        content_spec: |
+          - For every object that uses `additionalProperties: false`,
+            list every key from `properties` in `required`.
+          - Affected sites:
+              - `checked_surfaces` items: add `limitations` to required;
+                change its type to `["array", "null"]`.
+              - `findings` items: add `spec_update_suggestions` to
+                required; change its type to `["array", "null"]`.
+              - `spec_update_suggestions` items: add `reason`,
+                `phase_id`, `validation_command` to required; change
+                their types to `["string", "null"]`.
+          - All other constraints (minItems, pattern, enum) preserved.
+      - file: "scafld/review_packet.py"
+        action: "update"
+        content_spec: |
+          - `_normalize_checked_surfaces`: when `limitations` is null,
+            treat as the empty list (existing default for missing).
+          - `_normalize_findings`: when `spec_update_suggestions` is
+            null, treat as the empty list.
+          - `_normalize_spec_update_suggestions`: when `reason`,
+            `phase_id`, or `validation_command` is null, treat as the
+            empty string. Existing string-only validations (pattern,
+            no-newlines) skipped for null.
+          - All callers that consume the normalized values continue
+            to receive lists/strings as before; null handling is
+            invisible downstream.
+      - file: "scafld/review_runner.py"
+        action: "update"
+        ownership: "shared"
+        content_spec: |
+          `build_external_review_prompt`: update the demonstrated
+          ReviewPacket shape so optional fields appear with their
+          empty/null values (`limitations: []`,
+          `spec_update_suggestions` shown with all three nullable
+          fields populated). Keeps the example consistent with the
+          strict-mode schema the provider sees.
+      - file: ".ai/config.yaml"
+        action: "update"
+        ownership: "shared"
+        content_spec: |
+          Migrate scafld's own review.external timeout knobs from the
+          legacy `timeout_seconds: 600` to
+          `idle_timeout_seconds: 180` + `absolute_max_seconds: 1800`.
+          The activity-aware watchdog catches genuine hangs at the
+          idle threshold; absolute_max is the safety ceiling, not the
+          primary kill signal. The legacy 600s ceiling false-killed
+          long-but-productive reviews on substantive specs.
+      - file: "tests/test_review_packet.py"
+        action: "update"
+        ownership: "shared"
+        content_spec: |
+          - `test_null_limitations_normalizes_to_empty_list`: packet
+            with `checked_surfaces[].limitations: null` round-trips
+            to a normalized packet with `limitations: []`.
+          - `test_null_spec_update_suggestions_normalizes_to_empty_list`:
+            packet with `findings[].spec_update_suggestions: null`
+            normalizes to an empty list.
+          - `test_null_optional_strings_normalize_to_empty`: packet
+            with `spec_update_suggestions[].reason: null` (and
+            phase_id/validation_command) normalizes to empty strings
+            without raising.
+          - `test_schema_lists_every_property_in_required`: load
+            the JSON schema and assert that for every object with
+            `additionalProperties: false`, the set of keys in
+            `properties` is a subset of `required`. Regression guard
+            against future drift.
+    acceptance_criteria:
+      - id: "ac8_1"
+        type: "compile"
+        command: "python3 -m compileall scafld tests"
+        expected_kind: "exit_code_zero"
+        result: "pass"
+        executed_at: "2026-04-28T20:30:00Z"
+        result_output: "Listing 'scafld'... Listing 'scafld/commands'... Listing 'tests'..."
+      - id: "ac8_2"
+        type: "test"
+        command: "python3 -m unittest tests.test_review_packet tests.test_review_runner"
+        expected_kind: "exit_code_zero"
+        result: "pass"
+        executed_at: "2026-04-28T20:30:30Z"
+        result_output: "Ran 158 tests OK (skipped=3)"
+    status: "completed"
+
+rollback:
+  strategy: "per_phase"
+  commands:
+    phase1: "git checkout HEAD -- scafld/audit_scope.py scafld/commands/audit.py scafld/review_workflow.py && rm -f tests/test_audit_scope.py"
+    phase2: "git checkout HEAD -- scafld/commands/review.py scafld/runtime_guidance.py tests/test_review_packet.py tests/test_review_gate_severity.py tests/review_gate_smoke.sh"
+    phase3: "git checkout HEAD -- scafld/audit_scope.py scafld/lifecycle_runtime.py scafld/config.py tests/test_audit_scope.py tests/test_clean_plan.py"
+    phase4: "git checkout HEAD -- scafld/review_runner.py tests/test_review_runner.py tests/review_gate_smoke.sh"
+    phase5: "git checkout HEAD -- scafld/review_runner.py tests/test_review_runner.py"
+    phase6: "git checkout HEAD -- scafld/review_runner.py tests/test_review_runner.py"
+    phase7: "git checkout HEAD -- scafld/review_runner.py tests/test_review_runner.py"
+    phase8: "git checkout HEAD -- .ai/schemas/review_packet.json scafld/review_packet.py scafld/review_runner.py tests/test_review_packet.py"
+
+harden_rounds:
+  - round: 1
+    started_at: "2026-04-28T17:30:00Z"
+    outcome: "in_progress"
+    questions: []
+
+review:
+  timestamp: "2026-04-28T11:53:46Z"
+  verdict: "pass_with_issues"
+  review_rounds: 4
+  reviewer_mode: "fresh_agent"
+  reviewer_session: "c595a8b6-8a60-401b-bb14-0944b8924dfd"
+  round_status: "completed"
+  override_applied: false
+  override_reason: null
+  override_confirmed_at: null
+  reviewed_head: "556e2915733883a3a0372ef98d1b09d5cdf5e41e"
+  reviewed_dirty: true
+  reviewed_diff: "2c16e63fae7f0dfb1235885f3804170576d1f7bd01f0f6e03679cd21ed2a8e41"
+  passes:
+    - id: spec_compliance
+      result: "pass"
+    - id: scope_drift
+      result: "pass"
+    - id: regression_hunt
+      result: "pass_with_issues"
+    - id: convention_check
+      result: "pass_with_issues"
+    - id: dark_patterns
+      result: "pass_with_issues"
+  blocking_count: 0
+  non_blocking_count: 4

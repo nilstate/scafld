@@ -1,7 +1,33 @@
+import posixpath
 import re
 
 from scafld.runtime_bundle import ACTIVE_DIR, CONFIG_LOCAL_PATH, REVIEWS_DIR, RUNS_DIR, SPECS_DIR
 from scafld.spec_parsing import require_pyyaml
+
+
+def normalize_change_path(path):
+    """Return a canonical posix form for a declared or actual change path.
+
+    Smooths `./foo`, `foo//bar`, trailing slashes, and backslash-to-slash
+    so the declared-vs-actual comparison is symmetric. Preserves leading
+    `../` (multi-repo / sibling-repo declarations) without resolving to
+    an absolute path so the relationship to repo root stays meaningful.
+    Idempotent and side-effect-free.
+    """
+    if not isinstance(path, str):
+        return ""
+    text = path.strip()
+    if not text:
+        return ""
+    # Coerce to posix separators before normpath so windows-style backslashes
+    # don't leak into the canonical form.
+    posix = text.replace("\\", "/")
+    normalized = posixpath.normpath(posix)
+    # `posixpath.normpath('')` returns '.', clamp it back to empty for
+    # callers that may have an empty path slip through.
+    if normalized == ".":
+        return ""
+    return normalized
 
 
 AUDIT_IGNORED_PREFIXES = (
@@ -20,7 +46,12 @@ def git_sync_excluded_paths():
 
 def collect_changed_files_regex(text):
     """Collect declared files with a lightweight regex fallback."""
-    return sorted(set(re.findall(r'^\s*-\s+file:\s*"?([^"\n]+)"?', text, re.MULTILINE)))
+    paths = set()
+    for raw in re.findall(r'^\s*-\s+file:\s*"?([^"\n]+)"?', text, re.MULTILINE):
+        canonical = normalize_change_path(raw)
+        if canonical:
+            paths.add(canonical)
+    return sorted(paths)
 
 
 def normalize_change_ownership(value):
@@ -55,10 +86,7 @@ def collect_declared_change_map(text):
         for change in changes:
             if not isinstance(change, dict):
                 continue
-            path = change.get("file")
-            if not isinstance(path, str):
-                continue
-            path = path.strip()
+            path = normalize_change_path(change.get("file"))
             if not path:
                 continue
             ownership = normalize_change_ownership(change.get("ownership"))
@@ -76,10 +104,17 @@ def collect_changed_files(text):
 
 
 def filter_audit_paths(paths):
-    """Drop scafld execution artifacts from scope auditing."""
+    """Drop scafld execution artifacts from scope auditing.
+
+    Normalizes incoming paths so declared and actual sets agree on
+    canonical form before exclusion checks. Returns a set of
+    normalized paths (empty strings dropped).
+    """
+    normalized = {normalize_change_path(p) for p in paths}
+    normalized.discard("")
     return {
         path
-        for path in paths
+        for path in normalized
         if path not in AUDIT_IGNORED_FILES
         and not any(path == prefix[:-1] or path.startswith(prefix) for prefix in AUDIT_IGNORED_PREFIXES)
     }
@@ -122,60 +157,76 @@ def active_changes_by_file(active_changes):
 
 
 def apply_shared_ownership(spec_text, shared_paths):
-    """Rewrite a slim spec text to add `ownership: "shared"` on declared
-    change entries whose `file:` path is in `shared_paths`.
+    """Inject `ownership: "shared"` on declared change entries whose
+    `file:` path is in `shared_paths`. YAML-aware: parses the spec,
+    walks `phases[].changes[]`, mutates the entry dicts, and dumps.
 
-    Operates on text (not parsed YAML) so existing comments / formatting
-    survive. Only inserts `ownership` on entries that don't already
-    declare it. Idempotent.
+    Idempotent. Returns the original text unchanged when there are no
+    shared paths to mark.
+
+    Caveat: PyYAML's safe_dump doesn't preserve comments or original
+    formatting. Slim spec output is structured + minimal so this is
+    fine in practice. If we ever want to operate on hand-edited
+    verbose specs, switch to ruamel.yaml's round-trip mode.
     """
     if not shared_paths:
         return spec_text
-    target_set = {str(path) for path in shared_paths}
 
-    lines = spec_text.splitlines(keepends=True)
-    out = []
-    i = 0
-    while i < len(lines):
-        line = lines[i]
-        match = re.match(r'^(\s+)-\s+file:\s*"?([^"\n]+)"?\s*$', line.rstrip("\n"))
-        if not match:
-            out.append(line)
-            i += 1
+    yaml = require_pyyaml()
+    target_set = {normalize_change_path(p) for p in shared_paths if p}
+    target_set.discard("")
+    if not target_set:
+        return spec_text
+
+    data = yaml.safe_load(spec_text)
+    if not isinstance(data, dict):
+        return spec_text
+
+    phases = data.get("phases")
+    if not isinstance(phases, list):
+        return spec_text
+
+    mutated = False
+    for phase in phases:
+        if not isinstance(phase, dict):
             continue
-        indent = match.group(1)
-        path = match.group(2).strip().strip('"')
-        out.append(line)
-        i += 1
-        # Look ahead in the same change entry for an existing ownership
-        # field, while preserving the original lines unchanged.
-        entry_lines = []
-        already_owned = False
-        while i < len(lines):
-            field_line = lines[i]
-            stripped = field_line.lstrip()
-            if not stripped:
-                entry_lines.append(field_line)
-                i += 1
+        changes = phase.get("changes")
+        if not isinstance(changes, list):
+            continue
+        for change in changes:
+            if not isinstance(change, dict):
                 continue
-            field_indent = len(field_line) - len(stripped)
-            if field_indent <= len(indent):
-                break
-            entry_lines.append(field_line)
-            if re.match(r'^ownership:', stripped):
-                already_owned = True
-            i += 1
-        if path in target_set and not already_owned:
-            # Inject the ownership line at the same indent level as
-            # the action/content_spec siblings, after the `- file:` line.
-            ownership_indent = indent + "  "
-            out.append(f'{ownership_indent}ownership: "shared"\n')
-        out.extend(entry_lines)
-    return "".join(out)
+            path = normalize_change_path(change.get("file"))
+            if path and path in target_set:
+                if change.get("ownership") != "shared":
+                    change["ownership"] = "shared"
+                    mutated = True
+
+    if not mutated:
+        return spec_text
+
+    return yaml.safe_dump(data, sort_keys=False, default_flow_style=False)
 
 
-def classify_active_overlap(declared_changes, other_active_changes):
-    """Split shared overlap from conflicting overlap across active specs."""
+def classify_active_overlap(declared_changes, other_active_changes, *, plan_time=False):
+    """Split shared overlap from conflicting overlap across active specs.
+
+    Two semantics, selected by `plan_time`:
+
+    - `plan_time=False` (review-time, default): bilateral. A path is
+      classified `shared_with_other_active` only when BOTH this spec
+      and every overlapping other spec declare `ownership: shared`.
+      Anything else is `active_overlap`.
+
+    - `plan_time=True` (used by `scafld plan` slim-flow): unilateral
+      against the OTHER specs. A path is `shared_with_other_active`
+      whenever every overlapping other spec declares `shared` (this
+      spec's ownership is unspecified at plan-time and gets auto-tagged
+      shared by the caller). A path is `active_overlap` whenever any
+      overlapping other spec declares it `exclusive` — refuse the plan.
+
+    Same return shape regardless of mode, so callers don't branch.
+    """
     other_by_file = active_changes_by_file(other_active_changes)
     shared_with_other_active = set()
     active_overlap = set()
@@ -187,12 +238,25 @@ def classify_active_overlap(declared_changes, other_active_changes):
         if not overlapping:
             continue
         task_ids = [entry["task_id"] for entry in overlapping]
-        if ownership == "shared" and all(entry["ownership"] == "shared" for entry in overlapping):
-            shared_with_other_active.add(path)
-            shared_details[path] = task_ids
+        all_others_shared = all(entry["ownership"] == "shared" for entry in overlapping)
+        if plan_time:
+            if all_others_shared:
+                shared_with_other_active.add(path)
+                shared_details[path] = task_ids
+            else:
+                active_overlap.add(path)
+                conflict_details[path] = [
+                    entry["task_id"]
+                    for entry in overlapping
+                    if entry["ownership"] != "shared"
+                ]
         else:
-            active_overlap.add(path)
-            conflict_details[path] = task_ids
+            if ownership == "shared" and all_others_shared:
+                shared_with_other_active.add(path)
+                shared_details[path] = task_ids
+            else:
+                active_overlap.add(path)
+                conflict_details[path] = task_ids
 
     return {
         "shared_with_other_active": shared_with_other_active,

@@ -35,6 +35,8 @@ REVIEW_PROVIDER_VALUES = ("auto", "codex", "claude")
 EXTERNAL_FALLBACK_POLICY_VALUES = ("warn", "allow", "disable")
 CURRENT_AGENT_PROVIDER_VALUES = ("unknown", "codex", "claude")
 DEFAULT_EXTERNAL_TIMEOUT_SECONDS = 600
+DEFAULT_IDLE_TIMEOUT_SECONDS = 120
+DEFAULT_ABSOLUTE_MAX_SECONDS = 1800
 DEFAULT_EXTERNAL_FALLBACK_POLICY = "warn"
 DEFAULT_CODEX_REVIEW_MODEL = "gpt-5.5"
 DEFAULT_CLAUDE_REVIEW_MODEL = "claude-opus-4-7"
@@ -95,8 +97,13 @@ class ReviewRunnerConfig:
     provider: str
     model: str
     models: tuple
-    timeout_seconds: int
+    idle_timeout_seconds: int
+    absolute_max_seconds: int
     fallback_policy: str
+
+    @property
+    def timeout_seconds(self):
+        return self.absolute_max_seconds
 
 
 @dataclass(frozen=True)
@@ -105,8 +112,13 @@ class ResolvedReviewRunner:
     provider: str | None
     model: str
     models: tuple
-    timeout_seconds: int
+    idle_timeout_seconds: int
+    absolute_max_seconds: int
     fallback_policy: str
+
+    @property
+    def timeout_seconds(self):
+        return self.absolute_max_seconds
 
 
 @dataclass(frozen=True)
@@ -131,6 +143,12 @@ class ProviderProcessResult:
     stderr: str
     timed_out: bool = False
     pid: int | None = None
+    kill_reason: str | None = None
+    time_since_last_byte: float = 0.0
+    wall_elapsed: float = 0.0
+    idle_timeout_seconds: int = 0
+    absolute_max_seconds: int = 0
+    stdout_event_summary: dict = dataclasses.field(default_factory=dict)
 
 
 def _review_config(root):
@@ -154,16 +172,88 @@ def _normalize_model(value):
     return str(value or "").strip()
 
 
-def _normalize_timeout(value):
+def _normalize_positive_int(value, *, field_name, default):
     if value in (None, ""):
-        return DEFAULT_EXTERNAL_TIMEOUT_SECONDS
+        return default
     try:
-        timeout_seconds = int(str(value).strip())
+        normalized = int(str(value).strip())
     except (TypeError, ValueError) as exc:
-        raise ValueError(f"{CONFIG_PATH}: review.external.timeout_seconds must be a positive integer") from exc
-    if timeout_seconds <= 0:
-        raise ValueError(f"{CONFIG_PATH}: review.external.timeout_seconds must be a positive integer")
-    return timeout_seconds
+        raise ValueError(f"{CONFIG_PATH}: review.external.{field_name} must be a positive integer") from exc
+    if normalized <= 0:
+        raise ValueError(f"{CONFIG_PATH}: review.external.{field_name} must be a positive integer")
+    return normalized
+
+
+_LEGACY_TIMEOUT_DEPRECATION_NOTED = False
+
+
+def _maybe_warn_legacy_timeout():
+    """Emit the legacy `timeout_seconds` deprecation note once per process.
+
+    Aliasing happens silently if the operator hasn't set the new keys; the
+    note tells them how to migrate. Smokes grep this string, so changing
+    the wording requires updating the smoke fixture too.
+    """
+    global _LEGACY_TIMEOUT_DEPRECATION_NOTED
+    if _LEGACY_TIMEOUT_DEPRECATION_NOTED:
+        return
+    _LEGACY_TIMEOUT_DEPRECATION_NOTED = True
+    print(
+        "warning: review.external.timeout_seconds is deprecated; "
+        "use review.external.absolute_max_seconds + review.external.idle_timeout_seconds",
+        file=sys.stderr,
+    )
+
+
+def _resolve_review_timeouts(external_config):
+    """Read the activity-watchdog knobs from review.external, falling back
+    to the legacy `timeout_seconds` (aliased to `absolute_max_seconds`)
+    when the new keys are absent. Returns (idle_timeout_seconds,
+    absolute_max_seconds). Pure on the input mapping; emits a one-time
+    deprecation note as a side effect when legacy aliasing kicks in.
+
+    When idle isn't explicitly configured, the default is clamped to
+    absolute_max so a small legacy `timeout_seconds: 60` doesn't reject
+    against an inferred 120s idle default. Operators who set both keys
+    explicitly still see a hard reject if idle > absolute_max — that's
+    incoherent intent, not a back-compat case.
+    """
+    has_new_idle = "idle_timeout_seconds" in (external_config or {})
+    has_new_max = "absolute_max_seconds" in (external_config or {})
+    has_legacy = "timeout_seconds" in (external_config or {})
+
+    if has_new_max:
+        absolute_max_seconds = _normalize_positive_int(
+            external_config.get("absolute_max_seconds"),
+            field_name="absolute_max_seconds",
+            default=DEFAULT_ABSOLUTE_MAX_SECONDS,
+        )
+    elif has_legacy:
+        absolute_max_seconds = _normalize_positive_int(
+            external_config.get("timeout_seconds"),
+            field_name="timeout_seconds",
+            default=DEFAULT_EXTERNAL_TIMEOUT_SECONDS,
+        )
+        _maybe_warn_legacy_timeout()
+    else:
+        absolute_max_seconds = DEFAULT_ABSOLUTE_MAX_SECONDS
+
+    if has_new_idle:
+        idle_timeout_seconds = _normalize_positive_int(
+            external_config.get("idle_timeout_seconds"),
+            field_name="idle_timeout_seconds",
+            default=DEFAULT_IDLE_TIMEOUT_SECONDS,
+        )
+        if idle_timeout_seconds > absolute_max_seconds:
+            raise ValueError(
+                f"{CONFIG_PATH}: review.external.idle_timeout_seconds "
+                f"({idle_timeout_seconds}) cannot exceed absolute_max_seconds "
+                f"({absolute_max_seconds})"
+            )
+    else:
+        idle_timeout_seconds = min(DEFAULT_IDLE_TIMEOUT_SECONDS, absolute_max_seconds)
+
+    return idle_timeout_seconds, absolute_max_seconds
 
 
 def _is_model_rejection(returncode, stdout, stderr):
@@ -282,7 +372,7 @@ def load_review_runner_config(root):
 
     provider_models = _provider_models(external_config, provider)
 
-    timeout_seconds = _normalize_timeout(external_config.get("timeout_seconds", DEFAULT_EXTERNAL_TIMEOUT_SECONDS))
+    idle_timeout_seconds, absolute_max_seconds = _resolve_review_timeouts(external_config)
     fallback_policy = _normalize_choice(
         external_config.get("fallback_policy", DEFAULT_EXTERNAL_FALLBACK_POLICY),
         allowed=EXTERNAL_FALLBACK_POLICY_VALUES,
@@ -294,7 +384,8 @@ def load_review_runner_config(root):
         provider=provider,
         model=provider_models[0] if provider_models else "",
         models=provider_models,
-        timeout_seconds=timeout_seconds,
+        idle_timeout_seconds=idle_timeout_seconds,
+        absolute_max_seconds=absolute_max_seconds,
         fallback_policy=fallback_policy,
     )
 
@@ -324,7 +415,8 @@ def resolve_review_runner(root, *, runner_override=None, provider_override=None,
             provider=None,
             model="",
             models=(),
-            timeout_seconds=config.timeout_seconds,
+            idle_timeout_seconds=config.idle_timeout_seconds,
+            absolute_max_seconds=config.absolute_max_seconds,
             fallback_policy=config.fallback_policy,
         )
 
@@ -347,7 +439,8 @@ def resolve_review_runner(root, *, runner_override=None, provider_override=None,
         provider=provider,
         model=model,
         models=models,
-        timeout_seconds=config.timeout_seconds,
+        idle_timeout_seconds=config.idle_timeout_seconds,
+        absolute_max_seconds=config.absolute_max_seconds,
         fallback_policy=config.fallback_policy,
     )
 
@@ -535,6 +628,35 @@ def _external_diagnostic_path(root, task_id):
     return diagnostic_root / f"external-review-attempt-{len(existing) + 1}.txt"
 
 
+_WATCHDOG_TAIL_BYTES = 16 * 1024
+
+
+def _format_event_summary(event_summary):
+    """Render an event-count dict like {"system.init": 1, "assistant": 14}
+    as a stable, human-readable single line. Sorted by key so the output
+    is deterministic across runs.
+    """
+    if not event_summary:
+        return "(none parsed)"
+    parts = [f"{count}× {event_type}" for event_type, count in sorted(event_summary.items())]
+    return ", ".join(parts)
+
+
+def _stdout_tail(stdout, max_bytes=_WATCHDOG_TAIL_BYTES):
+    """Return the trailing slice of stdout as a string, prefixed with a
+    "[head trimmed N bytes]" marker when truncation occurred. The tail is
+    where the failure manifests; the head usually carries setup chatter.
+    """
+    if not stdout:
+        return ""
+    encoded = stdout.encode("utf-8", errors="replace")
+    if len(encoded) <= max_bytes:
+        return stdout
+    trimmed = len(encoded) - max_bytes
+    tail_text = encoded[-max_bytes:].decode("utf-8", errors="replace")
+    return f"[head trimmed {trimmed} bytes]\n{tail_text}"
+
+
 def _write_external_diagnostic(
     root,
     task_id,
@@ -554,7 +676,21 @@ def _write_external_diagnostic(
     raw_output,
     error,
     workspace_status="",
+    kill_reason=None,
+    time_since_last_byte=0.0,
+    idle_timeout_seconds=0,
+    absolute_max_seconds=0,
+    parsed_event_summary=None,
 ):
+    """Emit the diagnostic file for one external-review attempt.
+
+    When `timed_out=True` and `kill_reason` is set, an additional
+    "## Watchdog Kill" section names the trigger (idle_timeout vs
+    absolute_max), the time since the last stdout byte, the threshold
+    values in effect, the parsed event summary, and the trailing slice
+    of stdout — so the operator can tell what the provider was doing
+    when the watchdog fired instead of staring at empty fields.
+    """
     diagnostic_path = _external_diagnostic_path(root, task_id)
     safe_argv = _redacted_argv(root, argv)
     body = [
@@ -568,6 +704,13 @@ def _write_external_diagnostic(
         f"exit_code: {exit_code if exit_code is not None else ''}",
         f"timed_out: {str(bool(timed_out)).lower()}",
         f"timeout_seconds: {timeout_seconds}",
+    ]
+    if idle_timeout_seconds or absolute_max_seconds:
+        body.extend([
+            f"idle_timeout_seconds: {idle_timeout_seconds}",
+            f"absolute_max_seconds: {absolute_max_seconds}",
+        ])
+    body.extend([
         f"prompt_sha256: {prompt_sha256}",
         f"error: {error}",
         "",
@@ -583,7 +726,20 @@ def _write_external_diagnostic(
         "## Stderr",
         stderr or "",
         "",
-    ]
+    ])
+    if timed_out and kill_reason:
+        body.extend([
+            "## Watchdog Kill",
+            f"kill_reason: {kill_reason}",
+            f"time_since_last_byte: {float(time_since_last_byte):.2f}",
+            f"idle_timeout_seconds: {idle_timeout_seconds}",
+            f"absolute_max_seconds: {absolute_max_seconds}",
+            f"events: {_format_event_summary(parsed_event_summary)}",
+            "",
+            "### Stdout Tail",
+            _stdout_tail(stdout),
+            "",
+        ])
     if workspace_status:
         body.extend(
             [
@@ -652,16 +808,11 @@ def _kill_provider_process_group(proc):
             pass
 
 
-def _timeout_text(value):
-    if value is None:
-        return ""
-    if isinstance(value, bytes):
-        return value.decode("utf-8", errors="replace")
-    return str(value)
-
-
 WATCHDOG_GRACE_SECONDS = 2.0
-WATCHDOG_POLL_SECONDS = 1.0
+_SIGINT_KILL_GRACE_SECONDS = 0.5
+WATCHDOG_POLL_SECONDS = 0.25
+_STREAM_PUMP_BUFFER_BYTES = 8 * 1024 * 1024
+_STREAM_PUMP_READ_BYTES = 4096
 
 
 def _watchdog_elapsed(start_wall, start_mono):
@@ -673,25 +824,156 @@ def _watchdog_elapsed(start_wall, start_mono):
     return max(time.time() - start_wall, time.monotonic() - start_mono)
 
 
-def _provider_watchdog(proc, timeout_seconds, done, *, sleep=time.sleep):
-    """Force-kill `proc`'s process group at `timeout_seconds` past now.
+class _StreamPump:
+    """Reader thread that drains one of stdout/stderr into a bounded byte
+    buffer and advances a shared activity clock on each chunk arrival.
 
-    Runs on a daemon thread alongside `proc.communicate`. The deadline
-    is enforced via `_watchdog_elapsed` which counts wall-clock elapsed
-    in addition to monotonic — so a laptop sleep mid-watch counts
-    toward the deadline (macOS `time.monotonic` excludes suspend), and
-    an NTP backward step doesn't silently extend it.
+    The activity clock is read by `_provider_watchdog` to distinguish "still
+    making progress" from "stuck"; the bounded buffer caps memory while
+    still capturing enough output for diagnostics. Overflow drops the head
+    bytes (sliding window) — what the operator usually wants to see in a
+    diagnostic is the tail, which is where the failure manifests.
 
-    Exits early on `done.is_set()`. After the deadline, sends SIGTERM,
-    waits up to WATCHDOG_GRACE_SECONDS for `proc.poll()` to flip, then
-    escalates to SIGKILL.
+    Optional `event_inspector` is called with each newline-terminated line
+    of UTF-8 text; the claude NDJSON parser uses this to count event types
+    as they arrive so the diagnostic can say "events: 14× assistant, 0×
+    result". The pump itself stays provider-agnostic.
+    """
+
+    def __init__(self, stream, name, activity, *, max_bytes=_STREAM_PUMP_BUFFER_BYTES, event_inspector=None):
+        self.stream = stream
+        self.name = name
+        self.activity = activity
+        self.max_bytes = max_bytes
+        self.event_inspector = event_inspector
+        self._buf = bytearray()
+        self._dropped_total = 0
+        self._lock = threading.Lock()
+        self._line_buffer = bytearray()
+        self.event_summary: dict[str, int] = {}
+        self.thread = threading.Thread(
+            target=self._run,
+            daemon=True,
+            name=f"scafld-pump-{name}",
+        )
+
+    def start(self):
+        self.thread.start()
+
+    def _run(self):
+        try:
+            while True:
+                try:
+                    chunk = self.stream.read1(_STREAM_PUMP_READ_BYTES)
+                except (ValueError, OSError):
+                    # Stream closed (proc exited) — nothing to read.
+                    return
+                if not chunk:
+                    return
+                self._record_activity()
+                self._append_bytes(chunk)
+                if self.event_inspector is not None:
+                    self._dispatch_lines(chunk)
+        except Exception:
+            # A pump thread that crashes must not take the whole process down;
+            # the watchdog will still observe whatever activity got through.
+            return
+
+    def _record_activity(self):
+        # Activity clock is a plain dict shared with the watchdog. Two clocks
+        # so the same dual-clock liveness reasoning as `_watchdog_elapsed`
+        # applies (NTP rewinds, macOS suspends).
+        self.activity["last_wall"] = time.time()
+        self.activity["last_mono"] = time.monotonic()
+
+    def _append_bytes(self, chunk):
+        with self._lock:
+            self._buf.extend(chunk)
+            excess = len(self._buf) - self.max_bytes
+            if excess > 0:
+                del self._buf[:excess]
+                self._dropped_total += excess
+
+    def _dispatch_lines(self, chunk):
+        # Lines are inspected outside the buffer lock so the pump does not
+        # block the activity-update path on inspector work.
+        self._line_buffer.extend(chunk)
+        while True:
+            nl = self._line_buffer.find(b"\n")
+            if nl < 0:
+                return
+            line_bytes = bytes(self._line_buffer[:nl])
+            del self._line_buffer[: nl + 1]
+            if not line_bytes:
+                continue
+            try:
+                line = line_bytes.decode("utf-8", errors="replace")
+            except UnicodeDecodeError:
+                continue
+            try:
+                event_type = self.event_inspector(line)
+            except Exception:
+                event_type = None
+            if event_type:
+                self.event_summary[event_type] = self.event_summary.get(event_type, 0) + 1
+
+    def text(self) -> str:
+        with self._lock:
+            body = bytes(self._buf).decode("utf-8", errors="replace")
+            dropped = self._dropped_total
+        if dropped > 0:
+            return f"[truncated {dropped} earlier bytes]\n{body}"
+        return body
+
+    def join(self, timeout=None):
+        self.thread.join(timeout)
+
+
+def _provider_watchdog(
+    proc,
+    *,
+    idle_timeout_seconds,
+    absolute_max_seconds,
+    activity,
+    done,
+    kill_state,
+    sleep=time.sleep,
+):
+    """Activity-aware kill: SIGTERM the process group if either threshold
+    fires, then escalate to SIGKILL after a grace window.
+
+    Two thresholds:
+      - `idle_timeout_seconds`: no new bytes on stdout/stderr for this long.
+        Detects genuinely hung providers fast.
+      - `absolute_max_seconds`: total wall-clock since process start.
+        Catches infinite loops where the provider is producing output but
+        not converging.
+
+    The watchdog records which trigger fired in `kill_state` so the
+    diagnostic can name the cause instead of showing empty fields.
     """
     start_wall = time.time()
     start_mono = time.monotonic()
     while True:
         if done.is_set():
             return
-        if _watchdog_elapsed(start_wall, start_mono) >= timeout_seconds:
+        wall_elapsed = _watchdog_elapsed(start_wall, start_mono)
+        if wall_elapsed >= absolute_max_seconds:
+            kill_state["reason"] = "absolute_max"
+            kill_state["wall_elapsed"] = wall_elapsed
+            kill_state["idle_age"] = max(
+                time.time() - activity["last_wall"],
+                time.monotonic() - activity["last_mono"],
+            )
+            break
+        idle_age = max(
+            time.time() - activity["last_wall"],
+            time.monotonic() - activity["last_mono"],
+        )
+        if idle_age >= idle_timeout_seconds:
+            kill_state["reason"] = "idle_timeout"
+            kill_state["wall_elapsed"] = wall_elapsed
+            kill_state["idle_age"] = idle_age
             break
         sleep(WATCHDOG_POLL_SECONDS)
     if proc.poll() is not None:
@@ -707,85 +989,154 @@ def _provider_watchdog(proc, timeout_seconds, done, *, sleep=time.sleep):
         _kill_provider_process_group(proc)
 
 
-def _run_provider_subprocess(argv, *, prompt, root, provider, timeout_seconds, on_start=None):
-    stdin_payload = prompt if prompt.endswith("\n") else prompt + "\n"
-    proc = subprocess.Popen(
-        argv,
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        cwd=str(root),
-        env=_provider_subprocess_env(provider),
-        **_provider_start_new_session_kwargs(),
-    )
-    if on_start is not None:
+def _run_provider_subprocess(
+    argv,
+    *,
+    prompt,
+    root,
+    provider,
+    idle_timeout_seconds,
+    absolute_max_seconds,
+    on_start=None,
+    stdout_event_inspector=None,
+):
+    """Spawn the provider, drain stdout/stderr through reader threads, and
+    let the activity-aware watchdog decide when (if ever) to kill it.
+
+    Streams are pumped through `_StreamPump` so the watchdog sees real
+    liveness signals — every chunk arrival advances the activity clock.
+    `proc.communicate()` is no longer used: it blocks until end-of-process
+    and gives the watchdog nothing to observe in the meantime, which is
+    what made the old wall-clock-only watchdog kill long-but-productive
+    reviews indistinguishably from hung ones.
+    """
+    stdin_text = prompt if prompt.endswith("\n") else prompt + "\n"
+    stdin_payload = stdin_text.encode("utf-8")
+    # Block SIGINT around Popen + on_start so a Ctrl-C delivered in that
+    # narrow window can't fire `_on_sigint` against an empty proc_holder.
+    # Without this, the operator's cancel sets cancel_state but never
+    # terminates the subprocess, so the run feels silently unresponsive
+    # until the watchdog or natural completion.
+    sigint_was_blocked = False
+    if hasattr(signal, "pthread_sigmask"):
         try:
-            on_start(proc)
-        except Exception:
-            _terminate_provider_process_group(proc)
+            previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK, [signal.SIGINT])
+            sigint_was_blocked = signal.SIGINT not in previous_mask
+        except (OSError, ValueError):
+            sigint_was_blocked = False
+    try:
+        proc = subprocess.Popen(
+            argv,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            cwd=str(root),
+            env=_provider_subprocess_env(provider),
+            **_provider_start_new_session_kwargs(),
+        )
+        if on_start is not None:
             try:
-                proc.communicate(timeout=2)
-            except subprocess.TimeoutExpired:
-                _kill_provider_process_group(proc)
+                on_start(proc)
+            except Exception:
+                _terminate_provider_process_group(proc)
                 try:
-                    proc.communicate(timeout=2)
+                    proc.wait(timeout=2)
                 except subprocess.TimeoutExpired:
-                    pass
-            raise
+                    _kill_provider_process_group(proc)
+                    try:
+                        proc.wait(timeout=2)
+                    except subprocess.TimeoutExpired:
+                        pass
+                for stream in (proc.stdin, proc.stdout, proc.stderr):
+                    try:
+                        if stream:
+                            stream.close()
+                    except OSError:
+                        pass
+                raise
+    finally:
+        # Re-deliver any SIGINT that arrived during the blocked window;
+        # the registered handler will now see proc_holder populated.
+        if sigint_was_blocked and hasattr(signal, "pthread_sigmask"):
+            try:
+                signal.pthread_sigmask(signal.SIG_UNBLOCK, [signal.SIGINT])
+            except (OSError, ValueError):
+                pass
+
+    activity = {"last_wall": time.time(), "last_mono": time.monotonic()}
+    kill_state: dict = {"reason": None, "wall_elapsed": 0.0, "idle_age": 0.0}
+
+    stdout_pump = _StreamPump(
+        proc.stdout,
+        "stdout",
+        activity,
+        event_inspector=stdout_event_inspector,
+    )
+    stderr_pump = _StreamPump(proc.stderr, "stderr", activity)
+    stdout_pump.start()
+    stderr_pump.start()
+
     watchdog_done = threading.Event()
     watchdog_thread = threading.Thread(
         target=_provider_watchdog,
-        args=(proc, timeout_seconds, watchdog_done),
+        kwargs={
+            "proc": proc,
+            "idle_timeout_seconds": idle_timeout_seconds,
+            "absolute_max_seconds": absolute_max_seconds,
+            "activity": activity,
+            "done": watchdog_done,
+            "kill_state": kill_state,
+        },
         daemon=True,
         name=f"scafld-watchdog-{proc.pid}",
     )
     watchdog_thread.start()
-    timed_out_by_watchdog = False
+
     try:
         try:
-            stdout, stderr = proc.communicate(stdin_payload, timeout=timeout_seconds)
-            # If the watchdog already terminated the process, communicate
-            # returns successfully but the run was effectively a timeout.
-            if proc.returncode is not None and proc.returncode < 0:
-                timed_out_by_watchdog = True
-            return ProviderProcessResult(
-                returncode=proc.returncode,
-                stdout=stdout or "",
-                stderr=stderr or "",
-                timed_out=timed_out_by_watchdog,
-                pid=proc.pid,
-            )
-        except subprocess.TimeoutExpired:
-            _terminate_provider_process_group(proc)
-            try:
-                stdout, stderr = proc.communicate(timeout=2)
-            except subprocess.TimeoutExpired as exc:
-                _kill_provider_process_group(proc)
-                try:
-                    stdout, stderr = proc.communicate(timeout=2)
-                except subprocess.TimeoutExpired as kill_exc:
-                    stdout = _timeout_text(kill_exc.stdout) or _timeout_text(exc.stdout)
-                    stderr = _timeout_text(kill_exc.stderr) or _timeout_text(exc.stderr)
-                    stderr = (stderr + "\n" if stderr else "") + "provider output capture abandoned after timeout"
-                    for stream in (proc.stdin, proc.stdout, proc.stderr):
-                        try:
-                            if stream:
-                                stream.close()
-                        except OSError:
-                            pass
-            return ProviderProcessResult(
-                returncode=proc.returncode,
-                stdout=stdout or "",
-                stderr=stderr or "",
-                timed_out=True,
-                pid=proc.pid,
-            )
+            proc.stdin.write(stdin_payload)
+        except (BrokenPipeError, OSError):
+            # Provider exited before reading stdin (e.g. spawn error). The
+            # pumps and watchdog still drain whatever output exists.
+            pass
+        try:
+            proc.stdin.close()
+        except OSError:
+            pass
+
+        # Block until the process exits; the watchdog runs in parallel and
+        # will SIGTERM/SIGKILL it if either threshold fires. WATCHDOG_POLL
+        # cadence is short enough that responsiveness to operator SIGINT
+        # (which kills the process group out-of-band) is sub-second.
+        while proc.poll() is None:
+            time.sleep(WATCHDOG_POLL_SECONDS)
+
+        timed_out_by_watchdog = kill_state["reason"] is not None
     finally:
         watchdog_done.set()
         watchdog_thread.join(timeout=1.0)
+        stdout_pump.join(timeout=2.0)
+        stderr_pump.join(timeout=2.0)
+        for stream in (proc.stdout, proc.stderr):
+            try:
+                if stream:
+                    stream.close()
+            except OSError:
+                pass
+
+    return ProviderProcessResult(
+        returncode=proc.returncode,
+        stdout=stdout_pump.text(),
+        stderr=stderr_pump.text(),
+        timed_out=timed_out_by_watchdog,
+        pid=proc.pid,
+        kill_reason=kill_state["reason"],
+        time_since_last_byte=float(kill_state["idle_age"]),
+        wall_elapsed=float(kill_state["wall_elapsed"]),
+        idle_timeout_seconds=int(idle_timeout_seconds),
+        absolute_max_seconds=int(absolute_max_seconds),
+        stdout_event_summary=dict(stdout_pump.event_summary),
+    )
 
 
 def _prompt_preview(prompt, limit=4000, head=1000):
@@ -873,7 +1224,137 @@ def _model_from_model_usage(payload):
     return best_model or first_model
 
 
+def _claude_ndjson_event_inspector(line):
+    """Return the event type for one NDJSON line, or None on parse failure.
+
+    Used as `_StreamPump.event_inspector` so the pump can count event types
+    while they arrive (e.g. {"system.init": 1, "assistant": 14, "result": 1})
+    without re-parsing the whole stream after the fact. The diagnostic
+    consumes this summary to tell the operator what claude was doing right
+    before the watchdog fired ("0× result" means the run never converged).
+
+    `subtype` is folded into the event key when present so init / result
+    variants are visible: "system.init", "result.success", "result.error".
+    """
+    try:
+        event = json.loads(line)
+    except (TypeError, json.JSONDecodeError):
+        return None
+    if not isinstance(event, dict):
+        return None
+    event_type = event.get("type")
+    if not isinstance(event_type, str) or not event_type:
+        return None
+    subtype = event.get("subtype")
+    if isinstance(subtype, str) and subtype:
+        return f"{event_type}.{subtype}"
+    return event_type
+
+
+def _extract_claude_stdout_ndjson(stdout):
+    """Parse claude's NDJSON output (`--output-format stream-json --verbose`).
+
+    Walks every line, ignores parse failures (the run may include stray
+    non-JSON lines from logging or warnings), and pulls:
+      - `system.init` event: model + session_id (canonical source).
+      - `result` event (final): structured_output (the schema-conformant
+        ReviewPacket when --json-schema was attached) or the free-text
+        `result` summary as fallback.
+
+    Return shape matches the legacy single-blob parser:
+    (raw_output, model_observed, model_source, session_observed).
+    """
+    init_event = None
+    result_event = None
+    for raw_line in stdout.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        try:
+            event = json.loads(line)
+        except (TypeError, json.JSONDecodeError):
+            continue
+        if not isinstance(event, dict):
+            continue
+        event_type = event.get("type")
+        if event_type == "system" and event.get("subtype") == "init":
+            init_event = event
+        elif event_type == "result":
+            # Last result event wins if multiple appear (shouldn't happen
+            # but defensive — claude has one terminal result per run).
+            result_event = event
+
+    model_observed = ""
+    session_observed = ""
+    if init_event is not None:
+        model_observed = _valid_model_id(
+            _top_level_json_value(init_event, ("model", "model_id", "modelId"))
+        )
+        session_observed = _top_level_json_value(init_event, ("session_id", "sessionId"))
+
+    raw_output = ""
+    if result_event is not None:
+        structured = result_event.get("structured_output")
+        if isinstance(structured, dict):
+            raw_output = json.dumps(structured)
+        else:
+            raw_output = _first_json_value(
+                result_event, ("result", "output", "response", "text", "content")
+            ) or ""
+        if not model_observed:
+            model_observed = _model_from_model_usage(result_event)
+        if not session_observed:
+            session_observed = _top_level_json_value(result_event, ("session_id", "sessionId"))
+
+    if not raw_output:
+        # No usable result event (truncated stream / kill / parse failure).
+        # Returning the raw stdout keeps the diagnostic trail intact for
+        # downstream `_validate_external_result`.
+        raw_output = stdout or ""
+
+    model_source = "observed" if model_observed else ""
+    if not model_observed:
+        model_observed, model_source = _model_hint_from_text(stdout or "")
+
+    return raw_output, model_observed, model_source, session_observed
+
+
+def _looks_like_claude_ndjson(stdout):
+    """Cheap heuristic: at least one non-empty line is a JSON object with a
+    `type` field. Lets `_extract_claude_stdout` choose between the NDJSON
+    parser and the legacy single-blob parser without operator config.
+
+    Scans every non-empty line so a leading warning or banner (e.g. claude
+    emits a non-JSON notice before the stream starts) doesn't mis-route
+    a real NDJSON stream to the legacy parser.
+    """
+    if not stdout:
+        return False
+    for raw_line in stdout.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        try:
+            event = json.loads(line)
+        except (TypeError, json.JSONDecodeError):
+            continue
+        if isinstance(event, dict) and event.get("type"):
+            return True
+    return False
+
+
 def _extract_claude_stdout(stdout):
+    """Parse claude's stdout into (raw_output, model_observed, model_source,
+    session_observed).
+
+    Tries the NDJSON shape first (`--output-format stream-json`); falls
+    back to the legacy single-blob JSON shape if claude ever regresses or
+    scafld is run against an older claude binary that doesn't speak
+    stream-json. Pure on the input, no provider state.
+    """
+    if _looks_like_claude_ndjson(stdout):
+        return _extract_claude_stdout_ndjson(stdout)
+
     try:
         payload = json.loads(stdout)
     except (TypeError, json.JSONDecodeError):
@@ -882,10 +1363,6 @@ def _extract_claude_stdout(stdout):
     if not isinstance(payload, dict):
         model, source = _model_hint_from_text(stdout or "")
         return stdout or "", model, source, ""
-    # When claude is invoked with --json-schema, the structured response
-    # lands in `structured_output` (a real JSON object). The `result` field
-    # in that case holds a free-text summary, not the ReviewPacket. Prefer
-    # the structured field when present.
     structured = payload.get("structured_output")
     if isinstance(structured, dict):
         raw_output = json.dumps(structured)
@@ -996,7 +1473,7 @@ def build_external_review_prompt(review_prompt, topology, *, schema_arg_attached
         "- verdict must be pass, fail, or pass_with_issues\n"
         "- checked_surfaces must include one entry per pass id, even when findings exist\n"
         "- checked_surfaces targets must name concrete files, symbols, callers, rules, paths, or anchors, not generic claims\n"
-        "- every finding must include id, pass_id, severity, blocking, target, summary, failure_mode, why_it_matters, evidence, suggested_fix, and tests_to_add; spec_update_suggestions is optional but recommended when the spec itself is missing a contract\n"
+        "- every finding must include id, pass_id, severity, blocking, target, summary, failure_mode, why_it_matters, evidence, suggested_fix, tests_to_add, and spec_update_suggestions (use [] when none apply)\n"
         "- string fields must be single-line strings; put multiple evidence points in evidence/tests/spec_update_suggestions arrays\n"
         "- keep the review concise: at most 10 total findings and short explanations\n"
         "- finding targets must cite a real file and one numeric line, or a stable YAML/Markdown anchor such as config.yaml#review.external\n"
@@ -1079,17 +1556,31 @@ def _normalize_claude_session_id(session_id):
 
 
 def _claude_args(model, session_id, schema_json=None):
+    """Build the argv tail for `claude -p`.
+
+    `--output-format stream-json` emits NDJSON events as they happen so
+    the activity-aware watchdog sees real liveness signals; `--verbose`
+    is required by the CLI alongside stream-json in -p mode.
+
+    `--include-partial-messages` emits partial assistant deltas while
+    the model is generating — including during tool calls and
+    subagent runs — so the activity clock keeps advancing through
+    long-running tool processing. Without it, a subagent that takes
+    minutes to return would look like a hang to the idle watchdog.
+    """
     session_id = _normalize_claude_session_id(session_id)
     args = [
         "-p",
         "--output-format",
-        "json",
+        "stream-json",
+        "--verbose",
+        "--include-partial-messages",
         "--permission-mode",
         "plan",
         "--allowedTools",
         "Read,Grep,Glob",
         "--disallowedTools",
-        "Bash,Edit,MultiEdit,Write,NotebookEdit",
+        "Agent,Task,Bash,Edit,MultiEdit,Write,NotebookEdit",
         "--mcp-config",
         '{"mcpServers":{}}',
         "--strict-mcp-config",
@@ -1166,14 +1657,7 @@ def _run_external_review_with_model_fallback(root, task_id, review_prompt, topol
     model_attempts = []
     last_error = None
     for index, model in enumerate(candidate_models):
-        attempt_runner = ResolvedReviewRunner(
-            runner=resolved_runner.runner,
-            provider=resolved_runner.provider,
-            model=model,
-            models=(model,),
-            timeout_seconds=resolved_runner.timeout_seconds,
-            fallback_policy=resolved_runner.fallback_policy,
-        )
+        attempt_runner = dataclasses.replace(resolved_runner, model=model, models=(model,))
         try:
             result = _run_external_review_once(
                 root, task_id, review_prompt, topology, attempt_runner, on_start=on_start,
@@ -1335,7 +1819,8 @@ def _run_external_review_once(root, task_id, review_prompt, topology, resolved_r
                     "model_requested": model,
                     "pid": process_pid,
                     "provider_session_requested": reviewer_session,
-                    "timeout_seconds": resolved_runner.timeout_seconds,
+                    "idle_timeout_seconds": resolved_runner.idle_timeout_seconds,
+                    "absolute_max_seconds": resolved_runner.absolute_max_seconds,
                     "started_at": started_at,
                     "command": command_display,
                 }
@@ -1344,7 +1829,21 @@ def _run_external_review_once(root, task_id, review_prompt, topology, resolved_r
     def _on_sigint(_signum, _frame):
         cancel_state["requested"] = True
         if proc_holder:
-            _terminate_provider_process_group(proc_holder[0])
+            proc = proc_holder[0]
+            _terminate_provider_process_group(proc)
+            # Escalate to SIGKILL after a short grace window so the
+            # cancel path completes promptly even when the subprocess
+            # (or its descendants) ignore SIGTERM. macOS observed the
+            # `bash -lc "cat >/dev/null; sleep 30"` pattern surviving
+            # the SIGTERM long enough for the parent's
+            # `proc.communicate()` to keep blocking; mirrors the
+            # _provider_watchdog escalation.
+            def _escalate():
+                if proc.poll() is None:
+                    _kill_provider_process_group(proc)
+            timer = threading.Timer(_SIGINT_KILL_GRACE_SECONDS, _escalate)
+            timer.daemon = True
+            timer.start()
 
     previous_sigint_handler = None
     sigint_installed = False
@@ -1363,7 +1862,8 @@ def _run_external_review_once(root, task_id, review_prompt, topology, resolved_r
                 prompt=prompt,
                 root=root,
                 provider=provider,
-                timeout_seconds=resolved_runner.timeout_seconds,
+                idle_timeout_seconds=resolved_runner.idle_timeout_seconds,
+                absolute_max_seconds=resolved_runner.absolute_max_seconds,
                 on_start=_record_running_provider,
             )
             return_code = proc.returncode
@@ -1379,8 +1879,10 @@ def _run_external_review_once(root, task_id, review_prompt, topology, resolved_r
                 prompt=prompt,
                 root=root,
                 provider=provider,
-                timeout_seconds=resolved_runner.timeout_seconds,
+                idle_timeout_seconds=resolved_runner.idle_timeout_seconds,
+                absolute_max_seconds=resolved_runner.absolute_max_seconds,
                 on_start=_record_running_provider,
+                stdout_event_inspector=_claude_ndjson_event_inspector,
             )
             return_code = proc.returncode
             stdout = proc.stdout or ""
@@ -1450,12 +1952,23 @@ def _run_external_review_once(root, task_id, review_prompt, topology, resolved_r
             cancel_error._review_cancelled = True
             raise cancel_error
         if proc.timed_out:
-            raise subprocess.TimeoutExpired(
+            # Attach the watchdog kill data to the exception so the except
+            # block can populate the new diagnostic fields (kill_reason,
+            # time_since_last_byte, parsed event summary). Without this,
+            # the diagnostic would lose the trail at the raise/catch
+            # boundary and we'd be back to the empty-fields dead end.
+            timeout_exc = subprocess.TimeoutExpired(
                 argv,
-                resolved_runner.timeout_seconds,
+                resolved_runner.absolute_max_seconds,
                 output=stdout,
                 stderr=stderr,
             )
+            timeout_exc._scafld_kill_reason = proc.kill_reason
+            timeout_exc._scafld_idle_age = proc.time_since_last_byte
+            timeout_exc._scafld_idle_timeout = proc.idle_timeout_seconds
+            timeout_exc._scafld_abs_max = proc.absolute_max_seconds
+            timeout_exc._scafld_event_summary = dict(proc.stdout_event_summary)
+            raise timeout_exc
         if return_code != 0:
             rejection_signature = _is_model_rejection(return_code, stdout, stderr)
             transient_signature = (
@@ -1635,6 +2148,11 @@ def _run_external_review_once(root, task_id, review_prompt, topology, resolved_r
             stderr=partial_stderr,
             raw_output=partial_stdout,
             error="provider timed out",
+            kill_reason=getattr(exc, "_scafld_kill_reason", None),
+            time_since_last_byte=getattr(exc, "_scafld_idle_age", 0.0),
+            idle_timeout_seconds=getattr(exc, "_scafld_idle_timeout", 0),
+            absolute_max_seconds=getattr(exc, "_scafld_abs_max", 0),
+            parsed_event_summary=getattr(exc, "_scafld_event_summary", None),
         )
         record_provider_invocation(
             root,

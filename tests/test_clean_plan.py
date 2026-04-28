@@ -257,7 +257,7 @@ class PlanTimeConflictTest(unittest.TestCase):
         text = spec_path.read_text(encoding="utf-8")
         # The slim spec's change entry for tests/foo.py should now
         # carry ownership: "shared" (auto-tagged).
-        self.assertIn('ownership: "shared"', text)
+        self.assertIn('ownership: shared', text)
 
     def test_plan_refuses_on_exclusive_conflict(self):
         from scafld.errors import ScafldError
@@ -305,10 +305,10 @@ class ApplySharedOwnershipTest(unittest.TestCase):
             "        content_spec: \"noop\"\n"
         )
         result = apply_shared_ownership(text, {"a.py"})
-        self.assertIn('ownership: "shared"', result)
+        self.assertIn('ownership: shared', result)
         # Sibling fields preserved.
-        self.assertIn('action: "update"', result)
-        self.assertIn('content_spec: "noop"', result)
+        self.assertIn("action: update", result)
+        self.assertIn("content_spec: noop", result)
 
     def test_idempotent_when_already_shared(self):
         from scafld.audit_scope import apply_shared_ownership
@@ -322,8 +322,12 @@ class ApplySharedOwnershipTest(unittest.TestCase):
             "        content_spec: \"noop\"\n"
         )
         result = apply_shared_ownership(text, {"a.py"})
-        # Should NOT inject a second ownership line.
-        self.assertEqual(result.count('ownership: "shared"'), 1)
+        # Should NOT inject a second ownership line. Count any form
+        # ('ownership: "shared"' or unquoted) — the early-return path
+        # preserves the input formatting; the round-trip path emits
+        # the unquoted form.
+        ownership_lines = result.count("ownership:")
+        self.assertEqual(ownership_lines, 1)
 
     def test_skips_non_target_files(self):
         from scafld.audit_scope import apply_shared_ownership
@@ -340,7 +344,7 @@ class ApplySharedOwnershipTest(unittest.TestCase):
         )
         result = apply_shared_ownership(text, {"a.py"})
         # ownership added once, on a.py only
-        self.assertEqual(result.count('ownership: "shared"'), 1)
+        self.assertEqual(result.count('ownership: shared'), 1)
 
 
 if __name__ == "__main__":

@@ -2,9 +2,9 @@ import json
 import re
 
 from scafld.audit_scope import (
-    active_changes_by_file,
     active_declared_changes,
     apply_shared_ownership,
+    classify_active_overlap,
     collect_declared_change_map,
     filter_audit_paths,
     git_sync_excluded_paths,
@@ -91,49 +91,33 @@ def new_spec_snapshot(
         )
     dest.write_text(scaffold["text"])
 
-    # Plan-time scope conflict detection: catch overlap with other
-    # active specs at plan time instead of waiting for review-time
-    # scope_drift. For each file the new spec declares, check what
-    # other active specs already say:
-    #   - other declares it `shared` (and we agree implicitly) →
-    #     auto-tag this spec as `shared` to record the cooperation
-    #   - other declares it exclusively → refuse to plan with
-    #     SCOPE_DRIFT and a one-line conflict message
+    # Plan-time scope conflict detection: delegate to
+    # `classify_active_overlap(plan_time=True)` so review-time and
+    # plan-time share the same overlap surface. Auto-tag shared paths
+    # in the new spec; refuse the plan when any other spec claims a
+    # path exclusively.
     declared = collect_declared_change_map(scaffold["text"])
     if declared:
         other_changes = active_declared_changes(root, exclude_task_id=task_id)
-        other_by_file = active_changes_by_file(other_changes)
-        conflicts = {}
-        shared_paths = set()
-        for path in declared:
-            entries = other_by_file.get(path) or []
-            if not entries:
-                continue
-            if all(entry.get("ownership") == "shared" for entry in entries):
-                shared_paths.add(path)
-            else:
-                conflicts[path] = [
-                    entry["task_id"]
-                    for entry in entries
-                    if entry.get("ownership") != "shared"
-                ]
-        if conflicts:
+        overlap = classify_active_overlap(declared, other_changes, plan_time=True)
+        if overlap["active_overlap"]:
             dest.unlink()
             details = [
-                f"  {path} is exclusively owned by " + ", ".join(others)
-                for path, others in sorted(conflicts.items())
+                f"  {path} is exclusively owned by "
+                + ", ".join(overlap["conflict_details"].get(path) or [])
+                for path in sorted(overlap["active_overlap"])
             ]
             raise ScafldError(
-                f"plan refused: {len(conflicts)} file(s) exclusively owned by other active specs",
+                f"plan refused: {len(overlap['active_overlap'])} file(s) exclusively owned by other active specs",
                 details + [
                     "either coordinate ownership in the conflicting spec(s) or pick different files",
                 ],
                 code=EC.SCOPE_DRIFT,
             )
-        if shared_paths:
+        if overlap["shared_with_other_active"]:
             scaffold_text = apply_shared_ownership(
                 dest.read_text(encoding="utf-8"),
-                shared_paths,
+                overlap["shared_with_other_active"],
             )
             dest.write_text(scaffold_text)
 

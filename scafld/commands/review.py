@@ -420,6 +420,45 @@ def cmd_complete(args):
                             f"{packet_non_blocking_count}"
                         )
                         gate_errors = list(gate_errors) + ["body_non_blocking_mismatch"]
+                    else:
+                        # Per-bucket severity multiset cross-check. Counts
+                        # can match and the combined multiset can match
+                        # while still being tampered: swap a high-blocking
+                        # finding with a medium-non-blocking one and the
+                        # combined multiset is identical even though the
+                        # bucket assignment changed. Compare the two
+                        # buckets separately so a swap across buckets
+                        # gets caught.
+                        body_blocking_severities = sorted(
+                            (entry.get("severity") or "")
+                            for entry in (review_data.get("blocking_findings") or [])
+                        )
+                        body_non_blocking_severities = sorted(
+                            (entry.get("severity") or "")
+                            for entry in (review_data.get("non_blocking_findings") or [])
+                        )
+                        packet_blocking_severities = sorted(
+                            (f.get("severity") or "")
+                            for f in packet_findings
+                            if f.get("blocking") is True
+                        )
+                        packet_non_blocking_severities = sorted(
+                            (f.get("severity") or "")
+                            for f in packet_findings
+                            if not f.get("blocking")
+                        )
+                        if (
+                            body_blocking_severities != packet_blocking_severities
+                            or body_non_blocking_severities != packet_non_blocking_severities
+                        ):
+                            gate_reason = (
+                                f"review body tampered: per-bucket finding severity "
+                                f"mismatch (blocking body={body_blocking_severities}, "
+                                f"packet={packet_blocking_severities}; "
+                                f"non_blocking body={body_non_blocking_severities}, "
+                                f"packet={packet_non_blocking_severities})"
+                            )
+                            gate_errors = list(gate_errors) + ["body_severity_mismatch"]
             elif metadata_seal:
                 # Metadata claims a seal but the packet artifact is
                 # missing — either someone deleted it or this is a
@@ -773,7 +812,8 @@ def cmd_review(args):
         def print_external_start(event):
             provider = event.get("provider") or "unknown"
             pid = event.get("pid")
-            timeout = event.get("timeout_seconds")
+            idle_timeout = event.get("idle_timeout_seconds")
+            absolute_max = event.get("absolute_max_seconds")
             session_id = event.get("provider_session_requested") or ""
             invocation_id = event.get("invocation_id") or ""
             print()
@@ -784,8 +824,8 @@ def cmd_review(args):
                 print(f"  provider session: {c(C_DIM, session_id)}")
             if invocation_id:
                 print(f"  invocation id: {c(C_DIM, invocation_id)}")
-            if timeout:
-                print(f"  timeout: {c(C_DIM, str(timeout) + 's')}")
+            if idle_timeout and absolute_max:
+                print(f"  watchdog: {c(C_DIM, f'idle {idle_timeout}s / abs_max {absolute_max}s')}")
             print(f"  track: {c(C_BOLD, f'scafld status {args.task_id} --json')}  ({c(C_DIM, f'.ai/runs/{args.task_id}/session.json')})")
             sys.stdout.flush()
 

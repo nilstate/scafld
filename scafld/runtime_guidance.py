@@ -404,6 +404,42 @@ def derive_task_guidance(root, task_id, spec_path, spec_data, status, session, r
                 "block_reason": review_gate.get("gate_reason"),
             }
 
+        # Threshold-blocked branch: verdict is pass / pass_with_issues
+        # but `review.gate_severity` elevated non-blocking findings to
+        # gate-blocking. Rerunning review against the same code hits
+        # the same gate; the operator either fixes the findings or
+        # relaxes the threshold.
+        gate_threshold = review_gate.get("gate_threshold")
+        gate_blocking_count = review_gate.get("gate_blocking_count") or 0
+        gate_advisory_count = review_gate.get("gate_advisory_count") or 0
+        verdict_value = review_state.get("verdict")
+        if (
+            gate_threshold
+            and gate_threshold != "blocking"
+            and gate_blocking_count == 0
+            and verdict_value in ("pass", "pass_with_issues")
+        ):
+            next_action = _guidance(
+                "threshold_blocked",
+                command=None,
+                message=(
+                    f"Non-blocking findings at or above severity "
+                    f"{gate_threshold} are gating complete. Either "
+                    f"fix them or relax `review.gate_severity` in "
+                    f".ai/config.yaml."
+                ),
+                followup_command=f"scafld complete {task_id}",
+                blocked=True,
+                reason=review_gate.get("gate_reason"),
+                gate_threshold=gate_threshold,
+                gate_advisory_count=gate_advisory_count,
+            )
+            return {
+                "next_action": next_action,
+                "current_handoff": existing_review_handoff(root, task_id, review_state),
+                "block_reason": review_gate.get("gate_reason"),
+            }
+
         next_action = _guidance(
             "review",
             command=f"scafld review {task_id}",
