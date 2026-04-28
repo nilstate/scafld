@@ -1,0 +1,331 @@
+spec_version: "1.1"
+task_id: "external-review-model-fallback"
+created: "2026-04-27T09:03:46Z"
+updated: "2026-04-27T10:11:59Z"
+status: "completed"
+harden_status: "in_progress"
+
+task:
+  title: "Provider model fallback list for external review"
+  summary: >
+    `review.external.codex.model` and `review.external.claude.model` accept a
+    single string. The pinned defaults (`gpt-5.5`, `claude-opus-4-7`) are
+    aggressive on purpose, but if an account does not have access to the pin,
+    `scafld review` fails the entire run with `external review runner failed
+    via codex` and forces the operator to either pass `--model` or switch
+    runner. The provider-binary fallback in `_auto_provider_candidates` does
+    not help here: the binary exists, only the requested model is not
+    available, so auto fallback never triggers.
+
+    Accept a list under `review.external.{codex,claude}.model` and have
+    `run_external_review` retry the same provider across the list when the
+    failure surface looks like a model-rejection. Record the per-attempt
+    outcomes in provenance so it is obvious which model produced the verdict.
+    Keep the existing single-string form working untouched.
+  size: "small"
+  risk_level: "low"
+  context:
+    packages:
+      - "scafld"
+      - "tests"
+    files_impacted:
+      - path: "scafld/review_runner.py"
+        lines: "task-selected"
+        reason: "Owns config parsing for review.external and the provider invocation loop."
+      - path: "scafld/runtime_bundle.py"
+        lines: "task-selected"
+        reason: "Loads runtime config; confirm list-vs-string acceptance for the model field."
+      - path: ".ai/config.yaml"
+        lines: "task-selected"
+        reason: "Reference config that documents the model list shape; bundled with new workspaces via `scafld init`/`scafld update`."
+      - path: "tests/test_review_runner.py"
+        lines: "task-selected"
+        reason: "Pure tests for config parsing and the model-rejection classifier."
+      - path: "tests/review_gate_smoke.sh"
+        lines: "task-selected"
+        reason: "End-to-end smoke that exercises the fallback path with a stub provider."
+      - path: "docs/configuration.md"
+        lines: "task-selected"
+        reason: "Operator docs for the review configuration block."
+    invariants:
+      - "single_string_model_must_continue_to_work"
+      - "fallback_only_triggers_on_model_rejection_surfaces"
+      - "every_attempt_must_be_recorded_in_session_ledger"
+      - "first_successful_attempt_is_authoritative_for_verdict"
+    related_docs:
+      - ".ai/specs/archive/2026-04/external-review-observed-model-truth.yaml"
+      - ".ai/specs/archive/2026-04/harden-external-review-contract.yaml"
+      - "docs/configuration.md"
+    cwd: "."
+  objectives:
+    - "Accept a list of models per provider in `.ai/config.yaml` without breaking the existing single-string form."
+    - "Retry the provider call against the next model only when the failure looks like model-rejection."
+    - "Record an entry per attempted model in the session ledger and in the review provenance."
+    - "Document the model list shape and rejection classifier in operator docs."
+  scope:
+    in_scope:
+      - "Config parsing for `review.external.{codex,claude}.model` as `str | list[str]`."
+      - "A model-rejection classifier on stderr/stdout that decides whether to advance to the next model."
+      - "Per-attempt provider invocation records in the session ledger."
+      - "Smoke test using a stub provider that fails the first model and succeeds on the second."
+      - "Operator docs for the new shape."
+    out_of_scope:
+      - "Cross-provider fallback (Codex → Claude) on model rejection; that remains tied to provider-binary availability."
+      - "Reordering or deduplicating user-supplied model lists."
+      - "Per-attempt timeouts; the existing `timeout_seconds` applies per attempt as today."
+  assumptions:
+    - "Model rejection from `codex exec` and `claude -p` is observable in stderr with a stable enough signature to classify reliably; if the signature is ambiguous, fallback does not trigger and behavior matches today."
+    - "Operators who pin a single model want today's behavior; the list form is opt-in."
+    - "It is acceptable to record a `failed_model_unavailable` provider invocation status alongside a subsequent `completed`; downstream consumers (`scafld status`, `scafld report`) already iterate the entry list rather than reading only the latest."
+  touchpoints:
+    - area: "review config"
+      description: "`_provider_model` becomes `_provider_models` returning an ordered list; existing callers consume the first element when they only want one."
+    - area: "review runner"
+      description: "Wrap the provider call in a per-model loop with rejection classification."
+    - area: "session ledger"
+      description: "Record one provider invocation entry per model attempt, including the new `failed_model_unavailable` status."
+    - area: "operator docs"
+      description: "Document the list shape and how to spot fallback events in the report."
+  risks:
+    - description: "Rejection classifier is too aggressive and triggers fallback on transient or unrelated errors, masking real failures."
+      impact: "high"
+      mitigation: "Match a tight allowlist of strings (`unknown model`, `model not found`, `model not available`, `does not have access`, `not authorized to use this model`). Anything else falls through to the existing failure path."
+    - description: "List form silently changes behavior for operators who already configured a single model."
+      impact: "medium"
+      mitigation: "Keep the single-string code path explicit; only iterate when the parsed shape is a list of length > 1."
+    - description: "Per-attempt session ledger entries swell `session.json`."
+      impact: "low"
+      mitigation: "Only N <= len(models) entries per review attempt; reviews are infrequent enough that growth is bounded."
+  acceptance:
+    validation_profile: "standard"
+    definition_of_done:
+      - id: "dod1"
+        description: "`review.external.{codex,claude}.model` accepts a string or a non-empty list of strings; existing single-string configs continue to work."
+        status: "done"
+      - id: "dod2"
+        description: "When a provider call fails with a recognized model-rejection signature, the runner retries the same provider with the next model in the list."
+        status: "done"
+      - id: "dod3"
+        description: "The session ledger records one provider invocation per attempted model, including the failure reason for skipped attempts."
+        status: "done"
+      - id: "dod4"
+        description: "Smoke coverage proves the fallback path against a stub provider; unit coverage proves the rejection classifier."
+        status: "done"
+      - id: "dod5"
+        description: "Docs explain the list shape, the rejection classifier, and how to observe fallback in `scafld status`."
+        status: "done"
+    validation:
+      - id: "v1"
+        type: "compile"
+        description: "Python sources compile."
+        command: "python3 -m compileall scafld tests"
+        expected: "exit code 0"
+      - id: "v2"
+        type: "test"
+        description: "Unit tests cover config parsing and the rejection classifier."
+        command: "python3 -m unittest tests.test_review_runner"
+        expected: "exit code 0"
+      - id: "v3"
+        type: "integration"
+        description: "Smoke proves the fallback path."
+        command: "bash tests/review_gate_smoke.sh external-review-model-fallback"
+        expected: "exit code 0"
+      - id: "v4"
+        type: "boundary"
+        description: "Operator docs mention the model list shape."
+        command: "rg -n 'model:.*\\[' docs/configuration.md"
+        expected: "exit code 0"
+
+planning_log:
+  - timestamp: "2026-04-27T09:03:46Z"
+    actor: "user"
+    summary: "Spec created via scafld plan."
+  - timestamp: "2026-04-27T09:10:00Z"
+    actor: "agent"
+    summary: "Replaced placeholder with a concrete model-fallback plan covering config, runner loop, ledger entries, and docs."
+
+  - timestamp: "2026-04-27T09:09:22Z"
+    actor: "cli"
+    summary: "Spec approved"
+  - timestamp: "2026-04-27T09:12:58Z"
+    actor: "cli"
+    summary: "Execution started"
+  - timestamp: "2026-04-27T10:11:59Z"
+    actor: "cli"
+    summary: "Spec completed"
+phases:
+  - id: "phase1"
+    name: "Accept a model list in review config"
+    objective: "Parse `review.external.{codex,claude}.model` as `str | list[str]` and thread an ordered list of models down to the runner."
+    changes:
+      - file: "scafld/review_runner.py"
+        action: "update"
+        ownership: "shared"
+        content_spec: |
+          - Replace `_provider_model` with `_provider_models` returning a
+            non-empty list of strings, accepting both string and list[str]
+            shapes. Reject empty lists, non-string entries, and oversize
+            lists with a clear `ValueError` referencing `CONFIG_PATH`.
+          - `ReviewRunnerConfig` and `ResolvedReviewRunner` gain a `models`
+            field (tuple of strings). The legacy `model` field stays as the
+            first element so existing callers keep working.
+          - `resolve_review_runner` honors `--model` overrides as a single
+            element list with a one-shot warning if a list was configured.
+          - `configured_provider_model` becomes `configured_provider_models`
+            with a thin shim returning the first element for callers that
+            still want a single model.
+      - file: "tests/test_review_runner.py"
+        action: "update"
+        ownership: "shared"
+        content_spec: |
+          Add tests covering: single-string config returns a 1-tuple; list
+          config preserves order; empty list raises; non-string entry
+          raises; `--model` override yields a 1-tuple regardless of
+          configured shape.
+    acceptance_criteria:
+      - id: "ac1_1"
+        type: "compile"
+        description: "Sources compile after config refactor."
+        command: "python3 -m compileall scafld tests"
+        expected: "exit code 0"
+        result: "pass"
+        executed_at: "2026-04-27T09:12:59Z"
+        result_output: "Listing 'scafld'... Listing 'scafld/commands'... Listing 'tests'..."
+      - id: "ac1_2"
+        type: "test"
+        description: "Config parsing tests pass."
+        command: "python3 -m unittest tests.test_review_runner"
+        expected: "exit code 0"
+        result: "pass"
+        executed_at: "2026-04-27T09:12:59Z"
+        result_output: "..................................... ---------------------------------------------------------------------- Ran 37 tests in 0.000s  OK"
+    status: "completed"
+
+  - id: "phase2"
+    name: "Per-model retry loop with rejection classifier"
+    objective: "When a provider exits with a model-rejection signature, retry against the next configured model and record both attempts."
+    dependencies:
+      - "phase1"
+    changes:
+      - file: "scafld/review_runner.py"
+        action: "update"
+        ownership: "shared"
+        content_spec: |
+          - Add `_is_model_rejection(returncode, stdout, stderr)` matching a
+            tight allowlist of strings: `unknown model`, `model not found`,
+            `model not available`, `does not have access`, `not authorized
+            to use this model`. Only signal classification on non-zero
+            return codes.
+          - Restructure `run_external_review` so the provider call lives in
+            a `for model in resolved_runner.models:` loop. Each attempt:
+              - Records a provider invocation with status `running`.
+              - On non-zero exit + classifier match, records the entry as
+                `failed_model_unavailable` with the matched signature, then
+                continues.
+              - On non-zero exit + classifier miss, behaves exactly as today
+                (`failed`, raise `ScafldError`).
+              - On success, records `completed` and returns the result.
+            After exhausting the list, raise the existing
+            `external review runner failed via {provider}` error with a
+            details line listing each attempted model.
+          - Provenance includes a `model_attempts` list of
+            `{model, status, signature?}` dicts; `model_requested` becomes
+            the first attempted model and a new `model_used` field captures
+            the successful one.
+      - file: "tests/test_review_runner.py"
+        action: "update"
+        ownership: "shared"
+        content_spec: |
+          Cover `_is_model_rejection` against representative codex stderr
+          (e.g., `error: model 'gpt-5.5' not available`) and claude stdout
+          (e.g., `error: model "claude-opus-4-7" not found`). Cover negative
+          cases (timeout, network error) and ensure the classifier returns
+          False.
+      - file: "tests/review_gate_smoke.sh"
+        action: "update"
+        ownership: "shared"
+        content_spec: |
+          Add `external-review-model-fallback`: builds an isolated workspace
+          with `review.external.codex.model: ["fake-1", "fake-2"]`. Stub
+          provider exits non-zero with `error: model 'fake-1' not
+          available` on the first invocation and emits a valid review
+          packet on the second. Assert the review completes, the session
+          ledger records two provider invocations, and the provenance
+          `model_attempts` shows both attempts.
+      - file: "docs/configuration.md"
+        action: "update"
+        content_spec: |
+          Document `review.external.{codex,claude}.model` as `string |
+          list[string]`. Show the example shape, explain the fallback
+          trigger, and link to `scafld status` for observing
+          `model_attempts`.
+    acceptance_criteria:
+      - id: "ac2_1"
+        type: "test"
+        description: "Classifier and runner unit tests pass."
+        command: "python3 -m unittest tests.test_review_runner"
+        expected: "exit code 0"
+        result: "pass"
+        executed_at: "2026-04-27T09:22:52Z"
+        result_output: ".................................................... ---------------------------------------------------------------------- Ran 52 tests in 0.001s  OK"
+      - id: "ac2_2"
+        type: "boundary"
+        description: "Fallback smoke is registered in the harness dispatcher and case_all."
+        command: "grep -q 'case_external_review_model_fallback' tests/review_gate_smoke.sh"
+        expected: "exit code 0"
+        result: "pass"
+        executed_at: "2026-04-27T09:22:52Z"
+      - id: "ac2_3"
+        type: "boundary"
+        description: "Smoke harness has valid bash syntax."
+        command: "bash -n tests/review_gate_smoke.sh"
+        expected: "exit code 0"
+        result: "pass"
+        executed_at: "2026-04-27T09:22:52Z"
+      - id: "ac2_4"
+        type: "boundary"
+        description: "Docs explain the rejection classifier and list shape."
+        command: "grep -qE 'rejection signature|model not available|list of strings' docs/configuration.md"
+        expected: "exit code 0"
+        result: "pass"
+        executed_at: "2026-04-27T09:23:10Z"
+    status: "completed"
+
+rollback:
+  strategy: "per_phase"
+  commands:
+    phase1: "git checkout HEAD -- scafld/review_runner.py tests/test_review_runner.py"
+    phase2: "git checkout HEAD -- scafld/review_runner.py tests/test_review_runner.py tests/review_gate_smoke.sh docs/configuration.md"
+
+harden_rounds:
+  - round: 1
+    started_at: "2026-04-27T09:03:46Z"
+    outcome: "in_progress"
+    questions: []
+
+review:
+  timestamp: "2026-04-27T10:05:07Z"
+  verdict: "pass_with_issues"
+  review_rounds: 1
+  reviewer_mode: "fresh_agent"
+  reviewer_session: "7425cc4a-c4b9-47bf-855a-cf5be1daf675"
+  round_status: "completed"
+  override_applied: false
+  override_reason: null
+  override_confirmed_at: null
+  reviewed_head: "19a9a7618bec32860a5f96292fb1aa0302895e8e"
+  reviewed_dirty: true
+  reviewed_diff: "3246364e6e339bd47b72014853e884ba72628b1cd9880a47d423bfdb8bffe62a"
+  passes:
+    - id: spec_compliance
+      result: "pass"
+    - id: scope_drift
+      result: "pass"
+    - id: regression_hunt
+      result: "pass_with_issues"
+    - id: convention_check
+      result: "pass_with_issues"
+    - id: dark_patterns
+      result: "pass"
+  blocking_count: 0
+  non_blocking_count: 2

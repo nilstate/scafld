@@ -170,7 +170,17 @@ def parse_acceptance_criteria(text):
                         if not criterion_id:
                             continue
                         criterion = {"id": criterion_id, "phase": phase_id}
-                        for key in ("type", "description", "command", "expected", "cwd", "timeout_seconds"):
+                        for key in (
+                            "type",
+                            "description",
+                            "command",
+                            "expected",
+                            "cwd",
+                            "timeout_seconds",
+                            "expected_kind",
+                            "expected_exit_code",
+                            "evidence_required",
+                        ):
                             if key in entry:
                                 criterion[key] = entry.get(key)
                         result = entry.get("result")
@@ -232,7 +242,17 @@ def parse_acceptance_criteria(text):
                         if field_match:
                             key = field_match.group(1)
                             value = parse_yaml_value(field_match.group(2))
-                            if key in ("type", "description", "command", "expected", "cwd", "timeout_seconds"):
+                            if key in (
+                                "type",
+                                "description",
+                                "command",
+                                "expected",
+                                "cwd",
+                                "timeout_seconds",
+                                "expected_kind",
+                                "expected_exit_code",
+                                "evidence_required",
+                            ):
                                 criterion[key] = value
                             elif key == "result":
                                 if value:

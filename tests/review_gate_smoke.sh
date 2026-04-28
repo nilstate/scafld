@@ -2292,6 +2292,901 @@ PY
   assert_json "$output" "data['result']['runtime']['latest_provider_invocation']['status'] == 'completed'" "status should retain latest provider telemetry"
 }
 
+case_acceptance_strict_rejects_undeclared_kind() {
+  local repo task_id output session_json
+  repo="$(new_repo)"
+  task_id="acceptance-strict"
+  printf 'baseline\n' > "$repo/app.txt"
+
+  cat > "$repo/.ai/specs/active/$task_id.yaml" <<'EOF'
+spec_version: "1.1"
+task_id: "acceptance-strict"
+created: "2026-04-28T00:00:00Z"
+updated: "2026-04-28T00:00:00Z"
+status: "in_progress"
+task:
+  title: "Strict acceptance smoke"
+  summary: "Verify strict mode rejects undeclared expected_kind"
+  size: "small"
+  risk_level: "low"
+phases:
+  - id: "phase1"
+    name: "Smoke"
+    objective: "Exercise strict acceptance"
+    changes:
+      - file: "app.txt"
+        action: "update"
+        content_spec: "noop"
+    acceptance_criteria:
+      - id: "ac1_1"
+        type: "custom"
+        description: "legacy substring expectation that does not auto-resolve"
+        command: "echo 'all tests passed'"
+        expected: "all tests pass"
+    status: "pending"
+planning_log:
+  - timestamp: "2026-04-28T00:00:00Z"
+    actor: "user"
+    summary: "fixture"
+EOF
+
+  capture output env -i HOME="$HOME" PATH="$CLI_ROOT:$PATH" bash -c "cd '$repo' && scafld build '$task_id' --json" || true
+  assert_contains "$output" "add an explicit expected_kind" "strict mode must reject the legacy-substring criterion with explicit guidance"
+}
+
+case_complete_advisory_findings_pass() {
+  local repo task_id output
+  repo="$(new_repo)"
+  task_id="advisory-findings-pass"
+  write_changed_file "$repo"
+  write_active_spec "$repo" "$task_id" "grep -q '^changed$' app.txt" "exit code 0" "pass"
+
+  mkdir -p "$repo/.ai/reviews"
+  cat > "$repo/.ai/reviews/$task_id.md" <<'EOF'
+# Review: advisory-findings-pass
+
+## Spec
+Smoke advisory-findings-pass
+Smoke fixture for advisory line on complete
+
+## Files Changed
+- app.txt
+
+---
+
+## Review 1 — 2026-04-28T12:00:00Z
+
+### Metadata
+```json
+{
+  "schema_version": 3,
+  "round_status": "completed",
+  "reviewer_mode": "fresh_agent",
+  "reviewer_session": "sess-adv-1",
+  "reviewed_at": "2026-04-28T12:00:00Z",
+  "override_reason": null,
+  "pass_results": {
+    "spec_compliance": "pass",
+    "scope_drift": "pass",
+    "regression_hunt": "pass_with_issues",
+    "convention_check": "pass",
+    "dark_patterns": "pass"
+  }
+}
+```
+
+### Pass Results
+- spec_compliance: PASS
+- scope_drift: PASS
+- regression_hunt: PASS WITH ISSUES
+- convention_check: PASS
+- dark_patterns: PASS
+
+### Regression Hunt
+- **medium** `app.txt:1` — placeholder advisory finding for the smoke.
+
+### Convention Check
+No issues found — checked AGENTS.md and CONVENTIONS.md.
+
+### Dark Patterns
+No issues found — checked tests/ and scafld/.
+
+### Blocking
+None.
+
+### Non-blocking
+- **medium** `app.txt:1` — placeholder advisory finding for the smoke.
+
+### Verdict
+pass_with_issues
+EOF
+  inject_review_git_state "$repo" "$task_id"
+
+  capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld complete '$task_id'"
+  assert_contains "$output" "advisory:" "complete should print the advisory line when non-blocking findings exist under the threshold"
+  assert_contains "$output" "medium: 1" "advisory breakdown should name the severity bucket"
+}
+
+case_complete_blocks_on_medium_when_threshold_set() {
+  local repo task_id output
+  repo="$(new_repo)"
+  task_id="advisory-blocks-medium"
+  write_changed_file "$repo"
+  write_active_spec "$repo" "$task_id" "grep -q '^changed$' app.txt" "exit code 0" "pass"
+
+  cat > "$repo/.ai/config.local.yaml" <<'EOF'
+review:
+  gate_severity: "medium"
+EOF
+
+  mkdir -p "$repo/.ai/reviews"
+  cat > "$repo/.ai/reviews/$task_id.md" <<'EOF'
+# Review: advisory-blocks-medium
+
+## Spec
+Smoke advisory-blocks-medium
+Smoke fixture for medium-threshold gate
+
+## Files Changed
+- app.txt
+
+---
+
+## Review 1 — 2026-04-28T12:00:00Z
+
+### Metadata
+```json
+{
+  "schema_version": 3,
+  "round_status": "completed",
+  "reviewer_mode": "fresh_agent",
+  "reviewer_session": "sess-medium-1",
+  "reviewed_at": "2026-04-28T12:00:00Z",
+  "override_reason": null,
+  "pass_results": {
+    "spec_compliance": "pass",
+    "scope_drift": "pass",
+    "regression_hunt": "pass_with_issues",
+    "convention_check": "pass",
+    "dark_patterns": "pass"
+  }
+}
+```
+
+### Pass Results
+- spec_compliance: PASS
+- scope_drift: PASS
+- regression_hunt: PASS WITH ISSUES
+- convention_check: PASS
+- dark_patterns: PASS
+
+### Regression Hunt
+- **medium** `app.txt:1` — placeholder finding gates complete under threshold=medium.
+
+### Convention Check
+No issues found — checked AGENTS.md and CONVENTIONS.md.
+
+### Dark Patterns
+No issues found — checked tests/ and scafld/.
+
+### Blocking
+None.
+
+### Non-blocking
+- **medium** `app.txt:1` — placeholder finding gates complete under threshold=medium.
+
+### Verdict
+pass_with_issues
+EOF
+  inject_review_git_state "$repo" "$task_id"
+
+  if capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld complete '$task_id'"; then
+    fail "complete should refuse when gate_severity=medium and a non-blocking medium finding is present"
+  fi
+  assert_contains "$output" "at or above severity medium" "gate_reason should name the threshold and severity"
+}
+
+_seal_tamper_write_fixture() {
+  local repo="$1"
+  local task_id="$2"
+  mkdir -p "$repo/.ai/runs/$task_id/review-packets"
+  mkdir -p "$repo/.ai/reviews"
+  cat > "$repo/.ai/runs/$task_id/review-packets/review-1.json" <<EOF
+{
+  "schema_version": "review_packet_artifact.v1",
+  "task_id": "$task_id",
+  "review_round": 1,
+  "generated_at": "2026-04-28T12:00:00Z",
+  "packet": {
+    "schema_version": "review_packet.v1",
+    "review_summary": "Smoke fixture for seal verification.",
+    "verdict": "pass",
+    "pass_results": {
+      "regression_hunt": "pass",
+      "convention_check": "pass",
+      "dark_patterns": "pass"
+    },
+    "checked_surfaces": [
+      {"pass_id": "regression_hunt", "targets": ["app.txt"], "summary": "Checked app."},
+      {"pass_id": "convention_check", "targets": ["AGENTS.md"], "summary": "Checked conventions."},
+      {"pass_id": "dark_patterns", "targets": ["scafld/foo.py"], "summary": "Checked patterns."}
+    ],
+    "findings": []
+  }
+}
+EOF
+  local sha
+  sha="$(env PYTHONPATH="$REPO_ROOT" python3 -c "
+import json
+from scafld.review_packet import compute_canonical_response_sha256
+artifact = json.loads(open('$repo/.ai/runs/$task_id/review-packets/review-1.json').read())
+print(compute_canonical_response_sha256(artifact['packet']))
+")"
+  cat > "$repo/.ai/reviews/$task_id.md" <<EOF
+# Review: $task_id
+
+## Spec
+Seal tamper smoke
+Smoke fixture for seal verification on complete
+
+## Files Changed
+- app.txt
+
+---
+
+## Review 1 — 2026-04-28T12:00:00Z
+
+### Metadata
+\`\`\`json
+{
+  "schema_version": 3,
+  "round_status": "completed",
+  "reviewer_mode": "fresh_agent",
+  "reviewer_session": "sess-seal-1",
+  "reviewed_at": "2026-04-28T12:00:00Z",
+  "override_reason": null,
+  "pass_results": {
+    "spec_compliance": "pass",
+    "scope_drift": "pass",
+    "regression_hunt": "pass",
+    "convention_check": "pass",
+    "dark_patterns": "pass"
+  },
+  "review_provenance": {
+    "canonical_response_sha256": "$sha"
+  }
+}
+\`\`\`
+
+### Pass Results
+- spec_compliance: PASS
+- scope_drift: PASS
+- regression_hunt: PASS
+- convention_check: PASS
+- dark_patterns: PASS
+
+### Regression Hunt
+No issues found — checked app.txt.
+
+### Convention Check
+No issues found — checked AGENTS.md.
+
+### Dark Patterns
+No issues found — checked scafld/foo.py.
+
+### Blocking
+None.
+
+### Non-blocking
+None.
+
+### Verdict
+pass
+EOF
+  inject_review_git_state "$repo" "$task_id"
+}
+
+case_plan_produces_slim_spec() {
+  local repo task_id output spec_text
+  repo="$(new_repo)"
+  task_id="slim-plan-smoke"
+  printf 'baseline\n' > "$repo/app.txt"
+
+  capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld plan '$task_id' --command 'true' --files 'app.txt'"
+  spec_text="$(cat "$repo/.ai/specs/drafts/$task_id.yaml")"
+
+  # Slim spec should be well under 40 lines and carry no TODO sentinels.
+  local line_count
+  line_count="$(printf '%s\n' "$spec_text" | wc -l | tr -d ' ')"
+  if [ "$line_count" -ge 40 ]; then
+    fail "slim plan output is $line_count lines, expected < 40"
+  fi
+  assert_not_contains "$spec_text" 'command: "TODO' "slim plan must not emit TODO command sentinels"
+  assert_not_contains "$spec_text" 'file: "TODO' "slim plan must not emit TODO file sentinels"
+  assert_contains "$spec_text" 'expected_kind: "exit_code_zero"' "slim plan criterion must declare expected_kind explicitly"
+  assert_contains "$spec_text" 'file: "app.txt"' "slim plan must record the --files entry verbatim"
+}
+
+case_plan_refuses_on_exclusive_conflict() {
+  local repo task_id_other task_id output
+  repo="$(new_repo)"
+  task_id_other="other-exclusive-claim"
+  task_id="slim-conflict-attempt"
+  printf 'baseline\n' > "$repo/scafld/foo.py"
+  mkdir -p "$repo/scafld" 2>/dev/null || true
+
+  # Pre-create an active spec that exclusively claims scafld/foo.py.
+  mkdir -p "$repo/.ai/specs/active"
+  cat > "$repo/.ai/specs/active/$task_id_other.yaml" <<'EOF'
+spec_version: "1.1"
+task_id: "other-exclusive-claim"
+created: "2026-04-28T00:00:00Z"
+updated: "2026-04-28T00:00:00Z"
+status: "in_progress"
+task:
+  title: "Other"
+  summary: "Other"
+  size: "small"
+  risk_level: "low"
+planning_log:
+  - timestamp: "2026-04-28T00:00:00Z"
+    actor: "user"
+    summary: "fixture"
+phases:
+  - id: "phase1"
+    name: "Phase"
+    objective: "Phase"
+    changes:
+      - file: "scafld/foo.py"
+        action: "update"
+        content_spec: "noop"
+    acceptance_criteria:
+      - id: "ac1_1"
+        type: "test"
+        command: "true"
+        expected_kind: "exit_code_zero"
+    status: "pending"
+EOF
+
+  if capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld plan '$task_id' --command 'true' --files 'scafld/foo.py'"; then
+    fail "plan should refuse when --files declares a path another active spec exclusively owns"
+  fi
+  assert_contains "$output" "exclusively owned" "refusal must name the conflict"
+  if [ -f "$repo/.ai/specs/drafts/$task_id.yaml" ]; then
+    fail "refused plan must not leave a half-baked spec on disk"
+  fi
+}
+
+case_review_complete_rejects_tampered_review_file() {
+  local repo task_id output
+
+  # Control: a fresh repo with a matching seal advances cleanly.
+  repo="$(new_repo)"
+  task_id="seal-tamper-control"
+  write_changed_file "$repo"
+  write_active_spec "$repo" "$task_id" "grep -q '^changed$' app.txt" "exit code 0" "pass"
+  _seal_tamper_write_fixture "$repo" "$task_id"
+  capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld complete '$task_id'"
+  assert_contains "$output" "moved" "matching seal must allow complete to advance"
+
+  # Tamper run: a separate fresh repo with a flipped char in the
+  # metadata seal hash. Complete must refuse.
+  repo="$(new_repo)"
+  task_id="seal-tamper-rejected"
+  write_changed_file "$repo"
+  write_active_spec "$repo" "$task_id" "grep -q '^changed$' app.txt" "exit code 0" "pass"
+  _seal_tamper_write_fixture "$repo" "$task_id"
+  python3 -c "
+import re
+path = '$repo/.ai/reviews/$task_id.md'
+text = open(path).read()
+def flip(match):
+    sha = match.group(1)
+    flipped = sha[:-1] + ('0' if sha[-1] != '0' else '1')
+    return match.group(0).replace(sha, flipped, 1)
+text = re.sub(r'\"canonical_response_sha256\": \"([a-f0-9]{64})\"', flip, text, count=1)
+open(path, 'w').write(text)
+"
+  inject_review_git_state "$repo" "$task_id"
+
+  if capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld complete '$task_id'"; then
+    fail "complete should refuse when the review file's metadata hash is tampered"
+  fi
+  assert_contains "$output" "review seal check failed" "tampered seal must produce a named gate_reason"
+
+  # Body-tamper run: a separate fresh repo with the seal intact but
+  # the markdown body claims an extra non-blocking finding the sealed
+  # packet doesn't have. The body cross-check must catch the count
+  # mismatch and refuse complete.
+  repo="$(new_repo)"
+  task_id="seal-tamper-body"
+  write_changed_file "$repo"
+  write_active_spec "$repo" "$task_id" "grep -q '^changed$' app.txt" "exit code 0" "pass"
+  _seal_tamper_write_fixture "$repo" "$task_id"
+  # Add a fake non-blocking bullet to the body without touching the
+  # metadata block (which is what the seal binds to). The verified
+  # packet says findings=[]; the body now claims 1 non-blocking
+  # finding. Body cross-check should fire on body_non_blocking_mismatch.
+  python3 -c "
+path = '$repo/.ai/reviews/$task_id.md'
+text = open(path).read()
+text = text.replace(
+    '### Non-blocking\nNone.\n',
+    '### Non-blocking\n- **low** \`app.txt:1\` — fake finding injected by hand-edit.\n',
+)
+open(path, 'w').write(text)
+"
+  inject_review_git_state "$repo" "$task_id"
+
+  if capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld complete '$task_id'"; then
+    fail "complete should refuse when the review body's finding count diverges from the sealed packet"
+  fi
+  assert_contains "$output" "review body tampered" "body-only tamper must produce the body-mismatch gate_reason"
+}
+
+case_review_runner_schema_arg_passed_to_provider() {
+  local repo task_id stub_dir argv_capture schema_capture output session_json
+  repo="$(new_repo)"
+  task_id="review-runner-schema-arg"
+  write_changed_file "$repo"
+  write_active_spec "$repo" "$task_id" "grep -q '^changed$' app.txt" "exit code 0" "pass"
+
+  cat > "$repo/.ai/config.local.yaml" <<'EOF'
+review:
+  runner: "external"
+  external:
+    provider: "codex"
+    timeout_seconds: 30
+    fallback_policy: "warn"
+EOF
+
+  stub_dir="$(mktemp -d /tmp/scafld-review-schema-arg.XXXXXX)"
+  TMP_DIRS+=("$stub_dir")
+  argv_capture="$stub_dir/argv.txt"
+  schema_capture="$stub_dir/schema.txt"
+
+  cat > "$stub_dir/codex" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+argv_file="$argv_capture"
+schema_file="$schema_capture"
+EOF
+  cat >> "$stub_dir/codex" <<'EOF'
+output=""
+schema_path=""
+printf '%s\n' "$@" > "$argv_file"
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o|--output-last-message) output="$2"; shift 2 ;;
+    --output-schema) schema_path="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+if [ -n "$schema_path" ] && [ -f "$schema_path" ]; then
+  cp "$schema_path" "$schema_file"
+fi
+cat >/dev/null
+python3 - "$output" <<'PY'
+import json
+import sys
+
+passes = ["regression_hunt", "convention_check", "dark_patterns"]
+packet = {
+    "schema_version": "review_packet.v1",
+    "review_summary": "Schema-arg smoke verified the provider received --output-schema.",
+    "verdict": "pass",
+    "pass_results": {p: "pass" for p in passes},
+    "checked_surfaces": [
+        {"pass_id": "regression_hunt", "targets": ["app.txt:1"], "summary": "callers", "limitations": []},
+        {"pass_id": "convention_check", "targets": ["AGENTS.md#review"], "summary": "AGENTS.md", "limitations": []},
+        {"pass_id": "dark_patterns", "targets": ["app.txt:1"], "summary": "hardcodes", "limitations": []},
+    ],
+    "findings": [],
+}
+open(sys.argv[1], "w", encoding="utf-8").write(json.dumps(packet))
+PY
+EOF
+  chmod +x "$stub_dir/codex"
+
+  capture output env -i HOME="$HOME" PATH="$stub_dir:$CLI_ROOT:$PATH" SCAFLD_CURRENT_AGENT_PROVIDER=unknown bash -c "cd '$repo' && scafld review '$task_id'"
+  assert_contains "$output" "review: pass" "review should complete with verdict pass"
+
+  assert_contains_file "$argv_capture" "--output-schema" "codex argv must include --output-schema"
+  [ -f "$schema_capture" ] || fail "captured schema file should exist on disk"
+  python3 -c "import json; data=json.loads(open('$schema_capture').read()); assert data['title']=='scafld ReviewPacket', 'schema title mismatch'" || fail "captured schema must be the ReviewPacket schema"
+  python3 -c "import json; data=json.loads(open('$schema_capture').read()); pids=set(data['properties']['pass_results']['properties'].keys()); assert pids=={'regression_hunt','convention_check','dark_patterns'}, f'pass_ids mismatch: {pids}'" || fail "schema pass_results properties must match topology pass_ids"
+}
+
+case_review_runner_schema_arg_passed_to_claude_provider() {
+  local repo task_id stub_dir argv_capture schema_capture output
+  repo="$(new_repo)"
+  task_id="review-runner-claude-schema-arg"
+  write_changed_file "$repo"
+  write_active_spec "$repo" "$task_id" "grep -q '^changed$' app.txt" "exit code 0" "pass"
+
+  cat > "$repo/.ai/config.local.yaml" <<'EOF'
+review:
+  runner: "external"
+  external:
+    provider: "claude"
+    timeout_seconds: 30
+    fallback_policy: "warn"
+EOF
+
+  stub_dir="$(mktemp -d /tmp/scafld-review-claude-schema.XXXXXX)"
+  TMP_DIRS+=("$stub_dir")
+  argv_capture="$stub_dir/argv.txt"
+  schema_capture="$stub_dir/schema.txt"
+
+  cat > "$stub_dir/claude" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+argv_file="$argv_capture"
+schema_file="$schema_capture"
+EOF
+  cat >> "$stub_dir/claude" <<'EOF'
+schema_value=""
+printf '%s\n' "$@" > "$argv_file"
+prev=""
+for arg in "$@"; do
+  if [ "$prev" = "--json-schema" ]; then
+    schema_value="$arg"
+  fi
+  prev="$arg"
+done
+if [ -n "$schema_value" ]; then
+  printf '%s' "$schema_value" > "$schema_file"
+fi
+cat >/dev/null
+python3 - <<'PY'
+import json
+passes = ["regression_hunt", "convention_check", "dark_patterns"]
+packet = {
+    "schema_version": "review_packet.v1",
+    "review_summary": "Claude schema-arg smoke verified --json-schema reaches argv.",
+    "verdict": "pass",
+    "pass_results": {p: "pass" for p in passes},
+    "checked_surfaces": [
+        {"pass_id": "regression_hunt", "targets": ["app.txt:1"], "summary": "callers", "limitations": []},
+        {"pass_id": "convention_check", "targets": ["AGENTS.md#review"], "summary": "AGENTS.md", "limitations": []},
+        {"pass_id": "dark_patterns", "targets": ["app.txt:1"], "summary": "hardcodes", "limitations": []},
+    ],
+    "findings": [],
+}
+wrapper = {
+    "type": "result",
+    "subtype": "success",
+    "is_error": False,
+    "result": "ReviewPacket emitted",
+    "structured_output": packet,
+    "session_id": "11111111-1111-4111-8111-111111111111",
+    "model": "claude-opus-4-7",
+}
+print(json.dumps(wrapper))
+PY
+EOF
+  chmod +x "$stub_dir/claude"
+
+  capture output env -i HOME="$HOME" PATH="$stub_dir:$CLI_ROOT:$PATH" SCAFLD_CURRENT_AGENT_PROVIDER=unknown bash -c "cd '$repo' && scafld review '$task_id'"
+  assert_contains "$output" "review: pass" "claude review must complete with verdict pass"
+
+  assert_contains_file "$argv_capture" "--json-schema" "claude argv must include --json-schema"
+  [ -f "$schema_capture" ] || fail "captured schema string must be persisted"
+  python3 -c "import json; data=json.loads(open('$schema_capture').read()); assert data['title']=='scafld ReviewPacket', 'schema title mismatch'" || fail "captured --json-schema arg must parse as the ReviewPacket schema"
+  python3 -c "import json; data=json.loads(open('$schema_capture').read()); pids=set(data['properties']['pass_results']['properties'].keys()); assert pids=={'regression_hunt','convention_check','dark_patterns'}, f'pass_ids mismatch: {pids}'" || fail "claude schema pass_results properties must match topology pass_ids"
+}
+
+case_review_runner_watchdog_kills_hung_provider() {
+  local repo task_id stub_dir output session_json elapsed_start elapsed_end elapsed
+  repo="$(new_repo)"
+  task_id="review-runner-watchdog-hung"
+  write_changed_file "$repo"
+  write_active_spec "$repo" "$task_id" "grep -q '^changed$' app.txt" "exit code 0" "pass"
+
+  cat > "$repo/.ai/config.local.yaml" <<'EOF'
+review:
+  runner: "external"
+  external:
+    provider: "codex"
+    timeout_seconds: 3
+    fallback_policy: "warn"
+EOF
+
+  stub_dir="$(mktemp -d /tmp/scafld-review-watchdog.XXXXXX)"
+  TMP_DIRS+=("$stub_dir")
+  cat > "$stub_dir/codex" <<'EOF'
+#!/usr/bin/env bash
+# Trap SIGTERM and ignore it; only SIGKILL can stop us.
+trap '' TERM
+cat >/dev/null
+sleep 60
+EOF
+  chmod +x "$stub_dir/codex"
+
+  elapsed_start="$(python3 -c 'import time; print(int(time.monotonic()))')"
+  capture output env -i HOME="$HOME" PATH="$stub_dir:$CLI_ROOT:$PATH" SCAFLD_CURRENT_AGENT_PROVIDER=unknown bash -c "cd '$repo' && scafld review '$task_id'" || true
+  elapsed_end="$(python3 -c 'import time; print(int(time.monotonic()))')"
+  elapsed=$((elapsed_end - elapsed_start))
+
+  [ "$elapsed" -le 15 ] || fail "watchdog should kill the hung provider within timeout+grace, took ${elapsed}s"
+
+  session_json="$(cat "$repo/.ai/runs/$task_id/session.json")"
+  assert_json "$session_json" "data['entries'][-1]['type'] == 'provider_invocation' and data['entries'][-1]['status'] == 'timed_out'" "watchdog kill should record timed_out telemetry"
+}
+
+case_review_runner_transient_retry_succeeds() {
+  local repo task_id stub_dir output session_json
+  repo="$(new_repo)"
+  task_id="review-runner-transient-retry"
+  write_changed_file "$repo"
+  write_active_spec "$repo" "$task_id" "grep -q '^changed$' app.txt" "exit code 0" "pass"
+
+  cat > "$repo/.ai/config.local.yaml" <<'EOF'
+review:
+  runner: "external"
+  external:
+    provider: "codex"
+    timeout_seconds: 30
+    fallback_policy: "warn"
+EOF
+
+  stub_dir="$(mktemp -d /tmp/scafld-review-transient.XXXXXX)"
+  TMP_DIRS+=("$stub_dir")
+  printf '0\n' > "$stub_dir/attempt"
+
+  cat > "$stub_dir/codex" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+output=""
+attempt_file="$stub_dir/attempt"
+EOF
+  cat >> "$stub_dir/codex" <<'EOF'
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o|--output-last-message) output="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+cat >/dev/null
+attempt="$(cat "$attempt_file")"
+attempt=$((attempt + 1))
+printf '%s\n' "$attempt" > "$attempt_file"
+
+if [ "$attempt" -eq 1 ]; then
+  echo "API Error: Stream idle timeout - partial response received" >&2
+  exit 7
+fi
+python3 - "$output" <<'PY'
+import json
+import sys
+
+passes = ["regression_hunt", "convention_check", "dark_patterns"]
+packet = {
+    "schema_version": "review_packet.v1",
+    "review_summary": "Transient retry smoke completed on the second attempt.",
+    "verdict": "pass",
+    "pass_results": {p: "pass" for p in passes},
+    "checked_surfaces": [
+        {"pass_id": "regression_hunt", "targets": ["app.txt:1"], "summary": "callers", "limitations": []},
+        {"pass_id": "convention_check", "targets": ["AGENTS.md#review"], "summary": "AGENTS.md", "limitations": []},
+        {"pass_id": "dark_patterns", "targets": ["app.txt:1"], "summary": "hardcodes", "limitations": []},
+    ],
+    "findings": [],
+}
+open(sys.argv[1], "w", encoding="utf-8").write(json.dumps(packet))
+PY
+EOF
+  chmod +x "$stub_dir/codex"
+
+  capture output env -i HOME="$HOME" PATH="$stub_dir:$CLI_ROOT:$PATH" SCAFLD_CURRENT_AGENT_PROVIDER=unknown bash -c "cd '$repo' && scafld review '$task_id'"
+  assert_contains "$output" "review: pass" "transient retry should succeed on the second attempt"
+
+  session_json="$(cat "$repo/.ai/runs/$task_id/session.json")"
+  assert_json "$session_json" "[e['status'] for e in data['entries'] if e.get('type') == 'provider_invocation'] == ['failed_transient', 'completed']" "session ledger should record one failed_transient followed by completed"
+}
+
+case_review_cancel_signal_handler() {
+  local repo task_id stub_dir review_log review_pid marker session_json status_text i
+  repo="$(new_repo)"
+  task_id="review-cancel-signal-handler"
+  write_changed_file "$repo"
+  write_active_spec "$repo" "$task_id" "grep -q '^changed$' app.txt" "exit code 0" "pass"
+
+  stub_dir="$(mktemp -d /tmp/scafld-review-cancel-signal.XXXXXX)"
+  TMP_DIRS+=("$stub_dir")
+  marker="$stub_dir/started"
+  cat > "$stub_dir/codex" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+touch "$marker"
+EOF
+  cat >> "$stub_dir/codex" <<'EOF'
+cat >/dev/null
+sleep 30
+EOF
+  chmod +x "$stub_dir/codex"
+
+  review_log="$stub_dir/review.log"
+  (
+    env -i HOME="$HOME" PATH="$stub_dir:$CLI_ROOT:$PATH" SCAFLD_CURRENT_AGENT_PROVIDER=unknown bash -c "cd '$repo' && scafld review '$task_id' --provider codex" >"$review_log" 2>&1
+  ) &
+  review_pid="$!"
+
+  for i in $(seq 1 50); do
+    [ -f "$marker" ] && break
+    sleep 0.1
+  done
+  [ -f "$marker" ] || { kill "$review_pid" 2>/dev/null || true; cat "$review_log" >&2; fail "stub provider should produce a start marker"; }
+
+  kill -INT "$review_pid"
+  for i in $(seq 1 50); do
+    if ! kill -0 "$review_pid" 2>/dev/null; then
+      break
+    fi
+    sleep 0.1
+  done
+  if kill -0 "$review_pid" 2>/dev/null; then
+    kill -KILL "$review_pid" 2>/dev/null || true
+    fail "scafld review should exit promptly after SIGINT"
+  fi
+  wait "$review_pid" 2>/dev/null || true
+
+  assert_contains_file "$review_log" "cancelled" "review should print a cancelled message"
+
+  session_json="$(cat "$repo/.ai/runs/$task_id/session.json")"
+  assert_json "$session_json" "[e for e in data['entries'] if e.get('type') == 'provider_invocation'][-1]['status'] == 'cancelled'" "session ledger should mark the cancelled attempt"
+  assert_json "$session_json" "[e for e in data['entries'] if e.get('type') == 'provider_invocation'][-1]['diagnostic_path'].endswith('.txt')" "cancelled attempt should retain a diagnostic path"
+
+  capture status_text env -i HOME="$HOME" PATH="$CLI_ROOT:$PATH" bash -c "cd '$repo' && scafld status '$task_id'"
+  assert_contains "$status_text" "review: cancelled" "scafld status should surface the cancelled attempt"
+}
+
+case_external_review_model_fallback() {
+  local repo task_id stub_dir output session_json
+  repo="$(new_repo)"
+  task_id="external-review-model-fallback"
+  write_changed_file "$repo"
+  write_active_spec "$repo" "$task_id" "grep -q '^changed$' app.txt" "exit code 0" "pass"
+
+  cat > "$repo/.ai/config.local.yaml" <<'EOF'
+review:
+  runner: "external"
+  external:
+    provider: "codex"
+    timeout_seconds: 30
+    fallback_policy: "warn"
+    codex:
+      model:
+        - "fake-rejected-1"
+        - "fake-rejected-2"
+        - "fake-accepted-3"
+EOF
+
+  stub_dir="$(mktemp -d /tmp/scafld-review-model-fallback.XXXXXX)"
+  TMP_DIRS+=("$stub_dir")
+  printf '0\n' > "$stub_dir/attempt"
+
+  cat > "$stub_dir/codex" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+output=""
+model=""
+attempt_file="$stub_dir/attempt"
+EOF
+  cat >> "$stub_dir/codex" <<'EOF'
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o|--output-last-message)
+      output="$2"
+      shift 2
+      ;;
+    -m)
+      model="$2"
+      shift 2
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+cat >/dev/null
+attempt="$(cat "$attempt_file")"
+attempt=$((attempt + 1))
+printf '%s\n' "$attempt" > "$attempt_file"
+
+case "$attempt" in
+  1)
+    echo "error: model '$model' not available on this account" >&2
+    exit 7
+    ;;
+  2)
+    echo "error: unknown model '$model'" >&2
+    exit 7
+    ;;
+  3)
+    python3 - "$output" "$model" <<'PY'
+import json
+import sys
+
+passes = ["regression_hunt", "convention_check", "dark_patterns"]
+packet = {
+    "schema_version": "review_packet.v1",
+    "review_summary": "Model fallback smoke completed on the third configured model.",
+    "verdict": "pass",
+    "pass_results": {p: "pass" for p in passes},
+    "checked_surfaces": [
+        {"pass_id": "regression_hunt", "targets": ["app.txt:1"], "summary": "callers of app.txt", "limitations": []},
+        {"pass_id": "convention_check", "targets": ["AGENTS.md#review"], "summary": "AGENTS.md and CONVENTIONS.md", "limitations": []},
+        {"pass_id": "dark_patterns", "targets": ["app.txt:1"], "summary": "hardcodes and null handling in app.txt", "limitations": []},
+    ],
+    "findings": [],
+}
+open(sys.argv[1], "w", encoding="utf-8").write(json.dumps(packet))
+PY
+    ;;
+  *)
+    echo "stub codex called more times than expected" >&2
+    exit 99
+    ;;
+esac
+EOF
+  chmod +x "$stub_dir/codex"
+
+  capture output env -i HOME="$HOME" PATH="$stub_dir:$CLI_ROOT:$PATH" SCAFLD_CURRENT_AGENT_PROVIDER=unknown bash -c "cd '$repo' && scafld review '$task_id'"
+  assert_contains "$output" "review: pass" "model fallback should reach a passing review on the third model"
+
+  session_json="$(cat "$repo/.ai/runs/$task_id/session.json")"
+  assert_json "$session_json" "len([e for e in data['entries'] if e.get('type') == 'provider_invocation']) == 3" "every model attempt should be recorded in the session ledger"
+  assert_json "$session_json" "[e['status'] for e in data['entries'] if e.get('type') == 'provider_invocation'] == ['failed_model_unavailable', 'failed_model_unavailable', 'completed']" "rejection attempts should record failed_model_unavailable and the final attempt should record completed"
+  assert_json "$session_json" "[e['model_requested'] for e in data['entries'] if e.get('type') == 'provider_invocation'] == ['fake-rejected-1', 'fake-rejected-2', 'fake-accepted-3']" "every configured model should be attempted in order"
+}
+
+case_external_review_model_fallback_exhausted() {
+  local repo task_id stub_dir output session_json
+  repo="$(new_repo)"
+  task_id="external-review-model-fallback-exhausted"
+  write_changed_file "$repo"
+  write_active_spec "$repo" "$task_id" "grep -q '^changed$' app.txt" "exit code 0" "pass"
+
+  cat > "$repo/.ai/config.local.yaml" <<'EOF'
+review:
+  runner: "external"
+  external:
+    provider: "codex"
+    timeout_seconds: 30
+    fallback_policy: "warn"
+    codex:
+      model:
+        - "fake-rejected-1"
+        - "fake-rejected-2"
+EOF
+
+  stub_dir="$(mktemp -d /tmp/scafld-review-model-fallback-exhausted.XXXXXX)"
+  TMP_DIRS+=("$stub_dir")
+  cat > "$stub_dir/codex" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+model=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -m) model="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+cat >/dev/null
+echo "error: model '$model' not available" >&2
+exit 7
+EOF
+  chmod +x "$stub_dir/codex"
+
+  capture output env -i HOME="$HOME" PATH="$stub_dir:$CLI_ROOT:$PATH" SCAFLD_CURRENT_AGENT_PROVIDER=unknown bash -c "cd '$repo' && scafld review '$task_id'" || true
+  assert_contains "$output" "external review runner failed" "exhausted fallback should surface a runner-failed error"
+  assert_contains "$output" "all configured models rejected" "exhausted fallback should list the rejection sequence"
+
+  session_json="$(cat "$repo/.ai/runs/$task_id/session.json")"
+  assert_json "$session_json" "[e['status'] for e in data['entries'] if e.get('type') == 'provider_invocation'] == ['failed_model_unavailable', 'failed_model_unavailable']" "every exhausted attempt should be recorded as failed_model_unavailable"
+}
+
 case_exec_resume_nested_results() {
   local repo task_id output spec_text
   repo="$(new_repo)"
@@ -2669,6 +3564,19 @@ case_all() {
   case_external_runner_malformed_prose
   case_external_runner_json_overrides
   case_external_runner_tracking
+  case_acceptance_strict_rejects_undeclared_kind
+  case_complete_advisory_findings_pass
+  case_complete_blocks_on_medium_when_threshold_set
+  case_review_complete_rejects_tampered_review_file
+  case_plan_produces_slim_spec
+  case_plan_refuses_on_exclusive_conflict
+  case_review_runner_schema_arg_passed_to_provider
+  case_review_runner_schema_arg_passed_to_claude_provider
+  case_review_runner_watchdog_kills_hung_provider
+  case_review_runner_transient_retry_succeeds
+  case_review_cancel_signal_handler
+  case_external_review_model_fallback
+  case_external_review_model_fallback_exhausted
   case_exec_resume_nested_results
   case_exec_timeout_override
   case_complete_nested_exec_and_self_eval
@@ -2708,6 +3616,19 @@ main() {
     external-runner-malformed-prose) case_external_runner_malformed_prose ;;
     external-runner-json-overrides) case_external_runner_json_overrides ;;
     external-runner-tracking) case_external_runner_tracking ;;
+    review-cancel-signal-handler) case_review_cancel_signal_handler ;;
+    acceptance-strict-rejects-undeclared-kind) case_acceptance_strict_rejects_undeclared_kind ;;
+    complete-advisory-findings-pass) case_complete_advisory_findings_pass ;;
+    complete-blocks-on-medium-when-threshold-set) case_complete_blocks_on_medium_when_threshold_set ;;
+    review-complete-rejects-tampered-review-file) case_review_complete_rejects_tampered_review_file ;;
+    plan-produces-slim-spec) case_plan_produces_slim_spec ;;
+    plan-refuses-on-exclusive-conflict) case_plan_refuses_on_exclusive_conflict ;;
+    review-runner-schema-arg-passed-to-provider) case_review_runner_schema_arg_passed_to_provider ;;
+    review-runner-schema-arg-passed-to-claude-provider) case_review_runner_schema_arg_passed_to_claude_provider ;;
+    review-runner-watchdog-kills-hung-provider) case_review_runner_watchdog_kills_hung_provider ;;
+    review-runner-transient-retry-succeeds) case_review_runner_transient_retry_succeeds ;;
+    external-review-model-fallback) case_external_review_model_fallback ;;
+    external-review-model-fallback-exhausted) case_external_review_model_fallback_exhausted ;;
     exec-resume-nested-results) case_exec_resume_nested_results ;;
     exec-timeout-override) case_exec_timeout_override ;;
     complete-nested-exec-and-self-eval) case_complete_nested_exec_and_self_eval ;;

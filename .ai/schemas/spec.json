@@ -251,6 +251,17 @@
                   "description": {"type": "string"},
                   "command": {"type": "string"},
                   "expected": {"type": "string"},
+                  "expected_kind": {
+                    "type": "string",
+                    "enum": ["exit_code_zero", "exit_code_nonzero", "no_matches"]
+                  },
+                  "expected_exit_code": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 255,
+                    "description": "Pin a specific non-zero exit code. Only meaningful with expected_kind: exit_code_nonzero."
+                  },
+                  "evidence_required": {"type": "boolean"},
                   "cwd": {"type": "string", "description": "Working directory relative to workspace root"},
                   "timeout_seconds": {
                     "type": "integer",
@@ -361,6 +372,21 @@
                   "description": "Shell command to run for automated validation. Expected for compile, test, boundary, integration, and security types."
                 },
                 "expected": {"type": "string"},
+                "expected_kind": {
+                  "type": "string",
+                  "enum": ["exit_code_zero", "exit_code_nonzero", "no_matches"],
+                  "description": "Required in 1.7.0+. Structured acceptance match; replaces lenient substring matching."
+                },
+                "expected_exit_code": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 255,
+                  "description": "Used with expected_kind=exit_code_nonzero to pin a specific non-zero exit code."
+                },
+                "evidence_required": {
+                  "type": "boolean",
+                  "description": "When true, criterion-pass requires non-empty stdout. Stops the 'compile + unittest pass with no real work' pattern."
+                },
                 "cwd": {
                   "type": "string",
                   "description": "Working directory for the command, relative to workspace root. Useful in monorepo/workspace setups where different criteria target different submodules."

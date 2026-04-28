@@ -1,7 +1,14 @@
 import json
 import re
 
-from scafld.audit_scope import filter_audit_paths, git_sync_excluded_paths
+from scafld.audit_scope import (
+    active_changes_by_file,
+    active_declared_changes,
+    apply_shared_ownership,
+    collect_declared_change_map,
+    filter_audit_paths,
+    git_sync_excluded_paths,
+)
 from scafld.error_codes import ErrorCode as EC
 from scafld.errors import ScafldError
 from scafld.git_state import build_origin_sync_payload, list_working_tree_changed_files
@@ -19,10 +26,20 @@ from scafld.spec_store import (
     yaml_read_field,
     yaml_read_nested,
 )
-from scafld.spec_templates import build_new_spec_scaffold
+from scafld.spec_templates import build_new_spec_scaffold, build_slim_spec_scaffold
 
 
-def new_spec_snapshot(root, task_id, *, title=None, size=None, risk=None, auto_initialized=False):
+def new_spec_snapshot(
+    root,
+    task_id,
+    *,
+    title=None,
+    size=None,
+    risk=None,
+    command=None,
+    files=None,
+    auto_initialized=False,
+):
     if not re.match(r"^[a-z0-9][a-z0-9-]*[a-z0-9]$", task_id) and not re.match(r"^[a-z0-9]$", task_id):
         raise ScafldError("task-id must be kebab-case (a-z, 0-9, hyphens)", code=EC.INVALID_TASK_ID)
 
@@ -36,18 +53,90 @@ def new_spec_snapshot(root, task_id, *, title=None, size=None, risk=None, auto_i
     dest = dest_dir / f"{task_id}.yaml"
 
     ts = now_iso()
-    scaffold = build_new_spec_scaffold(
-        root,
-        task_id,
-        timestamp=ts,
-        title=title,
-        size=size,
-        risk=risk,
-        framework_config_path=FRAMEWORK_CONFIG_PATH,
-        config_path=CONFIG_PATH,
-        config_local_path=CONFIG_LOCAL_PATH,
-    )
+    use_slim = command and str(command).strip()
+    if use_slim:
+        if isinstance(files, str):
+            file_list = [path.strip() for path in files.split(",") if path.strip()]
+        else:
+            file_list = list(files or [])
+        if not file_list:
+            raise ScafldError(
+                "scafld plan --command requires --files (comma-separated paths)",
+                code=EC.INVALID_ARGUMENTS,
+            )
+        try:
+            scaffold = build_slim_spec_scaffold(
+                root,
+                task_id,
+                timestamp=ts,
+                title=title,
+                command=command,
+                files=file_list,
+                size=size or "small",
+                risk_level=risk or "low",
+            )
+        except ValueError as exc:
+            raise ScafldError(str(exc), code=EC.INVALID_ARGUMENTS) from exc
+    else:
+        scaffold = build_new_spec_scaffold(
+            root,
+            task_id,
+            timestamp=ts,
+            title=title,
+            size=size,
+            risk=risk,
+            framework_config_path=FRAMEWORK_CONFIG_PATH,
+            config_path=CONFIG_PATH,
+            config_local_path=CONFIG_LOCAL_PATH,
+        )
     dest.write_text(scaffold["text"])
+
+    # Plan-time scope conflict detection: catch overlap with other
+    # active specs at plan time instead of waiting for review-time
+    # scope_drift. For each file the new spec declares, check what
+    # other active specs already say:
+    #   - other declares it `shared` (and we agree implicitly) →
+    #     auto-tag this spec as `shared` to record the cooperation
+    #   - other declares it exclusively → refuse to plan with
+    #     SCOPE_DRIFT and a one-line conflict message
+    declared = collect_declared_change_map(scaffold["text"])
+    if declared:
+        other_changes = active_declared_changes(root, exclude_task_id=task_id)
+        other_by_file = active_changes_by_file(other_changes)
+        conflicts = {}
+        shared_paths = set()
+        for path in declared:
+            entries = other_by_file.get(path) or []
+            if not entries:
+                continue
+            if all(entry.get("ownership") == "shared" for entry in entries):
+                shared_paths.add(path)
+            else:
+                conflicts[path] = [
+                    entry["task_id"]
+                    for entry in entries
+                    if entry.get("ownership") != "shared"
+                ]
+        if conflicts:
+            dest.unlink()
+            details = [
+                f"  {path} is exclusively owned by " + ", ".join(others)
+                for path, others in sorted(conflicts.items())
+            ]
+            raise ScafldError(
+                f"plan refused: {len(conflicts)} file(s) exclusively owned by other active specs",
+                details + [
+                    "either coordinate ownership in the conflicting spec(s) or pick different files",
+                ],
+                code=EC.SCOPE_DRIFT,
+            )
+        if shared_paths:
+            scaffold_text = apply_shared_ownership(
+                dest.read_text(encoding="utf-8"),
+                shared_paths,
+            )
+            dest.write_text(scaffold_text)
+
     rel = dest.relative_to(root)
     return {
         "task_id": task_id,

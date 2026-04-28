@@ -34,6 +34,147 @@ Meaning:
 If an external wrapper knows token or cost usage, it may write optional `usage`
 fields into session. scafld does not require that data.
 
+## Acceptance strictness
+
+Acceptance criteria gate phase advance in `scafld build`. 1.x relied on
+substring matching against the legacy `expected:` string (e.g. `"exit
+code 0"`, `"all tests pass"`). 1.7.0 ships a structured alternative.
+
+```yaml
+- id: "ac1_1"
+  type: "test"
+  command: "python3 -m unittest tests.test_X"
+  expected_kind: "exit_code_zero"
+```
+
+Three `expected_kind` values:
+
+- `exit_code_zero` — passes when the command exits 0.
+- `exit_code_nonzero` — passes on any non-zero exit; pin a specific code with `expected_exit_code: <n>`.
+- `no_matches` — passes when stdout is empty OR the command exits non-zero (mirrors the legacy `expected: "no matches"` semantics; rg-style "no match found" returns exit code 1 with empty stdout).
+
+Optional `evidence_required: true` additionally requires non-empty
+stdout. Stops the "compile + unittest pass with no real work"
+pattern.
+
+Hard cutover: criteria without an explicit `expected_kind` are
+rejected loudly without running the command. Legacy `expected:`
+strings (`"exit code 0"`, `"exit code N"`, `"no matches"`) auto-map
+to the new kinds, so existing specs that use the documented forms
+continue to work; anything else fails with one-line guidance to add
+an explicit `expected_kind`. There is no lenient mode opt-out.
+
+## Slim plan
+
+`scafld plan <id> -t "<title>" --command "<cmd>" --files "a.py,b.py"`
+produces a complete ~30-line spec ready to approve. No `TODO`
+placeholders, no manual fill round, no validation surprises.
+
+```yaml
+spec_version: "1.1"
+task_id: "fix-typo"
+created: "..."
+updated: "..."
+status: "draft"
+harden_status: "in_progress"
+task:
+  title: "Fix typo"
+  summary: "Fix typo"
+  size: "small"
+  risk_level: "low"
+planning_log:
+  - timestamp: "..."
+    actor: "user"
+    summary: "Spec created via scafld plan --command"
+phases:
+  - id: "phase1"
+    name: "Fix typo"
+    objective: "Implement Fix typo"
+    changes:
+      - file: "README.md"
+        action: "update"
+        content_spec: "See task summary."
+    acceptance_criteria:
+      - id: "ac1_1"
+        type: "test"
+        command: "grep -q 'the' README.md"
+        expected_kind: "exit_code_zero"
+    status: "pending"
+```
+
+The slim criterion always declares `expected_kind: exit_code_zero`
+explicitly so the strict-unset-reject in
+`evaluate_acceptance_criterion` never fires.
+
+The verbose template path (current behavior) is preserved when
+`--command` is omitted; multi-phase complex specs stay verbose by
+default.
+
+## Plan-time conflict detection
+
+Whenever `scafld plan` writes a slim spec, it reads the declared
+file paths and compares them against other active specs:
+
+- If another active spec declares the same file as `ownership: shared`,
+  the new spec auto-tags its change entry as `shared` too.
+- If another active spec declares the file exclusively, `scafld plan`
+  refuses with `EC.SCOPE_DRIFT` and names the conflicting task. No
+  partial spec file is written; nothing to clean up.
+
+This catches scope conflicts at plan time instead of waiting for
+review-time `scope_drift` to surface them.
+
+## Review seal
+
+Each external-reviewer round writes `canonical_response_sha256` into
+the review markdown's metadata block (computed in
+[`scafld/review_runner.py`](../scafld/review_runner.py) over the
+canonical `{packet, projection}` shape) and persists the canonical
+packet body to `.ai/runs/<task>/review-packets/review-<n>.json`.
+
+`scafld complete` recomputes the hash from the parsed packet artifact
+and refuses to advance on mismatch with `EC.REVIEW_GATE_BLOCKED`.
+Hand-edits to the review markdown — flipping a verdict, changing a
+finding bullet, swapping pass results — fail loudly instead of
+slipping past the gate.
+
+Hard cutover: review files written before 1.7.0 (no
+`canonical_response_sha256` in metadata) fail complete with explicit
+guidance to re-run `scafld review` under 1.7.0 to refresh the seal.
+
+## Review gate severity
+
+`review.gate_severity` in `.ai/config.yaml` controls how non-blocking
+findings affect `scafld complete`. Default is `blocking`.
+
+```yaml
+review:
+  gate_severity: "blocking"   # default; only Blocking-section findings gate complete
+```
+
+Single-round-by-default semantics:
+
+- Verdict `pass` or `pass_with_issues` (no blocking findings) ships in
+  one review round. `complete` advances.
+- Iteration only happens when blocking (high/critical) findings
+  exist. Fix → re-review → repeat.
+- Medium and low findings are advisory output only — they don't block
+  `complete` and they don't drive iteration.
+
+Operators who want strict iteration opt in:
+
+```yaml
+review:
+  gate_severity: "medium"   # non-blocking medium+ findings now gate complete
+```
+
+When advisory findings exist under the threshold, `scafld complete`
+prints an `advisory: N finding(s)` summary with a per-severity
+breakdown so the operator/agent knows what was deferred.
+
+Findings must declare severity (already enforced by the review parser
+via `FINDING_LINE_RE` in `scafld/reviewing.py`).
+
 ## Review Topology
 
 Review ordering stays explicit:
@@ -88,10 +229,61 @@ Meaning:
   the preferred provider but can find the alternate provider; `warn` allows
   fallback or Codex self-review avoidance with a warning, `allow` records the
   weaker isolation without warning, and `disable` requires Codex
-- `external.<provider>.model`: optional provider-specific model pin. Codex
-  review defaults to `gpt-5.5` for the strongest available Codex review path.
-  Claude review defaults to `claude-opus-4-7`; override it if that Claude model
-  is not enabled for the operator account.
+
+### Structured output enforcement
+
+The reviewer's response shape is enforced at generation time by the provider
+CLI. scafld passes the ReviewPacket schema to claude via `--json-schema`
+(inline JSON) and to codex via `--output-schema <path>` (temporary file).
+The model is constrained to produce JSON matching the schema; no prose
+preface, no markdown fences. Python-side `normalize_review_packet` remains
+authoritative at runtime.
+
+The schema lives at `.ai/schemas/review_packet.json` and is bundled by
+`scafld init` and `scafld update`. Operator overrides in the workspace are
+preserved (matches the existing `spec.json` behavior). At prompt-build time
+scafld narrows the schema's `pass_results` properties to the exact
+adversarial pass_ids declared by the spec's review topology.
+
+Known constraints:
+
+- codex `--output-schema` is gated to the `gpt-5.x` model family
+  (codex#4181). The default pin is `gpt-5.5`; non-gpt-5 overrides silently
+  bypass the constraint.
+- The combination of codex `--json` and `--output-schema` with active MCP
+  servers can drop the strict `response_format` (codex#15451). scafld
+  passes `--ignore-user-config` and does not load MCP for codex review,
+  so this should not trip; the Python validator catches it if it does.
+
+### Per-provider model
+
+- `external.<provider>.model`: optional provider-specific model pin. Accepts
+  a single string or a list of strings. Codex review defaults to `gpt-5.5`
+  for the strongest available Codex review path; Claude review defaults to
+  `claude-opus-4-7`. Override either if that model is not enabled for the
+  operator account.
+
+  When the model is configured as a list, scafld retries the same provider
+  with the next entry whenever a non-zero exit reports a recognized
+  rejection signature (`unknown model`, `model not found`, `model not
+  available`, `does not have access`, `not authorized to use this model`).
+  Other failures still fail fast as before. Each attempted model is
+  recorded as its own `provider_invocation` entry in
+  `.ai/runs/<task>/session.json`, so `scafld status` and `scafld report`
+  show the full sequence:
+
+  ```yaml
+  review:
+    external:
+      codex:
+        model:
+          - "gpt-5.5"
+          - "gpt-5"
+      claude:
+        model:
+          - "claude-opus-4-7"
+          - "claude-sonnet-4-6"
+  ```
 
 CLI overrides are explicit:
 

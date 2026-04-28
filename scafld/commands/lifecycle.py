@@ -240,6 +240,8 @@ def cmd_new(args):
         title=getattr(args, "title", None),
         size=getattr(args, "size", None),
         risk=getattr(args, "risk", None),
+        command=getattr(args, "command", None),
+        files=getattr(args, "files", None),
         auto_initialized=auto_initialized,
     )
     rel = Path(snapshot["state"]["file"])
@@ -288,6 +290,7 @@ def cmd_status(args):
     supersession = result.get("supersession") or {}
     runtime = result.get("runtime") or {}
     active_provider = runtime.get("active_provider_invocation") or {}
+    latest_provider = runtime.get("latest_provider_invocation") or {}
     color = STATUS_COLORS.get(status, "")
     print(f"{c(C_BOLD, title)}")
     print(f"     id: {args.task_id}")
@@ -372,6 +375,13 @@ def cmd_status(args):
         session_id = active_provider.get("provider_session_requested")
         if session_id:
             print(f"session: {c(C_DIM, session_id)}")
+    elif latest_provider.get("status") == "cancelled":
+        provider = latest_provider.get("provider") or "unknown"
+        diagnostic = latest_provider.get("diagnostic_path")
+        bits = [f"via {provider}"]
+        if diagnostic:
+            bits.append(f"diagnostic {diagnostic}")
+        print(f" review: {c(C_YELLOW, 'cancelled')}  {' / '.join(bits)}")
     if next_action:
         command = next_action.get("command")
         message = next_action.get("message")

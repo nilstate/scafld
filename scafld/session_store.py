@@ -19,6 +19,9 @@ PROVIDER_INVOCATION_STATUSES = (
     "running",
     "completed",
     "failed",
+    "failed_model_unavailable",
+    "failed_transient",
+    "cancelled",
     "timed_out",
     "spawn_failed",
     "invalid_output",
@@ -476,6 +479,8 @@ def record_provider_invocation(
     review_packet="",
     repair_handoff="",
     repair_handoff_json="",
+    schema_arg_attached=False,
+    schema_load_error="",
     spec_path=None,
 ):
     if confidence is None:
@@ -546,6 +551,9 @@ def record_provider_invocation(
             fields["repair_handoff"] = repair_handoff
         if repair_handoff_json:
             fields["repair_handoff_json"] = repair_handoff_json
+        fields["schema_arg_attached"] = bool(schema_arg_attached)
+        if schema_load_error:
+            fields["schema_load_error"] = schema_load_error
         replace_keys = {"invocation_id": invocation_id} if invocation_id else None
         append_entry(session, "provider_invocation", replace_keys=replace_keys, **fields)
 

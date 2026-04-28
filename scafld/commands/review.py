@@ -5,7 +5,8 @@ from scafld.command_runtime import require_root
 from scafld.error_codes import ErrorCode as EC
 from scafld.errors import ScafldError
 from scafld.output import emit_command_json, error_payload
-from scafld.review_runner import resolve_review_runner, run_external_review
+from scafld.review_packet import metadata_canonical_sha256, read_review_packet_artifact, verify_review_seal
+from scafld.review_runner import is_review_cancelled, resolve_review_runner, run_external_review
 from scafld.review_runtime import review_snapshot
 from scafld.reviewing import (
     build_spec_review_block,
@@ -26,7 +27,7 @@ from scafld.review_workflow import (
 from scafld.runtime_bundle import REVIEWS_DIR
 from scafld.runtime_guidance import existing_review_handoff
 from scafld.runtime_contracts import archive_run_artifacts
-from scafld.session_store import ensure_session, record_challenge_verdict, record_human_override, record_provider_invocation
+from scafld.session_store import ensure_session, load_session, record_challenge_verdict, record_human_override, record_provider_invocation
 from scafld.spec_parsing import parse_acceptance_criteria
 from scafld.spec_store import move_spec, require_spec, yaml_read_field
 from scafld.terminal import C_BOLD, C_CYAN, C_DIM, C_GREEN, C_RED, C_YELLOW, STATUS_COLORS, c
@@ -230,6 +231,39 @@ def _rewrite_completed_dod_statuses(text):
     return "".join(result)
 
 
+def _session_has_override_entry(root, task_id, spec_path, review_round):
+    """Return True iff session.json carries a human_override entry for this round.
+
+    The `apply_human_override` CLI path records this entry via
+    `record_human_override`. Hand-edits to the review markdown can't
+    forge it without also writing to session.json, which would itself
+    be visible. This is the out-of-band signal that an audited override
+    actually ran.
+    """
+    try:
+        session = load_session(root, task_id, spec_path=spec_path)
+    except Exception:
+        return False
+    if not session:
+        return False
+    entries = session.get("entries") if isinstance(session, dict) else None
+    if not isinstance(entries, list):
+        return False
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("type") != "human_override":
+            continue
+        recorded_round = entry.get("review_round")
+        try:
+            recorded_int = int(recorded_round) if recorded_round is not None else None
+        except (TypeError, ValueError):
+            continue
+        if recorded_int == int(review_round or 0):
+            return True
+    return False
+
+
 def cmd_complete(args):
     """Move spec from active to archive (completed). Reads review file and gates on verdict."""
     root = require_root()
@@ -290,6 +324,124 @@ def cmd_complete(args):
     gate_reason = gate["gate_reason"]
     gate_errors = gate["gate_errors"]
     current_git_state = gate["current_git_state"]
+
+    # Verify the review packet seal. 1.7.0 hard cutover:
+    #
+    #   - sealed external review with valid seal + matching body → pass
+    #   - sealed external review with tampered seal or body → block
+    #   - audited override round (round_status=override AND
+    #     override_reason set) → bypass, but only when a real
+    #     `--human-reviewed --reason` flow produced the round
+    #   - any other shape (no artifact, no seal, hand-written
+    #     "override" without a reason, pre-1.7 external review) → block
+    #
+    # The discriminator for "sealed external review" is the existence
+    # of the packet artifact on disk — out-of-band signal an operator
+    # can't fake by editing the in-band metadata block.
+    if not gate_reason and review_data["exists"] and verdict is not None:
+        review_metadata_dict = review_data.get("metadata") or {}
+        round_status = review_metadata_dict.get("round_status")
+        override_reason_field = review_metadata_dict.get("override_reason")
+        review_count = review_data.get("review_count") or 0
+        is_audited_override = (
+            round_status == "override"
+            and isinstance(override_reason_field, str)
+            and override_reason_field.strip()
+            and _session_has_override_entry(root, args.task_id, spec, review_count)
+        )
+        if round_status == "override" and not is_audited_override:
+            # Hand-written `round_status: override` without a matching
+            # session.json entry from the real `--human-reviewed
+            # --reason` flow. The session entry is the out-of-band
+            # signal — written by `record_human_override` only when the
+            # CLI flow ran. Hand-edits to the review markdown can't
+            # forge this without also editing session.json, which the
+            # complete-time check here would still detect on a future
+            # run.
+            gate_reason = (
+                "review round claims override status but no matching "
+                "human_override entry exists in session.json; rerun "
+                "with `--human-reviewed --reason ...`"
+            )
+            gate_errors = list(gate_errors) + ["override_without_session_entry"]
+        elif not is_audited_override:
+            packet = read_review_packet_artifact(
+                root, args.task_id, review_count, spec_path=spec
+            )
+            metadata_seal = metadata_canonical_sha256(review_metadata_dict)
+            if packet is not None:
+                try:
+                    seal_ok, seal_reason = verify_review_seal(
+                        review_metadata_dict, packet
+                    )
+                except (KeyError, TypeError, ValueError) as exc:
+                    seal_ok = False
+                    seal_reason = f"malformed packet artifact: {exc}"
+                if not seal_ok:
+                    if seal_reason == "missing_seal":
+                        gate_reason = (
+                            f"review file predates 1.7.0 seal; re-run "
+                            f"`scafld review {args.task_id}` to refresh"
+                        )
+                    else:
+                        gate_reason = f"review seal check failed: {seal_reason}"
+                    gate_errors = list(gate_errors) + [seal_reason]
+                else:
+                    # Seal binds the packet only; the markdown body is a
+                    # rendered projection. Cross-check that the body's
+                    # verdict and finding counts (both blocking and
+                    # non-blocking) match the verified packet so
+                    # body-only tampering can't slip past the gate.
+                    packet_verdict = packet.get("verdict")
+                    packet_findings = packet.get("findings") or []
+                    packet_blocking_count = sum(
+                        1 for f in packet_findings if f.get("blocking")
+                    )
+                    packet_non_blocking_count = sum(
+                        1 for f in packet_findings if not f.get("blocking")
+                    )
+                    if packet_verdict and packet_verdict != verdict:
+                        gate_reason = (
+                            f"review body tampered: verdict={verdict!r} but "
+                            f"sealed packet says {packet_verdict!r}"
+                        )
+                        gate_errors = list(gate_errors) + ["body_verdict_mismatch"]
+                    elif packet_blocking_count != len(blocking):
+                        gate_reason = (
+                            f"review body tampered: {len(blocking)} blocking "
+                            f"finding(s) in markdown but sealed packet has "
+                            f"{packet_blocking_count}"
+                        )
+                        gate_errors = list(gate_errors) + ["body_blocking_mismatch"]
+                    elif packet_non_blocking_count != len(non_blocking):
+                        gate_reason = (
+                            f"review body tampered: {len(non_blocking)} non-blocking "
+                            f"finding(s) in markdown but sealed packet has "
+                            f"{packet_non_blocking_count}"
+                        )
+                        gate_errors = list(gate_errors) + ["body_non_blocking_mismatch"]
+            elif metadata_seal:
+                # Metadata claims a seal but the packet artifact is
+                # missing — either someone deleted it or this is a
+                # pre-1.7.0 external review whose canonical packet was
+                # never persisted. Either way, can't verify; refuse.
+                gate_reason = (
+                    "review packet artifact missing; cannot verify seal"
+                )
+                gate_errors = list(gate_errors) + ["packet_artifact_missing"]
+            else:
+                # Hard cutover: no artifact and no seal means this
+                # round wasn't produced by an external sealed run.
+                # Operators using `--runner local` or `--runner manual`
+                # must explicitly opt into completion via
+                # `--human-reviewed --reason ...`.
+                gate_reason = (
+                    f"review round has no sealed packet; rerun "
+                    f"`scafld review {args.task_id}` (external runner) "
+                    f"or use `--human-reviewed --reason ...` for an "
+                    f"audited override"
+                )
+                gate_errors = list(gate_errors) + ["no_sealed_packet"]
     override_ready = (
         review_data["exists"]
         and review_data.get("review_count", 0) > 0
@@ -458,6 +610,12 @@ def cmd_complete(args):
             raise ScafldError("--human-reviewed is only for blocked completion")
         sys.exit(1)
 
+    advisory_findings = list(gate.get("advisory_findings") or [])
+    advisory_breakdown = {}
+    for entry in advisory_findings:
+        severity = (entry.get("severity") or "unspecified") if isinstance(entry, dict) else "unspecified"
+        advisory_breakdown[severity] = advisory_breakdown.get(severity, 0) + 1
+
     if not json_mode:
         if verdict == "fail":
             print(f"  {c(C_RED, 'review')}: FAIL — {len(blocking)} blocking finding(s)")
@@ -471,6 +629,16 @@ def cmd_complete(args):
             print(f"  {c(C_GREEN, 'review')}: pass")
         else:
             print(f"  {c(C_YELLOW, 'review')}: incomplete")
+        if advisory_findings:
+            threshold = gate.get("gate_threshold") or "blocking"
+            print(
+                f"  {c(C_DIM, 'advisory')}: "
+                f"{len(advisory_findings)} finding(s) under threshold={threshold}"
+            )
+            for severity in ("critical", "high", "medium", "low", "unspecified"):
+                count = advisory_breakdown.get(severity, 0)
+                if count:
+                    print(f"    {c(C_DIM, f'{severity}: {count}')}")
 
     review_block = build_spec_review_block(
         review_data,
@@ -506,6 +674,9 @@ def cmd_complete(args):
                 "handoff_file": review_data.get("metadata", {}).get("review_handoff"),
                 "run_archive_dir": str(archived_run_dir.relative_to(root)) if archived_run_dir else None,
                 "transition": move_result_payload(root, move_result),
+                "advisory_findings_count": len(advisory_findings),
+                "advisory_severity_breakdown": advisory_breakdown,
+                "gate_threshold": gate.get("gate_threshold"),
             },
         )
     else:
@@ -635,6 +806,13 @@ def cmd_review(args):
             )
         except ScafldError as exc:
             print()
+            if is_review_cancelled(exc):
+                print(f"  {c(C_YELLOW, 'cancelled')}: review interrupted by SIGINT")
+                for detail in exc.details:
+                    if detail.startswith("diagnostic:"):
+                        print(f"    {c(C_DIM, detail)}")
+                print(f"  rerun when ready: {c(C_BOLD, f'scafld review {args.task_id}')}")
+                sys.exit(exc.exit_code)
             print(f"  {c(C_RED, 'error')}: {exc.message}")
             for detail in exc.details:
                 print(f"    {c(C_DIM, detail)}")

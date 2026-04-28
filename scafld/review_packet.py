@@ -1,3 +1,4 @@
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -98,9 +99,12 @@ def review_packet_from_text(text, topology, *, root=None):
     try:
         data = json.loads(payload)
     except json.JSONDecodeError as exc:
+        preview = payload[:200].replace("\n", "\\n")
+        if len(payload) > 200:
+            preview += "..."
         raise ScafldError(
             "external reviewer returned invalid ReviewPacket JSON",
-            [str(exc)],
+            [str(exc), f"received_preview: {preview}"],
             code=EC.COMMAND_FAILED,
         ) from exc
     return normalize_review_packet(data, topology, root=root)
@@ -480,6 +484,83 @@ def review_packet_projection(packet, topology):
             },
         },
     }
+
+
+def compute_canonical_response_sha256(packet):
+    """Recompute the canonical response sha256 from a parsed packet.
+
+    Mirrors the writer at review_runner.py — json-dumps the packet
+    with sorted keys and compact separators and returns the hex
+    sha256. Topology-independent: the seal binds to the packet
+    contents directly, so editing `.ai/config.yaml` between review
+    and complete cannot produce false-positive mismatches.
+    """
+    canonical_payload = json.dumps(packet, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical_payload.encode("utf-8")).hexdigest()
+
+
+def metadata_canonical_sha256(metadata):
+    """Read the seal hash from metadata.
+
+    The writer (`build_review_metadata` + `review_provenance` payload)
+    nests the hash inside `metadata.review_provenance.canonical_response_sha256`.
+    This helper centralises the lookup so callers don't read the wrong
+    level. Returns the hex string when present, or None.
+    """
+    if not isinstance(metadata, dict):
+        return None
+    provenance = metadata.get("review_provenance")
+    if isinstance(provenance, dict):
+        sha = provenance.get("canonical_response_sha256")
+        if isinstance(sha, str) and sha:
+            return sha
+    # Fallback: tolerate seals written at the top level (older write paths
+    # or hand-crafted fixtures). Empty/missing returns None.
+    sha = metadata.get("canonical_response_sha256")
+    return sha if isinstance(sha, str) and sha else None
+
+
+def verify_review_seal(metadata, packet):
+    """Verify a parsed packet's canonical sha256 against the review metadata.
+
+    Returns:
+      (True, "")           — metadata hash matches the recomputed packet hash
+      (False, "missing_seal") — metadata lacks `canonical_response_sha256`;
+                               caller decides what to do (1.7.0 cutover:
+                               reject; pre-1.7 files surface as missing).
+      (False, "hash mismatch: ...") — metadata hash and recomputed hash
+                                       differ. The review file or packet was
+                                       edited after the seal was written.
+    """
+    expected = metadata_canonical_sha256(metadata)
+    if not expected:
+        return False, "missing_seal"
+    recomputed = compute_canonical_response_sha256(packet)
+    if recomputed == expected:
+        return True, ""
+    return False, (
+        f"hash mismatch: metadata={expected[:12]}, recomputed={recomputed[:12]}"
+    )
+
+
+def read_review_packet_artifact(root, task_id, review_count, *, spec_path=None):
+    """Read the canonical packet body persisted alongside a review round.
+
+    Returns the parsed `packet` dict, or None when the artifact is
+    missing (local / manual runner paths, or pre-1.7 review files that
+    pre-date the artifact write).
+    """
+    path = review_packet_artifact_path(root, task_id, review_count, spec_path=spec_path)
+    if not path.exists():
+        return None
+    try:
+        artifact = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(artifact, dict):
+        return None
+    packet = artifact.get("packet")
+    return packet if isinstance(packet, dict) else None
 
 
 def review_packet_artifact_path(root, task_id, review_count, *, spec_path=None):
