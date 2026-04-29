@@ -403,8 +403,9 @@ def cmd_list(args):
         if args.filter:
             print(f"{c(C_DIM, 'No matching specs.')}")
         else:
+            plan_command = 'scafld plan my-feature -t "My feature" -s small -r low'
             print(f"{c(C_DIM, 'No specs found.')}")
-            print(f"  Create one: {c(C_BOLD, 'scafld plan my-feature -t \"My feature\" -s small -r low')}")
+            print(f"  Create one: {c(C_BOLD, plan_command)}")
         return
 
     for label, group_specs in listing_groups(specs).items():

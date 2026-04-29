@@ -120,7 +120,9 @@ def print_exec_payload(task_id, payload, *, phase=None, resume=False):
     if resolved_phase:
         print(f"  phase: {resolved_phase}")
     if resume and summary.get("skipped_resume"):
-        print(f"  {c(C_DIM, f'resume: skipping {summary['skipped_resume']} already-passed criteria')}")
+        skipped_resume = summary["skipped_resume"]
+        resume_message = f"resume: skipping {skipped_resume} already-passed criteria"
+        print(f"  {c(C_DIM, resume_message)}")
     if warnings:
         for warning in warnings:
             print(f"  {c(C_YELLOW, 'warn')}: {warning}")

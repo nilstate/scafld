@@ -29,7 +29,7 @@ jobs:
           package-manager-cache: false
 
       - name: Validate CLI syntax
-        run: PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile cli/scafld scafld/__init__.py scafld/__main__.py scafld/_version.py scafld/config.py scafld/git_state.py scafld/hardening.py scafld/output.py scafld/reviewing.py scripts/sync_version.py scripts/bump_version.py setup.py
+        run: PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile cli/scafld setup.py $(find scafld scripts -name '*.py' -print)
 
       - name: Validate version sync
         run: python3 scripts/sync_version.py --check
@@ -42,6 +42,7 @@ jobs:
           bash -n tests/lifecycle_smoke.sh
           bash -n tests/projection_surface_smoke.sh
           bash -n tests/package_smoke.sh
+          bash -n tests/challenge_override_smoke.sh
 
       - name: Run review gate smoke matrix
         run: bash -x tests/review_gate_smoke.sh all
@@ -60,3 +61,6 @@ jobs:
 
       - name: Run package smoke
         run: bash tests/package_smoke.sh
+
+      - name: Run challenge override smoke
+        run: bash tests/challenge_override_smoke.sh
