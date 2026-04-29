@@ -1,5 +1,8 @@
 import json
 
+from scafld.error_codes import ErrorCode as EC
+from scafld.errors import ScafldError
+
 
 DEFAULT_INIT_COMMANDS = {
     "compile_check": "echo 'Replace: your build command'",
@@ -34,25 +37,57 @@ def deep_merge(base, overlay):
     return result
 
 
+def normalize_config_overlay(overlay):
+    """Apply backward-compatible aliases before an overlay is merged."""
+    if not isinstance(overlay, dict):
+        return overlay
+    review = overlay.get("review")
+    if not isinstance(review, dict):
+        return overlay
+    external = review.get("external")
+    if not isinstance(external, dict) or "timeout_seconds" not in external:
+        return overlay
+
+    timeout_seconds = external.get("timeout_seconds")
+    external.setdefault("idle_timeout_seconds", timeout_seconds)
+    external.setdefault("absolute_max_seconds", timeout_seconds)
+    return overlay
+
+
 def load_config(root, framework_config_path, config_path, config_local_path):
     """Load config with local overlay support.
 
-    PyYAML is `install_requires`, so `yaml.safe_load` is available on
-    every supported runtime path. Each candidate file's parse failure
-    is swallowed so a corrupt overlay in one place doesn't kill the
-    overall config load — the previously-merged config still applies.
+    YAML parsing is only needed when a config file is present. A malformed
+    config file is a control-plane error: silently ignoring it can make
+    review/build commands run with defaults instead of the operator's intended
+    overrides.
     """
-    import yaml
-
     config = {}
-    for candidate in [root / framework_config_path, root / config_path, root / config_local_path]:
-        if not candidate.exists():
-            continue
+    candidates = [root / framework_config_path, root / config_path, root / config_local_path]
+    existing_candidates = [candidate for candidate in candidates if candidate.exists()]
+    if not existing_candidates:
+        return config
+
+    try:
+        import yaml
+    except ImportError as exc:
+        raise ScafldError(
+            "PyYAML is required to read scafld config files",
+            [f"install package dependencies before reading {existing_candidates[0]}"],
+            code=EC.MISSING_DEPENDENCY,
+        ) from exc
+
+    for candidate in existing_candidates:
         try:
             loaded = yaml.safe_load(candidate.read_text())
-        except yaml.YAMLError:
-            continue
+        except yaml.YAMLError as exc:
+            raise ScafldError(
+                "invalid scafld config YAML",
+                [f"{candidate}: {exc}"],
+                code=EC.INVALID_ARGUMENTS,
+            ) from exc
         if isinstance(loaded, dict):
+            loaded = normalize_config_overlay(loaded)
             config = deep_merge(config, loaded)
     return config
 

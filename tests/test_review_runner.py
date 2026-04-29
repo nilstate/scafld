@@ -1757,5 +1757,38 @@ class WatchdogKillDiagnosticTest(unittest.TestCase):
         self.assertIn("absolute_max_seconds: 1800", body)
 
 
+class RecordExternalReviewInvocationTest(unittest.TestCase):
+    def test_preserves_schema_enforcement_telemetry(self):
+        import tempfile
+        from pathlib import Path
+
+        from scafld.commands.review import record_external_review_invocation
+        from scafld.session_store import load_session
+
+        root = Path(tempfile.mkdtemp(prefix="scafld-provider-telemetry-"))
+        provenance = {
+            "invocation_id": "inv-1",
+            "provider": "claude",
+            "provider_bin": "claude",
+            "provider_requested": "claude",
+            "model_requested": "claude-opus-4-7",
+            "model_source": "requested",
+            "isolation_level": "claude_restricted_tools_fresh_session",
+            "fallback_policy": "warn",
+            "schema_arg_attached": True,
+            "schema_load_error": "",
+        }
+
+        record_external_review_invocation(root, "task", provenance, status="completed")
+
+        session = load_session(root, "task")
+        invocation = next(
+            entry for entry in session["entries"]
+            if entry.get("type") == "provider_invocation"
+        )
+        self.assertTrue(invocation["schema_arg_attached"])
+        self.assertNotIn("schema_load_error", invocation)
+
+
 if __name__ == "__main__":
     unittest.main()

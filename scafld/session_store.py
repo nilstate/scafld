@@ -808,11 +808,26 @@ def session_summary_payload(session):
         "executor_model_observed": "",
         "challenger_model_observed": "",
     }
-    override_keys = {
-        (entry.get("gate"), entry.get("review_round"))
-        for entry in override_entries
-    }
-    challenge_blocked = len(blocked_challenge_keys | override_keys)
+    def blocked_round_precedes_override(blocked_round, override_round):
+        if override_round is None or blocked_round is None:
+            return True
+        try:
+            return int(blocked_round) <= int(override_round)
+        except (TypeError, ValueError):
+            return blocked_round == override_round
+
+    implied_override_keys = set()
+    for entry in override_entries:
+        gate = entry.get("gate")
+        review_round = entry.get("review_round")
+        has_prior_blocked_challenge = any(
+            blocked_gate == gate
+            and blocked_round_precedes_override(blocked_round, review_round)
+            for blocked_gate, blocked_round in blocked_challenge_keys
+        )
+        if not has_prior_blocked_challenge:
+            implied_override_keys.add((gate, review_round))
+    challenge_blocked = len(blocked_challenge_keys | implied_override_keys)
     challenge_overrides = len(override_entries)
     return {
         "attempt_count": len(attempts),

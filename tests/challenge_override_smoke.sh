@@ -201,6 +201,7 @@ repo = pathlib.Path(os.environ["REPO"])
 session = json.loads((repo / ".ai" / "runs" / "archive" / "2026-04" / "override-task" / "session.json").read_text())
 assert any(entry["type"] == "challenge_verdict" and entry["blocked"] is True for entry in session["entries"]), session
 assert any(entry["type"] == "human_override" and entry["gate"] == "review" for entry in session["entries"]), session
+assert any(entry["type"] == "human_override" and entry["review_round"] == 2 for entry in session["entries"]), session
 PY
 
 echo "[5/5] report exposes challenge_override_rate"

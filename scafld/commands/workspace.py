@@ -247,6 +247,7 @@ def cmd_init(args):
         emit_command_json("init", state={"workspace": str(project_root)}, result=result)
         return
 
+    plan_command = 'scafld plan my-feature -t "My feature" -s small -r low'
     agent_hint = "\"Let's plan [feature].\""
     print(f"""{c(C_BOLD, 'Done!')} Next steps:
 
@@ -255,7 +256,7 @@ def cmd_init(args):
   3. Edit {c(C_CYAN, 'CLAUDE.md')} - add project overview and commands
   4. Edit {c(C_CYAN, '.ai/config.local.yaml')} - set your build/test/lint commands
 
-  Then: {c(C_BOLD, 'scafld plan my-feature -t \"My feature\" -s small -r low')} or tell your agent {c(C_BOLD, agent_hint)}
+  Then: {c(C_BOLD, plan_command)} or tell your agent {c(C_BOLD, agent_hint)}
   Handoff-first wrappers:
     {c(C_BOLD, 'scripts/scafld-codex-build.sh <task-id>')} / {c(C_BOLD, 'scripts/scafld-claude-build.sh <task-id>')}
     {c(C_BOLD, 'scripts/scafld-codex-review.sh <task-id>')} / {c(C_BOLD, 'scripts/scafld-claude-review.sh <task-id>')}

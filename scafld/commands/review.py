@@ -79,6 +79,8 @@ def record_external_review_invocation(root, task_id, provenance, *, status, diag
         review_packet=provenance.get("review_packet") or "",
         repair_handoff=provenance.get("repair_handoff") or "",
         repair_handoff_json=provenance.get("repair_handoff_json") or "",
+        schema_arg_attached=bool(provenance.get("schema_arg_attached")),
+        schema_load_error=provenance.get("schema_load_error") or "",
     )
 
 
@@ -619,7 +621,7 @@ def cmd_complete(args):
             root,
             args.task_id,
             gate="review",
-            review_round=review_data.get("review_count", 0) - 1,
+            review_round=review_data.get("review_count", 0),
             reason=override_reason,
             confirmed_at=override_confirmed_at,
             review_file=str(review_file.relative_to(root)),
