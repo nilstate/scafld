@@ -42,12 +42,14 @@ repo = pathlib.Path(os.environ["REVIEW_REPO"])
 task_id = os.environ["REVIEW_TASK_ID"]
 sys.path.insert(0, os.environ["REPO_ROOT"])
 from scafld.git_state import capture_review_git_state
+from scafld.review_workflow import review_binding_excluded_rels
 
-state, error = capture_review_git_state(repo, f".ai/reviews/{task_id}.md")
+excluded = review_binding_excluded_rels(task_id, f".scafld/reviews/{task_id}.md")
+state, error = capture_review_git_state(repo, excluded)
 if error:
     raise SystemExit(error)
 
-review_path = repo / ".ai" / "reviews" / f"{task_id}.md"
+review_path = repo / ".scafld" / "reviews" / f"{task_id}.md"
 text = review_path.read_text()
 matches = list(re.finditer(r"```json\s*\n(.*?)\n```", text, re.DOTALL))
 metadata_match = matches[-1]
@@ -59,53 +61,43 @@ PY
 
 write_valid_draft_spec() {
   local repo="$1"
-  cat > "$repo/.ai/specs/drafts/status-task.yaml" <<'EOF'
-spec_version: "1.1"
-task_id: "status-task"
-created: "2026-04-24T00:00:00Z"
-updated: "2026-04-24T00:00:00Z"
-status: "draft"
-harden_status: "in_progress"
-harden_rounds:
-  - round: 1
-    started_at: "2026-04-24T00:00:00Z"
-    outcome: "in_progress"
-    questions: []
+  SPEC_PATH="$repo/.scafld/specs/drafts/status-task.md" REPO_ROOT="$REPO_ROOT" python3 - <<'PY'
+import os
+import sys
+from pathlib import Path
 
-task:
-  title: "Status guidance smoke"
-  summary: "Exercise status next-action guidance"
-  size: "small"
-  risk_level: "low"
+sys.path.insert(0, os.environ["REPO_ROOT"])
+from scafld.spec_markdown import render_spec_markdown
+from tests.spec_fixture import basic_spec
 
-planning_log:
-  - timestamp: "2026-04-24T00:00:00Z"
-    actor: "user"
-    summary: "Bootstrap status guidance smoke fixture"
-
-phases:
-  - id: "phase1"
-    name: "Write the marker"
-    objective: "app.txt should end up ok"
-    changes:
-      - file: "app.txt"
-        action: "update"
-        lines: "1"
-        content_spec: "replace base with ok"
-    acceptance_criteria:
-      - id: "ac1_1"
-        type: "custom"
-        description: "app.txt contains ok"
-        command: "grep -q '^ok$' app.txt"
-        expected: "exit code 0"
-    status: "pending"
-EOF
+created = "2026-04-24T00:00:00Z"
+data = basic_spec(
+    "status-task",
+    status="draft",
+    title="Status guidance smoke",
+    file_path="app.txt",
+    command="grep -q '^ok$' app.txt",
+    created=created,
+)
+data["harden_status"] = "in_progress"
+data["harden_rounds"] = [
+    {
+        "round": 1,
+        "started_at": created,
+        "outcome": "in_progress",
+        "questions": [],
+    }
+]
+path = Path(os.environ["SPEC_PATH"])
+path.parent.mkdir(parents=True, exist_ok=True)
+path.write_text(render_spec_markdown(data), encoding="utf-8")
+PY
 }
 
 write_review_pass() {
   local repo="$1"
-  mkdir -p "$repo/.ai/reviews"
-  cat > "$repo/.ai/reviews/status-task.md" <<'EOF'
+  mkdir -p "$repo/.scafld/reviews"
+  cat > "$repo/.scafld/reviews/status-task.md" <<'EOF'
 # Review: status-task
 
 ## Spec
@@ -128,7 +120,7 @@ Exercise status next-action guidance
   "reviewer_session": "sess-1",
   "reviewed_at": "2026-04-24T00:00:00Z",
   "override_reason": null,
-  "review_handoff": ".ai/runs/status-task/handoffs/challenger-review.md",
+  "review_handoff": ".scafld/runs/status-task/handoffs/challenger-review.md",
   "pass_results": {
     "spec_compliance": "pass",
     "scope_drift": "pass",

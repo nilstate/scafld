@@ -83,7 +83,7 @@ repair_text = (repo / repair_rel).read_text()
 assert "Executor Review Repair" in repair_text, repair_text
 assert "Do not apply spec suggestions blindly" in repair_text, repair_text
 
-review_path = repo / ".ai" / "reviews" / "packet-task.md"
+review_path = repo / ".scafld" / "reviews" / "packet-task.md"
 review_path.parent.mkdir(parents=True, exist_ok=True)
 metadata = build_review_metadata(
     topology,
@@ -361,7 +361,7 @@ else:
 missing_anchor = copy.deepcopy(base)
 missing_anchor["verdict"] = "fail"
 missing_anchor["pass_results"]["regression_hunt"] = "fail"
-missing_anchor["checked_surfaces"][0]["targets"] = ["missing.yaml#review.external"]
+missing_anchor["checked_surfaces"][0]["targets"] = ["missing.md#review.external"]
 missing_anchor["findings"] = [
     {
         "id": "F1",
@@ -435,6 +435,8 @@ sys.path.insert(0, os.environ["REPO_ROOT"])
 from scafld.errors import ScafldError
 from scafld.review_packet import normalize_review_packet
 from scafld.review_workflow import complete_review_round_from_result, load_review_topology
+from scafld.spec_markdown import render_spec_markdown
+from tests.spec_fixture import basic_spec
 
 topology = load_review_topology(repo)
 packet = normalize_review_packet({
@@ -454,11 +456,11 @@ packet = normalize_review_packet({
     "findings": [],
 }, topology, root=repo)
 task_id = "reject-artifact-task"
-review_file = repo / ".ai" / "reviews" / f"{task_id}.md"
+review_file = repo / ".scafld" / "reviews" / f"{task_id}.md"
 review_data = {
     "metadata": {
         "pass_results": {"spec_compliance": "pass", "scope_drift": "pass"},
-        "review_handoff": ".ai/runs/reject-artifact-task/handoffs/challenger-review.md",
+        "review_handoff": ".scafld/runs/reject-artifact-task/handoffs/challenger-review.md",
     },
     "review_count": 1,
 }
@@ -481,14 +483,23 @@ runner_result = SimpleNamespace(
     packet=packet,
 )
 try:
-    complete_review_round_from_result(repo, review_file, task_id, "Smoke spec", topology, review_data, runner_result)
+    spec_text = render_spec_markdown(
+        basic_spec(
+            task_id,
+            status="in_progress",
+            title="Reject Artifact Task",
+            file_path="app.txt",
+            command="true",
+        )
+    )
+    complete_review_round_from_result(repo, review_file, task_id, spec_text, topology, review_data, runner_result)
 except ScafldError as exc:
     assert "invalid review artifact" in exc.message, [exc.message, *exc.details]
 else:
     raise AssertionError("malformed projection should fail")
 
-assert not (repo / ".ai" / "runs" / task_id / "review-packets" / "review-1.json").exists()
-assert not (repo / ".ai" / "runs" / task_id / "handoffs" / "executor-review-repair.md").exists()
+assert not (repo / ".scafld" / "runs" / task_id / "review-packets" / "review-1.json").exists()
+assert not (repo / ".scafld" / "runs" / task_id / "handoffs" / "executor-review-repair.md").exists()
 assert "review_packet" not in runner_result.provenance, runner_result.provenance
 PY
 

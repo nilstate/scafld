@@ -23,41 +23,17 @@ new_repo() {
 
 write_archived_task() {
   local repo="$1"
-  mkdir -p "$repo/.ai/specs/archive/2026-04"
-  mkdir -p "$repo/.ai/runs/archive/2026-04/demo-task"
-  mkdir -p "$repo/.ai/reviews"
-  cat > "$repo/.ai/specs/archive/2026-04/demo-task.yaml" <<'EOF'
-spec_version: "1.1"
-task_id: "demo-task"
-created: "2026-04-24T00:00:00Z"
-updated: "2026-04-24T00:00:00Z"
-status: "completed"
-
-task:
-  title: "Cohort smoke task"
-  summary: "Exercise the cohort summary script"
-  size: "medium"
-  risk_level: "low"
-
-phases:
-  - id: "phase1"
-    name: "Smoke"
-    objective: "Exercise the cohort summary"
-    changes:
-      - file: "demo.txt"
-        action: "update"
-        lines: "1"
-        content_spec: "Fixture"
-    acceptance_criteria:
-      - id: "ac1_1"
-        type: "custom"
-        description: "demo.txt contains ok"
-        command: "grep -q '^ok$' demo.txt"
-        expected: "exit code 0"
-        result: "pass"
-    status: "completed"
-EOF
-  cat > "$repo/.ai/runs/archive/2026-04/demo-task/session.json" <<'EOF'
+  mkdir -p "$repo/.scafld/specs/archive/2026-04"
+  mkdir -p "$repo/.scafld/runs/archive/2026-04/demo-task"
+  mkdir -p "$repo/.scafld/reviews"
+  SCAFLD_SPEC_CREATED="2026-04-24T00:00:00Z" \
+  SCAFLD_SPEC_PHASE_STATUS="completed" \
+  SCAFLD_SPEC_DOD_STATUS="done" \
+  SCAFLD_SPEC_CRITERION_RESULT="pass" \
+    write_markdown_spec "$repo/.scafld/specs/archive/2026-04/demo-task.md" \
+    "demo-task" "completed" "Cohort smoke task" \
+    "demo.txt" "grep -q '^ok$' demo.txt"
+  cat > "$repo/.scafld/runs/archive/2026-04/demo-task/session.json" <<'EOF'
 {
   "schema_version": 3,
   "task_id": "demo-task",
@@ -115,7 +91,7 @@ EOF
 
 write_review_file() {
   local repo="$1"
-  cat > "$repo/.ai/reviews/demo-task.md" <<'EOF'
+  cat > "$repo/.scafld/reviews/demo-task.md" <<'EOF'
 # Review: demo-task
 
 ## Review 1 — 2026-04-24T00:00:00Z
@@ -174,16 +150,15 @@ write_archived_task "$repo"
 write_review_file "$repo"
 
 echo "[1/2] cohort script emits task metrics and fixed questions"
-capture output bash -lc "cd '$REPO_ROOT' && python3 scripts/real_standard.py --root '$repo' --task demo-task --json"
+capture output bash -lc "cd '$REPO_ROOT' && PATH='$CLI_ROOT':\"\$PATH\" python3 scripts/real_standard.py --root '$repo' --task demo-task --json"
 assert_json "$output" "data['tasks'][0]['task_id'] == 'demo-task'" "cohort script should emit the requested task"
 assert_json "$output" "data['tasks'][0]['runtime']['first_attempt_pass_rate']['passed'] == 1" "cohort script should surface first-attempt pass data"
 assert_json "$output" "data['aggregate']['review_signal']['completed_rounds'] == 1" "cohort script should surface aggregate review signal"
-assert_json "$output" "data['tasks'][0]['review_signal']['clean_review_with_evidence'] is True" "cohort script should surface per-task review signal"
-assert_json "$output" "data['tasks'][0]['review_signal']['format_compliant_clean_review'] is True" "cohort script should surface renamed per-task review signal"
+assert_json "$output" "data['tasks'][0]['review_signal']['format_compliant_clean_review'] is True" "cohort script should surface per-task review signal"
 assert_json "$output" "data['tasks'][0]['questions'][0]['id'] == 'build_flow'" "cohort script should emit the fixed question set"
 
 echo "[2/2] markdown mode stays readable"
-capture output bash -lc "cd '$REPO_ROOT' && python3 scripts/real_standard.py --root '$repo' --task demo-task"
+capture output bash -lc "cd '$REPO_ROOT' && PATH='$CLI_ROOT':\"\$PATH\" python3 scripts/real_standard.py --root '$repo' --task demo-task"
 assert_contains "$output" "Task Cohort Summary" "markdown mode should render a heading"
 assert_contains "$output" "Format-compliant clean reviews" "markdown mode should render review signal metrics"
 assert_contains "$output" "Format-compliant clean review" "markdown mode should render per-task review signal metrics"

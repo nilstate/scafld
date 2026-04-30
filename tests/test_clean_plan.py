@@ -4,29 +4,31 @@ import unittest
 from pathlib import Path
 
 from scafld.lifecycle_runtime import validate_spec, new_spec_snapshot
+from scafld.spec_markdown import parse_spec_markdown
 from scafld.spec_templates import build_slim_spec_scaffold
+from tests.spec_fixture import write_basic_spec
 
 
 def _workspace():
     tmp = Path(tempfile.mkdtemp(prefix="scafld-clean-plan-"))
-    (tmp / ".ai").mkdir()
-    (tmp / ".ai" / "schemas").mkdir()
+    (tmp / ".scafld").mkdir()
+    (tmp / ".scafld" / "core" / "schemas").mkdir(parents=True)
     # validate_spec needs the schema to exist; copy from repo.
     repo_root = Path(__file__).resolve().parent.parent
-    (tmp / ".ai" / "schemas" / "spec.json").write_text(
-        (repo_root / ".ai" / "schemas" / "spec.json").read_text(encoding="utf-8"),
+    (tmp / ".scafld" / "core" / "schemas" / "spec.json").write_text(
+        (repo_root / ".scafld" / "core" / "schemas" / "spec.json").read_text(encoding="utf-8"),
         encoding="utf-8",
     )
-    (tmp / ".ai" / "specs").mkdir()
-    (tmp / ".ai" / "specs" / "drafts").mkdir()
-    (tmp / ".ai" / "specs" / "active").mkdir()
-    (tmp / ".ai" / "specs" / "archive").mkdir()
-    (tmp / ".ai" / "config.yaml").write_text("version: '1.0'\n", encoding="utf-8")
+    (tmp / ".scafld" / "specs").mkdir()
+    (tmp / ".scafld" / "specs" / "drafts").mkdir()
+    (tmp / ".scafld" / "specs" / "active").mkdir()
+    (tmp / ".scafld" / "specs" / "archive").mkdir()
+    (tmp / ".scafld" / "config.yaml").write_text("version: '1.0'\n", encoding="utf-8")
     return tmp
 
 
 class SlimScaffoldShapeTest(unittest.TestCase):
-    def test_under_40_lines(self):
+    def test_slim_still_uses_complete_markdown_grammar(self):
         root = _workspace()
         scaffold = build_slim_spec_scaffold(
             root,
@@ -37,10 +39,13 @@ class SlimScaffoldShapeTest(unittest.TestCase):
             files=["tests/foo.py", "scafld/foo.py"],
         )
         line_count = sum(1 for _ in scaffold["text"].splitlines())
-        self.assertLess(line_count, 40, f"slim scaffold is {line_count} lines, expected < 40")
+        self.assertGreater(line_count, 100)
+        self.assertIn("## Current State", scaffold["text"])
+        self.assertIn("## Phase 1: Slim line budget check", scaffold["text"])
+        self.assertIn("Acceptance:\n- [ ] `ac1_1`", scaffold["text"])
 
-    def test_no_todo_sentinels(self):
-        # validate_spec rejects TODO sentinels; the slim scaffold must
+    def test_no_todo_markers(self):
+        # validate_spec rejects TODO markers; the slim scaffold must
         # produce a spec that passes validation immediately.
         root = _workspace()
         scaffold = build_slim_spec_scaffold(
@@ -65,7 +70,7 @@ class SlimScaffoldShapeTest(unittest.TestCase):
             command="true",
             files=["app.py"],
         )
-        self.assertIn('expected_kind: "exit_code_zero"', scaffold["text"])
+        self.assertIn("Expected kind: `exit_code_zero`", scaffold["text"])
 
     def test_command_inserted_verbatim(self):
         root = _workspace()
@@ -90,9 +95,9 @@ class SlimScaffoldShapeTest(unittest.TestCase):
             files=["a.py", "b.py", "c.py"],
         )
         text = scaffold["text"]
-        self.assertEqual(text.count("- file:"), 3)
+        self.assertEqual(text.count(") - See task summary."), 6)
         for path in ("a.py", "b.py", "c.py"):
-            self.assertIn(f'"{path}"', text)
+            self.assertIn(f"`{path}`", text)
 
     def test_default_size_and_risk(self):
         root = _workspace()
@@ -106,8 +111,8 @@ class SlimScaffoldShapeTest(unittest.TestCase):
         )
         self.assertEqual(scaffold["size"], "small")
         self.assertEqual(scaffold["risk"], "low")
-        self.assertIn('size: "small"', scaffold["text"])
-        self.assertIn('risk_level: "low"', scaffold["text"])
+        self.assertIn("size: small", scaffold["text"])
+        self.assertIn("risk_level: low", scaffold["text"])
 
     def test_requires_command(self):
         root = _workspace()
@@ -147,7 +152,7 @@ class NewSpecSnapshotRoutingTest(unittest.TestCase):
         spec_path = root / result["state"]["file"]
         text = spec_path.read_text(encoding="utf-8")
         self.assertIn("scafld plan --command", text)  # planning_log marker
-        self.assertIn('expected_kind: "exit_code_zero"', text)
+        self.assertIn("Expected kind: `exit_code_zero`", text)
 
     def test_files_string_splits_on_comma(self):
         root = _workspace()
@@ -161,7 +166,7 @@ class NewSpecSnapshotRoutingTest(unittest.TestCase):
         spec_path = root / result["state"]["file"]
         text = spec_path.read_text(encoding="utf-8")
         for path in ("a.py", "b.py", "c.py"):
-            self.assertIn(f'"{path}"', text)
+            self.assertIn(f"`{path}`", text)
 
     def test_no_command_falls_back_to_verbose(self):
         root = _workspace()
@@ -205,42 +210,17 @@ def _write_active_spec_with_change(root, task_id, file_path, ownership=None):
     Used by plan-time conflict tests: the new spec under test will
     overlap this file. ownership None means exclusive (default).
     """
-    ownership_line = f'        ownership: "{ownership}"\n' if ownership else ""
-    text = (
-        f'spec_version: "1.1"\n'
-        f'task_id: "{task_id}"\n'
-        f'created: "2026-04-28T00:00:00Z"\n'
-        f'updated: "2026-04-28T00:00:00Z"\n'
-        f'status: "in_progress"\n'
-        f'task:\n'
-        f'  title: "Other active spec"\n'
-        f'  summary: "Other"\n'
-        f'  size: "small"\n'
-        f'  risk_level: "low"\n'
-        f'planning_log:\n'
-        f'  - timestamp: "2026-04-28T00:00:00Z"\n'
-        f'    actor: "user"\n'
-        f'    summary: "fixture"\n'
-        f'phases:\n'
-        f'  - id: "phase1"\n'
-        f'    name: "Phase 1"\n'
-        f'    objective: "Phase 1"\n'
-        f'    changes:\n'
-        f'      - file: "{file_path}"\n'
-        f'        action: "update"\n'
-        f'{ownership_line}'
-        f'        content_spec: "noop"\n'
-        f'    acceptance_criteria:\n'
-        f'      - id: "ac1_1"\n'
-        f'        type: "test"\n'
-        f'        command: "true"\n'
-        f'        expected_kind: "exit_code_zero"\n'
-        f'    status: "pending"\n'
+    write_basic_spec(
+        root / ".scafld" / "specs" / "active" / f"{task_id}.md",
+        task_id,
+        status="in_progress",
+        title="Other active spec",
+        file_path=file_path,
+        ownership=ownership,
     )
-    (root / ".ai" / "specs" / "active" / f"{task_id}.yaml").write_text(text, encoding="utf-8")
 
 
-@unittest.skipUnless(_HAS_PYYAML, "active_declared_changes loads spec yaml; requires PyYAML")
+@unittest.skipUnless(_HAS_PYYAML, "active_declared_changes loads Markdown spec front matter; requires PyYAML")
 class PlanTimeConflictTest(unittest.TestCase):
     def test_plan_auto_tags_shared_when_other_active_overlaps(self):
         from scafld.errors import ScafldError
@@ -256,8 +236,8 @@ class PlanTimeConflictTest(unittest.TestCase):
         spec_path = root / result["state"]["file"]
         text = spec_path.read_text(encoding="utf-8")
         # The slim spec's change entry for tests/foo.py should now
-        # carry ownership: "shared" (auto-tagged).
-        self.assertIn('ownership: shared', text)
+        # carry shared ownership (auto-tagged).
+        self.assertIn("`tests/foo.py` (all, shared)", text)
 
     def test_plan_refuses_on_exclusive_conflict(self):
         from scafld.errors import ScafldError
@@ -273,7 +253,7 @@ class PlanTimeConflictTest(unittest.TestCase):
             )
         self.assertIn("exclusively owned", str(ctx.exception))
         # Refused plan must NOT leave a half-baked spec on disk.
-        leaked = (root / ".ai" / "specs" / "drafts" / "slim-exclusive-overlap.yaml").exists()
+        leaked = (root / ".scafld" / "specs" / "drafts" / "slim-exclusive-overlap.md").exists()
         self.assertFalse(leaked, "plan that refuses on conflict must not write the spec file")
 
     def test_plan_passes_when_no_other_active_overlaps(self):
@@ -292,59 +272,33 @@ class PlanTimeConflictTest(unittest.TestCase):
 
 
 class ApplySharedOwnershipTest(unittest.TestCase):
-    """Pure-text rewriter; doesn't need PyYAML."""
-
     def test_rewrites_matching_file_entry(self):
         from scafld.audit_scope import apply_shared_ownership
-        text = (
-            "phases:\n"
-            "  - id: phase1\n"
-            "    changes:\n"
-            "      - file: \"a.py\"\n"
-            "        action: \"update\"\n"
-            "        content_spec: \"noop\"\n"
-        )
+        root = _workspace()
+        path = root / ".scafld" / "specs" / "active" / "x.md"
+        write_basic_spec(path, "x", status="in_progress", file_path="a.py")
+        text = path.read_text(encoding="utf-8")
         result = apply_shared_ownership(text, {"a.py"})
-        self.assertIn('ownership: shared', result)
-        # Sibling fields preserved.
-        self.assertIn("action: update", result)
-        self.assertIn("content_spec: noop", result)
+        data = parse_spec_markdown(result)
+        self.assertEqual(data["phases"][0]["changes"][0]["ownership"], "shared")
 
     def test_idempotent_when_already_shared(self):
         from scafld.audit_scope import apply_shared_ownership
-        text = (
-            "phases:\n"
-            "  - id: phase1\n"
-            "    changes:\n"
-            "      - file: \"a.py\"\n"
-            "        action: \"update\"\n"
-            "        ownership: \"shared\"\n"
-            "        content_spec: \"noop\"\n"
-        )
+        root = _workspace()
+        path = root / ".scafld" / "specs" / "active" / "x.md"
+        write_basic_spec(path, "x", status="in_progress", file_path="a.py", ownership="shared")
+        text = path.read_text(encoding="utf-8")
         result = apply_shared_ownership(text, {"a.py"})
-        # Should NOT inject a second ownership line. Count any form
-        # ('ownership: "shared"' or unquoted) — the early-return path
-        # preserves the input formatting; the round-trip path emits
-        # the unquoted form.
-        ownership_lines = result.count("ownership:")
-        self.assertEqual(ownership_lines, 1)
+        self.assertEqual(result, text)
 
     def test_skips_non_target_files(self):
         from scafld.audit_scope import apply_shared_ownership
-        text = (
-            "phases:\n"
-            "  - id: phase1\n"
-            "    changes:\n"
-            "      - file: \"a.py\"\n"
-            "        action: \"update\"\n"
-            "        content_spec: \"noop\"\n"
-            "      - file: \"b.py\"\n"
-            "        action: \"update\"\n"
-            "        content_spec: \"noop\"\n"
-        )
+        root = _workspace()
+        path = root / ".scafld" / "specs" / "active" / "x.md"
+        write_basic_spec(path, "x", status="in_progress", file_path="b.py")
+        text = path.read_text(encoding="utf-8")
         result = apply_shared_ownership(text, {"a.py"})
-        # ownership added once, on a.py only
-        self.assertEqual(result.count('ownership: shared'), 1)
+        self.assertEqual(result, text)
 
 
 if __name__ == "__main__":

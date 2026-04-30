@@ -19,7 +19,7 @@ git submodule add git@github.com:org/frontend.git frontend
 scafld init
 ```
 
-The `.ai/` directory lives at the workspace root. The agent sees the full picture.
+The `.scafld/` directory lives at the workspace root. The agent sees the full picture.
 
 ## Per-criterion working directory
 
@@ -70,7 +70,7 @@ scafld sync add-auth
   reports drift in both human output and `--json`.
 
 When scafld evaluates branch drift, it ignores its own control-plane artifacts
-under `.ai/specs/`, `.ai/reviews/`, `.ai/runs/`, plus `.ai/config.local.yaml`.
+under `.scafld/specs/`, `.scafld/reviews/`, `.scafld/runs/`, plus `.scafld/config.local.yaml`.
 That keeps sync focused on engineering changes instead of flagging the planning
 ledger itself.
 

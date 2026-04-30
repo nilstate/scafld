@@ -13,76 +13,65 @@ scafld_cmd() {
 
 write_spec() {
   local path="$1"
-  cat > "$path" <<'EOF'
-spec_version: "1.1"
-task_id: "origin-flow"
-created: "2026-04-21T00:00:00Z"
-updated: "2026-04-21T00:00:00Z"
-status: "draft"
-origin:
-  source:
-    system: "github"
-    kind: "issue"
-    id: "123"
-    url: "https://github.com/example/project/issues/123"
-    title: "Bind origin metadata"
-
-task:
-  title: "Origin Flow"
-  summary: "Exercise branch binding and sync drift detection in a real git workspace."
-  size: "small"
-  risk_level: "medium"
-  context:
-    packages:
-      - "cli"
-    invariants:
-      - "git_mutation_stays_explicit_and_safe"
-  objectives:
-    - "Create a branch binding and surface drift."
-  touchpoints:
-    - area: "tests"
-      description: "Exercise git-bound task behavior."
-  acceptance:
-    definition_of_done:
-      - id: "dod1"
-        description: "Fixture exists."
-        status: "pending"
-    validation:
-      - id: "v1"
-        type: "test"
-        description: "tracked file exists"
-        command: "test -f tracked.txt"
-        expected: "exit code 0"
-
-planning_log:
-  - timestamp: "2026-04-21T00:00:00Z"
-    actor: "test"
-    summary: "Fixture created."
-
-phases:
-  - id: "phase1"
-    name: "Bind branch"
-    objective: "Bind the task to a working branch and report drift."
-    changes:
-      - file: "tracked.txt"
-        action: "update"
-        content_spec: "Branch sync smoke mutates tracked.txt to prove drift."
-      - file: "cli/scafld"
-        action: "update"
-        content_spec: "Fixture declares the CLI surface under test."
-    acceptance_criteria:
-      - id: "ac1_1"
-        type: "test"
-        description: "tracked file exists"
-        command: "test -f tracked.txt"
-        expected: "exit code 0"
-    status: "pending"
-
-rollback:
-  strategy: "manual"
-  commands:
-    phase1: "git checkout HEAD -- tracked.txt"
-EOF
+  PYTHONPATH="$REPO_ROOT" SPEC_PATH="$path" python3 - <<'PY'
+import os
+from pathlib import Path
+from scafld.spec_markdown import render_spec_markdown
+data = {
+    "spec_version": "2.0",
+    "task_id": "origin-flow",
+    "created": "2026-04-21T00:00:00Z",
+    "updated": "2026-04-21T00:00:00Z",
+    "status": "draft",
+    "harden_status": "not_run",
+    "origin": {
+        "source": {
+            "system": "github",
+            "kind": "issue",
+            "id": "123",
+            "url": "https://github.com/example/project/issues/123",
+            "title": "Bind origin metadata",
+        },
+        "supersession": None,
+        "sync": None,
+    },
+    "task": {
+        "title": "Origin Flow",
+        "summary": "Exercise branch binding and sync drift detection in a real git workspace.",
+        "size": "small",
+        "risk_level": "medium",
+        "context": {
+            "packages": ["cli"],
+            "invariants": ["git_mutation_stays_explicit_and_safe"],
+            "files_impacted": [
+                {"path": "tracked.txt", "reason": "Branch sync smoke mutates tracked.txt to prove drift."},
+                {"path": "cli/scafld", "reason": "Fixture declares the CLI surface under test."},
+            ],
+        },
+        "objectives": ["Create a branch binding and surface drift."],
+        "touchpoints": [{"area": "tests", "description": "Exercise git-bound task behavior."}],
+        "acceptance": {"validation_profile": "strict", "definition_of_done": [{"id": "dod1", "description": "Fixture exists.", "status": "pending"}], "validation": []},
+    },
+    "planning_log": [{"timestamp": "2026-04-21T00:00:00Z", "actor": "test", "summary": "Fixture created."}],
+    "phases": [
+        {
+            "id": "phase1",
+            "name": "Bind branch",
+            "objective": "Bind the task to a working branch and report drift.",
+            "changes": [
+                {"file": "tracked.txt", "action": "update", "content_spec": "Branch sync smoke mutates tracked.txt to prove drift."},
+                {"file": "cli/scafld", "action": "update", "content_spec": "Fixture declares the CLI surface under test."},
+            ],
+            "acceptance_criteria": [{"id": "ac1_1", "type": "test", "description": "tracked file exists", "command": "test -f tracked.txt", "expected_kind": "exit_code_zero"}],
+            "status": "pending",
+        }
+    ],
+    "rollback": {"strategy": "manual", "commands": {"phase1": "git checkout HEAD -- tracked.txt"}},
+}
+path = Path(os.environ["SPEC_PATH"])
+path.parent.mkdir(parents=True, exist_ok=True)
+path.write_text(render_spec_markdown(data), encoding="utf-8")
+PY
 }
 
 WS="$(mktemp -d /tmp/scafld-git-origin-smoke.XXXXXX)"
@@ -92,7 +81,7 @@ echo "[1/8] init workspace and baseline commit"
 capture output bash -lc "cd '$WS' && PATH='$CLI_ROOT':\"\$PATH\" scafld init >/dev/null"
 printf 'seed\n' > "$WS/tracked.txt"
 (cd "$WS" && git init -b main >/dev/null 2>&1 && git config user.email smoke@example.com && git config user.name "Smoke Test" && git add . && git commit -m "chore: seed workspace" >/dev/null 2>&1)
-write_spec "$WS/.ai/specs/drafts/origin-flow.yaml"
+write_spec "$WS/.scafld/specs/drafts/origin-flow.md"
 capture output bash -lc "cd '$WS' && PATH='$CLI_ROOT':\"\$PATH\" scafld approve origin-flow >/dev/null && PATH='$CLI_ROOT':\"\$PATH\" scafld build origin-flow >/dev/null"
 
 echo "[2/8] branch --json creates a task branch and records origin metadata"

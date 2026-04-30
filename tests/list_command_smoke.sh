@@ -34,52 +34,36 @@ write_spec_fixture() {
   local phase_status="$6"
 
   mkdir -p "$(dirname "$repo/$rel_path")"
-  cat > "$repo/$rel_path" <<EOF
-spec_version: "1.1"
-task_id: "$task_id"
-created: "2026-04-25T00:00:00Z"
-updated: "2026-04-25T00:00:00Z"
-status: "$status"
-harden_status: "in_progress"
-task:
-  title: "$title"
-  summary: "Fixture for list smoke"
-  size: "small"
-  risk_level: "low"
-planning_log:
-  - timestamp: "2026-04-25T00:00:00Z"
-    actor: "user"
-    summary: "Fixture seeded for list smoke"
-phases:
-  - id: "phase1"
-    name: "Fixture phase"
-    objective: "Exercise list output"
-    changes:
-      - file: "fixture.txt"
-        action: "update"
-        content_spec: "fixture"
-    acceptance_criteria:
-      - id: "ac1_1"
-        type: "custom"
-        description: "Fixture criterion"
-        command: "true"
-        expected: "exit code 0"
-    status: "$phase_status"
-EOF
+  SCAFLD_SPEC_CREATED="2026-04-25T00:00:00Z" \
+  SCAFLD_SPEC_PHASE_STATUS="$phase_status" \
+    write_markdown_spec "$repo/$rel_path" "$task_id" "$status" "$title" "fixture.txt" "true"
 }
 
 repo="$(new_repo)"
 
-write_spec_fixture "$repo" ".ai/specs/drafts/draft-task.yaml" "draft-task" "draft" "Draft task" "pending"
-write_spec_fixture "$repo" ".ai/specs/approved/approved-task.yaml" "approved-task" "approved" "Approved task" "pending"
-write_spec_fixture "$repo" ".ai/specs/active/active-task.yaml" "active-task" "in_progress" "Active task" "completed"
-write_spec_fixture "$repo" ".ai/specs/archive/2026-04/completed-task.yaml" "completed-task" "completed" "Completed task" "completed"
-write_spec_fixture "$repo" ".ai/specs/archive/2026-04/superseded-task.yaml" "superseded-task" "cancelled" "Superseded task" "completed"
-cat >> "$repo/.ai/specs/archive/2026-04/superseded-task.yaml" <<'EOF'
-superseded_by: "completed-task"
-superseded_at: "2026-04-25T01:00:00Z"
-superseded_reason: "Replaced by completed-task"
-EOF
+write_spec_fixture "$repo" ".scafld/specs/drafts/draft-task.md" "draft-task" "draft" "Draft task" "pending"
+write_spec_fixture "$repo" ".scafld/specs/approved/approved-task.md" "approved-task" "approved" "Approved task" "pending"
+write_spec_fixture "$repo" ".scafld/specs/active/active-task.md" "active-task" "in_progress" "Active task" "completed"
+write_spec_fixture "$repo" ".scafld/specs/archive/2026-04/completed-task.md" "completed-task" "completed" "Completed task" "completed"
+write_spec_fixture "$repo" ".scafld/specs/archive/2026-04/superseded-task.md" "superseded-task" "cancelled" "Superseded task" "completed"
+PYTHONPATH="$REPO_ROOT" python3 - "$repo/.scafld/specs/archive/2026-04/superseded-task.md" <<'PY'
+import sys
+from pathlib import Path
+from scafld.spec_markdown import parse_spec_markdown, update_spec_markdown
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+data = parse_spec_markdown(text)
+data["origin"] = {
+    "origin": None,
+    "supersession": {
+        "superseded_by": "completed-task",
+        "superseded_at": "2026-04-25T01:00:00Z",
+        "reason": "Replaced by completed-task",
+    },
+    "sync": None,
+}
+path.write_text(update_spec_markdown(text, data), encoding="utf-8")
+PY
 
 echo "[1/3] unfiltered list shows lifecycle buckets without crashing"
 if ! capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld list"; then

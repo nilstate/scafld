@@ -14,17 +14,26 @@ from scafld.errors import ScafldError
 from scafld.git_state import build_origin_sync_payload, list_working_tree_changed_files
 from scafld.handoff_renderer import render_handoff
 from scafld.projections import origin_payload, phase_counts
-from scafld.runtime_bundle import CONFIG_LOCAL_PATH, CONFIG_PATH, DRAFTS_DIR, FRAMEWORK_CONFIG_PATH, resolve_schema_path
+from scafld.runtime_bundle import CONFIG_LOCAL_PATH, CONFIG_PATH, CORE_CONFIG_PATH, DRAFTS_DIR, resolve_schema_path
 from scafld.runtime_guidance import derive_task_guidance, review_gate_snapshot
 from scafld.session_store import ensure_session, ensure_workspace_baseline, load_session, record_approval, session_summary_payload
-from scafld.spec_parsing import active_done_open, count_phases, now_iso, parse_phase_status_entries, supersession_payload
+from scafld.spec_model import (
+    active_done_open,
+    count_phases,
+    get_risk,
+    get_size,
+    get_status,
+    get_title,
+    get_updated,
+    now_iso,
+    parse_phase_status_entries,
+    supersession_payload,
+)
 from scafld.spec_store import (
     find_spec,
     load_spec_document,
     move_spec,
     require_spec,
-    yaml_read_field,
-    yaml_read_nested,
 )
 from scafld.spec_templates import build_new_spec_scaffold, build_slim_spec_scaffold
 
@@ -50,7 +59,7 @@ def new_spec_snapshot(
 
     dest_dir = root / DRAFTS_DIR
     dest_dir.mkdir(parents=True, exist_ok=True)
-    dest = dest_dir / f"{task_id}.yaml"
+    dest = dest_dir / f"{task_id}.md"
 
     ts = now_iso()
     use_slim = command and str(command).strip()
@@ -85,7 +94,7 @@ def new_spec_snapshot(
             title=title,
             size=size,
             risk=risk,
-            framework_config_path=FRAMEWORK_CONFIG_PATH,
+            framework_config_path=CORE_CONFIG_PATH,
             config_path=CONFIG_PATH,
             config_local_path=CONFIG_LOCAL_PATH,
         )
@@ -173,8 +182,8 @@ def validate_spec(root, spec):
         errors.append(f"invalid status: '{status}' (expected one of: {', '.join(valid_statuses)})")
 
     spec_version = data.get("spec_version")
-    if spec_version and not re.match(r"^\d+\.\d+$", spec_version):
-        errors.append(f"spec_version must be semver: got '{spec_version}'")
+    if spec_version != "2.0":
+        errors.append(f"spec_version must be 2.0: got '{spec_version}'")
 
     phases = data.get("phases")
     if not isinstance(phases, list):
@@ -209,17 +218,18 @@ def validate_spec(root, spec):
 
 def validation_snapshot(root, spec):
     rel = spec.relative_to(root)
-    text = spec.read_text()
     errors = validate_spec(root, spec)
     invalid_document = any(error.startswith("invalid spec document:") for error in errors)
 
     if invalid_document:
         total = completed = failed = in_progress = 0
+        data = {}
     else:
-        total, completed, failed, in_progress = count_phases(text)
-    task_id = yaml_read_field(text, "task_id")
-    status = yaml_read_field(text, "status")
-    spec_version = yaml_read_field(text, "spec_version")
+        data = load_spec_document(spec)
+        total, completed, failed, in_progress = count_phases(data)
+    task_id = data.get("task_id")
+    status = data.get("status")
+    spec_version = data.get("spec_version")
 
     return {
         "state": {
@@ -267,7 +277,7 @@ def approve_spec_snapshot(root, task_id):
                 "to": str(move_result.dest.relative_to(root)),
                 "status": move_result.new_status,
             },
-            "session_file": f".ai/runs/{task_id}/session.json",
+            "session_file": f".scafld/runs/{task_id}/session.json",
             "entry_count": session_summary_payload(session).get("entry_count", 0),
         },
     }
@@ -304,7 +314,7 @@ def start_spec_snapshot(root, task_id):
                 "to": str(move_result.dest.relative_to(root)),
                 "status": move_result.new_status,
             },
-            "session_file": f".ai/runs/{task_id}/session.json",
+            "session_file": f".scafld/runs/{task_id}/session.json",
             "handoff_file": rendered["path_rel"],
             "handoff_json_file": rendered["json_path_rel"],
             "handoff_role": rendered["role"],
@@ -319,22 +329,22 @@ def status_snapshot(root, spec, task_id):
     data = load_spec_document(spec)
     rel = spec.relative_to(root)
 
-    status = yaml_read_field(text, "status") or "unknown"
+    status = get_status(data) or "unknown"
     state = {
         "file": str(rel),
         "status": status,
-        "size": yaml_read_nested(text, "task", "size") or "",
-        "risk": yaml_read_nested(text, "task", "risk_level") or "",
-        "updated_at": yaml_read_field(text, "updated") or "",
+        "size": get_size(data),
+        "risk": get_risk(data),
+        "updated_at": get_updated(data),
     }
     result = {
-        "title": yaml_read_nested(text, "task", "title") or "",
-        "phase_statuses": parse_phase_status_entries(text),
-        "phase_counts": phase_counts(*count_phases(text)),
+        "title": get_title(data),
+        "phase_statuses": parse_phase_status_entries(data),
+        "phase_counts": phase_counts(*count_phases(data)),
         "lifecycle_flags": {
-            "active_done_open": active_done_open(text, status),
+            "active_done_open": active_done_open(data, status),
         },
-        "supersession": supersession_payload(text),
+        "supersession": supersession_payload(data),
     }
 
     origin = origin_payload(data)

@@ -9,7 +9,7 @@ Every serious engineering discipline separates planning from execution. Civil en
 
 AI coding agents have no such separation. You type a prompt, the agent writes code, and you hope the result matches what you meant. For trivial tasks this works. For anything that touches multiple files, crosses module boundaries, or carries real risk; it doesn't. The agent hallucinates scope, drifts from objectives, and produces code that technically compiles but misses the point.
 
-scafld enforces the separation. Every non-trivial task becomes a YAML specification before a single line of code changes. The spec declares what will change, why it will change, what constitutes success, and what must not break. The agent executes against the spec, not against a loose prompt. When the work is done, scafld validates the result against the spec's acceptance criteria and audits for scope drift.
+scafld enforces the separation. Every non-trivial task becomes a Markdown living specification before a single line of code changes. The spec declares what will change, why it will change, what constitutes success, and what must not break. The agent executes against the spec, not against a loose prompt. When the work is done, scafld validates the result against the spec's acceptance criteria and audits for scope drift.
 
 ## The core idea
 

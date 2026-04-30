@@ -51,16 +51,16 @@ moving the lifecycle.
 Use `scafld review <task-id>` as the default challenger entrypoint. Use the
 wrapper scripts when you explicitly want the provider-specific handoff adapter:
 
-- `scripts/scafld-codex-build.sh <task-id>` resolves the current scafld handoff
+- `.scafld/core/scripts/scafld-codex-build.sh <task-id>` resolves the current scafld handoff
   and pipes it to Codex before the model acts
-- `scripts/scafld-codex-review.sh <task-id>` is the optional codex handoff adapter for challenger review
-- `scripts/scafld-claude-build.sh <task-id>` does the same for Claude Code
-- `scripts/scafld-claude-review.sh <task-id>` is the optional claude handoff adapter for challenger review
+- `.scafld/core/scripts/scafld-codex-review.sh <task-id>` is the optional codex handoff adapter for challenger review
+- `.scafld/core/scripts/scafld-claude-build.sh <task-id>` does the same for Claude Code
+- `.scafld/core/scripts/scafld-claude-review.sh <task-id>` is the optional claude handoff adapter for challenger review
 
 Prompt ownership is simple:
 
-- `.ai/prompts/*.md` is the active template layer
-- `.ai/scafld/prompts/*.md` is the managed reset copy
+- `.scafld/prompts/*.md` is the active template layer
+- `.scafld/core/prompts/*.md` is the managed reset copy
 
 ## Handoffs
 
@@ -83,7 +83,7 @@ Defaults:
 - if no phase is active yet, it returns `phase1`
 - after completion, it returns the archived review handoff
 - after a structured external review finds issues, read
-  `.ai/runs/{task-id}/handoffs/executor-review-repair.md` before repairing; it
+  `.scafld/runs/{task-id}/handoffs/executor-review-repair.md` before repairing; it
   is packet-derived review context, not lifecycle state
 
 ## Execution
@@ -112,7 +112,7 @@ During execution:
 - it runs automated checks first
 - it defaults to a fresh external challenger when configured for `external`
 - it still exposes a `challenger × review` handoff for explicit `local` or `manual` review modes
-- the challenger writes findings into `.ai/reviews/{task-id}.md`
+- the challenger writes findings into `.scafld/reviews/{task-id}.md`
 - `complete` closes only if the gate passes, or a human uses the audited override path
 
 The review stance is adversarial:
@@ -138,7 +138,7 @@ consumed the handoff.
 Project-specific invariants live in:
 
 - `CONVENTIONS.md`
-- `.ai/config.yaml`
+- `.scafld/config.yaml`
 
 Typical examples:
 

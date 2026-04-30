@@ -5,10 +5,10 @@ from pathlib import Path
 from scafld.error_codes import ErrorCode
 from scafld.errors import ScafldError
 
-AI_DIR = ".ai"
-SPECS_DIR = f"{AI_DIR}/specs"
-CONFIG_PATH = f"{AI_DIR}/config.yaml"
-FRAMEWORK_MANIFEST_PATH = f"{AI_DIR}/scafld/manifest.json"
+SCAFLD_DIR = ".scafld"
+SPECS_DIR = f"{SCAFLD_DIR}/specs"
+CONFIG_PATH = f"{SCAFLD_DIR}/config.yaml"
+CORE_MANIFEST_PATH = f"{SCAFLD_DIR}/core/manifest.json"
 SCAN_PRUNE_DIRS = {
     ".git",
     ".hg",
@@ -26,11 +26,11 @@ SCAN_PRUNE_DIRS = {
 
 def is_scafld_workspace(root):
     """Detect a scafld workspace root."""
-    ai_root = root / AI_DIR
-    return ai_root.is_dir() and (
+    scafld_root = root / SCAFLD_DIR
+    return scafld_root.is_dir() and (
         (root / SPECS_DIR).is_dir()
         or (root / CONFIG_PATH).exists()
-        or (root / FRAMEWORK_MANIFEST_PATH).exists()
+        or (root / CORE_MANIFEST_PATH).exists()
     )
 
 
@@ -49,7 +49,7 @@ def require_root(start=None):
     root = find_root(start)
     if root is None:
         raise ScafldError(
-            "not in a scafld project (no .ai/ directory found)",
+            "not in a scafld project (no .scafld/ directory found)",
             ["run 'scafld init' to set up a workspace"],
             code=ErrorCode.WORKSPACE_NOT_FOUND,
         )
@@ -69,7 +69,7 @@ def find_workspaces(scan_root):
         for dirname in dirnames:
             if dirname in SCAN_PRUNE_DIRS:
                 continue
-            if dirname == AI_DIR and is_scafld_workspace(current_path):
+            if dirname == SCAFLD_DIR and is_scafld_workspace(current_path):
                 if current_path not in seen:
                     workspaces.append(current_path)
                     seen.add(current_path)

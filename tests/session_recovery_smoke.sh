@@ -27,42 +27,10 @@ new_repo() {
 
 write_approved_spec() {
   local repo="$1"
-  cat > "$repo/.ai/specs/approved/recovery-task.yaml" <<'EOF'
-spec_version: "1.1"
-task_id: "recovery-task"
-created: "2026-04-23T00:00:00Z"
-updated: "2026-04-23T00:00:00Z"
-status: "approved"
-harden_status: "not_run"
-
-task:
-  title: "Recovery smoke"
-  summary: "Exercise session and recovery handoffs"
-  size: "small"
-  risk_level: "low"
-
-planning_log:
-  - timestamp: "2026-04-23T00:00:00Z"
-    actor: "user"
-    summary: "Bootstrap recovery smoke fixture"
-
-phases:
-  - id: "phase1"
-    name: "Write the marker"
-    objective: "demo.txt should end up green"
-    changes:
-      - file: "demo.txt"
-        action: "update"
-        lines: "1"
-        content_spec: "replace red with green"
-    acceptance_criteria:
-      - id: "ac1_1"
-        type: "custom"
-        description: "demo.txt contains green"
-        command: "grep -q '^green$' demo.txt"
-        expected: "exit code 0"
-    status: "pending"
-EOF
+  SCAFLD_SPEC_CREATED="2026-04-23T00:00:00Z" \
+    write_markdown_spec "$repo/.scafld/specs/approved/recovery-task.md" \
+    "recovery-task" "approved" "Recovery smoke" \
+    "demo.txt" "grep -q '^green$' demo.txt"
 }
 
 repo="$(new_repo)"
@@ -74,19 +42,19 @@ if capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld bui
   fail "first build should fail before the file is fixed"
 fi
 assert_json "$output" "data['state']['action'] == 'start_exec'" "build should start and execute in one call"
-assert_json "$output" "data['result']['start']['session_file'] == '.ai/runs/recovery-task/session.json'" "build should report the session file"
+assert_json "$output" "data['result']['start']['session_file'] == '.scafld/runs/recovery-task/session.json'" "build should report the session file"
 assert_json "$output" "data['result']['initial_handoff']['handoff_file'].endswith('executor-phase-phase1.md')" "build should report the first phase handoff"
 assert_json "$output" "data['result']['initial_handoff']['role'] == 'executor'" "build should report the handoff role"
 assert_json "$output" "data['result']['initial_handoff']['gate'] == 'phase'" "build should report the handoff gate"
-[ -f "$repo/.ai/runs/recovery-task/handoffs/executor-phase-phase1.json" ] || fail "phase handoff json should exist after build"
+[ -f "$repo/.scafld/runs/recovery-task/handoffs/executor-phase-phase1.json" ] || fail "phase handoff json should exist after build"
 
 echo "[2/4] failing build writes diagnostics and a recovery handoff"
 assert_json "$output" "data['error']['code'] == 'acceptance_failed'" "failing build should return acceptance_failed"
 assert_json "$output" "len(data['result']['exec']['recovery_handoffs']) == 1" "failing build should emit one recovery handoff"
-[ -f "$repo/.ai/runs/recovery-task/session.json" ] || fail "session file should exist after exec"
-[ -f "$repo/.ai/runs/recovery-task/diagnostics/ac1_1-attempt1.txt" ] || fail "diagnostic file should exist after failure"
-[ -f "$repo/.ai/runs/recovery-task/handoffs/executor-recovery-ac1_1-1.md" ] || fail "recovery handoff should exist after failure"
-[ -f "$repo/.ai/runs/recovery-task/handoffs/executor-recovery-ac1_1-1.json" ] || fail "recovery handoff json should exist after failure"
+[ -f "$repo/.scafld/runs/recovery-task/session.json" ] || fail "session file should exist after exec"
+[ -f "$repo/.scafld/runs/recovery-task/diagnostics/ac1_1-attempt1.txt" ] || fail "diagnostic file should exist after failure"
+[ -f "$repo/.scafld/runs/recovery-task/handoffs/executor-recovery-ac1_1-1.md" ] || fail "recovery handoff should exist after failure"
+[ -f "$repo/.scafld/runs/recovery-task/handoffs/executor-recovery-ac1_1-1.json" ] || fail "recovery handoff json should exist after failure"
 
 echo "[3/4] passing build records a phase summary"
 printf 'green\n' > "$repo/demo.txt"
@@ -105,7 +73,7 @@ import sys
 repo = pathlib.Path(os.environ["REPO"])
 sys.path.insert(0, os.environ["REPO_ROOT"])
 
-session = json.loads((repo / ".ai" / "runs" / "recovery-task" / "session.json").read_text())
+session = json.loads((repo / ".scafld" / "runs" / "recovery-task" / "session.json").read_text())
 assert session["recovery_attempts"]["ac1_1"] == 1, session
 assert len(session["attempts"]) == 2, session
 assert session["attempts"][0]["status"] == "fail", session

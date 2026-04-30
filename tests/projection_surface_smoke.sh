@@ -13,72 +13,10 @@ scafld_cmd() {
 
 write_spec() {
   local path="$1"
-  cat > "$path" <<'EOF'
-spec_version: "1.1"
-task_id: "projection-flow"
-created: "2026-04-21T00:00:00Z"
-updated: "2026-04-21T00:00:00Z"
-status: "draft"
-
-task:
-  title: "Projection Flow"
-  summary: "Project spec state into markdown and JSON surfaces for PRs and CI."
-  size: "medium"
-  risk_level: "medium"
-  context:
-    packages:
-      - "cli"
-    invariants:
-      - "spec_remains_the_single_source_of_truth"
-  objectives:
-    - "Render a concise summary."
-    - "Render a deterministic PR body."
-  risks:
-    - description: "Projection output could drift from the source spec."
-  touchpoints:
-    - area: "tests"
-      description: "Projection surface smoke."
-  acceptance:
-    definition_of_done:
-      - id: "dod1"
-        description: "Projection commands render."
-        status: "pending"
-    validation:
-      - id: "v1"
-        type: "test"
-        description: "tracked file exists"
-        command: "test -f tracked.txt"
-        expected: "exit code 0"
-
-planning_log:
-  - timestamp: "2026-04-21T00:00:00Z"
-    actor: "test"
-    summary: "Fixture created."
-
-phases:
-  - id: "phase1"
-    name: "Projection"
-    objective: "Render projection surfaces."
-    changes:
-      - file: "tracked.txt"
-        action: "update"
-        content_spec: "Projection smoke mutates tracked.txt to induce drift."
-    acceptance_criteria:
-      - id: "ac1_1"
-        type: "test"
-        description: "tracked file exists"
-        command: "test -f tracked.txt"
-        expected: "exit code 0"
-        result: "pass"
-        executed_at: "2026-04-21T00:01:00Z"
-        result_output: "ok"
-    status: "completed"
-
-rollback:
-  strategy: "manual"
-  commands:
-    phase1: "git checkout HEAD -- tracked.txt"
-EOF
+  SCAFLD_SPEC_CREATED="2026-04-21T00:00:00Z" \
+  SCAFLD_SPEC_PHASE_STATUS="completed" \
+  SCAFLD_SPEC_CRITERION_RESULT="pass" \
+    write_markdown_spec "$path" "projection-flow" "draft" "Projection Flow" "tracked.txt" "test -f tracked.txt"
 }
 
 write_review() {
@@ -152,9 +90,9 @@ echo "[1/6] init workspace, baseline commit, and active fixture"
 capture output bash -lc "cd '$WS' && PATH='$CLI_ROOT':\"\$PATH\" scafld init >/dev/null"
 printf 'seed\n' > "$WS/tracked.txt"
 (cd "$WS" && git init -b main >/dev/null 2>&1 && git config user.email smoke@example.com && git config user.name "Smoke Test" && git add . && git commit -m "chore: seed workspace" >/dev/null 2>&1)
-write_spec "$WS/.ai/specs/drafts/projection-flow.yaml"
+write_spec "$WS/.scafld/specs/drafts/projection-flow.md"
 capture output bash -lc "cd '$WS' && PATH='$CLI_ROOT':\"\$PATH\" scafld approve projection-flow >/dev/null && PATH='$CLI_ROOT':\"\$PATH\" scafld build projection-flow >/dev/null && PATH='$CLI_ROOT':\"\$PATH\" scafld branch projection-flow >/dev/null"
-write_review "$WS/.ai/reviews/projection-flow.md" "$(git -C "$WS" rev-parse HEAD)"
+write_review "$WS/.scafld/reviews/projection-flow.md" "$(git -C "$WS" rev-parse HEAD)"
 
 echo "[2/6] summary renders aligned markdown and JSON"
 capture markdown bash -lc "cd '$WS' && PATH='$CLI_ROOT':\"\$PATH\" scafld summary projection-flow"

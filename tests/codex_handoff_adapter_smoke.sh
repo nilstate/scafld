@@ -43,82 +43,20 @@ EOF
 
 write_approved_spec() {
   local repo="$1"
-  cat > "$repo/.ai/specs/approved/adapter-task.yaml" <<'EOF'
-spec_version: "1.1"
-task_id: "adapter-task"
-created: "2026-04-24T00:00:00Z"
-updated: "2026-04-24T00:00:00Z"
-status: "approved"
-harden_status: "not_run"
-
-task:
-  title: "Codex adapter smoke"
-  summary: "Verify the codex wrapper consumes the current handoff"
-  size: "small"
-  risk_level: "low"
-
-planning_log:
-  - timestamp: "2026-04-24T00:00:00Z"
-    actor: "user"
-    summary: "Bootstrap codex adapter smoke fixture"
-
-phases:
-  - id: "phase1"
-    name: "Write the marker"
-    objective: "adapter.txt should end up green"
-    changes:
-      - file: "adapter.txt"
-        action: "update"
-        lines: "1"
-        content_spec: "replace red with green"
-    acceptance_criteria:
-      - id: "ac1_1"
-        type: "custom"
-        description: "adapter.txt contains green"
-        command: "grep -q '^green$' adapter.txt"
-        expected: "exit code 0"
-    status: "pending"
-EOF
+  SCAFLD_SPEC_CREATED="2026-04-24T00:00:00Z" \
+    write_markdown_spec "$repo/.scafld/specs/approved/adapter-task.md" \
+    "adapter-task" "approved" "Codex adapter smoke" \
+    "adapter.txt" "grep -q '^green$' adapter.txt"
 }
 
 write_review_ready_spec() {
   local repo="$1"
-  cat > "$repo/.ai/specs/active/review-task.yaml" <<'EOF'
-spec_version: "1.1"
-task_id: "review-task"
-created: "2026-04-24T00:00:00Z"
-updated: "2026-04-24T00:00:00Z"
-status: "in_progress"
-
-task:
-  title: "Codex review adapter smoke"
-  summary: "Verify the codex wrapper consumes the challenger handoff"
-  size: "small"
-  risk_level: "low"
-
-planning_log:
-  - timestamp: "2026-04-24T00:00:00Z"
-    actor: "user"
-    summary: "Bootstrap codex review adapter smoke fixture"
-
-phases:
-  - id: "phase1"
-    name: "Keep the marker"
-    objective: "review.txt should stay ok"
-    changes:
-      - file: "review.txt"
-        action: "update"
-        lines: "1"
-        content_spec: "keep the marker ok"
-    acceptance_criteria:
-      - id: "ac1_1"
-        type: "custom"
-        description: "review.txt contains ok"
-        command: "grep -q '^ok$' review.txt"
-        expected: "exit code 0"
-        result: "pass"
-    status: "completed"
-EOF
+  SCAFLD_SPEC_CREATED="2026-04-24T00:00:00Z" \
+  SCAFLD_SPEC_PHASE_STATUS="completed" \
+  SCAFLD_SPEC_CRITERION_RESULT="pass" \
+    write_markdown_spec "$repo/.scafld/specs/active/review-task.md" \
+    "review-task" "in_progress" "Codex review adapter smoke" \
+    "review.txt" "grep -q '^ok$' review.txt"
 }
 
 repo="$(new_repo)"
@@ -126,9 +64,9 @@ stub_dir="$(write_provider_stub)"
 write_approved_spec "$repo"
 
 echo "[1/3] init seeds the codex adapter scripts"
-[ -x "$repo/scripts/scafld-provider-adapter.sh" ] || fail "init should seed the shared provider adapter"
-[ -x "$repo/scripts/scafld-codex-build.sh" ] || fail "init should seed the codex build adapter script"
-[ -x "$repo/scripts/scafld-codex-review.sh" ] || fail "init should seed the codex review adapter script"
+[ -x "$repo/.scafld/core/scripts/scafld-provider-adapter.sh" ] || fail "init should seed the shared provider adapter"
+[ -x "$repo/.scafld/core/scripts/scafld-codex-build.sh" ] || fail "init should seed the codex build adapter script"
+[ -x "$repo/.scafld/core/scripts/scafld-codex-review.sh" ] || fail "init should seed the codex review adapter script"
 
 echo "[2/3] approved work feeds the executor handoff to codex"
 capture_path="$repo/codex-phase.txt"
@@ -138,15 +76,15 @@ args_path="$repo/codex-phase.args"
   PATH="$stub_dir:$CLI_ROOT:$PATH" \
   SCAFLD_ADAPTER_CAPTURE="$capture_path" \
   SCAFLD_ADAPTER_ARGS="$args_path" \
-  ./scripts/scafld-codex-build.sh adapter-task --phase-arg >/dev/null
+  ./.scafld/core/scripts/scafld-codex-build.sh adapter-task --phase-arg >/dev/null
 )
 assert_contains_file "$capture_path" 'role: "executor"' "codex adapter should feed an executor handoff"
 assert_contains_file "$capture_path" '## Phase Objective' "codex adapter should feed the phase handoff content"
 assert_contains_file "$args_path" '--phase-arg' "codex adapter should pass through provider args"
-assert_contains_file "$repo/.ai/runs/adapter-task/session.json" '"type": "provider_invocation"' "codex adapter should record provider invocation telemetry"
-assert_contains_file "$repo/.ai/runs/adapter-task/session.json" '"role": "executor"' "codex adapter should record executor attribution"
-assert_contains_file "$repo/.ai/runs/adapter-task/session.json" '"provider": "codex"' "codex adapter should record the codex provider"
-assert_contains_file "$repo/.ai/runs/adapter-task/session.json" '"confidence": "unknown"' "codex adapter should record attribution confidence"
+assert_contains_file "$repo/.scafld/runs/adapter-task/session.json" '"type": "provider_invocation"' "codex adapter should record provider invocation telemetry"
+assert_contains_file "$repo/.scafld/runs/adapter-task/session.json" '"role": "executor"' "codex adapter should record executor attribution"
+assert_contains_file "$repo/.scafld/runs/adapter-task/session.json" '"provider": "codex"' "codex adapter should record the codex provider"
+assert_contains_file "$repo/.scafld/runs/adapter-task/session.json" '"confidence": "unknown"' "codex adapter should record attribution confidence"
 
 echo "[3/3] review-ready work feeds the challenger handoff to codex"
 review_repo="$(new_repo)"
@@ -160,11 +98,11 @@ args_path="$review_repo/codex-review.args"
   PATH="$review_stub_dir:$CLI_ROOT:$PATH" \
   SCAFLD_ADAPTER_CAPTURE="$capture_path" \
   SCAFLD_ADAPTER_ARGS="$args_path" \
-  ./scripts/scafld-codex-review.sh review-task >/dev/null
+  ./.scafld/core/scripts/scafld-codex-review.sh review-task >/dev/null
 )
 assert_contains_file "$capture_path" 'role: "challenger"' "codex adapter should feed a challenger handoff for review-ready work"
 assert_contains_file "$capture_path" '## Challenge Contract' "codex adapter should feed the review challenge contract"
-assert_contains_file "$review_repo/.ai/runs/review-task/session.json" '"role": "challenger"' "codex review adapter should record challenger attribution"
-assert_contains_file "$review_repo/.ai/runs/review-task/session.json" '"provider": "codex"' "codex review adapter should record the codex provider"
+assert_contains_file "$review_repo/.scafld/runs/review-task/session.json" '"role": "challenger"' "codex review adapter should record challenger attribution"
+assert_contains_file "$review_repo/.scafld/runs/review-task/session.json" '"provider": "codex"' "codex review adapter should record the codex provider"
 
 echo "PASS: codex handoff adapter smoke"

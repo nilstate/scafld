@@ -67,42 +67,10 @@ EOF
 
 write_approved_spec() {
   local repo="$1"
-  cat > "$repo/.ai/specs/approved/agent-task.yaml" <<'EOF'
-spec_version: "1.1"
-task_id: "agent-task"
-created: "2026-04-24T00:00:00Z"
-updated: "2026-04-24T00:00:00Z"
-status: "approved"
-harden_status: "not_run"
-
-task:
-  title: "Agent surface smoke"
-  summary: "Exercise plan/build wrapper commands"
-  size: "small"
-  risk_level: "low"
-
-planning_log:
-  - timestamp: "2026-04-24T00:00:00Z"
-    actor: "user"
-    summary: "Bootstrap agent surface smoke fixture"
-
-phases:
-  - id: "phase1"
-    name: "Write the marker"
-    objective: "agent.txt should end up green"
-    changes:
-      - file: "agent.txt"
-        action: "update"
-        lines: "1"
-        content_spec: "replace red with green"
-    acceptance_criteria:
-      - id: "ac1_1"
-        type: "custom"
-        description: "agent.txt contains green"
-        command: "grep -q '^green$' agent.txt"
-        expected: "exit code 0"
-    status: "pending"
-EOF
+  SCAFLD_SPEC_CREATED="2026-04-24T00:00:00Z" \
+    write_markdown_spec "$repo/.scafld/specs/approved/agent-task.md" \
+    "agent-task" "approved" "Agent surface smoke" \
+    "agent.txt" "grep -q '^green$' agent.txt"
 }
 
 repo="$(new_repo)"
@@ -130,8 +98,8 @@ assert_json "$output" "data['state']['status'] == 'draft'" "plan should create a
 assert_json "$output" "data['state']['harden_status'] == 'in_progress'" "plan should open harden"
 assert_json "$output" "data['result']['mark_passed_command'] == 'scafld harden draft-task --mark-passed'" "plan should return the harden completion command"
 assert_json "$output" "data['result']['repo_context']['summary'] == 'Mixed repo detected: Node (npm), React, TypeScript + Python (uv)'" "plan should surface mixed repo detection"
-assert_contains_file "$repo/.ai/specs/drafts/draft-task.yaml" 'command: npm run build && uv run python -m compileall .' "plan draft should carry the mixed compile command"
-assert_contains_file "$repo/.ai/specs/drafts/draft-task.yaml" 'command: npm test && uv run pytest' "plan draft should carry the mixed test command"
+assert_contains_file "$repo/.scafld/specs/drafts/draft-task.md" 'npm run build && uv run python -m compileall .' "plan draft should carry the mixed compile command"
+assert_contains_file "$repo/.scafld/specs/drafts/draft-task.md" 'npm test && uv run pytest' "plan draft should carry the mixed test command"
 
 echo "[3/5] plan reopens harden on an existing draft"
 capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld plan draft-task -t 'Draft task' -s small -r low --json"

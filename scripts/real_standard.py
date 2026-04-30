@@ -15,7 +15,8 @@ if str(REPO_ROOT) not in sys.path:
 from scafld.command_runtime import find_root
 from scafld.runtime_bundle import REVIEWS_DIR, scafld_source_root
 from scafld.runtime_guidance import review_gate_snapshot
-from scafld.spec_store import find_spec, yaml_read_field, yaml_read_nested
+from scafld.spec_model import get_status, get_title
+from scafld.spec_store import find_spec, load_spec_document
 
 
 QUESTION_SET = [
@@ -71,9 +72,9 @@ def load_report(root):
 def summarize_task(root, task_id, report):
     spec = find_spec(root, task_id)
     spec_path = str(spec.relative_to(root)) if spec else None
-    spec_text = spec.read_text() if spec else ""
-    status = yaml_read_field(spec_text, "status") if spec_text else None
-    title = yaml_read_nested(spec_text, "task", "title") if spec_text else None
+    spec_model = load_spec_document(spec) if spec else {}
+    status = get_status(spec_model) if spec else None
+    title = get_title(spec_model) if spec else None
     review_state = review_gate_snapshot(root, task_id)
     runtime = ((report.get("llm_runtime") or {}).get("per_task") or {}).get(task_id, {})
     review_signal = ((report.get("review_signal") or {}).get("per_task") or {}).get(task_id, {})
@@ -109,7 +110,7 @@ def render_markdown(root, aggregate, tasks):
             f"- Challenge override: {challenge.get('overrides', 0)}/{challenge.get('total', 0)}",
             f"- Review rounds: {review_signal.get('completed_rounds', 0)}",
             f"- Grounded findings: {review_signal.get('grounded_findings', 0)}",
-            f"- Format-compliant clean reviews: {review_signal.get('format_compliant_clean_reviews', review_signal.get('clean_reviews_with_evidence', 0))}",
+            f"- Format-compliant clean reviews: {review_signal.get('format_compliant_clean_reviews', 0)}",
             "",
         ]
     )
@@ -131,7 +132,7 @@ def render_markdown(root, aggregate, tasks):
                 f"- Recovery convergence: {recovery.get('recovered', 0)}/{recovery.get('total', 0)}",
                 f"- Challenge override: {challenge.get('overrides', 0)}/{challenge.get('total', 0)}",
                 f"- Grounded findings: {task_review_signal.get('grounded_findings', 0)}",
-                f"- Format-compliant clean review: `{bool(task_review_signal.get('format_compliant_clean_review', task_review_signal.get('clean_review_with_evidence')))}`",
+                f"- Format-compliant clean review: `{bool(task_review_signal.get('format_compliant_clean_review'))}`",
                 "",
                 "Questions:",
             ]

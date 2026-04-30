@@ -27,42 +27,10 @@ new_repo() {
 
 write_approved_spec() {
   local repo="$1"
-  cat > "$repo/.ai/specs/approved/report-task.yaml" <<'EOF'
-spec_version: "1.1"
-task_id: "report-task"
-created: "2026-04-23T00:00:00Z"
-updated: "2026-04-23T00:00:00Z"
-status: "approved"
-harden_status: "not_run"
-
-task:
-  title: "Report metrics smoke"
-  summary: "Exercise session-derived report metrics"
-  size: "small"
-  risk_level: "low"
-
-planning_log:
-  - timestamp: "2026-04-23T00:00:00Z"
-    actor: "user"
-    summary: "Bootstrap report metrics smoke fixture"
-
-phases:
-  - id: "phase1"
-    name: "Write the report marker"
-    objective: "metric.txt should end up green"
-    changes:
-      - file: "metric.txt"
-        action: "update"
-        lines: "1"
-        content_spec: "replace red with green"
-    acceptance_criteria:
-      - id: "ac1_1"
-        type: "custom"
-        description: "metric.txt contains green"
-        command: "grep -q '^green$' metric.txt"
-        expected: "exit code 0"
-    status: "pending"
-EOF
+  SCAFLD_SPEC_CREATED="2026-04-23T00:00:00Z" \
+    write_markdown_spec "$repo/.scafld/specs/approved/report-task.md" \
+    "report-task" "approved" "Report metrics smoke" \
+    "metric.txt" "grep -q '^green$' metric.txt"
 }
 
 repo="$(new_repo)"
@@ -184,22 +152,22 @@ assert separation_state([
     {"type": "provider_invocation", "role": "executor", "model_observed": "gpt-a", "confidence": "observed"},
     {"type": "provider_invocation", "role": "challenger", "model_observed": "gpt-b", "confidence": "inferred"},
 ]) == "unknown_challenger"
-legacy_summary = session_summary_payload({
+custom_summary = session_summary_payload({
     "entries": [
         {
             "type": "provider_invocation",
             "role": "challenger",
             "gate": "review",
-            "status": "legacy_status",
-            "confidence": "legacy_confidence",
+            "status": "custom_status",
+            "confidence": "custom_confidence",
             "isolation_level": "claude_restricted_tools_fresh_session",
         }
     ],
     "attempts": [],
 })
-assert legacy_summary["provider_statuses"]["legacy_status"] == 1
-assert legacy_summary["provider_confidence"]["legacy_confidence"] == 1
-assert legacy_summary["provider_weaker_review_isolation"] == 1
+assert custom_summary["provider_statuses"]["custom_status"] == 1
+assert custom_summary["provider_confidence"]["custom_confidence"] == 1
+assert custom_summary["provider_weaker_review_isolation"] == 1
 PY
 
 echo "[3/5] human report shows the LLM execution signals section"
@@ -237,7 +205,7 @@ assert_json "$output" "data['result']['llm_runtime']['provider_telemetry']['mode
 assert_json "$output" "data['result']['llm_runtime']['per_task']['report-task']['recovery_convergence_rate']['recovered'] == 1" "json report should expose per-task runtime metrics"
 assert_json "$output" "data['result']['llm_runtime']['per_task']['report-task']['provider_telemetry']['isolation_downgrades'] == 1" "json report should expose per-task provider telemetry"
 assert_json "$output" "data['result']['llm_runtime']['per_task']['report-task']['provider_telemetry']['weaker_review_isolation'] == 1" "json report should expose per-task weaker isolation telemetry"
-assert_json "$output" "'review_signal' in data['result'] and 'format_compliant_clean_reviews' in data['result']['review_signal'] and 'clean_reviews_with_evidence' in data['result']['review_signal']" "json report should expose renamed review signal metrics and legacy alias"
+assert_json "$output" "'review_signal' in data['result'] and 'format_compliant_clean_reviews' in data['result']['review_signal']" "json report should expose review signal metrics"
 
 echo "[5/5] runtime-only report filters to the session cohort"
 capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld report --json --runtime-only"

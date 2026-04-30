@@ -139,13 +139,13 @@ class VerifyReviewSealTest(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIn("hash mismatch", reason)
 
-    def test_missing_seal_returns_sentinel(self):
+    def test_missing_seal_returns_reason(self):
         packet = _fixture_packet()
         ok, reason = verify_review_seal({}, packet)
         self.assertFalse(ok)
         self.assertEqual(reason, "missing_seal")
 
-    def test_empty_seal_returns_sentinel(self):
+    def test_empty_seal_returns_reason(self):
         packet = _fixture_packet()
         ok, reason = verify_review_seal(
             {"review_provenance": {"canonical_response_sha256": ""}}, packet
@@ -153,14 +153,12 @@ class VerifyReviewSealTest(unittest.TestCase):
         self.assertFalse(ok)
         self.assertEqual(reason, "missing_seal")
 
-    def test_seal_at_top_level_still_matches(self):
-        # Tolerate seals written at the top level (older write paths or
-        # hand-crafted fixtures); the lookup helper falls back gracefully.
+    def test_top_level_seal_is_not_accepted(self):
         packet = _fixture_packet()
         sha = compute_canonical_response_sha256(packet)
         ok, reason = verify_review_seal({"canonical_response_sha256": sha}, packet)
-        self.assertTrue(ok)
-        self.assertEqual(reason, "")
+        self.assertFalse(ok)
+        self.assertEqual(reason, "missing_seal")
 
 
 class MetadataCanonicalSha256Test(unittest.TestCase):
@@ -170,12 +168,10 @@ class MetadataCanonicalSha256Test(unittest.TestCase):
             "abc",
         )
 
-    def test_reads_top_level_fallback(self):
-        self.assertEqual(metadata_canonical_sha256({"canonical_response_sha256": "xyz"}), "xyz")
-
     def test_returns_none_when_absent(self):
         self.assertIsNone(metadata_canonical_sha256({}))
         self.assertIsNone(metadata_canonical_sha256({"review_provenance": {}}))
+        self.assertIsNone(metadata_canonical_sha256({"canonical_response_sha256": "xyz"}))
 
     def test_returns_none_for_non_dict(self):
         self.assertIsNone(metadata_canonical_sha256(None))
@@ -185,10 +181,10 @@ class MetadataCanonicalSha256Test(unittest.TestCase):
 class ReadReviewPacketArtifactTest(unittest.TestCase):
     def setUp(self):
         self.root = Path(tempfile.mkdtemp(prefix="scafld-packet-artifact-"))
-        (self.root / ".ai").mkdir()
-        (self.root / ".ai" / "specs" / "active").mkdir(parents=True)
+        (self.root / ".scafld").mkdir()
+        (self.root / ".scafld" / "specs" / "active").mkdir(parents=True)
         # the path resolver wants a spec file to anchor under
-        self.spec_path = self.root / ".ai" / "specs" / "active" / "task-X.yaml"
+        self.spec_path = self.root / ".scafld" / "specs" / "active" / "task-X.md"
         self.spec_path.write_text("task_id: task-X\n", encoding="utf-8")
 
     def test_returns_none_when_artifact_missing(self):
@@ -389,7 +385,7 @@ class SchemaStrictModeShapeTest(unittest.TestCase):
     def test_every_property_listed_in_required(self):
         from collections import deque
         from pathlib import Path
-        schema_path = Path(__file__).resolve().parent.parent / ".ai" / "schemas" / "review_packet.json"
+        schema_path = Path(__file__).resolve().parent.parent / ".scafld" / "core" / "schemas" / "review_packet.json"
         schema = json.loads(schema_path.read_text(encoding="utf-8"))
         queue = deque([("$root", schema)])
         violations = []

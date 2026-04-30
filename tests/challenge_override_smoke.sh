@@ -43,11 +43,11 @@ task_id = os.environ["REVIEW_TASK_ID"]
 sys.path.insert(0, os.environ["REPO_ROOT"])
 from scafld.git_state import capture_review_git_state
 
-state, error = capture_review_git_state(repo, f".ai/reviews/{task_id}.md")
+state, error = capture_review_git_state(repo, f".scafld/reviews/{task_id}.md")
 if error:
     raise SystemExit(error)
 
-review_path = repo / ".ai" / "reviews" / f"{task_id}.md"
+review_path = repo / ".scafld" / "reviews" / f"{task_id}.md"
 text = review_path.read_text()
 match = list(re.finditer(r"```json\s*\n(.*?)\n```", text, re.DOTALL))[-1]
 metadata = json.loads(match.group(1))
@@ -58,48 +58,16 @@ PY
 
 write_approved_spec() {
   local repo="$1"
-  cat > "$repo/.ai/specs/approved/override-task.yaml" <<'EOF'
-spec_version: "1.1"
-task_id: "override-task"
-created: "2026-04-24T00:00:00Z"
-updated: "2026-04-24T00:00:00Z"
-status: "approved"
-harden_status: "not_run"
-
-task:
-  title: "Challenge override smoke"
-  summary: "Exercise review challenge override metrics"
-  size: "small"
-  risk_level: "low"
-
-planning_log:
-  - timestamp: "2026-04-24T00:00:00Z"
-    actor: "user"
-    summary: "Bootstrap challenge override smoke fixture"
-
-phases:
-  - id: "phase1"
-    name: "Write the marker"
-    objective: "app.txt should end up changed"
-    changes:
-      - file: "app.txt"
-        action: "update"
-        lines: "1"
-        content_spec: "replace base with changed"
-    acceptance_criteria:
-      - id: "ac1_1"
-        type: "custom"
-        description: "app.txt contains changed"
-        command: "grep -q '^changed$' app.txt"
-        expected: "exit code 0"
-    status: "pending"
-EOF
+  SCAFLD_SPEC_CREATED="2026-04-24T00:00:00Z" \
+    write_markdown_spec "$repo/.scafld/specs/approved/override-task.md" \
+    "override-task" "approved" "Challenge override smoke" \
+    "app.txt" "grep -q '^changed$' app.txt"
 }
 
 write_blocking_review() {
   local repo="$1"
-  mkdir -p "$repo/.ai/reviews"
-  cat > "$repo/.ai/reviews/override-task.md" <<'EOF'
+  mkdir -p "$repo/.scafld/reviews"
+  cat > "$repo/.scafld/reviews/override-task.md" <<'EOF'
 # Review: override-task
 
 ## Spec
@@ -122,7 +90,7 @@ Challenge override smoke fixture
   "reviewer_session": "sess-1",
   "reviewed_at": "2026-04-24T00:00:00Z",
   "override_reason": null,
-  "review_handoff": ".ai/runs/override-task/handoffs/challenger-review.md",
+  "review_handoff": ".scafld/runs/override-task/handoffs/challenger-review.md",
   "reviewer_isolation": "fresh_context_handoff",
   "pass_results": {
     "spec_compliance": "pass",
@@ -173,7 +141,7 @@ capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld build 
 assert_json "$output" "data['ok'] is True" "build should pass before review"
 capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld handoff override-task --review --json"
 assert_json "$output" "data['state']['role'] == 'challenger'" "review handoff should use the challenger role"
-[ -f "$repo/.ai/runs/override-task/handoffs/challenger-review.md" ] || fail "challenger review handoff should exist"
+[ -f "$repo/.scafld/runs/override-task/handoffs/challenger-review.md" ] || fail "challenger review handoff should exist"
 
 echo "[2/5] override is rejected until a challenger round exists"
 if capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld complete override-task --human-reviewed --reason 'manual audit'"; then
@@ -198,7 +166,7 @@ import os
 import pathlib
 
 repo = pathlib.Path(os.environ["REPO"])
-session = json.loads((repo / ".ai" / "runs" / "archive" / "2026-04" / "override-task" / "session.json").read_text())
+session = json.loads((repo / ".scafld" / "runs" / "archive" / "2026-04" / "override-task" / "session.json").read_text())
 assert any(entry["type"] == "challenge_verdict" and entry["blocked"] is True for entry in session["entries"]), session
 assert any(entry["type"] == "human_override" and entry["gate"] == "review" for entry in session["entries"]), session
 assert any(entry["type"] == "human_override" and entry["review_round"] == 2 for entry in session["entries"]), session

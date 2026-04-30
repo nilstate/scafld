@@ -4,39 +4,14 @@ from pathlib import Path
 
 from scafld.acceptance import (
     EXPECTED_KINDS,
-    _legacy_expected_to_kind,
     check_kind,
     evaluate_acceptance_criterion,
     resolve_kind,
 )
 
 
-class ResolveKindLegacyMappingTest(unittest.TestCase):
-    def test_legacy_exit_code_zero_maps(self):
-        self.assertEqual(_legacy_expected_to_kind("exit code 0"), ("exit_code_zero", {}))
-        self.assertEqual(_legacy_expected_to_kind("EXIT CODE 0"), ("exit_code_zero", {}))
-        self.assertEqual(_legacy_expected_to_kind("  exit  code  0  "), ("exit_code_zero", {}))
-
-    def test_legacy_exit_code_nonzero_maps(self):
-        kind, fields = _legacy_expected_to_kind("exit code 1")
-        self.assertEqual(kind, "exit_code_nonzero")
-        self.assertEqual(fields, {"expected_exit_code": 1})
-
-    def test_legacy_no_matches_maps(self):
-        self.assertEqual(_legacy_expected_to_kind("no matches"), ("no_matches", {}))
-
-    def test_legacy_unmapped_falls_back_to_substring(self):
-        kind, fields = _legacy_expected_to_kind("all tests pass")
-        self.assertEqual(kind, "legacy_substring")
-        self.assertEqual(fields, {"expected_substring": "all tests pass"})
-
-    def test_legacy_empty_maps_to_unset(self):
-        self.assertEqual(_legacy_expected_to_kind(""), ("unset", {}))
-        self.assertEqual(_legacy_expected_to_kind("   "), ("unset", {}))
-
-
 class ResolveKindExplicitTest(unittest.TestCase):
-    def test_explicit_kind_wins_over_legacy_string(self):
+    def test_explicit_kind_ignores_freeform_expected_text(self):
         criterion = {"expected_kind": "no_matches", "expected": "exit code 0"}
         kind, _ = resolve_kind(criterion)
         self.assertEqual(kind, "no_matches")
@@ -96,9 +71,8 @@ class CheckKindNoMatchesTest(unittest.TestCase):
         self.assertTrue(passed)
 
     def test_pass_on_nonzero_exit_with_output(self):
-        # Mirrors legacy `expected: "no matches"` semantics: rg-style
-        # "no match found" returns non-zero with empty stdout AND
-        # any non-zero exit is accepted as evidence of no matches.
+        # rg-style "no match found" returns non-zero with empty stdout;
+        # any non-zero exit is accepted by this structured matcher.
         passed, _ = check_kind(1, "irrelevant", {"expected_kind": "no_matches"})
         self.assertTrue(passed)
 
@@ -110,31 +84,30 @@ class CheckKindNoMatchesTest(unittest.TestCase):
 
 class EvaluateCriterionStrictModeTest(unittest.TestCase):
     """Integration tests for the strict-mode reject-before-run path on
-    `evaluate_acceptance_criterion`. 1.7.0 ships strict-only; criteria
-    without `expected_kind` declared fail loudly without running the
-    command."""
+    `evaluate_acceptance_criterion`. Criteria without `expected_kind`
+    declared fail loudly without running the command."""
 
     def _workspace(self):
         tmp = tempfile.mkdtemp(prefix="scafld-acceptance-")
         root = Path(tmp)
-        (root / ".ai").mkdir()
-        (root / ".ai" / "config.yaml").write_text("version: '1.0'\n", encoding="utf-8")
+        (root / ".scafld").mkdir()
+        (root / ".scafld" / "config.yaml").write_text("version: '1.0'\n", encoding="utf-8")
         return root
 
     def test_unset_kind_rejected_without_running_command(self):
         root = self._workspace()
-        sentinel = root / "side_effect.txt"
+        marker = root / "side_effect.txt"
         criterion = {
             "id": "ac1_1",
-            "command": f"touch '{sentinel}'",
+            "command": f"touch '{marker}'",
         }
         result = evaluate_acceptance_criterion(root, criterion)
         self.assertEqual(result["status"], "fail")
         self.assertIn("expected_kind", result["fail_reason"])
         self.assertIsNone(result["exit_code"])
-        self.assertFalse(sentinel.exists(), "rejection must short-circuit BEFORE subprocess.run")
+        self.assertFalse(marker.exists(), "rejection must short-circuit BEFORE subprocess.run")
 
-    def test_legacy_substring_rejected(self):
+    def test_freeform_expected_string_rejected(self):
         root = self._workspace()
         criterion = {
             "id": "ac1_2",
@@ -149,13 +122,12 @@ class EvaluateCriterionStrictModeTest(unittest.TestCase):
     def test_invalid_kind_rejected_without_running_command(self):
         # A typo'd expected_kind (e.g. "exit_cod_zero") must be rejected
         # BEFORE subprocess.run so commands with side effects don't run
-        # against an unevaluable contract. Mirrors the unset/legacy_substring
-        # short-circuit; closes the gap that allowed Review 6 F1.
+        # against an unevaluable contract.
         root = self._workspace()
-        sentinel = root / "side_effect.txt"
+        marker = root / "side_effect.txt"
         criterion = {
             "id": "ac1_invalid",
-            "command": f"touch '{sentinel}'",
+            "command": f"touch '{marker}'",
             "expected_kind": "exit_cod_zero",
         }
         result = evaluate_acceptance_criterion(root, criterion)
@@ -163,7 +135,7 @@ class EvaluateCriterionStrictModeTest(unittest.TestCase):
         self.assertIsNone(result["exit_code"])
         self.assertIn("unknown expected_kind", result["fail_reason"])
         self.assertIn("exit_cod_zero", result["fail_reason"])
-        self.assertFalse(sentinel.exists(), "invalid_kind must short-circuit BEFORE subprocess.run")
+        self.assertFalse(marker.exists(), "invalid_kind must short-circuit BEFORE subprocess.run")
 
     def test_explicit_kind_accepted(self):
         root = self._workspace()
@@ -175,15 +147,16 @@ class EvaluateCriterionStrictModeTest(unittest.TestCase):
         result = evaluate_acceptance_criterion(root, criterion)
         self.assertEqual(result["status"], "pass")
 
-    def test_legacy_exit_code_zero_string_auto_resolves(self):
+    def test_expected_string_exit_code_zero_does_not_auto_resolve(self):
         root = self._workspace()
         criterion = {
             "id": "ac1_4",
             "command": "true",
-            "expected": "exit code 0",  # legacy string that maps cleanly
+            "expected": "exit code 0",
         }
         result = evaluate_acceptance_criterion(root, criterion)
-        self.assertEqual(result["status"], "pass")
+        self.assertEqual(result["status"], "fail")
+        self.assertIn("expected_kind", result["fail_reason"])
 
 
 class EvaluateCriterionEvidenceTest(unittest.TestCase):
@@ -194,8 +167,8 @@ class EvaluateCriterionEvidenceTest(unittest.TestCase):
     def _workspace(self):
         tmp = tempfile.mkdtemp(prefix="scafld-evidence-")
         root = Path(tmp)
-        (root / ".ai").mkdir()
-        (root / ".ai" / "config.yaml").write_text("version: '1.0'\n", encoding="utf-8")
+        (root / ".scafld").mkdir()
+        (root / ".scafld" / "config.yaml").write_text("version: '1.0'\n", encoding="utf-8")
         return root
 
     def test_evidence_required_passes_with_stdout(self):

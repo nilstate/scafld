@@ -16,7 +16,7 @@ from scafld.runtime_contracts import (
     session_ref,
 )
 from scafld.session_store import prior_phase_summary, session_summary_payload
-from scafld.spec_parsing import now_iso
+from scafld.spec_model import now_iso
 from scafld.spec_store import load_spec_document
 
 
@@ -328,7 +328,7 @@ def render_review_sections(root, task_id, spec_path, spec_data, session, selecto
     changed_files = []
     for phase in phase_definitions(spec_data):
         changed_files.extend(phase_change_lines(phase))
-    review_file_rel = context.get("review_file_rel") or ".ai/reviews/{task_id}.md"
+    review_file_rel = context.get("review_file_rel") or ".scafld/reviews/{task_id}.md"
     return [
         format_section(
             "Challenge Contract",

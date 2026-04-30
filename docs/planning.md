@@ -21,7 +21,7 @@ If any of these are vague, the spec isn't ready.
 
 ## The planning loop
 
-In planning mode, the agent reads the project-owned `.ai/prompts/plan.md` template and runs a structured exploration cycle:
+In planning mode, the agent reads the project-owned `.scafld/prompts/plan.md` template and runs a structured exploration cycle:
 
 1. **THOUGHT** -- interpret the request in repo terms, identify unknowns
 2. **ACTION** -- search the codebase, read files, check diffs
@@ -29,7 +29,7 @@ In planning mode, the agent reads the project-owned `.ai/prompts/plan.md` templa
 4. **THOUGHT** -- update the spec, ask clarifying questions
 5. **REPEAT** until all required fields are filled
 
-The agent is in read-only mode during planning. It can explore anything but change nothing outside `.ai/specs/`. Max 20 cycles. If blocked by uncertainty, it saves with `status: under_review` and documents what it needs.
+The agent is in read-only mode during planning. It can explore anything but change nothing outside `.scafld/specs/`. Max 20 cycles. If blocked by uncertainty, it saves with `status: under_review` and documents what it needs.
 
 `scafld plan <task-id>` is idempotent for drafts: rerunning it on an existing draft reopens harden instead of erroring. That gives agents a clean retry path without forcing them down to `scafld harden`.
 
@@ -77,41 +77,41 @@ scope:
 
 Each phase has its own acceptance criteria, so partial progress is measurable. Dependencies between phases enforce ordering.
 
-```yaml
-phases:
-  - id: phase1
-    name: "Token generation"
-    objective: "JWT creation and signing"
-    dependencies: []
-    changes:
-      - file: src/auth/token.ts
-        action: create
-        content_spec: "Sign and verify JWTs using RS256"
-    acceptance_criteria:
-      - id: ac1_1
-        type: test
-        description: "Token round-trips correctly"
-        command: "npm test -- --grep 'token'"
-        expected: "exit code 0"
-    status: pending
+````md
+## Phase 1: Token generation
 
-  - id: phase2
-    name: "Auth middleware"
-    dependencies: [phase1]
-    ...
-```
+Goal: JWT creation and signing.
+
+Status: pending
+Dependencies: none
+
+Changes:
+- `src/auth/token.ts` — sign and verify JWTs using RS256.
+
+Acceptance:
+- [ ] `ac1_1` test: Token round-trips correctly.
+  - Command: `npm test -- --grep 'token'`
+  - Expected kind: `exit_code_zero`
+  - Status: `pending`
+
+## Phase 2: Auth middleware
+
+Goal: Request validation pipeline.
+
+Status: pending
+Dependencies: phase1
+````
 
 ## The planning log
 
 Records decisions made during spec creation. Uses a structured format:
 
-```yaml
-planning_log:
-  - timestamp: "2026-04-16T10:00:00Z"
-    actor: agent
-    summary: "Chose RS256 over HS256 for token signing"
-    notes: "Asymmetric keys allow verification without exposing the signing key"
-```
+````md
+## Planning Log
+
+- 2026-04-16T10:00:00Z - agent - Chose RS256 over HS256 for token signing.
+  - Notes: Asymmetric keys allow verification without exposing the signing key.
+````
 
 ## Risk assessment
 

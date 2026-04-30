@@ -9,10 +9,10 @@ scafld stays provider-neutral in core.
 
 The first-party integration layer is intentionally thin:
 
-- `scripts/scafld-codex-build.sh <task-id>`
-- `scripts/scafld-codex-review.sh <task-id>`
-- `scripts/scafld-claude-build.sh <task-id>`
-- `scripts/scafld-claude-review.sh <task-id>`
+- `.scafld/core/scripts/scafld-codex-build.sh <task-id>`
+- `.scafld/core/scripts/scafld-codex-review.sh <task-id>`
+- `.scafld/core/scripts/scafld-claude-build.sh <task-id>`
+- `.scafld/core/scripts/scafld-claude-review.sh <task-id>`
 
 Each wrapper:
 

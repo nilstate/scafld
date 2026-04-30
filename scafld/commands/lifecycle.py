@@ -24,15 +24,13 @@ from scafld.runtime_bundle import (
     sync_framework_bundle,
 )
 from scafld.runtime_contracts import archive_run_artifacts
-from scafld.spec_parsing import active_done_open, count_phases, now_iso, supersession_payload
+from scafld.spec_model import active_done_open, count_phases, get_status, get_title, now_iso, supersession_payload
 from scafld.spec_store import (
     find_all_specs,
     load_spec_document,
     move_spec,
     require_spec,
     write_spec_document,
-    yaml_read_field,
-    yaml_read_nested,
 )
 from scafld.terminal import C_BOLD, C_CYAN, C_DIM, C_GREEN, C_RED, C_YELLOW, STATUS_COLORS, c
 
@@ -61,10 +59,14 @@ def record_cancel_metadata(spec_path, *, reason=None, superseded_by=None):
     if reason:
         data["cancel_reason"] = reason
     if superseded_by:
-        data["superseded_by"] = superseded_by
-        data["superseded_at"] = timestamp
+        origin = data.get("origin") if isinstance(data.get("origin"), dict) else {}
+        supersession = origin.get("supersession") if isinstance(origin.get("supersession"), dict) else {}
+        supersession["superseded_by"] = superseded_by
+        supersession["superseded_at"] = timestamp
         if reason:
-            data["superseded_reason"] = reason
+            supersession["reason"] = reason
+        origin["supersession"] = supersession
+        data["origin"] = origin
         summary = f"Spec superseded by {superseded_by}"
         if reason:
             summary = f"{summary}: {reason}"
@@ -77,11 +79,10 @@ def record_cancel_metadata(spec_path, *, reason=None, superseded_by=None):
         if isinstance(planning_log, list):
             planning_log.append({"timestamp": timestamp, "actor": "cli", "summary": summary})
     write_spec_document(spec_path, data)
-    text = spec_path.read_text(encoding="utf-8")
     return {
         "cancelled_at": timestamp,
         "reason": reason,
-        "supersession": supersession_payload(text),
+        "supersession": supersession_payload(data),
     }
 
 
@@ -101,15 +102,15 @@ def filter_specs(specs, filter_text):
     if flt in ("stale", "stale-active", "active-done", "done-open", "ready-review", "ready-for-review"):
         matches = []
         for spec_path, label in specs:
-            text = spec_path.read_text(encoding="utf-8")
-            if active_done_open(text, yaml_read_field(text, "status")):
+            data = load_spec_document(spec_path)
+            if active_done_open(data, get_status(data)):
                 matches.append((spec_path, label))
         return matches
     if flt in ("superseded", "superseded-by"):
         matches = []
         for spec_path, label in specs:
-            text = spec_path.read_text(encoding="utf-8")
-            if supersession_payload(text).get("superseded"):
+            data = load_spec_document(spec_path)
+            if supersession_payload(data).get("superseded"):
                 matches.append((spec_path, label))
         return matches
     return [(spec_path, label) for spec_path, label in specs if flt in spec_path.stem.lower()]
@@ -411,17 +412,17 @@ def cmd_list(args):
     for label, group_specs in listing_groups(specs).items():
         print(f"{c(C_BOLD, label)}/")
         for spec_path in group_specs:
-            text = spec_path.read_text()
-            status = yaml_read_field(text, "status") or "unknown"
-            title = yaml_read_nested(text, "task", "title") or spec_path.stem
+            data = load_spec_document(spec_path)
+            status = get_status(data) or "unknown"
+            title = get_title(data) or spec_path.stem
             color = STATUS_COLORS.get(status, "")
-            total, completed, _, _ = count_phases(text)
+            total, completed, _, _ = count_phases(data)
             phase_str = f" [{completed}/{total}]" if total > 0 else ""
             markers = []
-            supersession = supersession_payload(text)
+            supersession = supersession_payload(data)
             if supersession.get("superseded"):
                 markers.append(f"superseded by {supersession['superseded_by']}")
-            elif active_done_open(text, status):
+            elif active_done_open(data, status):
                 markers.append("stale active")
             marker_str = f" {c(C_YELLOW, '(' + '; '.join(markers) + ')')}" if markers else ""
             max_title = 50
@@ -445,7 +446,7 @@ def cmd_approve(args):
         )
         return
     print_move_result(root, move_result)
-    print(f"  session: .ai/runs/{args.task_id}/session.json")
+    print(f"  session: .scafld/runs/{args.task_id}/session.json")
 
 
 def cmd_start(args):
@@ -463,7 +464,7 @@ def cmd_start(args):
         )
         return
     print_move_result(root, move_result)
-    print(f"  session: .ai/runs/{args.task_id}/session.json")
+    print(f"  session: .scafld/runs/{args.task_id}/session.json")
     print(f"  handoff: {result['handoff_file']}")
 
 

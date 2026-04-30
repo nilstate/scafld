@@ -82,7 +82,7 @@ to without needing `--json`:
 ```text
 Add Auth Middleware
      id: add-auth
-   file: .ai/specs/active/add-auth.yaml
+   file: .scafld/specs/active/add-auth.md
  status: in_progress
  phases: 1 active / 2 pending  (3 total)
  source: github issue #123 - Add auth middleware

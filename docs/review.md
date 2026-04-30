@@ -24,21 +24,21 @@ scafld review <task-id>
 The command:
 
 1. runs automated passes
-2. appends a new round to `.ai/reviews/{task-id}.md`
+2. appends a new round to `.scafld/reviews/{task-id}.md`
 3. resolves the configured review runner
 4. either executes a fresh external challenger or emits the `challenger × review` handoff for an explicit degraded path
 
 The handoff lives at:
 
-- `.ai/runs/{task-id}/handoffs/challenger-review.md`
-- `.ai/runs/{task-id}/handoffs/challenger-review.json`
+- `.scafld/runs/{task-id}/handoffs/challenger-review.md`
+- `.scafld/runs/{task-id}/handoffs/challenger-review.json`
 
 Successful external reviews also persist the normalized review transport and the
 executor-facing repair projection:
 
-- `.ai/runs/{task-id}/review-packets/review-N.json`
-- `.ai/runs/{task-id}/handoffs/executor-review-repair.md`
-- `.ai/runs/{task-id}/handoffs/executor-review-repair.json`
+- `.scafld/runs/{task-id}/review-packets/review-N.json`
+- `.scafld/runs/{task-id}/handoffs/executor-review-repair.md`
+- `.scafld/runs/{task-id}/handoffs/executor-review-repair.json`
 
 If the latest review round is still `in_progress`, rerunning `scafld review
 <task-id>` refreshes that same round in place. It does not append a second
@@ -52,7 +52,8 @@ The default runner is `external`:
 - fall back to the other provider when available, with a visible weaker
   isolation or self-review warning before the subprocess starts
 - fail cleanly if neither exists
-- stop after `review.external.timeout_seconds` instead of hanging indefinitely
+- stop after `review.external.idle_timeout_seconds` or
+  `review.external.absolute_max_seconds` instead of hanging indefinitely
 
 Set `review.external.fallback_policy: "disable"` to require Codex for
 `provider: auto`. `warn` is the default and prints a warning on Claude fallback
@@ -80,8 +81,8 @@ reviewer. It reports runner/provider/model overrides as snapshot metadata only.
 When the workspace includes them, the thin review wrappers remain optional
 integration surfaces:
 
-- `scripts/scafld-codex-review.sh <task-id>`
-- `scripts/scafld-claude-review.sh <task-id>`
+- `.scafld/core/scripts/scafld-codex-review.sh <task-id>`
+- `.scafld/core/scripts/scafld-claude-review.sh <task-id>`
 
 They are not the primary review product surface anymore. They are thin provider
 adapters over the same handoff contract.
@@ -128,7 +129,7 @@ executor must reconcile them with the approved task contract before editing the
 spec.
 
 Failed external attempts, timeouts, and malformed external output write raw
-provider diagnostics under `.ai/runs/<task-id>/diagnostics/`. The command error
+provider diagnostics under `.scafld/runs/<task-id>/diagnostics/`. The command error
 prints the diagnostic path so the paid model output remains inspectable even
 when it cannot be accepted as a review round.
 Diagnostics include the prompt sha256 and a bounded prompt preview so the
@@ -230,8 +231,8 @@ scafld complete <task-id> --human-reviewed --reason "manual audit"
 That reviewed git state is bound to the engineering workspace, not scafld's own
 review control plane. The gate excludes:
 
-- the review artifact itself: `.ai/reviews/{task-id}.md`
-- the task-scoped run tree: `.ai/runs/{task-id}/`
+- the review artifact itself: `.scafld/reviews/{task-id}.md`
+- the task-scoped run tree: `.scafld/runs/{task-id}/`
 
 That means rerendering the challenger handoff or updating task-run metadata does
 not create fake review drift. Real product-file changes still do.

@@ -17,9 +17,8 @@ dist/
 Thumbs.db
 
 # scafld runtime state
-.ai/runs/
-.ai/reviews/
-.ai/scafld/
+.scafld/runs/
+.scafld/reviews/
 docs/node_modules/
 plans/
 .runx

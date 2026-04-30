@@ -8,22 +8,22 @@ from scafld.errors import ScafldError
 
 
 class LoadConfigTest(unittest.TestCase):
-    def test_invalid_yaml_raises_control_plane_error(self):
+    def test_invalid_markdown_raises_control_plane_error(self):
         root = Path(tempfile.mkdtemp(prefix="scafld-config-test-"))
-        (root / ".ai").mkdir()
-        (root / ".ai" / "config.yaml").write_text("review:\n  external: [broken\n", encoding="utf-8")
+        (root / ".scafld").mkdir()
+        (root / ".scafld" / "config.yaml").write_text("review:\n  external: [broken\n", encoding="utf-8")
 
         with self.assertRaises(ScafldError) as ctx:
-            load_config(root, ".ai/scafld/config.yaml", ".ai/config.yaml", ".ai/config.local.yaml")
+            load_config(root, ".scafld/core/config.yaml", ".scafld/config.yaml", ".scafld/config.local.yaml")
 
         self.assertEqual(ctx.exception.code, EC.INVALID_ARGUMENTS)
         self.assertIn("invalid scafld config YAML", ctx.exception.message)
-        self.assertIn(".ai/config.yaml", "\n".join(ctx.exception.details))
+        self.assertIn(".scafld/config.yaml", "\n".join(ctx.exception.details))
 
-    def test_legacy_timeout_overlay_overrides_managed_timeout_keys(self):
+    def test_local_timeout_overlay_uses_v2_timeout_keys_only(self):
         root = Path(tempfile.mkdtemp(prefix="scafld-config-test-"))
-        (root / ".ai" / "scafld").mkdir(parents=True)
-        (root / ".ai" / "scafld" / "config.yaml").write_text(
+        (root / ".scafld" / "core").mkdir(parents=True)
+        (root / ".scafld" / "core" / "config.yaml").write_text(
             """
 review:
   external:
@@ -32,18 +32,19 @@ review:
 """,
             encoding="utf-8",
         )
-        (root / ".ai" / "config.local.yaml").write_text(
+        (root / ".scafld" / "config.local.yaml").write_text(
             """
 review:
   external:
-    timeout_seconds: 1
+    idle_timeout_seconds: 60
+    absolute_max_seconds: 600
 """,
             encoding="utf-8",
         )
 
-        config = load_config(root, ".ai/scafld/config.yaml", ".ai/config.yaml", ".ai/config.local.yaml")
+        config = load_config(root, ".scafld/core/config.yaml", ".scafld/config.yaml", ".scafld/config.local.yaml")
 
         external = config["review"]["external"]
-        self.assertEqual(external["timeout_seconds"], 1)
-        self.assertEqual(external["idle_timeout_seconds"], 1)
-        self.assertEqual(external["absolute_max_seconds"], 1)
+        self.assertNotIn("timeout_seconds", external)
+        self.assertEqual(external["idle_timeout_seconds"], 60)
+        self.assertEqual(external["absolute_max_seconds"], 600)

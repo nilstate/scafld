@@ -5,7 +5,8 @@ from scafld.error_codes import ErrorCode as EC
 from scafld.handoff_renderer import current_phase_id, phase_definitions, render_handoff
 from scafld.output import emit_command_json, error_payload
 from scafld.session_store import attempts_for_criterion, failed_attempts_for_criterion, latest_failed_attempt, load_session
-from scafld.spec_store import load_spec_document, require_spec, yaml_read_field
+from scafld.spec_model import get_status
+from scafld.spec_store import load_spec_document, require_spec
 
 
 def selected_handoff_identity(args, status):
@@ -31,10 +32,9 @@ def cmd_handoff(args):
     root = require_root()
     spec = require_spec(root, args.task_id)
     json_mode = bool(getattr(args, "json", False))
-    spec_text = spec.read_text()
     session = load_session(root, args.task_id, spec_path=spec)
-    status = yaml_read_field(spec_text, "status")
     spec_data = load_spec_document(spec)
+    status = get_status(spec_data)
 
     try:
         role, gate = selected_handoff_identity(args, status)

@@ -26,7 +26,7 @@ Install from npm:
 npm install -g scafld
 ```
 
-The npm package ships the same CLI/runtime bundle, but the executable still requires `python3` at runtime. Commands that edit YAML specs, such as `scafld harden`, also need `PyYAML` installed in that Python runtime:
+The npm package ships the same CLI/runtime bundle, but the executable still requires `python3` at runtime. Commands that edit Markdown spec front matter, such as `scafld harden`, also need `PyYAML` installed in that Python runtime:
 
 ```bash
 python3 -m pip install PyYAML
@@ -78,10 +78,10 @@ Navigate to your project root and run:
 scafld init
 ```
 
-This scaffolds the full `.ai/` structure:
+This scaffolds the full `.scafld/` structure:
 
 ```
-  .ai/
+  .scafld/
   scafld/               # Managed reset copy refreshed by `scafld update`
   config.yaml            # Validation rules, rubric, safety controls
   config.local.yaml      # Your overrides (build/test/lint commands)
@@ -104,20 +104,20 @@ AGENTS.md                # Your project's invariants and policies
 CONVENTIONS.md           # Coding standards
 ```
 
-The `.ai/specs/` directory and `AGENTS.md` should be committed to version control. Specs are project artifacts, not personal notes.
+The `.scafld/specs/` directory and `AGENTS.md` should be committed to version control. Specs are project artifacts, not personal notes.
 
-When `scafld init` sees common repo markers such as `package.json`, lockfiles, `pyproject.toml`, or `requirements.txt`, it now seeds `.ai/config.local.yaml` with suggested build, test, lint, and typecheck commands. Unknown repo shapes keep the existing safe placeholder commands.
+When `scafld init` sees common repo markers such as `package.json`, lockfiles, `pyproject.toml`, or `requirements.txt`, it now seeds `.scafld/config.local.yaml` with suggested build, test, lint, and typecheck commands. Unknown repo shapes keep the existing safe placeholder commands.
 
 Prompt precedence is intentional:
 
-- `.ai/prompts/*` is the active layer
-- `.ai/scafld/prompts/*` is the managed reset source
+- `.scafld/prompts/*` is the active layer
+- `.scafld/core/prompts/*` is the managed reset source
 
 ## Configuration
 
-scafld uses two config files in `.ai/`:
+scafld uses two config files in `.scafld/`:
 
-- `scafld/config.yaml` -- framework-managed defaults refreshed by `scafld update`
+- `.scafld/core/config.yaml` -- framework-managed defaults refreshed by `scafld update`
 - `config.yaml` -- project-level configuration and overrides committed with the repo
 - `config.local.yaml` -- project-specific overrides (build/test/lint commands)
 
@@ -125,13 +125,13 @@ The local config merges on top of the project config, which itself layers on top
 
 ## Editor integration
 
-scafld specs are YAML files validated against `.ai/schemas/spec.json`. Point your editor's YAML language server at the schema for autocompletion:
+scafld specs are Markdown files validated against `.scafld/core/schemas/spec.json`. Point your editor's YAML language server at the schema for autocompletion:
 
 ```json
 // .vscode/settings.json
 {
   "yaml.schemas": {
-    ".ai/schemas/spec.json": ".ai/specs/**/*.yaml"
+    ".scafld/core/schemas/spec.json": ".scafld/specs/**/*.md"
   }
 }
 ```

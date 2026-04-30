@@ -27,10 +27,10 @@ from scafld.reviewing import (
     review_passes_by_kind,
 )
 from scafld.runtime_contracts import diagnostics_dir, relative_path
-from scafld.runtime_bundle import CONFIG_PATH, REVIEWS_DIR, load_runtime_config, scafld_source_root
+from scafld.runtime_bundle import CONFIG_PATH, REVIEWS_DIR, RUNS_DIR, load_runtime_config, scafld_source_root
 from scafld.session_store import load_session
-from scafld.spec_parsing import extract_self_eval_score, extract_spec_cwd, now_iso, parse_acceptance_criteria
-from scafld.spec_store import yaml_read_nested
+from scafld.spec_markdown import parse_spec_markdown
+from scafld.spec_model import extract_self_eval_score, extract_spec_cwd, now_iso, parse_acceptance_criteria
 from scafld.terminal import C_BOLD, C_CYAN, C_DIM, C_RED, C_YELLOW, c
 
 
@@ -48,8 +48,10 @@ def ensure_review_file_header(review_file, task_id, spec_text):
     if review_file.exists():
         return
 
-    task_title = yaml_read_nested(spec_text, "task", "title") or task_id
-    task_summary = yaml_read_nested(spec_text, "task", "summary") or ""
+    spec_data = parse_spec_markdown(spec_text)
+    task = spec_data.get("task") if isinstance(spec_data.get("task"), dict) else {}
+    task_title = task.get("title") or task_id
+    task_summary = task.get("summary") or ""
     changed_files = collect_changed_files(spec_text)
     files_section = "\n".join(f"- {path}" for path in changed_files) if changed_files else "- (see git diff)"
 
@@ -88,14 +90,14 @@ def review_binding_excluded_rels(task_id, review_file_rel):
     """Return scafld control-plane paths excluded from review binding.
 
     The review anchor must reflect engineering changes only. scafld's own
-    bookkeeping writes (archive moves under .ai/specs, .ai/reviews,
-    .ai/runs) happen between sequential complete calls and would
+    bookkeeping writes (archive moves under .scafld/specs, .scafld/reviews,
+    .scafld/runs) happen between sequential complete calls and would
     otherwise invalidate sibling reviews even when no code changed.
     """
     excluded = []
     if review_file_rel:
         excluded.append(Path(review_file_rel).as_posix())
-    excluded.append((Path(".ai") / "runs" / task_id).as_posix())
+    excluded.append((Path(RUNS_DIR) / task_id).as_posix())
     for prefix in git_sync_excluded_paths():
         excluded.append(prefix)
     seen = set()
@@ -203,54 +205,17 @@ def append_review_round(
     return review_count
 
 
-def upsert_review_block(text, review_block):
-    """Replace the top-level review block or insert it before trailing metadata."""
-    lines = text.splitlines(True)
-    result = []
-    i = 0
-
-    while i < len(lines):
-        if re.match(r"^review:\s*$", lines[i]):
-            i += 1
-            while i < len(lines):
-                line = lines[i]
-                if line.strip() and not line[0].isspace():
-                    break
-                i += 1
-            continue
-        result.append(lines[i])
-        i += 1
-
-    block_text = review_block.strip() + "\n"
-    insert_idx = None
-    for idx, line in enumerate(result):
-        if re.match(r"^(self_eval|deviations|metadata):", line):
-            insert_idx = idx
-            break
-
-    if insert_idx is None:
-        if result and not result[-1].endswith("\n"):
-            result[-1] += "\n"
-        if result and result[-1].strip():
-            result.append("\n")
-        result.append(block_text)
-    else:
-        if insert_idx > 0 and result[insert_idx - 1].strip():
-            result.insert(insert_idx, "\n")
-            insert_idx += 1
-        result.insert(insert_idx, block_text)
-
-    return "".join(result)
-
-
 def check_self_eval(text, task_id):
     """Warn if self-eval looks like a rubber stamp."""
-    score = extract_self_eval_score(text)
+    data = parse_spec_markdown(text)
+    score = extract_self_eval_score(data)
     if score is None:
         print(f"  {c(C_YELLOW, 'warn')}: no self-eval score found in spec")
         return
-    has_deviations = bool(re.search(r"deviations:", text, re.MULTILINE))
-    has_improvements = bool(re.search(r"improvements:", text, re.MULTILINE))
+    deviations = data.get("deviations")
+    has_deviations = bool(deviations)
+    self_eval = data.get("self_eval") if isinstance(data.get("self_eval"), dict) else {}
+    has_improvements = bool(self_eval.get("improvements"))
     score_display = int(score) if float(score).is_integer() else score
 
     if score >= 9 and not has_deviations and not has_improvements:
@@ -355,8 +320,9 @@ def confirm_human_override(task_id, gate_reason):
 
 def run_spec_compliance_check(root, text):
     """Run acceptance criteria in read-only review mode."""
-    spec_cwd = extract_spec_cwd(text)
-    criteria = parse_acceptance_criteria(text)
+    data = parse_spec_markdown(text)
+    spec_cwd = extract_spec_cwd(data)
+    criteria = parse_acceptance_criteria(data)
     if not criteria:
         return {"result": "pass", "lines": ["no acceptance criteria found"]}
 
@@ -701,7 +667,7 @@ def _load_gate_severity(root):
     """Return the configured `review.gate_severity` value.
 
     Default is "blocking" (only Blocking-section findings gate complete).
-    Operators set "medium" or "low" in `.ai/config.yaml` to opt into
+    Operators set "medium" or "low" in `.scafld/config.yaml` to opt into
     strict iteration. Unrecognised values fall back to "blocking" so a
     typo'd setting can never silently weaken the gate.
     """

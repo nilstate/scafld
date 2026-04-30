@@ -55,7 +55,7 @@ For each runnable criterion, execution:
 1. runs the command
 2. records a short audit-friendly result snippet back into the spec
 3. appends the full attempt to `session.json`
-4. writes full diagnostics into `.ai/runs/{task-id}/diagnostics/`
+4. writes full diagnostics into `.scafld/runs/{task-id}/diagnostics/`
 
 The spec stays concise. Session carries the real run history.
 
@@ -113,14 +113,14 @@ harness to use it. Session metrics measure outcomes, not handoff consumption.
 When the workspace includes them, the wrapper scripts remain optional handoff
 adapters for Codex and Claude Code:
 
-- `scripts/scafld-codex-build.sh <task-id>`
-- `scripts/scafld-claude-build.sh <task-id>`
-- `scripts/scafld-codex-review.sh <task-id>`
-- `scripts/scafld-claude-review.sh <task-id>`
+- `.scafld/core/scripts/scafld-codex-build.sh <task-id>`
+- `.scafld/core/scripts/scafld-claude-build.sh <task-id>`
+- `.scafld/core/scripts/scafld-codex-review.sh <task-id>`
+- `.scafld/core/scripts/scafld-claude-review.sh <task-id>`
 
 `scafld review` itself is now the default challenger entrypoint.
 
 Prompt ownership is also explicit:
 
-- `.ai/prompts/exec.md` and `.ai/prompts/recovery.md` are the active template sources
-- `.ai/scafld/prompts/*.md` is the managed reset copy that `scafld update` refreshes
+- `.scafld/prompts/exec.md` and `.scafld/prompts/recovery.md` are the active template sources
+- `.scafld/core/prompts/*.md` is the managed reset copy that `scafld update` refreshes

@@ -1,12 +1,19 @@
 import unittest
 
+from scafld.spec_markdown import parse_spec_markdown, render_spec_markdown
 from scafld.audit_scope import (
     AUDIT_IGNORED_PREFIXES,
-    collect_changed_files_regex,
     collect_declared_change_map,
     filter_audit_paths,
     normalize_change_path,
 )
+from tests.spec_fixture import basic_spec
+
+
+def spec_text_with_changes(changes):
+    data = basic_spec("x", title="Fixture", file_path="placeholder.py")
+    data["phases"][0]["changes"] = changes
+    return render_spec_markdown(data)
 
 
 class NormalizeChangePathTest(unittest.TestCase):
@@ -51,31 +58,22 @@ class NormalizeChangePathTest(unittest.TestCase):
 
 class CollectDeclaredChangeMapTest(unittest.TestCase):
     def test_canonicalizes_declared_paths(self):
-        text = (
-            'spec_version: "1.1"\n'
-            'task_id: "x"\n'
-            'phases:\n'
-            '  - id: "phase1"\n'
-            '    changes:\n'
-            '      - file: "./scafld//foo.py"\n'
-            '      - file: "../cloud/bar.py"\n'
-            '      - file: "scafld/baz.py"\n'
-        )
+        text = spec_text_with_changes([
+            {"file": "./scafld//foo.py", "action": "update", "content_spec": "Fixture"},
+            {"file": "../cloud/bar.py", "action": "update", "content_spec": "Fixture"},
+            {"file": "scafld/baz.py", "action": "update", "content_spec": "Fixture"},
+        ])
         declared = collect_declared_change_map(text)
         self.assertIn("scafld/foo.py", declared)
         self.assertIn("../cloud/bar.py", declared)
         self.assertIn("scafld/baz.py", declared)
 
     def test_drops_empty_or_dot_paths(self):
-        text = (
-            'spec_version: "1.1"\n'
-            'phases:\n'
-            '  - id: "phase1"\n'
-            '    changes:\n'
-            '      - file: "."\n'
-            '      - file: ""\n'
-            '      - file: "scafld/foo.py"\n'
-        )
+        text = spec_text_with_changes([
+            {"file": ".", "action": "update", "content_spec": "Fixture"},
+            {"file": "", "action": "update", "content_spec": "Fixture"},
+            {"file": "scafld/foo.py", "action": "update", "content_spec": "Fixture"},
+        ])
         declared = collect_declared_change_map(text)
         self.assertEqual(list(declared), ["scafld/foo.py"])
 
@@ -111,38 +109,20 @@ class DeclaredAndActualSymmetryTest(unittest.TestCase):
     in the spec but git emits the canonical form (or vice versa)."""
 
     def test_declared_dot_prefix_matches_canonical_actual(self):
-        text = (
-            'spec_version: "1.1"\n'
-            'phases:\n'
-            '  - id: "phase1"\n'
-            '    changes:\n'
-            '      - file: "./scafld/foo.py"\n'
-        )
+        text = spec_text_with_changes([{"file": "./scafld/foo.py", "action": "update", "content_spec": "Fixture"}])
         declared = collect_declared_change_map(text)
         actual = filter_audit_paths({"scafld/foo.py"})
         # Both sides agree on canonical form.
         self.assertEqual(set(declared.keys()) & actual, {"scafld/foo.py"})
 
     def test_declared_double_slash_matches_canonical_actual(self):
-        text = (
-            'spec_version: "1.1"\n'
-            'phases:\n'
-            '  - id: "phase1"\n'
-            '    changes:\n'
-            '      - file: "scafld//foo.py"\n'
-        )
+        text = spec_text_with_changes([{"file": "scafld//foo.py", "action": "update", "content_spec": "Fixture"}])
         declared = collect_declared_change_map(text)
         actual = filter_audit_paths({"scafld/foo.py"})
         self.assertEqual(set(declared.keys()) & actual, {"scafld/foo.py"})
 
     def test_sibling_repo_declared_matches_sibling_actual(self):
-        text = (
-            'spec_version: "1.1"\n'
-            'phases:\n'
-            '  - id: "phase1"\n'
-            '    changes:\n'
-            '      - file: "../cloud/foo.py"\n'
-        )
+        text = spec_text_with_changes([{"file": "../cloud/foo.py", "action": "update", "content_spec": "Fixture"}])
         declared = collect_declared_change_map(text)
         # Simulate git emitting the same path (e.g. via worktree or
         # parent-dir invocation).
@@ -150,25 +130,11 @@ class DeclaredAndActualSymmetryTest(unittest.TestCase):
         self.assertEqual(set(declared.keys()) & actual, {"../cloud/foo.py"})
 
 
-class CollectChangedFilesRegexTest(unittest.TestCase):
-    def test_regex_path_canonicalization(self):
-        text = (
-            "phases:\n"
-            "  - id: phase1\n"
-            "    changes:\n"
-            "      - file: ./a.py\n"
-            "      - file: \"b//c.py\"\n"
-        )
-        out = collect_changed_files_regex(text)
-        self.assertIn("a.py", out)
-        self.assertIn("b/c.py", out)
-
-
 class ClassifyActiveOverlapTest(unittest.TestCase):
-    """1.7.1 unifies plan-time and review-time overlap classification.
+    """Plan-time and review-time overlap classification share one policy.
 
     `plan_time=False` (default, review-time) keeps the bilateral
-    semantics from 1.7.0: shared only when BOTH sides declare shared.
+    semantics: shared only when BOTH sides declare shared.
     `plan_time=True` is unilateral against other specs: shared when
     every overlapping other spec declares shared (caller auto-tags
     this spec); conflict when any other spec declares exclusive.
@@ -235,31 +201,19 @@ class ClassifyActiveOverlapTest(unittest.TestCase):
         self.assertEqual(result["active_overlap"], set())
 
 
-class ApplySharedOwnershipYamlAwareTest(unittest.TestCase):
-    """1.7.1 replaces the text-line regex rewriter with a YAML-aware
-    injector. We verify structural mutation, not formatting preservation
-    (PyYAML safe_dump doesn't preserve comments)."""
+class ApplySharedOwnershipMarkdownAwareTest(unittest.TestCase):
+    """Shared ownership is applied through Markdown runner sections."""
 
     def _slim_text(self):
-        return (
-            'spec_version: "1.1"\n'
-            'task_id: "x"\n'
-            'phases:\n'
-            '  - id: "phase1"\n'
-            '    changes:\n'
-            '      - file: "a.py"\n'
-            '        action: "update"\n'
-            '        content_spec: "noop"\n'
-            '      - file: "b.py"\n'
-            '        action: "update"\n'
-            '        content_spec: "noop"\n'
-        )
+        return spec_text_with_changes([
+            {"file": "a.py", "action": "update", "content_spec": "noop"},
+            {"file": "b.py", "action": "update", "content_spec": "noop"},
+        ])
 
     def test_marks_only_targeted_paths(self):
         from scafld.audit_scope import apply_shared_ownership
-        import yaml as yamllib
         out = apply_shared_ownership(self._slim_text(), {"a.py"})
-        data = yamllib.safe_load(out)
+        data = parse_spec_markdown(out)
         changes = data["phases"][0]["changes"]
         a_entry = next(c for c in changes if c["file"] == "a.py")
         b_entry = next(c for c in changes if c["file"] == "b.py")
@@ -280,19 +234,17 @@ class ApplySharedOwnershipYamlAwareTest(unittest.TestCase):
 
     def test_normalizes_target_paths(self):
         from scafld.audit_scope import apply_shared_ownership
-        import yaml as yamllib
         # Caller passes ./a.py — should still match the canonical a.py
         # in the spec.
         out = apply_shared_ownership(self._slim_text(), {"./a.py"})
-        data = yamllib.safe_load(out)
+        data = parse_spec_markdown(out)
         a_entry = next(c for c in data["phases"][0]["changes"] if c["file"] == "a.py")
         self.assertEqual(a_entry["ownership"], "shared")
 
     def test_preserves_other_phase_fields(self):
         from scafld.audit_scope import apply_shared_ownership
-        import yaml as yamllib
         out = apply_shared_ownership(self._slim_text(), {"a.py"})
-        data = yamllib.safe_load(out)
+        data = parse_spec_markdown(out)
         phase = data["phases"][0]
         self.assertEqual(phase["id"], "phase1")
         self.assertEqual(len(phase["changes"]), 2)

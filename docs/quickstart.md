@@ -12,7 +12,7 @@ cd your-project
 scafld init
 ```
 
-`scafld init` will suggest starter commands in `.ai/config.local.yaml` when it recognizes common Node or Python repo markers. Review them before relying on them.
+`scafld init` will suggest starter commands in `.scafld/config.local.yaml` when it recognizes common Node or Python repo markers. Review them before relying on them.
 
 ## Create a spec
 
@@ -20,76 +20,81 @@ scafld init
 scafld plan add-auth -t "Add JWT authentication" -s medium -r high
 ```
 
-This generates `.ai/specs/drafts/add-auth.yaml` from the default template and
+This generates `.scafld/specs/drafts/add-auth.md` from the default template and
 immediately opens a harden round. When scafld already knows the repo shape, the
 draft also inherits the suggested compile and test commands plus a short
 repo-context header. Open it and fill in the task-specific fields:
 
-```yaml
-spec_version: "1.1"
+````md
+---
+spec_version: "2.0"
 task_id: add-auth
+status: draft
 created: "2026-04-16T10:00:00Z"
 updated: "2026-04-16T10:00:00Z"
-status: draft
+size: medium
+risk_level: high
+---
 
-task:
-  title: "Add JWT authentication"
-  summary: "Add token-based auth to the API layer"
-  size: medium
-  risk_level: high
-  context:
-    packages: ["src/auth", "src/middleware"]
-    invariants: [public_api_stable, config_from_env]
-  objectives:
-    - "Issue JWT tokens on successful login"
-    - "Validate tokens on protected routes"
-  touchpoints:
-    - area: "src/middleware"
-      description: "New auth middleware"
+# Add JWT authentication
 
-  acceptance:
-    definition_of_done:
-      - id: dod1
-        description: "All auth endpoints return standard error envelope"
-        status: pending
+Add token-based auth to the API layer.
 
-phases:
-  - id: phase1
-    name: "Token generation"
-    objective: "Create JWT signing and verification"
-    changes:
-      - file: src/auth/token.ts
-        action: create
-        content_spec: "Sign and verify JWTs using RS256"
-    acceptance_criteria:
-      - id: ac1_1
-        type: test
-        description: "Token round-trips correctly"
-        command: "npm test -- --grep 'token'"
-        expected: "exit code 0"
-    status: pending
+## Current State
 
-  - id: phase2
-    name: "Auth middleware"
-    objective: "Request validation pipeline"
-    dependencies: [phase1]
-    changes:
-      - file: src/middleware/auth.ts
-        action: create
-        content_spec: "Extract and validate JWT from Authorization header"
-    acceptance_criteria:
-      - id: ac2_1
-        type: test
-        description: "Middleware blocks unauthenticated requests"
-        command: "npm test -- --grep 'auth middleware'"
-        expected: "exit code 0"
-    status: pending
+Status: draft
+Current phase: none
+Review gate: not_started
 
-planning_log:
-  - timestamp: "2026-04-16T10:00:00Z"
-    actor: agent
-    summary: "Initial spec draft"
-```
+## Objectives
+
+- Issue JWT tokens on successful login.
+- Validate tokens on protected routes.
+
+## Scope
+
+### In Scope
+
+- Token creation and verification.
+- API request authentication middleware.
+
+### Out of Scope
+
+- User model or database schema changes.
+- Frontend authentication flow.
+
+## Phase 1: Token generation
+
+Goal: Create JWT signing and verification.
+
+Status: pending
+Dependencies: none
+
+Changes:
+- `src/auth/token.ts` — create signing and verification helpers.
+
+Acceptance:
+- [ ] `ac1_1` test: Token round-trips correctly.
+  - Command: `npm test -- --grep 'token'`
+  - Expected kind: `exit_code_zero`
+  - Status: `pending`
+
+## Phase 2: Auth middleware
+
+Goal: Request validation pipeline.
+
+Status: pending
+Dependencies: phase1
+
+Changes:
+- `src/middleware/auth.ts` — extract and validate JWT from `Authorization`.
+
+Acceptance:
+- [ ] `ac2_1` test: Middleware blocks unauthenticated requests.
+  - Command: `npm test -- --grep 'auth middleware'`
+  - Expected kind: `exit_code_zero`
+  - Status: `pending`
+````
 
 ## Move through the lifecycle
 

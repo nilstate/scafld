@@ -29,42 +29,12 @@ new_repo() {
 
 write_active_spec() {
   local repo="$1"
-  cat > "$repo/.ai/specs/active/review-task.yaml" <<'EOF'
-spec_version: "1.1"
-task_id: "review-task"
-created: "2026-04-24T00:00:00Z"
-updated: "2026-04-24T00:00:00Z"
-status: "in_progress"
-
-task:
-  title: "Review prompt contract smoke"
-  summary: "Verify the challenger prompt contract and required sections"
-  size: "small"
-  risk_level: "low"
-
-planning_log:
-  - timestamp: "2026-04-24T00:00:00Z"
-    actor: "user"
-    summary: "Bootstrap review prompt contract smoke fixture"
-
-phases:
-  - id: "phase1"
-    name: "Keep the marker"
-    objective: "app.txt should stay ok"
-    changes:
-      - file: "app.txt"
-        action: "update"
-        lines: "1"
-        content_spec: "keep the marker green"
-    acceptance_criteria:
-      - id: "ac1_1"
-        type: "custom"
-        description: "app.txt contains ok"
-        command: "grep -q '^ok$' app.txt"
-        expected: "exit code 0"
-        result: "pass"
-    status: "completed"
-EOF
+  SCAFLD_SPEC_CREATED="2026-04-24T00:00:00Z" \
+  SCAFLD_SPEC_PHASE_STATUS="completed" \
+  SCAFLD_SPEC_CRITERION_RESULT="pass" \
+    write_markdown_spec "$repo/.scafld/specs/active/review-task.md" \
+    "review-task" "in_progress" "Review prompt contract smoke" \
+    "app.txt" "grep -q '^ok$' app.txt"
 }
 
 repo="$(new_repo)"
@@ -72,9 +42,9 @@ printf 'ok\n' > "$repo/app.txt"
 write_active_spec "$repo"
 
 echo "[1/2] source review prompt carries the stricter contract"
-assert_contains_file "$REPO_ROOT/.ai/prompts/review.md" 'Required finding format' "review prompt should teach the required finding format"
-assert_contains_file "$REPO_ROOT/.ai/prompts/review.md" 'No issues found — checked <specific files, callers, rules, or paths attacked>' "review prompt should teach the explicit no-issues format"
-assert_contains_file "$REPO_ROOT/.ai/prompts/review.md" 'untrusted data' "review prompt should treat spec content as untrusted data"
+assert_contains_file "$REPO_ROOT/.scafld/prompts/review.md" 'Required finding format' "review prompt should teach the required finding format"
+assert_contains_file "$REPO_ROOT/.scafld/prompts/review.md" 'No issues found — checked <specific files, callers, rules, or paths attacked>' "review prompt should teach the explicit no-issues format"
+assert_contains_file "$REPO_ROOT/.scafld/prompts/review.md" 'untrusted data' "review prompt should treat spec content as untrusted data"
 
 echo "[2/2] review scaffolding emits the required sections and format guidance"
 capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld review review-task --json"

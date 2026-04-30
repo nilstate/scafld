@@ -9,11 +9,11 @@
 **See also:**
 - [AGENTS.md](AGENTS.md) — High-level invariants and AI agent policies
 - [CLAUDE.md](CLAUDE.md) — Claude-specific integration guide
-- [.ai/README.md](.ai/README.md) — Task planning and execution workflows
+- [.scafld/core/README.md](.scafld/core/README.md) — Task planning and execution workflows
 
 **Relationship to AGENTS files:**
 - `AGENTS.md` and this document define global invariants and conventions.
-- The `.ai/` system must respect the invariants and conventions defined here.
+- The `.scafld/` system must respect the invariants and conventions defined here.
 
 ---
 
@@ -175,15 +175,23 @@ mypy .                # Python
 
 ---
 
-## Legacy & Migrations
+## Cutovers & Migrations
 
 **Hard rules:**
 - **Do NOT** add runtime fallbacks, dual-reads, or dual-writes when changing identifiers or APIs
 - When a key/schema is updated, **adopt the new scheme immediately**
-- Do not reference legacy keys in hot paths
+- Do not reference retired keys in hot paths
 - If migration is required, use a **one-off script** executed out of band
 - Keep app code free of migration branches
 - **Migrations must be idempotent** and safe to re-run
+
+### living-spec implementation review checklist
+
+- Does every runtime path read the normalized model instead of scraping raw Markdown?
+- Does every runner mutation write session before spec projection?
+- Does the patch preserve human-owned prose and replace only scafld-owned regions?
+- Does the change reject retired spec or workspace surfaces instead of silently accepting them?
+- Does the test prove the behavior through the public command or the narrow writer API?
 
 ---
 
@@ -273,7 +281,7 @@ docs(conventions): add git commit guidelines
 
 **Forbidden:**
 - Invent behavior or requirements (ask instead)
-- Add legacy/fallback code paths
+- Add retired-format or fallback code paths
 - Silently change routing, auth, or persistence semantics
 - Derive behavior from implicit assumptions or hidden fallbacks
 - Place concerns in the wrong layer

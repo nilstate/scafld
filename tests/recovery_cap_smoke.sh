@@ -21,7 +21,7 @@ new_repo() {
     git config user.email smoke@example.com
     git config user.name "Smoke Test"
     scafld_cmd init >/dev/null
-    cat >> .ai/config.local.yaml <<'EOF'
+    cat >> .scafld/config.local.yaml <<'EOF'
 llm:
   recovery:
     max_attempts: 1
@@ -32,42 +32,10 @@ EOF
 
 write_approved_spec() {
   local repo="$1"
-  cat > "$repo/.ai/specs/approved/cap-task.yaml" <<'EOF'
-spec_version: "1.1"
-task_id: "cap-task"
-created: "2026-04-23T00:00:00Z"
-updated: "2026-04-23T00:00:00Z"
-status: "approved"
-harden_status: "not_run"
-
-task:
-  title: "Recovery cap smoke"
-  summary: "Exercise recovery exhaustion behavior"
-  size: "small"
-  risk_level: "low"
-
-planning_log:
-  - timestamp: "2026-04-23T00:00:00Z"
-    actor: "user"
-    summary: "Bootstrap recovery cap smoke fixture"
-
-phases:
-  - id: "phase1"
-    name: "Keep failing"
-    objective: "cap.txt still fails twice"
-    changes:
-      - file: "cap.txt"
-        action: "update"
-        lines: "1"
-        content_spec: "replace red with green"
-    acceptance_criteria:
-      - id: "ac1_1"
-        type: "custom"
-        description: "cap.txt contains green"
-        command: "grep -q '^green$' cap.txt"
-        expected: "exit code 0"
-    status: "pending"
-EOF
+  SCAFLD_SPEC_CREATED="2026-04-23T00:00:00Z" \
+    write_markdown_spec "$repo/.scafld/specs/approved/cap-task.md" \
+    "cap-task" "approved" "Recovery cap smoke" \
+    "cap.txt" "grep -q '^green$' cap.txt"
 }
 
 repo="$(new_repo)"
@@ -101,7 +69,7 @@ import os
 import pathlib
 
 repo = pathlib.Path(os.environ["REPO"])
-session = json.loads((repo / ".ai" / "runs" / "cap-task" / "session.json").read_text())
+session = json.loads((repo / ".scafld" / "runs" / "cap-task" / "session.json").read_text())
 assert session["criterion_states"]["ac1_1"]["status"] == "failed_exhausted", session
 assert session["phases"][0]["blocked_reason"] == "recovery exhausted for ac1_1", session
 PY

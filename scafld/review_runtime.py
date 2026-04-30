@@ -9,7 +9,8 @@ from scafld.review_workflow import (
     open_review_round,
     run_automated_review_suite,
 )
-from scafld.spec_store import require_spec, yaml_read_field
+from scafld.spec_model import get_status
+from scafld.spec_store import load_spec_document, require_spec
 
 
 def _review_execute_command(task_id, resolved_runner):
@@ -46,7 +47,7 @@ def review_snapshot(
             "ok": False,
             "command": "review",
             "task_id": task_id,
-            "state": {"status": yaml_read_field(require_spec(root, task_id).read_text(), "status")},
+            "state": {"status": get_status(load_spec_document(require_spec(root, task_id)))},
             "result": None,
             "warnings": [],
             "error": error_payload(
@@ -56,7 +57,7 @@ def review_snapshot(
         }, 1)
     spec = require_spec(root, task_id)
     text = spec.read_text()
-    status = yaml_read_field(text, "status")
+    status = get_status(load_spec_document(spec))
 
     if status != "in_progress":
         return ({
