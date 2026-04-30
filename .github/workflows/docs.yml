@@ -48,7 +48,14 @@ jobs:
               process.exit(exists ? 0 : 1);
             });
           '; then
-            npx --yes wrangler@4 pages project create "$PAGES_PROJECT" --production-branch "$PAGES_BRANCH"
+            if ! output="$(npx --yes wrangler@4 pages project create "$PAGES_PROJECT" --production-branch "$PAGES_BRANCH" 2>&1)"; then
+              if printf '%s\n' "$output" | grep -q "already exists"; then
+                printf '%s\n' "$output"
+              else
+                printf '%s\n' "$output" >&2
+                exit 1
+              fi
+            fi
           fi
 
       - name: Deploy docs to Cloudflare Pages
