@@ -7,14 +7,14 @@ description: Minimal runtime config for model profile, context budget, and recov
 
 scafld merges:
 
-- `.ai/config.yaml`
-- `.ai/config.local.yaml`
+- `.scafld/config.yaml`
+- `.scafld/config.local.yaml`
 
 The local file overlays the committed base file.
 
 ## Minimal LLM Surface
 
-v1 keeps the runtime surface intentionally small:
+The runtime surface stays intentionally small:
 
 ```yaml
 llm:
@@ -36,9 +36,8 @@ fields into session. scafld does not require that data.
 
 ## Acceptance strictness
 
-Acceptance criteria gate phase advance in `scafld build`. 1.x relied on
-substring matching against the legacy `expected:` string (e.g. `"exit
-code 0"`, `"all tests pass"`). 1.7.0 ships a structured alternative.
+Acceptance criteria gate phase advance in `scafld build`. Each executable
+criterion requires an explicit structured matcher:
 
 ```yaml
 - id: "ac1_1"
@@ -51,62 +50,46 @@ Three `expected_kind` values:
 
 - `exit_code_zero` — passes when the command exits 0.
 - `exit_code_nonzero` — passes on any non-zero exit; pin a specific code with `expected_exit_code: <n>`.
-- `no_matches` — passes when stdout is empty OR the command exits non-zero (mirrors the legacy `expected: "no matches"` semantics; rg-style "no match found" returns exit code 1 with empty stdout).
+- `no_matches` — passes when stdout is empty OR the command exits non-zero; rg-style "no match found" returns exit code 1 with empty stdout.
 
 Optional `evidence_required: true` additionally requires non-empty
 stdout. Stops the "compile + unittest pass with no real work"
 pattern.
 
-Hard cutover: criteria without an explicit `expected_kind` are
-rejected loudly without running the command. Legacy `expected:`
-strings (`"exit code 0"`, `"exit code N"`, `"no matches"`) auto-map
-to the new kinds, so existing specs that use the documented forms
-continue to work; anything else fails with one-line guidance to add
-an explicit `expected_kind`. There is no lenient mode opt-out.
+Hard cutover: criteria without an explicit `expected_kind` are rejected loudly
+without running the command. Free-form `expected:` text is documentation only;
+it is never enough to execute a criterion.
 
 ## Slim plan
 
 `scafld plan <id> -t "<title>" --command "<cmd>" --files "a.py,b.py"`
-produces a complete ~30-line spec ready to approve. No `TODO`
-placeholders, no manual fill round, no validation surprises.
+produces a complete spec ready to approve. No `TODO` placeholders, no manual
+fill round, no validation surprises.
 
-```yaml
-spec_version: "1.1"
-task_id: "fix-typo"
-created: "..."
-updated: "..."
-status: "draft"
-harden_status: "in_progress"
-task:
-  title: "Fix typo"
-  summary: "Fix typo"
-  size: "small"
-  risk_level: "low"
-planning_log:
-  - timestamp: "..."
-    actor: "user"
-    summary: "Spec created via scafld plan --command"
-phases:
-  - id: "phase1"
-    name: "Fix typo"
-    objective: "Implement Fix typo"
-    changes:
-      - file: "README.md"
-        action: "update"
-        content_spec: "See task summary."
-    acceptance_criteria:
-      - id: "ac1_1"
-        type: "test"
-        command: "grep -q 'the' README.md"
-        expected_kind: "exit_code_zero"
-    status: "pending"
+```markdown
+---
+spec_version: "2.0"
+task_id: fix-typo
+status: draft
+---
+
+# Fix typo
+
+## Phase 1: Fix typo
+
+Goal:
+
+Acceptance:
+- [ ] `ac1_1` test
+  - Command: `grep -q 'the' README.md`
+  - Expected kind: `exit_code_zero`
 ```
 
 The slim criterion always declares `expected_kind: exit_code_zero`
 explicitly so the strict-unset-reject in
 `evaluate_acceptance_criterion` never fires.
 
-The verbose template path (current behavior) is preserved when
+The verbose template path is used when
 `--command` is omitted; multi-phase complex specs stay verbose by
 default.
 
@@ -130,7 +113,7 @@ Each external-reviewer round writes `canonical_response_sha256` into
 the review markdown's metadata block (computed in
 [`scafld/review_runner.py`](../scafld/review_runner.py) over the
 canonical `{packet, projection}` shape) and persists the canonical
-packet body to `.ai/runs/<task>/review-packets/review-<n>.json`.
+packet body to `.scafld/runs/<task>/review-packets/review-<n>.json`.
 
 `scafld complete` recomputes the hash from the parsed packet artifact
 and refuses to advance on mismatch with `EC.REVIEW_GATE_BLOCKED`.
@@ -138,13 +121,14 @@ Hand-edits to the review markdown — flipping a verdict, changing a
 finding bullet, swapping pass results — fail loudly instead of
 slipping past the gate.
 
-Hard cutover: review files written before 1.7.0 (no
-`canonical_response_sha256` in metadata) fail complete with explicit
-guidance to re-run `scafld review` under 1.7.0 to refresh the seal.
+External review rounds must carry a packet artifact and nested
+`review_provenance.canonical_response_sha256` metadata. If either part is
+missing or mismatched, `scafld complete` fails with guidance to re-run
+`scafld review`.
 
 ## Review gate severity
 
-`review.gate_severity` in `.ai/config.yaml` controls how non-blocking
+`review.gate_severity` in `.scafld/config.yaml` controls how non-blocking
 findings affect `scafld complete`. Default is `blocking`.
 
 ```yaml
@@ -197,7 +181,7 @@ review:
 
 Configured titles and order flow into both:
 
-- the review scaffold under `.ai/reviews/`
+- the review scaffold under `.scafld/reviews/`
 - the generated challenger handoff
 
 ## Review Runner
@@ -209,7 +193,8 @@ review:
   runner: "external"     # external | local | manual
   external:
     provider: "auto"     # auto | codex | claude
-    timeout_seconds: 600
+    idle_timeout_seconds: 180
+    absolute_max_seconds: 1800
     fallback_policy: "warn" # warn | allow | disable
     codex:
       model: "gpt-5.5"
@@ -223,7 +208,9 @@ Meaning:
 - `external.provider`: provider selection for external review; `auto` prefers
   another installed provider when the current agent is detected as Codex,
   otherwise `codex` first, then `claude`
-- `external.timeout_seconds`: maximum provider subprocess runtime before
+- `external.idle_timeout_seconds`: maximum time without stdout/stderr bytes
+  before `scafld review` treats the provider as hung
+- `external.absolute_max_seconds`: maximum wall-clock runtime before
   `scafld review` fails with fallback guidance
 - `external.fallback_policy`: behavior when `provider: auto` cannot find
   the preferred provider but can find the alternate provider; `warn` allows
@@ -239,7 +226,7 @@ The model is constrained to produce JSON matching the schema; no prose
 preface, no markdown fences. Python-side `normalize_review_packet` remains
 authoritative at runtime.
 
-The schema lives at `.ai/schemas/review_packet.json` and is bundled by
+The schema lives at `.scafld/core/schemas/review_packet.json` and is bundled by
 `scafld init` and `scafld update`. Operator overrides in the workspace are
 preserved (matches the existing `spec.json` behavior). At prompt-build time
 scafld narrows the schema's `pass_results` properties to the exact
@@ -269,7 +256,7 @@ Known constraints:
   available`, `does not have access`, `not authorized to use this model`).
   Other failures still fail fast as before. Each attempted model is
   recorded as its own `provider_invocation` entry in
-  `.ai/runs/<task>/session.json`, so `scafld status` and `scafld report`
+  `.scafld/runs/<task>/session.json`, so `scafld status` and `scafld report`
   show the full sequence:
 
   ```yaml

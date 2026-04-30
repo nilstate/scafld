@@ -39,7 +39,7 @@ from scafld.review_signal import review_signal_payload
 from scafld.review_workflow import load_review_topology
 from scafld.reviewing import clean_no_issues_has_evidence, parse_review_file
 
-review_path = repo / ".ai" / "reviews" / "clean.md"
+review_path = repo / ".scafld" / "reviews" / "clean.md"
 review_path.parent.mkdir(parents=True, exist_ok=True)
 review_path.write_text(
     """# Review: clean
@@ -100,8 +100,7 @@ parsed = parse_review_file(review_path, topology)
 assert not parsed["errors"], parsed
 assert parsed["verdict"] == "pass", parsed
 signal = review_signal_payload(parsed)
-assert signal["clean_review_with_evidence"] is True, signal
-assert signal["deprecated_aliases"]["clean_review_with_evidence"] == "format_compliant_clean_review", signal
+assert signal["format_compliant_clean_review"] is True, signal
 assert signal["grounded_findings"] == 0, signal
 PY
 
@@ -117,7 +116,7 @@ from scafld.review_signal import review_signal_payload
 from scafld.review_workflow import load_review_topology
 from scafld.reviewing import parse_review_file
 
-review_path = repo / ".ai" / "reviews" / "anchors.md"
+review_path = repo / ".scafld" / "reviews" / "anchors.md"
 review_path.write_text(
     """# Review: anchors
 
@@ -192,7 +191,7 @@ from scafld.review_signal import review_signal_payload
 from scafld.review_workflow import load_review_topology
 from scafld.reviewing import clean_no_issues_has_evidence, parse_review_file
 
-review_path = repo / ".ai" / "reviews" / "flawed.md"
+review_path = repo / ".scafld" / "reviews" / "flawed.md"
 review_path.write_text(
     """# Review: flawed
 
@@ -253,7 +252,7 @@ assert parsed["errors"], parsed
 assert any("must use '- **severity** `file:line` or `doc.md#anchor` — explanation'" in error for error in parsed["errors"]), parsed
 assert any("Convention Check" in error for error in parsed["errors"]), parsed
 signal = review_signal_payload(parsed)
-assert signal["clean_review_with_evidence"] is False, signal
+assert signal["format_compliant_clean_review"] is False, signal
 assert clean_no_issues_has_evidence("No issues found — checked many things.") is False
 assert clean_no_issues_has_evidence("No issues found — checked the relevant code.") is False
 assert clean_no_issues_has_evidence("No issues found — checked callers.") is False

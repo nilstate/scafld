@@ -11,23 +11,23 @@ from scafld.review_workflow import review_binding_excluded_rels
 
 class ReviewBindingExcludedRelsTest(unittest.TestCase):
     def test_includes_per_task_review_artifact(self):
-        excluded = review_binding_excluded_rels("my-task", ".ai/reviews/my-task.md")
-        self.assertIn(".ai/reviews/my-task.md", excluded)
-        self.assertIn(".ai/runs/my-task", excluded)
+        excluded = review_binding_excluded_rels("my-task", ".scafld/reviews/my-task.md")
+        self.assertIn(".scafld/reviews/my-task.md", excluded)
+        self.assertIn(".scafld/runs/my-task", excluded)
 
     def test_includes_scafld_control_plane_prefixes(self):
-        excluded = review_binding_excluded_rels("my-task", ".ai/reviews/my-task.md")
+        excluded = review_binding_excluded_rels("my-task", ".scafld/reviews/my-task.md")
         for prefix in git_sync_excluded_paths():
             self.assertIn(prefix, excluded, f"control-plane prefix {prefix!r} must be excluded from review binding")
 
     def test_no_duplicates(self):
-        excluded = review_binding_excluded_rels("my-task", ".ai/reviews/my-task.md")
+        excluded = review_binding_excluded_rels("my-task", ".scafld/reviews/my-task.md")
         self.assertEqual(len(excluded), len(set(excluded)))
 
     def test_handles_empty_review_file_rel(self):
         excluded = review_binding_excluded_rels("my-task", "")
         self.assertNotIn("", excluded)
-        self.assertIn(".ai/runs/my-task", excluded)
+        self.assertIn(".scafld/runs/my-task", excluded)
         for prefix in git_sync_excluded_paths():
             self.assertIn(prefix, excluded)
 
@@ -48,18 +48,18 @@ class ReviewAnchorEngineeringDiffOnlyTest(unittest.TestCase):
             root = Path(tmp)
             _git_init(root)
 
-            (root / ".ai" / "specs" / "active").mkdir(parents=True)
-            (root / ".ai" / "specs" / "archive" / "2026-04").mkdir(parents=True)
-            (root / ".ai" / "runs" / "spec-a").mkdir(parents=True)
-            (root / ".ai" / "specs" / "active" / "spec-a.yaml").write_text("active: true\n")
-            (root / ".ai" / "runs" / "spec-a" / "session.json").write_text("{}\n")
+            (root / ".scafld" / "specs" / "active").mkdir(parents=True)
+            (root / ".scafld" / "specs" / "archive" / "2026-04").mkdir(parents=True)
+            (root / ".scafld" / "runs" / "spec-a").mkdir(parents=True)
+            (root / ".scafld" / "specs" / "active" / "spec-a.md").write_text("active: true\n")
+            (root / ".scafld" / "runs" / "spec-a" / "session.json").write_text("{}\n")
 
-            excluded = review_binding_excluded_rels("spec-b", ".ai/reviews/spec-b.md")
+            excluded = review_binding_excluded_rels("spec-b", ".scafld/reviews/spec-b.md")
             before, _ = capture_review_git_state(root, excluded)
             self.assertIsNotNone(before)
 
-            archive_dest = root / ".ai" / "specs" / "archive" / "2026-04" / "spec-a.yaml"
-            (root / ".ai" / "specs" / "active" / "spec-a.yaml").rename(archive_dest)
+            archive_dest = root / ".scafld" / "specs" / "archive" / "2026-04" / "spec-a.md"
+            (root / ".scafld" / "specs" / "active" / "spec-a.md").rename(archive_dest)
 
             after, _ = capture_review_git_state(root, excluded)
             self.assertEqual(before["reviewed_diff"], after["reviewed_diff"])
@@ -69,7 +69,7 @@ class ReviewAnchorEngineeringDiffOnlyTest(unittest.TestCase):
             root = Path(tmp)
             _git_init(root)
 
-            excluded = review_binding_excluded_rels("spec-b", ".ai/reviews/spec-b.md")
+            excluded = review_binding_excluded_rels("spec-b", ".scafld/reviews/spec-b.md")
             before, _ = capture_review_git_state(root, excluded)
             self.assertIsNotNone(before)
 

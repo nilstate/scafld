@@ -7,7 +7,7 @@ from scafld.error_codes import ErrorCode as EC
 from scafld.errors import ScafldError
 from scafld.reviewing import FINDING_SEVERITIES, FINDING_TARGET_RE, review_pass_ids, review_passes_by_kind
 from scafld.runtime_contracts import handoff_path, relative_path, review_packets_dir
-from scafld.spec_parsing import now_iso
+from scafld.spec_model import now_iso
 
 
 REVIEW_PACKET_SCHEMA_VERSION = "review_packet.v1"
@@ -495,7 +495,7 @@ def compute_canonical_response_sha256(packet):
     Mirrors the writer at review_runner.py — json-dumps the packet
     with sorted keys and compact separators and returns the hex
     sha256. Topology-independent: the seal binds to the packet
-    contents directly, so editing `.ai/config.yaml` between review
+    contents directly, so editing `.scafld/config.yaml` between review
     and complete cannot produce false-positive mismatches.
     """
     canonical_payload = json.dumps(packet, sort_keys=True, separators=(",", ":"))
@@ -507,8 +507,8 @@ def metadata_canonical_sha256(metadata):
 
     The writer (`build_review_metadata` + `review_provenance` payload)
     nests the hash inside `metadata.review_provenance.canonical_response_sha256`.
-    This helper centralises the lookup so callers don't read the wrong
-    level. Returns the hex string when present, or None.
+    This helper centralises the lookup so callers do not accept stale or
+    hand-crafted locations. Returns the hex string when present, or None.
     """
     if not isinstance(metadata, dict):
         return None
@@ -517,10 +517,7 @@ def metadata_canonical_sha256(metadata):
         sha = provenance.get("canonical_response_sha256")
         if isinstance(sha, str) and sha:
             return sha
-    # Fallback: tolerate seals written at the top level (older write paths
-    # or hand-crafted fixtures). Empty/missing returns None.
-    sha = metadata.get("canonical_response_sha256")
-    return sha if isinstance(sha, str) and sha else None
+    return None
 
 
 def verify_review_seal(metadata, packet):
@@ -529,8 +526,7 @@ def verify_review_seal(metadata, packet):
     Returns:
       (True, "")           — metadata hash matches the recomputed packet hash
       (False, "missing_seal") — metadata lacks `canonical_response_sha256`;
-                               caller decides what to do (1.7.0 cutover:
-                               reject; pre-1.7 files surface as missing).
+                               caller decides whether the runner requires one.
       (False, "hash mismatch: ...") — metadata hash and recomputed hash
                                        differ. The review file or packet was
                                        edited after the seal was written.
@@ -550,8 +546,7 @@ def read_review_packet_artifact(root, task_id, review_count, *, spec_path=None):
     """Read the canonical packet body persisted alongside a review round.
 
     Returns the parsed `packet` dict, or None when the artifact is
-    missing (local / manual runner paths, or pre-1.7 review files that
-    pre-date the artifact write).
+    missing for local or manual runner paths.
     """
     path = review_packet_artifact_path(root, task_id, review_count, spec_path=spec_path)
     if not path.exists():

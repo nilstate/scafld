@@ -10,7 +10,7 @@ def find_archived_spec(root, archive_dir, task_id):
     for month_dir in sorted(archive.iterdir(), reverse=True):
         if not month_dir.is_dir():
             continue
-        candidate = month_dir / f"{task_id}.yaml"
+        candidate = month_dir / f"{task_id}.md"
         if candidate.exists():
             return candidate
     return None

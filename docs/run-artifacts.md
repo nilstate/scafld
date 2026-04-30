@@ -23,7 +23,7 @@ The model is intentionally small:
 ## Layout
 
 ```text
-.ai/
+.scafld/
   runs/
     {task-id}/
       handoffs/
@@ -80,7 +80,7 @@ path, and finding counts for tooling.
 External challenger output is normalized into:
 
 ```text
-.ai/runs/{task-id}/review-packets/review-N.json
+.scafld/runs/{task-id}/review-packets/review-N.json
 ```
 
 The packet artifact is the structured provider content captured before the
@@ -131,5 +131,5 @@ Superseded handoffs stay inside the run dir for debugging.
 On `complete`, `fail`, or `cancel`, scafld archives the whole run dir into:
 
 ```text
-.ai/runs/archive/{YYYY-MM}/{task-id}/
+.scafld/runs/archive/{YYYY-MM}/{task-id}/
 ```

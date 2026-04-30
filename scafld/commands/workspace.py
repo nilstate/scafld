@@ -8,16 +8,16 @@ from scafld.errors import ScafldError
 from scafld.git_state import source_git_metadata
 from scafld.output import emit_command_json
 from scafld.runtime_bundle import (
-    AI_DIR,
     ACTIVE_DIR,
     APPROVED_DIR,
     ARCHIVE_DIR,
+    CORE_DIR,
+    CORE_MANIFEST_PATH,
     CONFIG_LOCAL_PATH,
     DRAFTS_DIR,
-    FRAMEWORK_DIR,
-    FRAMEWORK_MANIFEST_PATH,
     REVIEWS_DIR,
     RUNS_DIR,
+    SCAFLD_DIR,
     SPECS_DIR,
     VERSION,
     scafld_source_root,
@@ -30,7 +30,7 @@ SCAFLD_GITIGNORE_MARKER = "# scafld"
 SCAFLD_GITIGNORE_ENTRIES = (
     f"{RUNS_DIR}/",
     f"{REVIEWS_DIR}/",
-    f"{FRAMEWORK_DIR}/",
+    f"{CORE_DIR}/",
 )
 
 
@@ -79,7 +79,7 @@ def cmd_init(args):
             "Edit AGENTS.md and add project invariants",
             "Edit CONVENTIONS.md and add stack-specific rules",
             "Edit CLAUDE.md and add project overview and commands",
-            "Edit .ai/config.local.yaml and review build/test/lint commands",
+            "Edit .scafld/config.local.yaml and review build/test/lint commands",
             "Use the handoff-first wrapper scripts so the agent reads the current executor or challenger brief first",
             "Run scafld plan my-feature -t \"My feature\" -s small -r low",
         ],
@@ -117,7 +117,7 @@ def cmd_init(args):
 
     if not json_mode:
         print(f"{c(C_BOLD, 'Directories:')}")
-    for directory in [DRAFTS_DIR, APPROVED_DIR, ACTIVE_DIR, ARCHIVE_DIR, RUNS_DIR, f"{AI_DIR}/schemas", f"{AI_DIR}/prompts", f"{AI_DIR}/reviews"]:
+    for directory in [DRAFTS_DIR, APPROVED_DIR, ACTIVE_DIR, ARCHIVE_DIR, RUNS_DIR, f"{SCAFLD_DIR}/prompts", REVIEWS_DIR]:
         path = project_root / directory
         path.mkdir(parents=True, exist_ok=True)
         result["directories"].append({"path": f"{directory}/", "action": "ok"})
@@ -129,21 +129,20 @@ def cmd_init(args):
     if not json_mode:
         print(f"{c(C_BOLD, 'Framework files:')}")
     copy_files = [
-        (f"{AI_DIR}/config.yaml", f"{AI_DIR}/config.yaml"),
-        (f"{AI_DIR}/schemas/spec.json", f"{AI_DIR}/schemas/spec.json"),
-        (f"{AI_DIR}/prompts/plan.md", f"{AI_DIR}/prompts/plan.md"),
-        (f"{AI_DIR}/prompts/harden.md", f"{AI_DIR}/prompts/harden.md"),
-        (f"{AI_DIR}/prompts/exec.md", f"{AI_DIR}/prompts/exec.md"),
-        (f"{AI_DIR}/prompts/review.md", f"{AI_DIR}/prompts/review.md"),
-        (f"{AI_DIR}/prompts/recovery.md", f"{AI_DIR}/prompts/recovery.md"),
-        (f"{AI_DIR}/README.md", f"{AI_DIR}/README.md"),
-        (f"{AI_DIR}/OPERATORS.md", f"{AI_DIR}/OPERATORS.md"),
+        (f"{SCAFLD_DIR}/config.yaml", f"{SCAFLD_DIR}/config.yaml"),
+        (f"{SCAFLD_DIR}/core/prompts/plan.md", f"{SCAFLD_DIR}/prompts/plan.md"),
+        (f"{SCAFLD_DIR}/core/prompts/harden.md", f"{SCAFLD_DIR}/prompts/harden.md"),
+        (f"{SCAFLD_DIR}/core/prompts/exec.md", f"{SCAFLD_DIR}/prompts/exec.md"),
+        (f"{SCAFLD_DIR}/core/prompts/review.md", f"{SCAFLD_DIR}/prompts/review.md"),
+        (f"{SCAFLD_DIR}/core/prompts/recovery.md", f"{SCAFLD_DIR}/prompts/recovery.md"),
+        (f"{SCAFLD_DIR}/core/README.md", f"{SCAFLD_DIR}/core/README.md"),
+        (f"{SCAFLD_DIR}/core/OPERATORS.md", f"{SCAFLD_DIR}/core/OPERATORS.md"),
         (f"{SPECS_DIR}/README.md", f"{SPECS_DIR}/README.md"),
-        ("scripts/scafld-provider-adapter.sh", "scripts/scafld-provider-adapter.sh"),
-        ("scripts/scafld-codex-build.sh", "scripts/scafld-codex-build.sh"),
-        ("scripts/scafld-codex-review.sh", "scripts/scafld-codex-review.sh"),
-        ("scripts/scafld-claude-build.sh", "scripts/scafld-claude-build.sh"),
-        ("scripts/scafld-claude-review.sh", "scripts/scafld-claude-review.sh"),
+        (f"{SCAFLD_DIR}/core/scripts/scafld-provider-adapter.sh", f"{SCAFLD_DIR}/core/scripts/scafld-provider-adapter.sh"),
+        (f"{SCAFLD_DIR}/core/scripts/scafld-codex-build.sh", f"{SCAFLD_DIR}/core/scripts/scafld-codex-build.sh"),
+        (f"{SCAFLD_DIR}/core/scripts/scafld-codex-review.sh", f"{SCAFLD_DIR}/core/scripts/scafld-codex-review.sh"),
+        (f"{SCAFLD_DIR}/core/scripts/scafld-claude-build.sh", f"{SCAFLD_DIR}/core/scripts/scafld-claude-build.sh"),
+        (f"{SCAFLD_DIR}/core/scripts/scafld-claude-review.sh", f"{SCAFLD_DIR}/core/scripts/scafld-claude-review.sh"),
     ]
     for src_rel, dest_rel in copy_files:
         src = scafld_dir / src_rel
@@ -185,8 +184,8 @@ def cmd_init(args):
         bundle_label = c(C_DIM, "skip")
     manifest_color = C_GREEN if bundle["manifest_status"] == "created" else C_YELLOW if bundle["manifest_status"] == "updated" else C_DIM
     if not json_mode:
-        print(f"  {bundle_label}: {FRAMEWORK_DIR}/ ({len(bundle['created'])} files created, {len(bundle['updated'])} updated)")
-        print(f"  {c(manifest_color, bundle['manifest_status'])}: {FRAMEWORK_MANIFEST_PATH}")
+        print(f"  {bundle_label}: {CORE_DIR}/ ({len(bundle['created'])} files created, {len(bundle['updated'])} updated)")
+        print(f"  {c(manifest_color, bundle['manifest_status'])}: {CORE_MANIFEST_PATH}")
         print()
 
     examples_src = scafld_dir / SPECS_DIR / "examples"
@@ -254,12 +253,12 @@ def cmd_init(args):
   1. Edit {c(C_CYAN, 'AGENTS.md')} - add your project's invariants
   2. Edit {c(C_CYAN, 'CONVENTIONS.md')} - add your tech stack and patterns
   3. Edit {c(C_CYAN, 'CLAUDE.md')} - add project overview and commands
-  4. Edit {c(C_CYAN, '.ai/config.local.yaml')} - set your build/test/lint commands
+  4. Edit {c(C_CYAN, '.scafld/config.local.yaml')} - set your build/test/lint commands
 
   Then: {c(C_BOLD, plan_command)} or tell your agent {c(C_BOLD, agent_hint)}
   Handoff-first wrappers:
-    {c(C_BOLD, 'scripts/scafld-codex-build.sh <task-id>')} / {c(C_BOLD, 'scripts/scafld-claude-build.sh <task-id>')}
-    {c(C_BOLD, 'scripts/scafld-codex-review.sh <task-id>')} / {c(C_BOLD, 'scripts/scafld-claude-review.sh <task-id>')}
+    {c(C_BOLD, '.scafld/core/scripts/scafld-codex-build.sh <task-id>')} / {c(C_BOLD, '.scafld/core/scripts/scafld-claude-build.sh <task-id>')}
+    {c(C_BOLD, '.scafld/core/scripts/scafld-codex-review.sh <task-id>')} / {c(C_BOLD, '.scafld/core/scripts/scafld-claude-review.sh <task-id>')}
 """)
 
 
@@ -298,7 +297,7 @@ def cmd_update(args):
             if args.self:
                 return
             raise ScafldError(
-                "not in a scafld project (no .ai/ directory found)",
+                "not in a scafld project (no .scafld/ directory found)",
                 ["run 'scafld init' first or pass --scan-root /path"],
             )
         workspaces = [root]

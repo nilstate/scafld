@@ -36,7 +36,6 @@ REVIEW_RUNNER_VALUES = ("external", "local", "manual")
 REVIEW_PROVIDER_VALUES = ("auto", "codex", "claude")
 EXTERNAL_FALLBACK_POLICY_VALUES = ("warn", "allow", "disable")
 CURRENT_AGENT_PROVIDER_VALUES = ("unknown", "codex", "claude")
-DEFAULT_EXTERNAL_TIMEOUT_SECONDS = 600
 DEFAULT_IDLE_TIMEOUT_SECONDS = 120
 DEFAULT_ABSOLUTE_MAX_SECONDS = 1800
 DEFAULT_EXTERNAL_FALLBACK_POLICY = "warn"
@@ -186,43 +185,10 @@ def _normalize_positive_int(value, *, field_name, default):
     return normalized
 
 
-_LEGACY_TIMEOUT_DEPRECATION_NOTED = False
-
-
-def _maybe_warn_legacy_timeout():
-    """Emit the legacy `timeout_seconds` deprecation note once per process.
-
-    Aliasing happens silently if the operator hasn't set the new keys; the
-    note tells them how to migrate. Smokes grep this string, so changing
-    the wording requires updating the smoke fixture too.
-    """
-    global _LEGACY_TIMEOUT_DEPRECATION_NOTED
-    if _LEGACY_TIMEOUT_DEPRECATION_NOTED:
-        return
-    _LEGACY_TIMEOUT_DEPRECATION_NOTED = True
-    print(
-        "warning: review.external.timeout_seconds is deprecated; "
-        "use review.external.absolute_max_seconds + review.external.idle_timeout_seconds",
-        file=sys.stderr,
-    )
-
-
 def _resolve_review_timeouts(external_config):
-    """Read the activity-watchdog knobs from review.external, falling back
-    to the legacy `timeout_seconds` (aliased to `absolute_max_seconds`)
-    when the new keys are absent. Returns (idle_timeout_seconds,
-    absolute_max_seconds). Pure on the input mapping; emits a one-time
-    deprecation note as a side effect when legacy aliasing kicks in.
-
-    When idle isn't explicitly configured, the default is clamped to
-    absolute_max so a small legacy `timeout_seconds: 60` doesn't reject
-    against an inferred 120s idle default. Operators who set both keys
-    explicitly still see a hard reject if idle > absolute_max — that's
-    incoherent intent, not a back-compat case.
-    """
+    """Read the activity-watchdog knobs from review.external."""
     has_new_idle = "idle_timeout_seconds" in (external_config or {})
     has_new_max = "absolute_max_seconds" in (external_config or {})
-    has_legacy = "timeout_seconds" in (external_config or {})
 
     if has_new_max:
         absolute_max_seconds = _normalize_positive_int(
@@ -230,13 +196,6 @@ def _resolve_review_timeouts(external_config):
             field_name="absolute_max_seconds",
             default=DEFAULT_ABSOLUTE_MAX_SECONDS,
         )
-    elif has_legacy:
-        absolute_max_seconds = _normalize_positive_int(
-            external_config.get("timeout_seconds"),
-            field_name="timeout_seconds",
-            default=DEFAULT_EXTERNAL_TIMEOUT_SECONDS,
-        )
-        _maybe_warn_legacy_timeout()
     else:
         absolute_max_seconds = DEFAULT_ABSOLUTE_MAX_SECONDS
 
@@ -1263,7 +1222,7 @@ def _extract_claude_stdout_ndjson(stdout):
         ReviewPacket when --json-schema was attached) or the free-text
         `result` summary as fallback.
 
-    Return shape matches the legacy single-blob parser:
+    Return shape:
     (raw_output, model_observed, model_source, session_observed).
     """
     init_event = None
@@ -1323,12 +1282,10 @@ def _extract_claude_stdout_ndjson(stdout):
 
 def _looks_like_claude_ndjson(stdout):
     """Cheap heuristic: at least one non-empty line is a JSON object with a
-    `type` field. Lets `_extract_claude_stdout` choose between the NDJSON
-    parser and the legacy single-blob parser without operator config.
+    `type` field. Lets `_extract_claude_stdout` detect the provider stream.
 
     Scans every non-empty line so a leading warning or banner (e.g. claude
-    emits a non-JSON notice before the stream starts) doesn't mis-route
-    a real NDJSON stream to the legacy parser.
+    emits a non-JSON notice before the stream starts) still works.
     """
     if not stdout:
         return False
@@ -1349,10 +1306,8 @@ def _extract_claude_stdout(stdout):
     """Parse claude's stdout into (raw_output, model_observed, model_source,
     session_observed).
 
-    Tries the NDJSON shape first (`--output-format stream-json`); falls
-    back to the legacy single-blob JSON shape if claude ever regresses or
-    scafld is run against an older claude binary that doesn't speak
-    stream-json. Pure on the input, no provider state.
+    Tries the NDJSON shape first (`--output-format stream-json`), then a
+    single JSON payload. Pure on the input, no provider state.
     """
     if _looks_like_claude_ndjson(stdout):
         return _extract_claude_stdout_ndjson(stdout)
@@ -2329,7 +2284,7 @@ def _run_external_review_once(root, task_id, review_prompt, topology, resolved_r
     # canonical wrapper. The projection is derived from packet via the
     # live review topology config; including it would tie the seal to
     # the topology and produce false-positive `hash mismatch` errors
-    # whenever an operator edits .ai/config.yaml between review and
+    # whenever an operator edits .scafld/config.yaml between review and
     # complete. The packet is the source of truth; the projection is
     # a view, and reproducing it from the packet is deterministic.
     canonical_payload = json.dumps(normalized["packet"], sort_keys=True, separators=(",", ":"))

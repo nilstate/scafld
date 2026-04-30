@@ -105,7 +105,7 @@ def cmd_audit(args):
                     root,
                     args.task_id,
                     paths=sorted(set(actual) - declared),
-                    source="legacy_bootstrap",
+                    source="audit_bootstrap",
                     spec_path=spec,
                 )
                 baseline = session.get("workspace_baseline")

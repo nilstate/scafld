@@ -1,6 +1,5 @@
-import json
-
 from scafld.config import command_is_placeholder, detect_init_config, load_config
+from scafld.spec_markdown import render_spec_markdown
 
 
 def config_string(config, *keys):
@@ -69,77 +68,75 @@ def build_new_spec_scaffold(
     phase_content = f'TODO: Describe the changes for the first slice of "{resolved_title}".'
     phase_acceptance = "Run the repo's suggested targeted test command for this phase."
 
-    template = f'''# Repo context: {detection["summary"]}
-# Repo markers: {marker_text}
-# Suggested validation commands come from repo detection (including mixed Python+Node repos)
-# and .ai/config.local.yaml when available.
-spec_version: "1.1"
-task_id: {json.dumps(task_id)}
-created: {json.dumps(timestamp)}
-updated: {json.dumps(timestamp)}
-status: "draft"
-harden_status: "not_run"
-
-task:
-  title: {json.dumps(resolved_title)}
-  summary: >
-    {summary_prompt}
-  size: {json.dumps(resolved_size)}
-  risk_level: {json.dumps(resolved_risk)}
-  context:
-    packages:
-      - {json.dumps(packages_prompt)}
-    invariants:
-      - "domain_boundaries"
-  objectives:
-    - {json.dumps(objective_prompt)}
-  touchpoints:
-    - area: {json.dumps(touchpoint_area)}
-      description: {json.dumps(touchpoint_description)}
-  acceptance:
-    definition_of_done:
-      - id: "dod1"
-        description: "TODO: define what completion means for this task."
-        status: "pending"
-    validation:
-      - id: "v1"
-        type: "compile"
-        description: {json.dumps(compile_description)}
-        command: {json.dumps(commands["compile_check"])}
-        expected_kind: "exit_code_zero"
-      - id: "v2"
-        type: "test"
-        description: {json.dumps(test_description)}
-        command: {json.dumps(commands["targeted_tests"])}
-        expected_kind: "exit_code_zero"
-
-planning_log:
-  - timestamp: {json.dumps(timestamp)}
-    actor: "user"
-    summary: "Spec created via scafld plan"
-
-phases:
-  - id: "phase1"
-    name: {json.dumps(phase_name)}
-    objective: {json.dumps(phase_objective)}
-    changes:
-      - file: "TODO"
-        action: "update"
-        content_spec: |
-          {phase_content}
-    acceptance_criteria:
-      - id: "ac1_1"
-        type: "test"
-        description: {json.dumps(phase_acceptance)}
-        command: {json.dumps(commands["targeted_tests"])}
-        expected_kind: "exit_code_zero"
-    status: "pending"
-
-rollback:
-  strategy: "per_phase"
-  commands:
-    phase1: "git checkout HEAD -- TODO"
-'''
+    data = {
+        "spec_version": "2.0",
+        "task_id": task_id,
+        "created": timestamp,
+        "updated": timestamp,
+        "status": "draft",
+        "harden_status": "not_run",
+        "task": {
+            "title": resolved_title,
+            "summary": (
+                f"{summary_prompt}\n\n"
+                f"Repo context: {detection['summary']}. Repo markers: {marker_text}. "
+                "Suggested validation commands come from repo detection and .scafld/config.local.yaml."
+            ),
+            "size": resolved_size,
+            "risk_level": resolved_risk,
+            "context": {
+                "cwd": ".",
+                "packages": [packages_prompt],
+                "files_impacted": [{"path": "TODO", "reason": phase_content}],
+                "invariants": ["domain_boundaries"],
+            },
+            "objectives": [objective_prompt],
+            "touchpoints": [{"area": touchpoint_area, "description": touchpoint_description}],
+            "acceptance": {
+                "validation_profile": "strict",
+                "definition_of_done": [
+                    {"id": "dod1", "description": "TODO: define what completion means for this task.", "status": "pending"},
+                ],
+                "validation": [
+                    {
+                        "id": "v1",
+                        "type": "compile",
+                        "description": compile_description,
+                        "command": commands["compile_check"],
+                        "expected_kind": "exit_code_zero",
+                    },
+                    {
+                        "id": "v2",
+                        "type": "test",
+                        "description": test_description,
+                        "command": commands["targeted_tests"],
+                        "expected_kind": "exit_code_zero",
+                    },
+                ],
+            },
+        },
+        "planning_log": [{"timestamp": timestamp, "actor": "user", "summary": "Spec created via scafld plan"}],
+        "phases": [
+            {
+                "id": "phase1",
+                "name": phase_name,
+                "objective": phase_objective,
+                "changes": [{"file": "TODO", "action": "update", "content_spec": phase_content}],
+                "acceptance_criteria": [
+                    {
+                        "id": "ac1_1",
+                        "type": "test",
+                        "description": phase_acceptance,
+                        "command": commands["targeted_tests"],
+                        "expected_kind": "exit_code_zero",
+                    }
+                ],
+                "status": "pending",
+            }
+        ],
+        "rollback": {"strategy": "per_phase", "commands": {"phase1": "git checkout HEAD -- TODO"}},
+    }
+    template = render_spec_markdown(data)
 
     return {
         "text": template,
@@ -171,10 +168,10 @@ def build_slim_spec_scaffold(
     size="small",
     risk_level="low",
 ):
-    """Build a slim, ~30-line spec scaffold.
+    """Build a compact Markdown spec scaffold.
 
     Caller supplies real values for `title`, `command`, and `files`
-    (a list). The result has no `TODO` sentinels: every required
+    (a list). The result has no `TODO` placeholders: every required
     field is populated, so `validate_spec` passes immediately and
     `scafld approve` can advance without a manual fill round.
 
@@ -182,11 +179,10 @@ def build_slim_spec_scaffold(
     exit_code_zero` so `evaluate_acceptance_criterion`'s
     strict-unset-reject doesn't fire.
 
-    Optional task blocks (context.packages, invariants, objectives,
-    touchpoints, top-level acceptance.validation, rollback) are
-    omitted. Reviewers' renderers fall back gracefully on missing
-    fields. For complex multi-phase work, operators extend the spec
-    by hand or use the verbose `build_new_spec_scaffold`.
+    The grammar still emits every standard section, including empty
+    state/projection sections, so the document remains deterministic for
+    runner updates. For complex multi-phase work, operators extend the
+    Markdown spec by hand or use the verbose scaffold.
     """
     resolved_title = title or task_id.replace("-", " ").title()
     resolved_size = size or "small"
@@ -207,44 +203,43 @@ def build_slim_spec_scaffold(
 
     detection = detect_init_config(root)
 
-    changes_block = "\n".join(
-        f"      - file: {json.dumps(path)}\n"
-        f"        action: \"update\"\n"
-        f"        content_spec: \"See task summary.\""
-        for path in file_paths
-    )
-
-    template = f'''spec_version: "1.1"
-task_id: {json.dumps(task_id)}
-created: {json.dumps(timestamp)}
-updated: {json.dumps(timestamp)}
-status: "draft"
-harden_status: "in_progress"
-
-task:
-  title: {json.dumps(resolved_title)}
-  summary: {json.dumps(resolved_title)}
-  size: {json.dumps(resolved_size)}
-  risk_level: {json.dumps(resolved_risk)}
-
-planning_log:
-  - timestamp: {json.dumps(timestamp)}
-    actor: "user"
-    summary: "Spec created via scafld plan --command"
-
-phases:
-  - id: "phase1"
-    name: {json.dumps(resolved_title)}
-    objective: {json.dumps(f"Implement {resolved_title}")}
-    changes:
-{changes_block}
-    acceptance_criteria:
-      - id: "ac1_1"
-        type: "test"
-        command: {json.dumps(str(command))}
-        expected_kind: "exit_code_zero"
-    status: "pending"
-'''
+    data = {
+        "spec_version": "2.0",
+        "task_id": task_id,
+        "created": timestamp,
+        "updated": timestamp,
+        "status": "draft",
+        "harden_status": "not_run",
+        "task": {
+            "title": resolved_title,
+            "summary": resolved_title,
+            "size": resolved_size,
+            "risk_level": resolved_risk,
+            "context": {
+                "cwd": ".",
+                "files_impacted": [{"path": path, "reason": "See task summary."} for path in file_paths],
+            },
+        },
+        "planning_log": [{"timestamp": timestamp, "actor": "user", "summary": "Spec created via scafld plan --command"}],
+        "phases": [
+            {
+                "id": "phase1",
+                "name": resolved_title,
+                "objective": f"Implement {resolved_title}",
+                "changes": [{"file": path, "action": "update", "content_spec": "See task summary."} for path in file_paths],
+                "acceptance_criteria": [
+                    {
+                        "id": "ac1_1",
+                        "type": "test",
+                        "command": str(command),
+                        "expected_kind": "exit_code_zero",
+                    }
+                ],
+                "status": "pending",
+            }
+        ],
+    }
+    template = render_spec_markdown(data)
 
     return {
         "text": template,

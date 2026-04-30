@@ -1,8 +1,7 @@
 import posixpath
-import re
 
 from scafld.runtime_bundle import ACTIVE_DIR, CONFIG_LOCAL_PATH, REVIEWS_DIR, RUNS_DIR, SPECS_DIR
-from scafld.spec_parsing import require_pyyaml
+from scafld.spec_markdown import parse_spec_markdown, update_spec_markdown
 
 
 def normalize_change_path(path):
@@ -44,16 +43,6 @@ def git_sync_excluded_paths():
     return sorted((*AUDIT_IGNORED_PREFIXES, *AUDIT_IGNORED_FILES))
 
 
-def collect_changed_files_regex(text):
-    """Collect declared files with a lightweight regex fallback."""
-    paths = set()
-    for raw in re.findall(r'^\s*-\s+file:\s*"?([^"\n]+)"?', text, re.MULTILINE):
-        canonical = normalize_change_path(raw)
-        if canonical:
-            paths.add(canonical)
-    return sorted(paths)
-
-
 def normalize_change_ownership(value):
     """Normalize one change ownership value, defaulting to exclusive."""
     if isinstance(value, str) and value in CHANGE_OWNERSHIP_VALUES:
@@ -63,11 +52,7 @@ def normalize_change_ownership(value):
 
 def collect_declared_change_map(text):
     """Collect declared files and ownership from spec phases."""
-    try:
-        yaml = require_pyyaml()
-        data = yaml.safe_load(text) or {}
-    except Exception:
-        return {path: "exclusive" for path in collect_changed_files_regex(text)}
+    data = parse_spec_markdown(text)
 
     if not isinstance(data, dict):
         return {}
@@ -127,7 +112,7 @@ def active_declared_changes(root, exclude_task_id=None):
     if not active_dir.is_dir():
         return declared
 
-    for spec_path in sorted(active_dir.glob("*.yaml")):
+    for spec_path in sorted(active_dir.glob("*.md")):
         task_id = spec_path.stem
         if task_id == exclude_task_id:
             continue
@@ -158,29 +143,18 @@ def active_changes_by_file(active_changes):
 
 def apply_shared_ownership(spec_text, shared_paths):
     """Inject `ownership: "shared"` on declared change entries whose
-    `file:` path is in `shared_paths`. YAML-aware: parses the spec,
-    walks `phases[].changes[]`, mutates the entry dicts, and dumps.
-
-    Idempotent. Returns the original text unchanged when there are no
-    shared paths to mark.
-
-    Caveat: PyYAML's safe_dump doesn't preserve comments or original
-    formatting. Slim spec output is structured + minimal so this is
-    fine in practice. If we ever want to operate on hand-edited
-    verbose specs, switch to ruamel.yaml's round-trip mode.
+    `file:` path is in `shared_paths`. The update is applied through the
+    Markdown spec writer so task prose is preserved.
     """
     if not shared_paths:
         return spec_text
 
-    yaml = require_pyyaml()
     target_set = {normalize_change_path(p) for p in shared_paths if p}
     target_set.discard("")
     if not target_set:
         return spec_text
 
-    data = yaml.safe_load(spec_text)
-    if not isinstance(data, dict):
-        return spec_text
+    data = parse_spec_markdown(spec_text)
 
     phases = data.get("phases")
     if not isinstance(phases, list):
@@ -205,7 +179,7 @@ def apply_shared_ownership(spec_text, shared_paths):
     if not mutated:
         return spec_text
 
-    return yaml.safe_dump(data, sort_keys=False, default_flow_style=False)
+    return update_spec_markdown(spec_text, data)
 
 
 def classify_active_overlap(declared_changes, other_active_changes, *, plan_time=False):

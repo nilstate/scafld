@@ -37,23 +37,6 @@ def deep_merge(base, overlay):
     return result
 
 
-def normalize_config_overlay(overlay):
-    """Apply backward-compatible aliases before an overlay is merged."""
-    if not isinstance(overlay, dict):
-        return overlay
-    review = overlay.get("review")
-    if not isinstance(review, dict):
-        return overlay
-    external = review.get("external")
-    if not isinstance(external, dict) or "timeout_seconds" not in external:
-        return overlay
-
-    timeout_seconds = external.get("timeout_seconds")
-    external.setdefault("idle_timeout_seconds", timeout_seconds)
-    external.setdefault("absolute_max_seconds", timeout_seconds)
-    return overlay
-
-
 def load_config(root, framework_config_path, config_path, config_local_path):
     """Load config with local overlay support.
 
@@ -87,7 +70,6 @@ def load_config(root, framework_config_path, config_path, config_local_path):
                 code=EC.INVALID_ARGUMENTS,
             ) from exc
         if isinstance(loaded, dict):
-            loaded = normalize_config_overlay(loaded)
             config = deep_merge(config, loaded)
     return config
 
@@ -391,8 +373,8 @@ def render_init_local_config(detection):
     commands = detection["commands"]
     marker_text = ", ".join(detection["markers"]) if detection["markers"] else "none"
     return f"""# Project-specific config overlay
-# Values here merge on top of the managed bundle (.ai/scafld/config.yaml)
-# and any project-level .ai/config.yaml overrides.
+# Values here merge on top of the managed bundle (.scafld/core/config.yaml)
+# and any project-level .scafld/config.yaml overrides.
 # Only include sections you want to override - everything else inherits.
 #
 # Suggested commands generated from repo markers. Review them before relying on them.

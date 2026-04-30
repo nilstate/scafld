@@ -337,9 +337,8 @@ class ExtractClaudeStdoutNDJSONTest(unittest.TestCase):
         # Claude or a wrapper may write a banner or warning to stdout
         # before the stream-json events start. The detection heuristic
         # must scan past leading non-JSON lines and route to the NDJSON
-        # parser when typed events appear later, not fall back to the
-        # legacy single-blob parser (which would return raw stdout with
-        # no extracted packet).
+        # parser when typed events appear later, not treat the whole
+        # stream as one JSON blob.
         stream = (
             "warning: starting up\n"
             + json.dumps({"type": "system", "subtype": "init", "model": "claude-opus-4-7", "session_id": "abc"}) + "\n"
@@ -356,12 +355,12 @@ class ExtractClaudeStdoutNDJSONTest(unittest.TestCase):
         self.assertEqual(source, "observed")
         self.assertEqual(session, "abc")
 
-    def test_legacy_single_blob_still_parses(self):
-        # Safety: if claude regresses to single-blob JSON or scafld talks
-        # to an older binary, the parser must still extract the packet.
+    def test_single_json_blob_parses(self):
+        # Safety: if a provider emits one JSON object instead of NDJSON,
+        # the parser must still extract the packet.
         # The detection heuristic only routes to NDJSON when at least one
         # line parses as a typed event; a single blob without `\n` between
-        # objects looks like one big JSON object → legacy path.
+        # objects looks like one big JSON object.
         payload = json.dumps({
             "model": "claude-opus-4-7",
             "session_id": "11111111-1111-4111-8111-111111111111",
@@ -969,7 +968,7 @@ class ReviewPacketSchemaContractTest(unittest.TestCase):
     def _load_schema(self):
         from pathlib import Path
         import json
-        schema_path = Path(__file__).resolve().parents[1] / ".ai" / "schemas" / "review_packet.json"
+        schema_path = Path(__file__).resolve().parents[1] / ".scafld" / "core" / "schemas" / "review_packet.json"
         return json.loads(schema_path.read_text(encoding="utf-8"))
 
     def test_schema_file_loads_as_valid_json(self):
@@ -1105,7 +1104,7 @@ class ComposeReviewPacketSchemaTest(unittest.TestCase):
         self.assertEqual(set(cs_pass_id["enum"]), {"regression_hunt", "dark_patterns"})
 
     def test_overridden_schema_missing_keys_still_gets_narrowed(self):
-        # If an operator overrides .ai/schemas/review_packet.json with a schema
+        # If an operator overrides .scafld/core/schemas/review_packet.json with a schema
         # that's missing findings/checked_surfaces structure, the composer must
         # still install the pass_id narrowing (no silent no-op).
         from scafld.review_runner import _compose_review_packet_schema
@@ -1342,16 +1341,7 @@ class SigintEscalationTest(unittest.TestCase):
 
 
 class TimeoutResolutionTest(unittest.TestCase):
-    """Config knobs: new fields take precedence; legacy `timeout_seconds`
-    aliases to `absolute_max_seconds` with a deprecation note; defaults
-    apply when nothing is configured."""
-
-    def setUp(self):
-        # Reset the once-per-process deprecation latch so each test sees a
-        # fresh state. Smokes run scafld in fresh processes so this latch
-        # resetting in tests is just hygiene.
-        from scafld import review_runner
-        review_runner._LEGACY_TIMEOUT_DEPRECATION_NOTED = False
+    """Config knobs use explicit idle and absolute timeout fields."""
 
     def test_defaults_when_nothing_configured(self):
         from scafld.review_runner import (
@@ -1362,41 +1352,14 @@ class TimeoutResolutionTest(unittest.TestCase):
         self.assertEqual(idle, DEFAULT_IDLE_TIMEOUT_SECONDS)
         self.assertEqual(abs_max, DEFAULT_ABSOLUTE_MAX_SECONDS)
 
-    def test_legacy_timeout_seconds_aliases_absolute_max(self):
-        from scafld.review_runner import DEFAULT_IDLE_TIMEOUT_SECONDS
-        captured = []
-
-        def _fake_print(*args, **kwargs):
-            captured.append(" ".join(str(a) for a in args))
-
-        with unittest.mock.patch("builtins.print", side_effect=_fake_print):
-            idle, abs_max = _resolve_review_timeouts({"timeout_seconds": 900})
-
-        self.assertEqual(idle, DEFAULT_IDLE_TIMEOUT_SECONDS)
-        self.assertEqual(abs_max, 900)
-        # Deprecation note emitted exactly once.
-        deprecation_lines = [c for c in captured if "timeout_seconds is deprecated" in c]
-        self.assertEqual(len(deprecation_lines), 1)
-
-    def test_new_keys_take_precedence_over_legacy(self):
-        captured = []
-
-        def _fake_print(*args, **kwargs):
-            captured.append(" ".join(str(a) for a in args))
-
-        with unittest.mock.patch("builtins.print", side_effect=_fake_print):
-            idle, abs_max = _resolve_review_timeouts({
-                "idle_timeout_seconds": 60,
-                "absolute_max_seconds": 300,
-                "timeout_seconds": 900,  # ignored when new keys present
-            })
+    def test_explicit_keys_set_both_timeouts(self):
+        idle, abs_max = _resolve_review_timeouts({
+            "idle_timeout_seconds": 60,
+            "absolute_max_seconds": 300,
+        })
 
         self.assertEqual(idle, 60)
         self.assertEqual(abs_max, 300)
-        # No deprecation note: legacy was silently ignored because the new
-        # keys carry the operator's intent.
-        deprecation_lines = [c for c in captured if "timeout_seconds is deprecated" in c]
-        self.assertEqual(len(deprecation_lines), 0)
 
     def test_idle_cannot_exceed_absolute_max(self):
         with self.assertRaises(ValueError) as ctx:
@@ -1407,37 +1370,14 @@ class TimeoutResolutionTest(unittest.TestCase):
         self.assertIn("idle_timeout_seconds", str(ctx.exception))
         self.assertIn("absolute_max_seconds", str(ctx.exception))
 
-    def test_deprecation_note_only_emitted_once(self):
-        # Three separate aliasings produce a single deprecation note.
-        # Test the latch.
-        captured = []
-
-        def _fake_print(*args, **kwargs):
-            captured.append(" ".join(str(a) for a in args))
-
-        with unittest.mock.patch("builtins.print", side_effect=_fake_print):
-            _resolve_review_timeouts({"timeout_seconds": 60})
-            _resolve_review_timeouts({"timeout_seconds": 900})
-            _resolve_review_timeouts({"timeout_seconds": 1200})
-
-        deprecation_lines = [c for c in captured if "timeout_seconds is deprecated" in c]
-        self.assertEqual(len(deprecation_lines), 1)
-
-    def test_legacy_timeout_below_default_idle_does_not_reject(self):
-        # Existing configs with `timeout_seconds: 60` (below the 120s
-        # default idle) must still load — they predate the new keys and
-        # the operator never set the idle threshold. The default idle
-        # clamps to absolute_max in that case so the cross-check passes.
-        idle, abs_max = _resolve_review_timeouts({"timeout_seconds": 60})
-        self.assertEqual(abs_max, 60)
-        self.assertEqual(idle, 60)
-        self.assertLessEqual(idle, abs_max)
-
-    def test_legacy_small_timeout_with_default_idle_clamps(self):
+    def test_timeout_seconds_key_is_not_a_v2_config_knob(self):
+        from scafld.review_runner import (
+            DEFAULT_IDLE_TIMEOUT_SECONDS,
+            DEFAULT_ABSOLUTE_MAX_SECONDS,
+        )
         idle, abs_max = _resolve_review_timeouts({"timeout_seconds": 30})
-        self.assertEqual(abs_max, 30)
-        self.assertEqual(idle, 30)
-
+        self.assertEqual(idle, DEFAULT_IDLE_TIMEOUT_SECONDS)
+        self.assertEqual(abs_max, DEFAULT_ABSOLUTE_MAX_SECONDS)
 
 
 class StreamingProviderTransportTest(unittest.TestCase):
@@ -1609,7 +1549,7 @@ class WatchdogKillDiagnosticTest(unittest.TestCase):
     def _root_with_diag_dir(self, tmp_dir):
         from scafld.runtime_contracts import diagnostics_dir
         root = Path(tmp_dir)
-        # `diagnostics_dir` builds .ai/runs/<task>/diagnostics — make sure
+        # `diagnostics_dir` builds .scafld/runs/<task>/diagnostics — make sure
         # the parents exist so `_write_external_diagnostic` can write.
         diag = diagnostics_dir(root, "sometask")
         diag.parent.mkdir(parents=True, exist_ok=True)
@@ -1690,7 +1630,7 @@ class WatchdogKillDiagnosticTest(unittest.TestCase):
         self.assertNotIn("## Watchdog Kill", body)
 
     def test_no_watchdog_section_when_timed_out_but_no_reason(self):
-        # Defensive: timed_out=True with no kill_reason (legacy path or
+        # Defensive: timed_out=True with no kill_reason (older session data or
         # unknown) → omit the new section to avoid showing empty fields.
         import tempfile
         with tempfile.TemporaryDirectory() as tmp:

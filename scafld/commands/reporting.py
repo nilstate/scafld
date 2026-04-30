@@ -9,21 +9,26 @@ from scafld.reviewing import parse_review_file, review_git_gate_reason
 from scafld.review_workflow import capture_bound_review_git_state, load_review_topology
 from scafld.runtime_bundle import REVIEWS_DIR
 from scafld.session_store import load_session, session_summary_payload
-from scafld.spec_parsing import (
+from scafld.spec_model import (
     active_done_open,
     count_phases,
     extract_self_eval_score,
+    get_risk,
+    get_size,
+    get_status,
+    get_task_id,
+    get_updated,
     parse_acceptance_criteria,
     parse_iso8601_timestamp,
     supersession_payload,
 )
-from scafld.spec_store import find_all_specs, yaml_read_field, yaml_read_nested
+from scafld.spec_store import find_all_specs, load_spec_document
 from scafld.terminal import C_BOLD, C_DIM, C_GREEN, C_RED, C_YELLOW, STATUS_COLORS, c
 
 
-def report_triage_entry(root, spec_path, text):
-    task_id = yaml_read_field(text, "task_id") or spec_path.stem
-    updated = parse_iso8601_timestamp(yaml_read_field(text, "updated") or yaml_read_field(text, "created"))
+def report_triage_entry(root, spec_path, data):
+    task_id = get_task_id(data) or spec_path.stem
+    updated = parse_iso8601_timestamp(get_updated(data) or data.get("created"))
     age_days = None
     if updated is not None:
         age_days = max((datetime.datetime.now(datetime.timezone.utc) - updated).days, 0)
@@ -120,10 +125,6 @@ def cmd_report(args):
         "blocking_verdicts": 0,
         "pass_with_issues_verdicts": 0,
         "format_compliant_clean_reviews": 0,
-        "clean_reviews_with_evidence": 0,
-        "deprecated_aliases": {
-            "clean_reviews_with_evidence": "format_compliant_clean_reviews",
-        },
         "grounded_findings": 0,
     }
     per_task_review_signal = {}
@@ -134,12 +135,12 @@ def cmd_report(args):
         review_topology = None
 
     for spec_path, label in specs:
-        text = spec_path.read_text()
+        data = load_spec_document(spec_path)
 
-        status = yaml_read_field(text, "status") or "unknown"
-        triage_entry = report_triage_entry(root, spec_path, text)
-        is_active_done_open = active_done_open(text, status)
-        supersession = supersession_payload(text)
+        status = get_status(data) or "unknown"
+        triage_entry = report_triage_entry(root, spec_path, data)
+        is_active_done_open = active_done_open(data, status)
+        supersession = supersession_payload(data)
         session = load_session(root, triage_entry["task_id"], spec_path=spec_path)
         if runtime_only and session is None:
             continue
@@ -154,12 +155,12 @@ def cmd_report(args):
             })
 
         total += 1
-        harden_status = yaml_read_field(text, "harden_status")
+        harden_status = data.get("harden_status")
         if harden_status and harden_status in harden_status_counts:
             harden_status_counts[harden_status] += 1
         else:
             harden_status_counts["absent"] += 1
-        if re.search(r'^harden_rounds:\s*\n\s*-\s+round:', text, re.MULTILINE):
+        if isinstance(data.get("harden_rounds"), list) and data.get("harden_rounds"):
             specs_with_rounds += 1
         by_status[status] = by_status.get(status, 0) + 1
 
@@ -167,17 +168,17 @@ def cmd_report(args):
             month = label.split("/", 1)[1]
             by_month[month] = by_month.get(month, 0) + 1
 
-        size = yaml_read_nested(text, "task", "size") or "unknown"
+        size = get_size(data) or "unknown"
         sizes[size] = sizes.get(size, 0) + 1
 
-        risk = yaml_read_nested(text, "task", "risk_level") or "unknown"
+        risk = get_risk(data) or "unknown"
         risks[risk] = risks.get(risk, 0) + 1
 
-        score = extract_self_eval_score(text)
+        score = extract_self_eval_score(data)
         if score is not None:
             self_eval_scores.append(score)
 
-        criteria = parse_acceptance_criteria(text)
+        criteria = parse_acceptance_criteria(data)
         passes = sum(1 for criterion in criteria if criterion.get("result") == "pass")
         fails = sum(1 for criterion in criteria if criterion.get("result") == "fail")
         if passes or fails:
@@ -190,7 +191,7 @@ def cmd_report(args):
             if status == "in_progress" and not is_active_done_open:
                 active_without_exec.append(triage_entry)
 
-        total_phases, _, _, _ = count_phases(text)
+        total_phases, _, _, _ = count_phases(data)
         if total_phases > 0:
             phase_counts.append(total_phases)
 
@@ -233,8 +234,6 @@ def cmd_report(args):
                 review_signal["pass_with_issues_verdicts"] += 1
             if signal["format_compliant_clean_review"]:
                 review_signal["format_compliant_clean_reviews"] += 1
-            if signal["clean_review_with_evidence"]:
-                review_signal["clean_reviews_with_evidence"] += 1
             review_signal["grounded_findings"] += signal["grounded_findings"]
 
         if session is not None:

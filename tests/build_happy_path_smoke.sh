@@ -27,42 +27,10 @@ new_repo() {
 
 write_approved_spec() {
   local repo="$1"
-  cat > "$repo/.ai/specs/approved/happy-task.yaml" <<'EOF'
-spec_version: "1.1"
-task_id: "happy-task"
-created: "2026-04-24T00:00:00Z"
-updated: "2026-04-24T00:00:00Z"
-status: "approved"
-harden_status: "not_run"
-
-task:
-  title: "Build happy path smoke"
-  summary: "Exercise canonical next actions through build and status"
-  size: "small"
-  risk_level: "low"
-
-planning_log:
-  - timestamp: "2026-04-24T00:00:00Z"
-    actor: "user"
-    summary: "Bootstrap build happy path smoke fixture"
-
-phases:
-  - id: "phase1"
-    name: "Write the marker"
-    objective: "happy.txt should end up green"
-    changes:
-      - file: "happy.txt"
-        action: "update"
-        lines: "1"
-        content_spec: "replace red with green"
-    acceptance_criteria:
-      - id: "ac1_1"
-        type: "custom"
-        description: "happy.txt contains green"
-        command: "grep -q '^green$' happy.txt"
-        expected: "exit code 0"
-    status: "pending"
-EOF
+  SCAFLD_SPEC_CREATED="2026-04-24T00:00:00Z" \
+    write_markdown_spec "$repo/.scafld/specs/approved/happy-task.md" \
+    "happy-task" "approved" "Build happy path smoke" \
+    "happy.txt" "grep -q '^green$' happy.txt"
 }
 
 repo="$(new_repo)"

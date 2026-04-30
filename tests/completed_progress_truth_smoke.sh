@@ -27,87 +27,23 @@ new_repo() {
   printf '%s\n' "$repo"
 }
 
-write_legacy_archive_spec() {
+write_archive_spec() {
   local repo="$1"
-  mkdir -p "$repo/.ai/specs/archive/2026-04"
-  cat > "$repo/.ai/specs/archive/2026-04/legacy-completed.yaml" <<'EOF'
-spec_version: "1.1"
-task_id: "legacy-completed"
-created: "2026-04-01T00:00:00Z"
-updated: "2026-04-01T00:00:00Z"
-status: "completed"
-task:
-  title: "Legacy completed"
-  summary: "Legacy archive with stale pending phase status"
-  size: "small"
-  risk_level: "low"
-  acceptance:
-    definition_of_done:
-      - id: "dod1"
-        description: "Legacy done item"
-        status: "pending"
-planning_log:
-  - timestamp: "2026-04-01T00:00:00Z"
-    actor: "user"
-    summary: "Legacy fixture"
-phases:
-  - id: "phase1"
-    name: "Legacy"
-    objective: "Legacy fixture"
-    changes:
-      - file: "legacy.txt"
-        action: "update"
-        content_spec: "Legacy"
-    acceptance_criteria:
-      - id: "ac1_1"
-        type: "custom"
-        description: "Legacy pass"
-        command: "true"
-        expected: "exit code 0"
-        result: "pass"
-    status: "pending"
-EOF
+  mkdir -p "$repo/.scafld/specs/archive/2026-04"
+  SCAFLD_SPEC_CREATED="2026-04-01T00:00:00Z" \
+  SCAFLD_SPEC_PHASE_STATUS="completed" \
+  SCAFLD_SPEC_DOD_STATUS="done" \
+  SCAFLD_SPEC_CRITERION_RESULT="pass" \
+    write_markdown_spec "$repo/.scafld/specs/archive/2026-04/archive-completed.md" \
+    "archive-completed" "completed" "Archive completed" "archive.txt" "true"
 }
 
 write_active_spec() {
   local repo="$1"
-  cat > "$repo/.ai/specs/active/fresh-completed.yaml" <<'EOF'
-spec_version: "1.1"
-task_id: "fresh-completed"
-created: "2026-04-25T00:00:00Z"
-updated: "2026-04-25T00:00:00Z"
-status: "in_progress"
-task:
-  title: "Fresh completed"
-  summary: "Exercise completion truth stamping"
-  size: "small"
-  risk_level: "low"
-  acceptance:
-    definition_of_done:
-      - id: "dod1"
-        description: "Fresh done item"
-        status: "pending"
-planning_log:
-  - timestamp: "2026-04-25T00:00:00Z"
-    actor: "user"
-    summary: "Fresh fixture"
-phases:
-  - id: "phase1"
-    name: "Fresh"
-    objective: "Fresh fixture"
-    changes:
-      - file: "fresh.txt"
-        action: "update"
-        content_spec: "Fresh"
-    acceptance_criteria:
-      - id: "ac1_1"
-        type: "custom"
-        description: "Fresh pass"
-        command: "true"
-        expected: "exit code 0"
-        result: "pass"
-    status: "pending"
-EOF
+  SCAFLD_SPEC_CREATED="2026-04-25T00:00:00Z" \
+  SCAFLD_SPEC_CRITERION_RESULT="pass" \
+    write_markdown_spec "$repo/.scafld/specs/active/fresh-completed.md" \
+    "fresh-completed" "in_progress" "Fresh completed" "fresh.txt" "true"
 }
 
 complete_scaffolded_review_round() {
@@ -121,7 +57,7 @@ import re
 
 repo = pathlib.Path(os.environ["REVIEW_REPO"])
 task_id = os.environ["REVIEW_TASK_ID"]
-review_path = repo / ".ai" / "reviews" / f"{task_id}.md"
+review_path = repo / ".scafld" / "reviews" / f"{task_id}.md"
 text = review_path.read_text()
 
 json_blocks = list(re.finditer(r"```json\s*\n(.*?)\n```", text, re.DOTALL))
@@ -147,11 +83,11 @@ pass_lines = "\n".join([
 
 section_updates = {
     "Pass Results": pass_lines,
-    "Regression Hunt": "No issues found — checked the legacy archive projection and fresh completion path.\n",
-    "Convention Check": "No issues found — checked the lifecycle and review surfaces only.\n",
-    "Dark Patterns": "No issues found — checked for stale archive truth and silent progress drift.\n",
-    "Blocking": "No issues found — checked the archive truth surface.\n",
-    "Non-blocking": "No issues found — checked for residual progress mismatches within the bounded task.\n",
+    "Regression Hunt": "No issues found — checked callers of fresh.txt.\n",
+    "Convention Check": "No issues found — checked AGENTS.md and CONVENTIONS.md.\n",
+    "Dark Patterns": "No issues found — checked hardcodes and null handling in fresh.txt.\n",
+    "Blocking": "None.\n",
+    "Non-blocking": "None.\n",
     "Verdict": "pass\n",
 }
 
@@ -183,19 +119,19 @@ commit_fixtures() {
 archive_spec_path() {
   local repo="$1"
   local task_id="$2"
-  find "$repo/.ai/specs/archive" -name "$task_id.yaml" -print | head -n 1
+  find "$repo/.scafld/specs/archive" -name "$task_id.md" -print | head -n 1
 }
 
 repo="$(new_repo)"
-write_legacy_archive_spec "$repo"
+write_archive_spec "$repo"
 write_active_spec "$repo"
 commit_fixtures "$repo"
 printf 'fresh\n' > "$repo/fresh.txt"
 
-echo "[1/5] legacy completed archive lists as fully done"
+echo "[1/5] completed archive lists as fully done"
 capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld list"
-assert_contains "$output" "legacy-completed" "legacy completed fixture should appear in list output"
-assert_contains "$output" "[1/1]" "legacy completed fixture should render truthful completed progress"
+assert_contains "$output" "archive-completed" "completed fixture should appear in list output"
+assert_contains "$output" "[1/1]" "completed fixture should render truthful completed progress"
 
 echo "[2/5] review opens for the fresh active spec"
 capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld review fresh-completed --json"
@@ -209,7 +145,7 @@ assert_json "$output" "data['ok'] is True and data['state']['status'] == 'comple
 echo "[4/5] archived fresh spec stores terminal phase and DoD truth"
 archive_path="$(archive_spec_path "$repo" "fresh-completed")"
 [ -n "$archive_path" ] || fail "fresh-completed archive path should exist"
-capture output bash -lc "python3 -c \"import yaml; from pathlib import Path; data = yaml.safe_load(Path('$archive_path').read_text()); assert data['phases'][0]['status'] == 'completed'; assert data['task']['acceptance']['definition_of_done'][0]['status'] == 'done'; print('ok')\""
+capture output bash -lc "PATH='$CLI_ROOT':\"\$PATH\" PYTHONPATH='$REPO_ROOT' python3 -c \"from pathlib import Path; from scafld.spec_markdown import parse_spec_markdown; data = parse_spec_markdown(Path('$archive_path').read_text()); assert data['phases'][0]['status'] == 'completed'; assert data['task']['acceptance']['definition_of_done'][0]['status'] == 'done'; print('ok')\""
 assert_contains "$output" "ok" "archived fresh spec should store terminal completion truth"
 
 echo "[5/5] list shows the newly archived spec as fully done too"

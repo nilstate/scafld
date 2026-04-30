@@ -426,7 +426,7 @@ def derive_task_guidance(root, task_id, spec_path, spec_data, status, session, r
                     f"Non-blocking findings at or above severity "
                     f"{gate_threshold} are gating complete. Either "
                     f"fix them or relax `review.gate_severity` in "
-                    f".ai/config.yaml."
+                    f".scafld/config.yaml."
                 ),
                 followup_command=f"scafld complete {task_id}",
                 blocked=True,

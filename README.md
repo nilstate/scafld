@@ -31,7 +31,7 @@ What changed is the core model underneath it.
 Two nouns carry the system:
 
 - `spec`: what must be true. The reviewed contract and lifecycle source of truth.
-- `session`: what happened. The durable run ledger under `.ai/runs/{task-id}/session.json`.
+- `session`: what happened. The durable run ledger under `.scafld/runs/{task-id}/session.json`.
 
 `handoff` is transport, not a primitive. It is the structured brief for the next voice.
 
@@ -54,7 +54,7 @@ Challenge fires at one gate only in v1: `review`.
 That keeps the system sharp without turning every phase into ceremony.
 
 - `review` emits a challenger handoff
-- the challenger writes a verdict into `.ai/reviews/{task-id}.md`
+- the challenger writes a verdict into `.scafld/reviews/{task-id}.md`
 - `complete` closes only if the review gate passes, or a human applies the audited override path after a completed challenger round
 
 The override path is explicit:
@@ -69,7 +69,7 @@ exists.
 ## Runtime Layout
 
 ```text
-.ai/
+.scafld/
   specs/{drafts,approved,active,archive}/
   runs/
     {task-id}/
@@ -129,10 +129,10 @@ adapters for Codex and Claude Code. The default challenger path is now
 `scafld review` itself.
 
 ```bash
-scripts/scafld-codex-build.sh <task-id>
-scripts/scafld-codex-review.sh <task-id>
-scripts/scafld-claude-build.sh <task-id>
-scripts/scafld-claude-review.sh <task-id>
+.scafld/core/scripts/scafld-codex-build.sh <task-id>
+.scafld/core/scripts/scafld-codex-review.sh <task-id>
+.scafld/core/scripts/scafld-claude-build.sh <task-id>
+.scafld/core/scripts/scafld-claude-review.sh <task-id>
 ```
 
 ## Success Metrics
@@ -167,7 +167,7 @@ curl -fsSL https://raw.githubusercontent.com/nilstate/scafld/main/install.sh | s
 
 `pip install scafld` installs the console entry point plus the managed runtime bundle used by `scafld init` and `scafld update`.
 
-`npm install -g scafld` installs the same CLI package for environments that ship tooling through npm. The CLI still requires `python3` at runtime. Commands that edit YAML specs, such as `scafld harden`, also require `PyYAML` in that Python runtime:
+`npm install -g scafld` installs the same CLI package for environments that ship tooling through npm. The CLI still requires `python3` at runtime. Commands that edit Markdown spec front matter, such as `scafld harden`, also require `PyYAML` in that Python runtime:
 
 ```bash
 python3 -m pip install PyYAML
@@ -185,7 +185,7 @@ project-owned overlays:
 
 ```text
 your-project/
-  .ai/
+  .scafld/
     scafld/                # Managed reset copy refreshed by `scafld update`
     config.yaml            # Project config overlay
     config.local.yaml      # Local machine overrides
@@ -203,14 +203,14 @@ Start by customizing:
 1. `AGENTS.md`
 2. `CLAUDE.md`
 3. `CONVENTIONS.md`
-4. `.ai/config.local.yaml`
+4. `.scafld/config.local.yaml`
 
 When the workspace includes them, the handoff-first wrappers are:
 
-- `scripts/scafld-codex-build.sh <task-id>`
-- `scripts/scafld-codex-review.sh <task-id>`
-- `scripts/scafld-claude-build.sh <task-id>`
-- `scripts/scafld-claude-review.sh <task-id>`
+- `.scafld/core/scripts/scafld-codex-build.sh <task-id>`
+- `.scafld/core/scripts/scafld-codex-review.sh <task-id>`
+- `.scafld/core/scripts/scafld-claude-build.sh <task-id>`
+- `.scafld/core/scripts/scafld-claude-review.sh <task-id>`
 
 Repo-aware planning also works for mixed Python+Node repos. When both stacks are
 present, scafld merges the signals and prefers concrete detected commands over
@@ -218,8 +218,8 @@ placeholder defaults.
 
 Prompt ownership is deliberate:
 
-- `.ai/prompts/*` is the active template layer the runtime reads first
-- `.ai/scafld/prompts/*` is the managed reset copy refreshed by `scafld update`
+- `.scafld/prompts/*` is the active template layer the runtime reads first
+- `.scafld/core/prompts/*` is the managed reset copy refreshed by `scafld update`
 
 ## Minimal Runtime Config
 

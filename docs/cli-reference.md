@@ -27,10 +27,10 @@ When the workspace includes them, these wrappers resolve the current handoff
 before the external agent acts:
 
 ```bash
-scripts/scafld-codex-build.sh <task-id>
-scripts/scafld-codex-review.sh <task-id>
-scripts/scafld-claude-build.sh <task-id>
-scripts/scafld-claude-review.sh <task-id>
+.scafld/core/scripts/scafld-codex-build.sh <task-id>
+.scafld/core/scripts/scafld-codex-review.sh <task-id>
+.scafld/core/scripts/scafld-claude-build.sh <task-id>
+.scafld/core/scripts/scafld-claude-review.sh <task-id>
 ```
 
 ## JSON Mode
@@ -159,9 +159,11 @@ subprocess pid, invocation id, timeout, and a tracking command. While that
 subprocess is running, `status --json` exposes
 `runtime.active_provider_invocation` and `next_action.type: review_running`.
 
-External provider calls fail rather than hang when `review.external.timeout_seconds`
-is reached. Invalid external output also fails the review command; it leaves the
-latest round in progress and does not suggest `scafld complete`.
+External provider calls fail rather than hang when either
+`review.external.idle_timeout_seconds` or
+`review.external.absolute_max_seconds` is reached. Invalid external output also
+fails the review command; it leaves the latest round in progress and does not
+suggest `scafld complete`.
 
 For `provider: auto`, scafld avoids Codex self-review by preferring Claude when
 the current agent is detected as Codex. Otherwise it prefers Codex, then Claude.

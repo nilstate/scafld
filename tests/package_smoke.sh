@@ -44,7 +44,7 @@ help_output="$(scafld --help)"
 [[ "$help_output" == *"plan"* ]] || fail "default help should expose plan"
 [[ "$help_output" == *"build"* ]] || fail "default help should expose build"
 [[ "$help_output" == *"exec"* ]] || fail "default help should expose exec"
-[[ "$help_output" != *"start"* ]] || fail "default help should hide legacy start"
+[[ "$help_output" != *"start"* ]] || fail "default help should hide advanced start"
 
 echo "[4/6] installed wheel can init a workspace"
 WS="$(mktemp -d /tmp/scafld-wheel-workspace.XXXXXX)"
@@ -55,23 +55,23 @@ import json
 from pathlib import Path
 
 workspace = Path("$WS")
-manifest = json.load(open(workspace / ".ai" / "scafld" / "manifest.json"))
+manifest = json.load(open(workspace / ".scafld" / "core" / "manifest.json"))
 assert manifest["scafld_version"] == "$EXPECTED_VERSION", manifest["scafld_version"]
-assert (workspace / ".ai" / "scafld" / "prompts" / "harden.md").exists()
-assert (workspace / ".ai" / "scafld" / "prompts" / "recovery.md").exists()
-assert (workspace / ".ai" / "scafld" / "scripts" / "scafld-provider-adapter.sh").exists()
-assert (workspace / ".ai" / "scafld" / "scripts" / "scafld-codex-build.sh").exists()
-assert (workspace / ".ai" / "scafld" / "scripts" / "scafld-codex-review.sh").exists()
-assert (workspace / "scripts" / "scafld-codex-build.sh").exists()
-assert (workspace / "scripts" / "scafld-codex-review.sh").exists()
-assert (workspace / "scripts" / "scafld-claude-build.sh").exists()
-assert (workspace / "scripts" / "scafld-claude-review.sh").exists()
+assert (workspace / ".scafld" / "core" / "prompts" / "harden.md").exists()
+assert (workspace / ".scafld" / "core" / "prompts" / "recovery.md").exists()
+assert (workspace / ".scafld" / "core" / "scripts" / "scafld-provider-adapter.sh").exists()
+assert (workspace / ".scafld" / "core" / "scripts" / "scafld-codex-build.sh").exists()
+assert (workspace / ".scafld" / "core" / "scripts" / "scafld-codex-review.sh").exists()
+assert not (workspace / "scripts" / "scafld-codex-build.sh").exists()
+assert not (workspace / "scripts" / "scafld-codex-review.sh").exists()
+assert not (workspace / "scripts" / "scafld-claude-build.sh").exists()
+assert not (workspace / "scripts" / "scafld-claude-review.sh").exists()
 PY
 
 echo "[5/6] installed wheel init is idempotent for the managed manifest"
-before_manifest="$(cat "$WS/.ai/scafld/manifest.json")"
+before_manifest="$(cat "$WS/.scafld/core/manifest.json")"
 (cd "$WS" && scafld init >/dev/null) || fail "installed wheel could not re-init an existing workspace"
-after_manifest="$(cat "$WS/.ai/scafld/manifest.json")"
+after_manifest="$(cat "$WS/.scafld/core/manifest.json")"
 [[ "$before_manifest" == "$after_manifest" ]] || fail "re-running init rewrote the managed manifest"
 
 echo "[6/6] npm pack dry-run exposes the expected tarball"
@@ -87,16 +87,11 @@ assert pkg["version"] == "$EXPECTED_VERSION", pkg["version"]
 files = {entry["path"] for entry in pkg["files"]}
 required = {
     "cli/scafld",
-    ".ai/config.yaml",
-    ".ai/prompts/harden.md",
-    ".ai/prompts/recovery.md",
-    ".ai/schemas/spec.json",
-    ".ai/specs/examples/add-error-codes.yaml",
-    "scripts/scafld-provider-adapter.sh",
-    "scripts/scafld-codex-build.sh",
-    "scripts/scafld-codex-review.sh",
-    "scripts/scafld-claude-build.sh",
-    "scripts/scafld-claude-review.sh",
+    ".scafld/config.yaml",
+    ".scafld/prompts/harden.md",
+    ".scafld/prompts/recovery.md",
+    ".scafld/core/schemas/spec.json",
+    ".scafld/specs/examples/add-error-codes.md",
     "scafld/__main__.py",
     "scafld/acceptance.py",
     "scafld/audit_scope.py",
@@ -124,7 +119,7 @@ required = {
     "scafld/runtime_contracts.py",
     "scafld/session_store.py",
     "scafld/handoff_renderer.py",
-    "scafld/spec_parsing.py",
+    "scafld/spec_model.py",
     "scafld/spec_store.py",
     "scafld/spec_templates.py",
     "scafld/terminal.py",
@@ -139,7 +134,7 @@ required = {
 }
 missing = sorted(required - files)
 assert not missing, missing
-assert ".ai/scafld/manifest.json" not in files
+assert ".scafld/core/manifest.json" not in files
 PY
 
 PACKAGE_JSON_PATH="$REPO_ROOT/package.json" EXPECTED_VERSION="$EXPECTED_VERSION" node - <<'JS' || fail "package.json metadata is missing expected homepage"

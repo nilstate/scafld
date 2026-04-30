@@ -43,82 +43,20 @@ EOF
 
 write_approved_spec() {
   local repo="$1"
-  cat > "$repo/.ai/specs/approved/adapter-task.yaml" <<'EOF'
-spec_version: "1.1"
-task_id: "adapter-task"
-created: "2026-04-24T00:00:00Z"
-updated: "2026-04-24T00:00:00Z"
-status: "approved"
-harden_status: "not_run"
-
-task:
-  title: "Claude adapter smoke"
-  summary: "Verify the claude wrapper consumes the current handoff"
-  size: "small"
-  risk_level: "low"
-
-planning_log:
-  - timestamp: "2026-04-24T00:00:00Z"
-    actor: "user"
-    summary: "Bootstrap claude adapter smoke fixture"
-
-phases:
-  - id: "phase1"
-    name: "Write the marker"
-    objective: "adapter.txt should end up green"
-    changes:
-      - file: "adapter.txt"
-        action: "update"
-        lines: "1"
-        content_spec: "replace red with green"
-    acceptance_criteria:
-      - id: "ac1_1"
-        type: "custom"
-        description: "adapter.txt contains green"
-        command: "grep -q '^green$' adapter.txt"
-        expected: "exit code 0"
-    status: "pending"
-EOF
+  SCAFLD_SPEC_CREATED="2026-04-24T00:00:00Z" \
+    write_markdown_spec "$repo/.scafld/specs/approved/adapter-task.md" \
+    "adapter-task" "approved" "Claude adapter smoke" \
+    "adapter.txt" "grep -q '^green$' adapter.txt"
 }
 
 write_review_ready_spec() {
   local repo="$1"
-  cat > "$repo/.ai/specs/active/review-task.yaml" <<'EOF'
-spec_version: "1.1"
-task_id: "review-task"
-created: "2026-04-24T00:00:00Z"
-updated: "2026-04-24T00:00:00Z"
-status: "in_progress"
-
-task:
-  title: "Claude review adapter smoke"
-  summary: "Verify the claude wrapper consumes the challenger handoff"
-  size: "small"
-  risk_level: "low"
-
-planning_log:
-  - timestamp: "2026-04-24T00:00:00Z"
-    actor: "user"
-    summary: "Bootstrap claude review adapter smoke fixture"
-
-phases:
-  - id: "phase1"
-    name: "Keep the marker"
-    objective: "review.txt should stay ok"
-    changes:
-      - file: "review.txt"
-        action: "update"
-        lines: "1"
-        content_spec: "keep the marker ok"
-    acceptance_criteria:
-      - id: "ac1_1"
-        type: "custom"
-        description: "review.txt contains ok"
-        command: "grep -q '^ok$' review.txt"
-        expected: "exit code 0"
-        result: "pass"
-    status: "completed"
-EOF
+  SCAFLD_SPEC_CREATED="2026-04-24T00:00:00Z" \
+  SCAFLD_SPEC_PHASE_STATUS="completed" \
+  SCAFLD_SPEC_CRITERION_RESULT="pass" \
+    write_markdown_spec "$repo/.scafld/specs/active/review-task.md" \
+    "review-task" "in_progress" "Claude review adapter smoke" \
+    "review.txt" "grep -q '^ok$' review.txt"
 }
 
 repo="$(new_repo)"
@@ -126,9 +64,9 @@ stub_dir="$(write_provider_stub)"
 write_approved_spec "$repo"
 
 echo "[1/3] init seeds the claude adapter scripts"
-[ -x "$repo/scripts/scafld-provider-adapter.sh" ] || fail "init should seed the shared provider adapter"
-[ -x "$repo/scripts/scafld-claude-build.sh" ] || fail "init should seed the claude build adapter script"
-[ -x "$repo/scripts/scafld-claude-review.sh" ] || fail "init should seed the claude review adapter script"
+[ -x "$repo/.scafld/core/scripts/scafld-provider-adapter.sh" ] || fail "init should seed the shared provider adapter"
+[ -x "$repo/.scafld/core/scripts/scafld-claude-build.sh" ] || fail "init should seed the claude build adapter script"
+[ -x "$repo/.scafld/core/scripts/scafld-claude-review.sh" ] || fail "init should seed the claude review adapter script"
 
 echo "[2/3] approved work feeds the executor handoff to claude"
 capture_path="$repo/claude-phase.txt"
@@ -138,15 +76,15 @@ args_path="$repo/claude-phase.args"
   PATH="$stub_dir:$CLI_ROOT:$PATH" \
   SCAFLD_ADAPTER_CAPTURE="$capture_path" \
   SCAFLD_ADAPTER_ARGS="$args_path" \
-  ./scripts/scafld-claude-build.sh adapter-task --phase-arg >/dev/null
+  ./.scafld/core/scripts/scafld-claude-build.sh adapter-task --phase-arg >/dev/null
 )
 assert_contains_file "$capture_path" 'role: "executor"' "claude adapter should feed an executor handoff"
 assert_contains_file "$capture_path" '## Phase Objective' "claude adapter should feed the phase handoff content"
 assert_contains_file "$args_path" '--phase-arg' "claude adapter should pass through provider args"
-assert_contains_file "$repo/.ai/runs/adapter-task/session.json" '"type": "provider_invocation"' "claude adapter should record provider invocation telemetry"
-assert_contains_file "$repo/.ai/runs/adapter-task/session.json" '"role": "executor"' "claude adapter should record executor attribution"
-assert_contains_file "$repo/.ai/runs/adapter-task/session.json" '"provider": "claude"' "claude adapter should record the claude provider"
-assert_contains_file "$repo/.ai/runs/adapter-task/session.json" '"confidence": "unknown"' "claude adapter should record attribution confidence"
+assert_contains_file "$repo/.scafld/runs/adapter-task/session.json" '"type": "provider_invocation"' "claude adapter should record provider invocation telemetry"
+assert_contains_file "$repo/.scafld/runs/adapter-task/session.json" '"role": "executor"' "claude adapter should record executor attribution"
+assert_contains_file "$repo/.scafld/runs/adapter-task/session.json" '"provider": "claude"' "claude adapter should record the claude provider"
+assert_contains_file "$repo/.scafld/runs/adapter-task/session.json" '"confidence": "unknown"' "claude adapter should record attribution confidence"
 
 echo "[3/3] review-ready work feeds the challenger handoff to claude"
 review_repo="$(new_repo)"
@@ -160,11 +98,11 @@ args_path="$review_repo/claude-review.args"
   PATH="$review_stub_dir:$CLI_ROOT:$PATH" \
   SCAFLD_ADAPTER_CAPTURE="$capture_path" \
   SCAFLD_ADAPTER_ARGS="$args_path" \
-  ./scripts/scafld-claude-review.sh review-task >/dev/null
+  ./.scafld/core/scripts/scafld-claude-review.sh review-task >/dev/null
 )
 assert_contains_file "$capture_path" 'role: "challenger"' "claude adapter should feed a challenger handoff for review-ready work"
 assert_contains_file "$capture_path" '## Challenge Contract' "claude adapter should feed the review challenge contract"
-assert_contains_file "$review_repo/.ai/runs/review-task/session.json" '"role": "challenger"' "claude review adapter should record challenger attribution"
-assert_contains_file "$review_repo/.ai/runs/review-task/session.json" '"provider": "claude"' "claude review adapter should record the claude provider"
+assert_contains_file "$review_repo/.scafld/runs/review-task/session.json" '"role": "challenger"' "claude review adapter should record challenger attribution"
+assert_contains_file "$review_repo/.scafld/runs/review-task/session.json" '"provider": "claude"' "claude review adapter should record the claude provider"
 
 echo "PASS: claude handoff adapter smoke"

@@ -33,42 +33,42 @@ def runtime_data_files():
     for rel in top_level:
         files.append(("share/scafld" if "/" not in rel else "share/scafld/cli", [str(ROOT / rel)]))
 
-    ai_roots = [
-        ROOT / ".ai" / "OPERATORS.md",
-        ROOT / ".ai" / "README.md",
-        ROOT / ".ai" / "config.yaml",
+    scafld_roots = [
+        ROOT / ".scafld" / "config.yaml",
+        ROOT / ".scafld" / "core" / "OPERATORS.md",
+        ROOT / ".scafld" / "core" / "README.md",
+        ROOT / ".scafld" / "core" / "config.yaml",
     ]
-    for path in ai_roots:
-        files.append(("share/scafld/.ai", [str(path)]))
+    for path in scafld_roots:
+        dest = "share/scafld/.scafld/core" if path.parent.name == "core" else "share/scafld/.scafld"
+        files.append((dest, [str(path)]))
 
     files.append(("share/scafld/scafld", [str(ROOT / "scafld" / "_version.py")]))
 
-    for path in sorted((ROOT / ".ai" / "prompts").rglob("*")):
+    for path in sorted((ROOT / ".scafld" / "prompts").rglob("*")):
         if path.is_file():
-            files.append(("share/scafld/.ai/prompts", [str(path)]))
+            files.append(("share/scafld/.scafld/prompts", [str(path)]))
 
-    for path in sorted((ROOT / ".ai" / "schemas").rglob("*")):
+    for path in sorted((ROOT / ".scafld" / "core" / "prompts").rglob("*")):
         if path.is_file():
-            files.append(("share/scafld/.ai/schemas", [str(path)]))
+            files.append(("share/scafld/.scafld/core/prompts", [str(path)]))
 
-    specs_root = ROOT / ".ai" / "specs"
+    for path in sorted((ROOT / ".scafld" / "core" / "schemas").rglob("*")):
+        if path.is_file():
+            files.append(("share/scafld/.scafld/core/schemas", [str(path)]))
+
+    specs_root = ROOT / ".scafld" / "specs"
     include_specs = [
         specs_root / "README.md",
-        specs_root / "examples" / "add-error-codes.yaml",
+        ROOT / ".scafld" / "core" / "specs" / "examples" / "add-error-codes.md",
+        ROOT / ".scafld" / "core" / "specs" / "examples" / "markdown-2.0-skeleton.md",
     ]
     for path in include_specs:
-        dest = "share/scafld/.ai/specs" if path.parent == specs_root else "share/scafld/.ai/specs/examples"
+        dest = "share/scafld/.scafld/specs" if path.parent == specs_root else "share/scafld/.scafld/core/specs/examples"
         files.append((dest, [str(path)]))
 
-    for path in (
-        ROOT / "scripts" / "scafld-provider-adapter.sh",
-        ROOT / "scripts" / "scafld-codex-build.sh",
-        ROOT / "scripts" / "scafld-codex-review.sh",
-        ROOT / "scripts" / "scafld-claude-build.sh",
-        ROOT / "scripts" / "scafld-claude-review.sh",
-    ):
-        if path.exists():
-            files.append(("share/scafld/scripts", [str(path)]))
+    for path in sorted((ROOT / ".scafld" / "core" / "scripts").rglob("*.sh")):
+        files.append(("share/scafld/.scafld/core/scripts", [str(path)]))
 
     return files
 

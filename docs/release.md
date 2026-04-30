@@ -39,7 +39,7 @@ form (the latter is only for projects that have not been created yet).
 The job now runs with `permissions.id-token: write` and uploads to PyPI
 on every tag push without referencing any repository secret.
 
-### Verifying with TestPyPI before deleting the legacy token
+### Verifying with TestPyPI before deleting the old token
 
 Before removing `PYPI_API_TOKEN`, dry-run the binding against TestPyPI
 to confirm the OIDC handshake works without a password. Do not use a
@@ -56,7 +56,7 @@ would also publish to npm and create a GitHub release.
 3. Confirm the TestPyPI upload succeeds, then delete the dry-run
    workflow file. Do not merge it.
 
-### Removing the legacy token
+### Removing the old token
 
 `PYPI_API_TOKEN` may still exist in the repository's *Settings → Secrets
 and variables → Actions*. Leave it in place until both:
@@ -92,8 +92,9 @@ registry, GitHub Actions, and supply-chain consumers.
 ## Cutting a release
 
 ```bash
-python3 scripts/bump_version.py <patch|minor|major>
-git commit -am "release: vX.Y.Z"
+python3 scripts/bump_version.py X.Y.Z
+git add -A
+git commit -m "release: vX.Y.Z"
 git tag vX.Y.Z
 git push origin main vX.Y.Z
 ```

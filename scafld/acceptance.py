@@ -1,8 +1,7 @@
-import json
-import re
 import subprocess
 
-from scafld.spec_parsing import now_iso, require_pyyaml
+from scafld.spec_markdown import parse_spec_markdown, update_spec_markdown
+from scafld.spec_model import now_iso
 
 
 DEFAULT_ACCEPTANCE_TIMEOUT_SECONDS = 600
@@ -37,8 +36,7 @@ def _match_exit_code_nonzero(returncode, output, criterion):
 
 def _match_no_matches(returncode, output, criterion):
     # `no matches` is satisfied when the command emits no output OR exits
-    # non-zero. Mirrors the legacy `check_expected('no matches')` contract
-    # so existing specs keep working under strict mode after auto-mapping.
+    # non-zero.
     if returncode != 0 or not (output or "").strip():
         return True, ""
     return False, "expected no matches, got output"
@@ -51,41 +49,8 @@ _KIND_MATCHERS = {
 }
 
 
-def _legacy_expected_to_kind(expected):
-    """Map a legacy `expected:` string into a (kind, fields) tuple.
-
-    Returns ("legacy_substring", {"expected_substring": <verbatim>}) for
-    strings not in the recognized set; that path falls through to
-    `check_expected` substring matching in lenient mode.
-
-    Returns ("unset", {}) when neither `expected_kind` nor `expected` is
-    declared. Strict mode treats this as a hard failure (the criterion
-    declares no contract for what passing looks like).
-    """
-    if not isinstance(expected, str) or not expected.strip():
-        return "unset", {}
-    exp_lower = expected.strip().lower()
-    if exp_lower == "exit code 0":
-        return "exit_code_zero", {}
-    match = re.fullmatch(r"exit\s+code\s+(\d+)", exp_lower)
-    if match:
-        code = int(match.group(1))
-        if code == 0:
-            return "exit_code_zero", {}
-        return "exit_code_nonzero", {"expected_exit_code": code}
-    if exp_lower == "no matches":
-        return "no_matches", {}
-    return "legacy_substring", {"expected_substring": expected}
-
-
 def resolve_kind(criterion):
-    """Return the (kind, derived_fields) for a criterion.
-
-    Explicit `expected_kind` wins. Otherwise the legacy `expected:` string
-    is mapped. Unrecognized legacy strings yield kind == "legacy_substring"
-    so callers can route them through the existing check_expected path
-    (lenient mode) or refuse them (strict mode).
-    """
+    """Return the (kind, derived_fields) for a criterion."""
     if isinstance(criterion, dict):
         explicit = criterion.get("expected_kind")
         if isinstance(explicit, str) and explicit.strip():
@@ -93,15 +58,14 @@ def resolve_kind(criterion):
             if kind in EXPECTED_KINDS:
                 return kind, {}
             return "invalid_kind", {"declared_kind": kind}
-        return _legacy_expected_to_kind(criterion.get("expected", ""))
-    return _legacy_expected_to_kind("")
+    return "unset", {}
 
 
 def check_kind(returncode, output, criterion):
     """Apply the structured matcher for the criterion's resolved kind.
 
-    Returns (passed: bool, reason: str). Does not handle the
-    `legacy_substring` / `invalid_kind` paths — callers route those.
+    Returns (passed: bool, reason: str). Does not handle the `invalid_kind`
+    path; callers route that before executing commands.
     """
     kind, derived = resolve_kind(criterion)
     if kind in _KIND_MATCHERS:
@@ -114,15 +78,10 @@ def check_kind(returncode, output, criterion):
 
 def record_exec_result(text, ac_id, passed, output_snippet=""):
     """Record execution result for an acceptance criterion in the spec."""
-    yaml = require_pyyaml()
-    data = yaml.safe_load(text) or {}
-    if not isinstance(data, dict):
-        return text
-
+    data = parse_spec_markdown(text)
     status = "pass" if passed else "fail"
     executed_at = now_iso()
     snippet = output_snippet[:200].replace("\n", " ")
-    nested_result = False
 
     phases = data.get("phases")
     if not isinstance(phases, list):
@@ -131,125 +90,22 @@ def record_exec_result(text, ac_id, passed, output_snippet=""):
     for phase in phases:
         if not isinstance(phase, dict):
             continue
-        for block_name in ("acceptance_criteria", "validation"):
-            block = phase.get(block_name)
-            if not isinstance(block, list):
+        block = phase.get("acceptance_criteria")
+        if not isinstance(block, list):
+            continue
+        for entry in block:
+            if not isinstance(entry, dict):
                 continue
-            for entry in block:
-                if not isinstance(entry, dict):
-                    continue
-                if entry.get("id") != ac_id and entry.get("dod_id") != ac_id:
-                    continue
-                nested_result = isinstance(entry.get("result"), dict)
-                return _rewrite_exec_result_fields(
-                    text=text,
-                    ac_id=ac_id,
-                    nested_result=nested_result,
-                    status=status,
-                    executed_at=executed_at,
-                    output_snippet=snippet if output_snippet else "",
-                )
+            if entry.get("id") != ac_id:
+                continue
+            entry["result"] = status
+            entry["status"] = status
+            entry["checked_at"] = executed_at
+            if snippet:
+                entry["evidence"] = snippet
+            return update_spec_markdown(text, data)
 
     return text
-
-
-def _rewrite_exec_result_fields(*, text, ac_id, nested_result, status, executed_at, output_snippet):
-    lines = text.splitlines(True)
-    result = []
-    i = 0
-
-    while i < len(lines):
-        line = lines[i]
-        if re.search(rf'(?:id|dod_id):\s*"?{re.escape(ac_id)}"?\s*$', line):
-            result.append(line)
-            item_match = re.match(r"^(\s*)-\s+", line)
-            if item_match:
-                field_indent = " " * (len(item_match.group(1)) + 2)
-            else:
-                field_indent = " " * (len(line) - len(line.lstrip()))
-
-            i += 1
-            preserved = []
-            insert_at = None
-            while i < len(lines):
-                field_line = lines[i]
-                if not field_line.strip():
-                    preserved.append(field_line)
-                    i += 1
-                    continue
-
-                field_indent_level = len(field_line) - len(field_line.lstrip())
-                expected_indent = len(field_indent)
-                if field_indent_level < expected_indent:
-                    break
-                if field_indent_level == expected_indent - 2 and field_line.strip().startswith("- "):
-                    break
-
-                if field_indent_level == expected_indent and re.match(
-                    r"^\s+(result|result_output|executed_at):(?:\s|$)",
-                    field_line,
-                ):
-                    if insert_at is None:
-                        insert_at = len(preserved)
-                    i = _skip_yaml_field(lines, i, field_indent_level, expected_indent - 2)
-                    continue
-
-                preserved.append(field_line)
-                i += 1
-
-            runtime_lines = _render_exec_result_fields(
-                field_indent=field_indent,
-                nested_result=nested_result,
-                status=status,
-                executed_at=executed_at,
-                output_snippet=output_snippet,
-            )
-            if insert_at is None:
-                insert_at = len(preserved)
-            preserved[insert_at:insert_at] = runtime_lines
-            result.extend(preserved)
-            continue
-
-        result.append(line)
-        i += 1
-
-    return "".join(result)
-
-
-def _skip_yaml_field(lines, start_index, field_indent_level, item_indent_level):
-    i = start_index + 1
-    while i < len(lines):
-        next_line = lines[i]
-        if not next_line.strip():
-            i += 1
-            continue
-        next_indent = len(next_line) - len(next_line.lstrip())
-        if next_indent <= field_indent_level:
-            break
-        if next_indent <= item_indent_level and next_line.strip().startswith("- "):
-            break
-        i += 1
-    return i
-
-
-def _render_exec_result_fields(*, field_indent, nested_result, status, executed_at, output_snippet):
-    if nested_result:
-        lines = [
-            f"{field_indent}result:\n",
-            f"{field_indent}  status: {json.dumps(status)}\n",
-            f"{field_indent}  timestamp: {json.dumps(executed_at)}\n",
-        ]
-        if output_snippet:
-            lines.append(f"{field_indent}  output: {json.dumps(output_snippet)}\n")
-        return lines
-
-    lines = [
-        f"{field_indent}result: {json.dumps(status)}\n",
-        f"{field_indent}executed_at: {json.dumps(executed_at)}\n",
-    ]
-    if output_snippet:
-        lines.append(f"{field_indent}result_output: {json.dumps(output_snippet)}\n")
-    return lines
 
 
 def criterion_timeout_seconds(criterion):
@@ -317,14 +173,12 @@ def evaluate_acceptance_criterion(root, criterion, spec_cwd=None):
     # Reject criteria whose kind we cannot evaluate BEFORE running the
     # command. The command can have side effects (file writes, network
     # calls); running it only to throw the result away is a footgun.
-    # Three pre-run rejection cases:
-    #   - unset: no expected_kind and no legacy `expected:` string
-    #   - legacy_substring: a legacy `expected:` string that doesn't
-    #     auto-map to one of the three kinds
+    # Two pre-run rejection cases:
+    #   - unset: no expected_kind declared
     #   - invalid_kind: an explicit `expected_kind` that's not in
     #     EXPECTED_KINDS (typically a typo like `exit_cod_zero`)
     kind, derived = resolve_kind(criterion)
-    if kind in ("legacy_substring", "unset", "invalid_kind"):
+    if kind in ("unset", "invalid_kind"):
         if kind == "unset":
             reason = (
                 f"criterion {ac_id} has no expected_kind declared; "
@@ -336,11 +190,6 @@ def evaluate_acceptance_criterion(root, criterion, spec_cwd=None):
             reason = (
                 f"criterion {ac_id} declares unknown expected_kind={declared!r}; "
                 f"valid kinds are: {', '.join(EXPECTED_KINDS)}"
-            )
-        else:
-            reason = (
-                f"criterion {ac_id} has only a legacy `expected: {expected!r}` string; "
-                f"add an explicit expected_kind"
             )
         return {
             **base,

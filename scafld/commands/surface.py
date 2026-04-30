@@ -198,6 +198,17 @@ COMMAND_SPECS = (
         public=False,
     ),
     CommandSpec(
+        "reconcile",
+        "Check or repair session-derived spec sections",
+        "scafld.commands.spec:cmd_reconcile",
+        (
+            ArgumentSpec(("task_id",), {"help": "Task ID"}),
+            ArgumentSpec(("--repair",), {"action": "store_true", "help": "Rewrite runner-derived sections from the session ledger"}),
+            ArgumentSpec(("--json",), {"action": "store_true", "help": "Emit machine-readable reconcile JSON"}),
+        ),
+        public=False,
+    ),
+    CommandSpec(
         "summary",
         "Render a concise markdown or JSON summary from spec state",
         "scafld.commands.projections:cmd_summary",
@@ -341,7 +352,7 @@ def build_parser(*, include_advanced=False, active_command=None):
     parser.add_argument(
         "--advanced",
         action="store_true",
-        help=argparse.SUPPRESS if not include_advanced else "Show advanced and legacy commands in help",
+        help=argparse.SUPPRESS if not include_advanced else "Show the full command surface in help",
     )
     sub = parser.add_subparsers(dest="command")
 

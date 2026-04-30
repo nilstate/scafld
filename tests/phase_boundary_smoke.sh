@@ -31,54 +31,50 @@ new_repo() {
 
 write_approved_multiphase_spec() {
   local repo="$1"
-  cat > "$repo/.ai/specs/approved/phase-boundary.yaml" <<'EOF'
-spec_version: "1.1"
-task_id: "phase-boundary"
-created: "2026-04-25T00:00:00Z"
-updated: "2026-04-25T00:00:00Z"
-status: "approved"
+  SPEC_REPO="$repo" PYTHONPATH="$REPO_ROOT" python3 - <<'PY'
+import os
+from pathlib import Path
+from scafld.spec_markdown import render_spec_markdown
 
-task:
-  title: "Phase boundary smoke"
-  summary: "Ensure build only executes the current phase"
-  size: "small"
-  risk_level: "low"
-
-phases:
-  - id: "phase1"
-    name: "Finish first file"
-    objective: "Only phase1 should run on the first build"
-    changes:
-      - file: "first.txt"
-        action: "update"
-        content_spec: "Replace base with phase1-done"
-    acceptance_criteria:
-      - id: "ac1_1"
-        type: "custom"
-        description: "first.txt contains phase1-done"
-        command: "grep -q '^phase1-done$' first.txt"
-        expected: "exit code 0"
-    status: "pending"
-  - id: "phase2"
-    name: "Finish second file"
-    objective: "Phase2 should wait for a second explicit execution pass"
-    changes:
-      - file: "second.txt"
-        action: "update"
-        content_spec: "Replace base with phase2-done"
-    acceptance_criteria:
-      - id: "ac2_1"
-        type: "custom"
-        description: "second.txt contains phase2-done"
-        command: "grep -q '^phase2-done$' second.txt"
-        expected: "exit code 0"
-    status: "pending"
-
-planning_log:
-  - timestamp: "2026-04-25T00:00:00Z"
-    actor: "user"
-    summary: "Bootstrap phase boundary fixture"
-EOF
+repo = Path(os.environ["SPEC_REPO"])
+data = {
+    "spec_version": "2.0",
+    "task_id": "phase-boundary",
+    "created": "2026-04-25T00:00:00Z",
+    "updated": "2026-04-25T00:00:00Z",
+    "status": "approved",
+    "harden_status": "not_run",
+    "task": {
+        "title": "Phase boundary smoke",
+        "summary": "Ensure build only executes the current phase",
+        "size": "small",
+        "risk_level": "low",
+        "context": {"cwd": ".", "files_impacted": [{"path": "first.txt", "reason": "fixture"}, {"path": "second.txt", "reason": "fixture"}]},
+    },
+    "planning_log": [{"timestamp": "2026-04-25T00:00:00Z", "actor": "test", "summary": "Bootstrap phase boundary fixture"}],
+    "phases": [
+        {
+            "id": "phase1",
+            "name": "Finish first file",
+            "objective": "Only phase1 should run on the first build",
+            "changes": [{"file": "first.txt", "action": "update", "content_spec": "Replace base with phase1-done"}],
+            "acceptance_criteria": [{"id": "ac1_1", "type": "custom", "description": "first.txt contains phase1-done", "command": "grep -q '^phase1-done$' first.txt", "expected_kind": "exit_code_zero"}],
+            "status": "pending",
+        },
+        {
+            "id": "phase2",
+            "name": "Finish second file",
+            "objective": "Phase2 should wait for a second explicit execution pass",
+            "changes": [{"file": "second.txt", "action": "update", "content_spec": "Replace base with phase2-done"}],
+            "acceptance_criteria": [{"id": "ac2_1", "type": "custom", "description": "second.txt contains phase2-done", "command": "grep -q '^phase2-done$' second.txt", "expected_kind": "exit_code_zero"}],
+            "status": "pending",
+        },
+    ],
+}
+path = repo / ".scafld/specs/approved/phase-boundary.md"
+path.parent.mkdir(parents=True, exist_ok=True)
+path.write_text(render_spec_markdown(data), encoding="utf-8")
+PY
 }
 
 main() {

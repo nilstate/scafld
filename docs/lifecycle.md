@@ -56,10 +56,10 @@ The directory structure enforces the lifecycle mechanically. A spec in
 This design is deliberate. The filesystem is auditable, diffable, and requires no runtime process. You can inspect the state of every spec with `ls`:
 
 ```bash
-ls .ai/specs/drafts/      # what's being planned
-ls .ai/specs/approved/     # what's ready to execute
-ls .ai/specs/active/       # what's in flight
-ls .ai/specs/archive/      # what's done
+ls .scafld/specs/drafts/      # what's being planned
+ls .scafld/specs/approved/     # what's ready to execute
+ls .scafld/specs/active/       # what's in flight
+ls .scafld/specs/archive/      # what's done
 ```
 
 ## Archive structure
@@ -69,10 +69,10 @@ Completed, failed, and cancelled specs are archived by month:
 ```
 archive/
   2026-04/
-    add-auth.yaml
-    refactor-db.yaml
+    add-auth.md
+    refactor-db.md
   2026-03/
-    upgrade-deps.yaml
+    upgrade-deps.md
 ```
 
 The archive preserves the full spec including the review artifact, self-evaluation, and any deviation records. It's a complete audit trail of every task the project has executed.

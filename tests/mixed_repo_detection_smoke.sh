@@ -61,12 +61,12 @@ EOF
 repo="$(new_repo)"
 
 echo "[1/3] init merges mixed repo signals into one concrete config overlay"
-assert_contains_file "$repo/.ai/config.local.yaml" 'Detection: Mixed repo detected: Node (npm), React, TypeScript + Python (uv)' "mixed fixture should record mixed detection"
-assert_contains_file "$repo/.ai/config.local.yaml" 'compile_check: "npm run build && uv run python -m compileall ."' "mixed fixture should combine compile commands"
-assert_contains_file "$repo/.ai/config.local.yaml" 'targeted_tests: "npm test && uv run pytest"' "mixed fixture should combine targeted tests"
-assert_contains_file "$repo/.ai/config.local.yaml" 'full_test_suite: "npm test && uv run pytest"' "mixed fixture should combine full tests"
-assert_contains_file "$repo/.ai/config.local.yaml" 'linter_suite: "npm run lint"' "mixed fixture should keep the node linter"
-assert_contains_file "$repo/.ai/config.local.yaml" 'typecheck: "npm run typecheck"' "mixed fixture should keep the node typecheck"
+assert_contains_file "$repo/.scafld/config.local.yaml" 'Detection: Mixed repo detected: Node (npm), React, TypeScript + Python (uv)' "mixed fixture should record mixed detection"
+assert_contains_file "$repo/.scafld/config.local.yaml" 'compile_check: "npm run build && uv run python -m compileall ."' "mixed fixture should combine compile commands"
+assert_contains_file "$repo/.scafld/config.local.yaml" 'targeted_tests: "npm test && uv run pytest"' "mixed fixture should combine targeted tests"
+assert_contains_file "$repo/.scafld/config.local.yaml" 'full_test_suite: "npm test && uv run pytest"' "mixed fixture should combine full tests"
+assert_contains_file "$repo/.scafld/config.local.yaml" 'linter_suite: "npm run lint"' "mixed fixture should keep the node linter"
+assert_contains_file "$repo/.scafld/config.local.yaml" 'typecheck: "npm run typecheck"' "mixed fixture should keep the node typecheck"
 
 echo "[2/3] plan surfaces the same mixed context through the taught agent workflow"
 capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld plan mixed-task -t 'Mixed task' -s small -r low --json"
@@ -75,8 +75,8 @@ assert_json "$output" "data['state']['harden_status'] == 'in_progress'" "plan sh
 assert_json "$output" "data['result']['repo_context']['summary'] == 'Mixed repo detected: Node (npm), React, TypeScript + Python (uv)'" "plan should return the mixed repo summary"
 
 echo "[3/3] draft scaffolding carries the mixed summary and concrete commands"
-assert_contains_file "$repo/.ai/specs/drafts/mixed-task.yaml" 'repo detected: Node (npm), React, TypeScript + Python (uv).' "mixed draft should record the mixed summary"
-assert_contains_file "$repo/.ai/specs/drafts/mixed-task.yaml" 'command: npm run build && uv run python -m compileall .' "mixed draft should inherit the combined compile command"
-assert_contains_file "$repo/.ai/specs/drafts/mixed-task.yaml" 'command: npm test && uv run pytest' "mixed draft should inherit the combined test command"
+assert_contains_file "$repo/.scafld/specs/drafts/mixed-task.md" 'repo detected: Node (npm), React, TypeScript + Python (uv).' "mixed draft should record the mixed summary"
+assert_contains_file "$repo/.scafld/specs/drafts/mixed-task.md" 'npm run build && uv run python -m compileall .' "mixed draft should inherit the combined compile command"
+assert_contains_file "$repo/.scafld/specs/drafts/mixed-task.md" 'npm test && uv run pytest' "mixed draft should inherit the combined test command"
 
 echo "PASS: mixed repo detection smoke"

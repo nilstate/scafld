@@ -17,15 +17,14 @@ from scafld.reviewing import load_review_state
 from scafld.review_workflow import load_review_topology
 from scafld.runtime_bundle import REVIEWS_DIR
 from scafld.session_store import load_session, session_summary_payload
-from scafld.spec_parsing import count_phases, parse_acceptance_criteria, parse_phase_status_entries
+from scafld.spec_model import count_phases, parse_acceptance_criteria, parse_phase_status_entries
 from scafld.spec_store import load_spec_document, require_spec
 
 
 def projection_model_for_task(root, spec, task_id):
     """Build one projection model from the current spec plus live review/sync state."""
-    text = spec.read_text()
     data = load_spec_document(spec)
-    counts = phase_counts(*count_phases(text))
+    counts = phase_counts(*count_phases(data))
     origin = origin_payload(data)
     sync = build_origin_sync_payload(root, origin, excluded_rels=git_sync_excluded_paths())
     review_path = root / REVIEWS_DIR / f"{task_id}.md"
@@ -42,9 +41,9 @@ def projection_model_for_task(root, spec, task_id):
         spec,
         task_id,
         data=data,
-        phase_entries=parse_phase_status_entries(text),
+        phase_entries=parse_phase_status_entries(data),
         phase_counts_payload=counts,
-        criteria=parse_acceptance_criteria(text),
+        criteria=parse_acceptance_criteria(data),
         review_state=review_state,
         sync=sync,
         runtime=runtime,

@@ -1,6 +1,3 @@
-import json
-import re
-
 from scafld.acceptance import evaluate_acceptance_criterion, record_exec_result
 from scafld.error_codes import ErrorCode as EC
 from scafld.errors import ScafldError
@@ -22,8 +19,8 @@ from scafld.session_store import (
     set_recovery_attempt,
     update_latest_attempt_status,
 )
-from scafld.spec_parsing import extract_spec_cwd, now_iso, parse_acceptance_criteria
-from scafld.spec_store import load_spec_document, require_spec, write_spec_document, yaml_read_field
+from scafld.spec_model import extract_spec_cwd, now_iso, parse_acceptance_criteria
+from scafld.spec_store import load_spec_document, require_spec, write_spec_document
 
 
 def harden_open_snapshot(root, task_id):
@@ -107,7 +104,7 @@ def empty_exec_summary():
 
 
 def write_diagnostic_artifact(root, task_id, criterion_id, attempt_number, outcome):
-    """Persist full command diagnostics under .ai/runs/{task-id}/diagnostics/."""
+    """Persist full command diagnostics under .scafld/runs/{task-id}/diagnostics/."""
     diagnostic_root = diagnostics_dir(root, task_id)
     diagnostic_root.mkdir(parents=True, exist_ok=True)
     path = diagnostic_root / f"{criterion_id}-attempt{attempt_number}.txt"
@@ -134,13 +131,11 @@ def phase_completion_summary(phase):
 
 def sync_phase_statuses(spec):
     """Update per-phase status fields from current acceptance results."""
-    text = spec.read_text()
     data = load_spec_document(spec)
     phases = data.get("phases")
     if not isinstance(phases, list):
         return data if isinstance(data, dict) else {}
 
-    next_statuses = {}
     changed = False
     for phase in phases:
         if not isinstance(phase, dict):
@@ -161,89 +156,20 @@ def sync_phase_statuses(spec):
                 next_status = "in_progress"
             else:
                 next_status = "pending"
-        next_statuses[phase_id] = next_status
         if phase.get("status") != next_status:
             phase["status"] = next_status
             changed = True
 
     if changed:
-        spec.write_text(_rewrite_phase_status_fields(text, next_statuses))
+        write_spec_document(spec, data)
     return data if isinstance(data, dict) else {}
-
-
-def _rewrite_phase_status_fields(text, phase_statuses):
-    lines = text.splitlines(True)
-    result = []
-    i = 0
-    in_phases = False
-
-    while i < len(lines):
-        line = lines[i]
-        stripped = line.strip()
-        indent = len(line) - len(line.lstrip())
-
-        if not in_phases:
-            result.append(line)
-            if re.match(r"^phases:\s*$", line):
-                in_phases = True
-            i += 1
-            continue
-
-        if stripped and indent == 0 and not stripped.startswith("- "):
-            in_phases = False
-            result.append(line)
-            i += 1
-            continue
-
-        match = re.match(r'^(\s*)-\s+id:\s*"?(phase\d+)"?\s*$', line)
-        if not match:
-            result.append(line)
-            i += 1
-            continue
-
-        phase_id = match.group(2)
-        item_indent = len(match.group(1))
-        field_indent = " " * (item_indent + 2)
-        result.append(line)
-        i += 1
-
-        preserved = []
-        insert_at = None
-        while i < len(lines):
-            field_line = lines[i]
-            if not field_line.strip():
-                preserved.append(field_line)
-                i += 1
-                continue
-
-            field_indent_level = len(field_line) - len(field_line.lstrip())
-            if field_indent_level <= item_indent:
-                break
-            if field_indent_level == item_indent and field_line.strip().startswith("- "):
-                break
-
-            if field_indent_level == len(field_indent) and re.match(r"^\s+status:\s*(.+)$", field_line):
-                if insert_at is None:
-                    insert_at = len(preserved)
-                i += 1
-                continue
-
-            preserved.append(field_line)
-            i += 1
-
-        if insert_at is None:
-            insert_at = len(preserved)
-        preserved[insert_at:insert_at] = [f"{field_indent}status: {json.dumps(phase_statuses[phase_id])}\n"]
-        result.extend(preserved)
-
-    return "".join(result)
 
 
 def exec_snapshot(root, task_id, *, phase=None, resume=False):
     spec = require_spec(root, task_id)
     text = spec.read_text()
     spec_data = load_spec_document(spec)
-    status = yaml_read_field(text, "status")
+    status = spec_data.get("status")
     if status not in ("in_progress", "approved"):
         return ({
             "ok": False,
@@ -259,8 +185,8 @@ def exec_snapshot(root, task_id, *, phase=None, resume=False):
             ),
         }, 1)
 
-    spec_cwd = extract_spec_cwd(text)
-    criteria = parse_acceptance_criteria(text)
+    spec_cwd = extract_spec_cwd(spec_data)
+    criteria = parse_acceptance_criteria(spec_data)
     resolved_phase = phase or current_phase_id(spec_data)
     if not criteria:
         warning = "no acceptance criteria found in spec"

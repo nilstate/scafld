@@ -30,43 +30,10 @@ write_draft_spec() {
   local task_id="$2"
   local status="$3"
   local dir="$4"
-  mkdir -p "$repo/.ai/specs/$dir"
-  cat > "$repo/.ai/specs/$dir/$task_id.yaml" <<EOF
-spec_version: "1.1"
-task_id: "$task_id"
-created: "2026-04-24T00:00:00Z"
-updated: "2026-04-24T00:00:00Z"
-status: "$status"
-harden_status: "not_run"
-
-task:
-  title: "Retire $task_id"
-  summary: "Exercise direct cancellation from $status"
-  size: "small"
-  risk_level: "low"
-
-planning_log:
-  - timestamp: "2026-04-24T00:00:00Z"
-    actor: "user"
-    summary: "Bootstrap retirement fixture"
-
-phases:
-  - id: "phase1"
-    name: "No-op"
-    objective: "No-op"
-    changes:
-      - file: "noop.txt"
-        action: "update"
-        lines: "1"
-        content_spec: "no-op"
-    acceptance_criteria:
-      - id: "ac1_1"
-        type: "custom"
-        description: "noop"
-        command: "printf 'ok\\n'"
-        expected: "exit code 0"
-    status: "pending"
-EOF
+  mkdir -p "$repo/.scafld/specs/$dir"
+  SCAFLD_SPEC_CREATED="2026-04-24T00:00:00Z" \
+    write_markdown_spec "$repo/.scafld/specs/$dir/$task_id.md" \
+    "$task_id" "$status" "Retire $task_id" "noop.txt" "printf 'ok\\n'"
 }
 
 repo="$(new_repo)"
@@ -75,12 +42,12 @@ echo "[1/2] approved work can be cancelled without entering runtime"
 write_draft_spec "$repo" "approved-task" "approved" "approved"
 capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld cancel approved-task"
 assert_contains "$output" "status: cancelled" "cancel should archive an approved spec directly"
-[ -f "$repo/.ai/specs/archive/2026-04/approved-task.yaml" ] || fail "approved spec should move to archive when cancelled"
+[ -f "$repo/.scafld/specs/archive/2026-04/approved-task.md" ] || fail "approved spec should move to archive when cancelled"
 
 echo "[2/2] drafts can be cancelled directly"
 write_draft_spec "$repo" "draft-task" "draft" "drafts"
 capture output bash -lc "cd '$repo' && PATH='$CLI_ROOT':\"\$PATH\" scafld cancel draft-task"
 assert_contains "$output" "status: cancelled" "cancel should archive a draft directly"
-[ -f "$repo/.ai/specs/archive/2026-04/draft-task.yaml" ] || fail "draft spec should move to archive when cancelled"
+[ -f "$repo/.scafld/specs/archive/2026-04/draft-task.md" ] || fail "draft spec should move to archive when cancelled"
 
 echo "PASS: retire approved smoke"

@@ -173,85 +173,86 @@ new_node_fixture "$NODE_REPO"
 new_python_fixture "$PYTHON_REPO"
 new_mixed_fixture "$MIXED_REPO"
 new_fallback_fixture "$FALLBACK_REPO"
-rm -rf "$WS1/.ai/scafld" "$WS2/.ai/scafld"
-rm -f "$WS1/.ai/prompts/harden.md"
-rm -f "$WS1/.ai/schemas/spec.json"
-printf '\ncustom_marker: "keep-me"\n' >> "$WS1/.ai/config.yaml"
+rm -rf "$WS1/.scafld/core" "$WS2/.scafld/core"
+rm -f "$WS1/.scafld/prompts/harden.md"
+rm -f "$WS1/.scafld/core/schemas/spec.json"
+printf '\ncustom_marker: "keep-me"\n' >> "$WS1/.scafld/config.yaml"
 
 echo "[2/12] init detects a Node toolchain and writes concrete commands"
-assert_contains_file "$NODE_REPO/.ai/config.local.yaml" 'Detection: Node repo detected (npm), React, TypeScript' "node fixture should record the detected stack"
-assert_contains_file "$NODE_REPO/.ai/config.local.yaml" 'compile_check: "npm run build"' "node fixture should suggest the build command"
-assert_contains_file "$NODE_REPO/.ai/config.local.yaml" 'targeted_tests: "npm test"' "node fixture should suggest the test command"
-assert_contains_file "$NODE_REPO/.ai/config.local.yaml" 'linter_suite: "npm run lint"' "node fixture should suggest the lint command"
-assert_contains_file "$NODE_REPO/.ai/config.local.yaml" 'typecheck: "npm run typecheck"' "node fixture should suggest the typecheck command"
+assert_contains_file "$NODE_REPO/.scafld/config.local.yaml" 'Detection: Node repo detected (npm), React, TypeScript' "node fixture should record the detected stack"
+assert_contains_file "$NODE_REPO/.scafld/config.local.yaml" 'compile_check: "npm run build"' "node fixture should suggest the build command"
+assert_contains_file "$NODE_REPO/.scafld/config.local.yaml" 'targeted_tests: "npm test"' "node fixture should suggest the test command"
+assert_contains_file "$NODE_REPO/.scafld/config.local.yaml" 'linter_suite: "npm run lint"' "node fixture should suggest the lint command"
+assert_contains_file "$NODE_REPO/.scafld/config.local.yaml" 'typecheck: "npm run typecheck"' "node fixture should suggest the typecheck command"
 
 echo "[3/12] plan reuses Node repo defaults while keeping task prompts editable"
-assert_contains_file "$NODE_REPO/.ai/specs/drafts/t1.yaml" 'npm run build' "node draft should inherit the compile command"
-assert_contains_file "$NODE_REPO/.ai/specs/drafts/t1.yaml" 'npm test' "node draft should inherit the targeted test command"
-assert_contains_file "$NODE_REPO/.ai/specs/drafts/t1.yaml" 'TODO: Describe the problem or goal for "Update smoke".' "node draft should keep an editable summary TODO"
-assert_contains_file "$NODE_REPO/.ai/specs/drafts/t1.yaml" 'repo detected (npm), React, TypeScript.' "node draft summary should still carry detected repo context"
+assert_contains_file "$NODE_REPO/.scafld/specs/drafts/t1.md" 'npm run build' "node draft should inherit the compile command"
+assert_contains_file "$NODE_REPO/.scafld/specs/drafts/t1.md" 'npm test' "node draft should inherit the targeted test command"
+assert_contains_file "$NODE_REPO/.scafld/specs/drafts/t1.md" 'TODO: Describe the problem or goal for "Update smoke".' "node draft should keep an editable summary TODO"
+assert_contains_file "$NODE_REPO/.scafld/specs/drafts/t1.md" 'repo detected (npm), React, TypeScript.' "node draft summary should still carry detected repo context"
 
 echo "[4/12] init detects a Python toolchain and writes concrete commands"
-assert_contains_file "$PYTHON_REPO/.ai/config.local.yaml" 'Detection: Python repo detected (uv), FastAPI' "python fixture should record the detected stack"
-assert_contains_file "$PYTHON_REPO/.ai/config.local.yaml" 'compile_check: "uv run python -m compileall ."' "python fixture should suggest a compile check"
-assert_contains_file "$PYTHON_REPO/.ai/config.local.yaml" 'targeted_tests: "uv run pytest"' "python fixture should suggest pytest"
-assert_contains_file "$PYTHON_REPO/.ai/config.local.yaml" 'linter_suite: "uv run ruff check ."' "python fixture should suggest ruff"
-assert_contains_file "$PYTHON_REPO/.ai/config.local.yaml" 'typecheck: "uv run mypy ."' "python fixture should suggest mypy"
+assert_contains_file "$PYTHON_REPO/.scafld/config.local.yaml" 'Detection: Python repo detected (uv), FastAPI' "python fixture should record the detected stack"
+assert_contains_file "$PYTHON_REPO/.scafld/config.local.yaml" 'compile_check: "uv run python -m compileall ."' "python fixture should suggest a compile check"
+assert_contains_file "$PYTHON_REPO/.scafld/config.local.yaml" 'targeted_tests: "uv run pytest"' "python fixture should suggest pytest"
+assert_contains_file "$PYTHON_REPO/.scafld/config.local.yaml" 'linter_suite: "uv run ruff check ."' "python fixture should suggest ruff"
+assert_contains_file "$PYTHON_REPO/.scafld/config.local.yaml" 'typecheck: "uv run mypy ."' "python fixture should suggest mypy"
 
 echo "[5/12] plan reuses Python repo defaults while keeping task prompts editable"
-assert_contains_file "$PYTHON_REPO/.ai/specs/drafts/t1.yaml" 'uv run python -m compileall .' "python draft should inherit the compile command"
-assert_contains_file "$PYTHON_REPO/.ai/specs/drafts/t1.yaml" 'uv run pytest' "python draft should inherit the targeted test command"
-assert_contains_file "$PYTHON_REPO/.ai/specs/drafts/t1.yaml" 'TODO: Describe the problem or goal for "Update smoke".' "python draft should keep an editable summary TODO"
-assert_contains_file "$PYTHON_REPO/.ai/specs/drafts/t1.yaml" 'repo detected (uv), FastAPI.' "python draft summary should still carry detected repo context"
+assert_contains_file "$PYTHON_REPO/.scafld/specs/drafts/t1.md" 'uv run python -m compileall .' "python draft should inherit the compile command"
+assert_contains_file "$PYTHON_REPO/.scafld/specs/drafts/t1.md" 'uv run pytest' "python draft should inherit the targeted test command"
+assert_contains_file "$PYTHON_REPO/.scafld/specs/drafts/t1.md" 'TODO: Describe the problem or goal for "Update smoke".' "python draft should keep an editable summary TODO"
+assert_contains_file "$PYTHON_REPO/.scafld/specs/drafts/t1.md" 'repo detected (uv), FastAPI.' "python draft summary should still carry detected repo context"
 
 echo "[6/12] init detects mixed Python and Node repos without falling back to placeholders"
-assert_contains_file "$MIXED_REPO/.ai/config.local.yaml" 'Detection: Mixed repo detected: Node (npm), React, TypeScript + Python (uv)' "mixed fixture should record mixed detection"
-assert_contains_file "$MIXED_REPO/.ai/config.local.yaml" 'compile_check: "npm run build && uv run python -m compileall ."' "mixed fixture should combine compile commands"
-assert_contains_file "$MIXED_REPO/.ai/config.local.yaml" 'targeted_tests: "npm test && uv run pytest"' "mixed fixture should combine targeted tests"
-assert_contains_file "$MIXED_REPO/.ai/config.local.yaml" 'linter_suite: "npm run lint"' "mixed fixture should keep the node linter"
-assert_contains_file "$MIXED_REPO/.ai/config.local.yaml" 'typecheck: "npm run typecheck"' "mixed fixture should keep the node typecheck"
+assert_contains_file "$MIXED_REPO/.scafld/config.local.yaml" 'Detection: Mixed repo detected: Node (npm), React, TypeScript + Python (uv)' "mixed fixture should record mixed detection"
+assert_contains_file "$MIXED_REPO/.scafld/config.local.yaml" 'compile_check: "npm run build && uv run python -m compileall ."' "mixed fixture should combine compile commands"
+assert_contains_file "$MIXED_REPO/.scafld/config.local.yaml" 'targeted_tests: "npm test && uv run pytest"' "mixed fixture should combine targeted tests"
+assert_contains_file "$MIXED_REPO/.scafld/config.local.yaml" 'linter_suite: "npm run lint"' "mixed fixture should keep the node linter"
+assert_contains_file "$MIXED_REPO/.scafld/config.local.yaml" 'typecheck: "npm run typecheck"' "mixed fixture should keep the node typecheck"
 
 echo "[7/12] plan reuses mixed repo defaults while keeping task prompts editable"
-assert_contains_file "$MIXED_REPO/.ai/specs/drafts/t1.yaml" 'npm run build && uv run python -m compileall .' "mixed draft should inherit the combined compile command"
-assert_contains_file "$MIXED_REPO/.ai/specs/drafts/t1.yaml" 'npm test && uv run pytest' "mixed draft should inherit the combined targeted test command"
-assert_contains_file "$MIXED_REPO/.ai/specs/drafts/t1.yaml" 'TODO: Describe the problem or goal for "Update smoke".' "mixed draft should keep an editable summary TODO"
-assert_contains_file "$MIXED_REPO/.ai/specs/drafts/t1.yaml" 'repo detected: Node (npm), React, TypeScript + Python (uv).' "mixed draft summary should still carry detected repo context"
+assert_contains_file "$MIXED_REPO/.scafld/specs/drafts/t1.md" 'npm run build && uv run python -m compileall .' "mixed draft should inherit the combined compile command"
+assert_contains_file "$MIXED_REPO/.scafld/specs/drafts/t1.md" 'npm test && uv run pytest' "mixed draft should inherit the combined targeted test command"
+assert_contains_file "$MIXED_REPO/.scafld/specs/drafts/t1.md" 'TODO: Describe the problem or goal for "Update smoke".' "mixed draft should keep an editable summary TODO"
+assert_contains_file "$MIXED_REPO/.scafld/specs/drafts/t1.md" 'repo detected: Node (npm), React, TypeScript + Python (uv).' "mixed draft summary should still carry detected repo context"
 
 echo "[8/12] unknown repos keep the safe placeholder fallback"
-assert_contains_file "$FALLBACK_REPO/.ai/config.local.yaml" 'Detection: no known Node or Python repo markers found' "fallback fixture should say autodetection fell back"
-assert_contains_file "$FALLBACK_REPO/.ai/config.local.yaml" "compile_check: \"echo 'Replace: your build command'\"" "fallback fixture should keep placeholder commands"
-assert_contains_file "$FALLBACK_REPO/.ai/specs/drafts/t1.yaml" 'known Node or Python repo markers found.' "fallback draft should record the fallback repo context"
-assert_contains_file "$FALLBACK_REPO/.ai/specs/drafts/t1.yaml" "Replace: your build command" "fallback draft should keep the compile placeholder"
-assert_contains_file "$FALLBACK_REPO/.ai/specs/drafts/t1.yaml" "Replace: your test command" "fallback draft should keep the test placeholder"
+assert_contains_file "$FALLBACK_REPO/.scafld/config.local.yaml" 'Detection: no known Node or Python repo markers found' "fallback fixture should say autodetection fell back"
+assert_contains_file "$FALLBACK_REPO/.scafld/config.local.yaml" "compile_check: \"echo 'Replace: your build command'\"" "fallback fixture should keep placeholder commands"
+assert_contains_file "$FALLBACK_REPO/.scafld/specs/drafts/t1.md" 'known Node or Python repo markers found.' "fallback draft should record the fallback repo context"
+assert_contains_file "$FALLBACK_REPO/.scafld/specs/drafts/t1.md" "Replace: your build command" "fallback draft should keep the compile placeholder"
+assert_contains_file "$FALLBACK_REPO/.scafld/specs/drafts/t1.md" "Replace: your test command" "fallback draft should keep the test placeholder"
 
 echo "[9/12] scafld update --scan-root recreates managed bundles"
 python3 "$CLI" update --scan-root "$ROOT" >/dev/null || fail "scan-root update failed"
-[ -f "$WS1/.ai/scafld/manifest.json" ] || fail "ws1 missing managed manifest"
-[ -f "$WS2/.ai/scafld/manifest.json" ] || fail "ws2 missing managed manifest"
+[ -f "$WS1/.scafld/core/manifest.json" ] || fail "ws1 missing managed manifest"
+[ -f "$WS2/.scafld/core/manifest.json" ] || fail "ws2 missing managed manifest"
 
 echo "[10/12] manifest records the current scafld version"
 python3 - <<PY || fail "manifest missing expected version or managed assets"
 import json
 
-for path in ("$WS1/.ai/scafld/manifest.json", "$WS2/.ai/scafld/manifest.json"):
+for path in ("$WS1/.scafld/core/manifest.json", "$WS2/.scafld/core/manifest.json"):
     data = json.load(open(path))
     assert data["scafld_version"] == "$EXPECTED_VERSION", data["scafld_version"]
-    assert ".ai/scafld/prompts/harden.md" in data["managed_assets"], data["managed_assets"].keys()
-    assert ".ai/scafld/prompts/recovery.md" in data["managed_assets"], data["managed_assets"].keys()
-    assert ".ai/scafld/schemas/spec.json" in data["managed_assets"], data["managed_assets"].keys()
-    assert ".ai/scafld/scripts/scafld-provider-adapter.sh" in data["managed_assets"], data["managed_assets"].keys()
-    assert ".ai/scafld/scripts/scafld-codex-review.sh" in data["managed_assets"], data["managed_assets"].keys()
-    assert ".ai/scafld/scripts/scafld-claude-review.sh" in data["managed_assets"], data["managed_assets"].keys()
+    assert ".scafld/core/prompts/harden.md" in data["managed_assets"], data["managed_assets"].keys()
+    assert ".scafld/core/prompts/recovery.md" in data["managed_assets"], data["managed_assets"].keys()
+    assert ".scafld/core/schemas/spec.json" in data["managed_assets"], data["managed_assets"].keys()
+    assert ".scafld/core/scripts/scafld-provider-adapter.sh" in data["managed_assets"], data["managed_assets"].keys()
+    assert ".scafld/core/scripts/scafld-codex-review.sh" in data["managed_assets"], data["managed_assets"].keys()
+    assert ".scafld/core/scripts/scafld-claude-review.sh" in data["managed_assets"], data["managed_assets"].keys()
 PY
 
 echo "[11/12] repo-owned config stays intact"
-grep -q 'custom_marker: "keep-me"' "$WS1/.ai/config.yaml" \
+grep -q 'custom_marker: "keep-me"' "$WS1/.scafld/config.yaml" \
   || fail "update overwrote repo-specific config"
 
-echo "[12/12] managed prompt and schema power legacy workspaces"
+echo "[12/12] managed prompt and schema power workspaces"
 validate_output="$(run_scafld "$WS1" validate t1 2>&1 || true)"
 [[ "$validate_output" != *"schema not found"* ]] || fail "validate did not use managed schema"
-[[ "$validate_output" == *"PASS:"* ]] || fail "validate should succeed through the managed schema path"
+[[ "$validate_output" == *"FAIL:"* && "$validate_output" == *"TODO"* ]] \
+  || fail "validate should reach spec validation through the managed schema path"
 output="$(run_scafld "$WS1" harden t1)"
 [[ "$output" == *"HARDEN MODE"* ]] || fail "harden did not use managed prompt"
 

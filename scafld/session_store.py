@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+import tempfile
 from collections import defaultdict
 from copy import deepcopy
 
@@ -12,7 +13,7 @@ from scafld.runtime_contracts import (
     relative_path,
     session_path,
 )
-from scafld.spec_parsing import now_iso
+from scafld.spec_model import now_iso
 
 
 PROVIDER_INVOCATION_STATUSES = (
@@ -44,6 +45,7 @@ def default_session(task_id, *, model_profile):
         "recovery_attempts": {},
         "criterion_states": {},
         "phases": [],
+        "phase_blocks": {},
         "attempts": [],
         "phase_summaries": [],
         "workspace_baseline": None,
@@ -57,6 +59,7 @@ def normalize_session(session):
     session.setdefault("recovery_attempts", {})
     session.setdefault("criterion_states", {})
     session.setdefault("phases", [])
+    session.setdefault("phase_blocks", {})
     session.setdefault("attempts", [])
     session.setdefault("phase_summaries", [])
     session.setdefault("workspace_baseline", None)
@@ -118,7 +121,26 @@ def write_session(root, task_id, session, *, spec_path=None):
     ensure_run_dirs(root, task_id, spec_path=spec_path)
     session["updated_at"] = now_iso()
     path = session_path(root, task_id, spec_path=spec_path)
-    path.write_text(json.dumps(session, indent=2, sort_keys=False) + "\n", encoding="utf-8")
+    payload = json.dumps(session, indent=2, sort_keys=False) + "\n"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_name = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            dir=str(path.parent),
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as tmp:
+            tmp_name = tmp.name
+            tmp.write(payload)
+            tmp.flush()
+            os.fsync(tmp.fileno())
+        os.replace(tmp_name, path)
+    finally:
+        if tmp_name and os.path.exists(tmp_name):
+            os.unlink(tmp_name)
     return path
 
 
@@ -320,6 +342,11 @@ def record_phase_summary(root, task_id, phase_id, summary, *, spec_path=None):
         phase["completed_at"] = timestamp
         phase["blocked_at"] = None
         phase["blocked_reason"] = None
+        session.setdefault("phase_blocks", {})[phase_id] = {
+            "status": "completed",
+            "reason": None,
+            "updated_at": timestamp,
+        }
         append_entry(
             session,
             "phase_summary",
@@ -350,6 +377,11 @@ def set_phase_block(root, task_id, phase_id, *, reason, spec_path=None):
         blocked_at = now_iso()
         phase["blocked_at"] = blocked_at
         phase["blocked_reason"] = reason
+        session.setdefault("phase_blocks", {})[phase_id] = {
+            "status": "blocked",
+            "reason": reason,
+            "updated_at": blocked_at,
+        }
         append_entry(
             session,
             "phase_block",

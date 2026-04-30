@@ -1,17 +1,19 @@
 import datetime
-import re
 import shutil
 from dataclasses import dataclass
 
 from scafld.error_codes import ErrorCode
 from scafld.errors import ScafldError
+from scafld.spec_markdown import parse_spec_markdown, render_spec_markdown, update_spec_markdown
+from scafld.spec_model import now_iso
 
-AI_DIR = ".ai"
-SPECS_DIR = f"{AI_DIR}/specs"
+SCAFLD_DIR = ".scafld"
+SPECS_DIR = f"{SCAFLD_DIR}/specs"
 DRAFTS_DIR = f"{SPECS_DIR}/drafts"
 APPROVED_DIR = f"{SPECS_DIR}/approved"
 ACTIVE_DIR = f"{SPECS_DIR}/active"
 ARCHIVE_DIR = f"{SPECS_DIR}/archive"
+SPEC_EXTENSION = ".md"
 
 STATUS_FOLDERS = {
     "draft": DRAFTS_DIR,
@@ -40,185 +42,96 @@ class SpecMoveResult:
     new_status: str
 
 
-def now_iso():
-    return datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-def require_pyyaml():
-    """Import PyYAML for structured spec mutations."""
-    try:
-        import yaml
-    except ModuleNotFoundError as exc:
-        raise ScafldError(
-            "PyYAML is required for structured spec metadata updates",
-            ["install it with: python3 -m pip install PyYAML"],
-            code=ErrorCode.MISSING_DEPENDENCY,
-        ) from exc
-    return yaml
-
-
 def load_spec_document(spec_path):
-    """Load a full spec document for structured edits."""
-    yaml = require_pyyaml()
-    try:
-        data = yaml.safe_load(spec_path.read_text(encoding="utf-8")) or {}
-    except yaml.YAMLError as exc:
-        details = []
-        mark = getattr(exc, "problem_mark", None)
-        if mark is not None:
-            details.append(f"yaml parse error at line {mark.line + 1}, column {mark.column + 1}")
-        problem = getattr(exc, "problem", None)
-        if isinstance(problem, str) and problem:
-            details.append(problem)
+    """Load a Markdown task spec into the normalized runtime model."""
+    if spec_path.suffix != SPEC_EXTENSION:
         raise ScafldError(
-            f"invalid spec document: {spec_path.name}",
-            details,
-            code=ErrorCode.INVALID_SPEC_DOCUMENT,
-        ) from exc
-    if not isinstance(data, dict):
-        raise ScafldError(
-            f"invalid spec document: {spec_path.name}",
-            ["spec root must be a YAML mapping"],
+            f"unsupported spec format: {spec_path.name}",
+            [f"scafld v2 only loads *{SPEC_EXTENSION} task specs"],
             code=ErrorCode.INVALID_SPEC_DOCUMENT,
         )
-    return data
+    return parse_spec_markdown(spec_path.read_text(encoding="utf-8"), path=spec_path)
 
 
 def write_spec_document(spec_path, data):
-    """Write a full spec document after structured edits."""
-    yaml = require_pyyaml()
-    spec_path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+    """Write Markdown runner sections while preserving human-owned prose."""
+    if spec_path.suffix != SPEC_EXTENSION:
+        raise ScafldError(
+            f"unsupported spec format: {spec_path.name}",
+            [f"scafld v2 only writes *{SPEC_EXTENSION} task specs"],
+            code=ErrorCode.INVALID_SPEC_DOCUMENT,
+        )
+    if spec_path.exists():
+        current = spec_path.read_text(encoding="utf-8")
+        spec_path.write_text(update_spec_markdown(current, data), encoding="utf-8")
+    else:
+        spec_path.parent.mkdir(parents=True, exist_ok=True)
+        spec_path.write_text(render_spec_markdown(data), encoding="utf-8")
 
 
 def prune_empty(value):
     """Drop empty strings/nulls/empty containers while preserving False/0."""
     if isinstance(value, dict):
-        pruned = {
-            key: prune_empty(item)
-            for key, item in value.items()
-        }
-        return {
-            key: item
-            for key, item in pruned.items()
-            if item not in (None, "", [], {})
-        }
+        pruned = {key: prune_empty(item) for key, item in value.items()}
+        return {key: item for key, item in pruned.items() if item not in (None, "", [], {})}
     if isinstance(value, list):
         pruned = [prune_empty(item) for item in value]
         return [item for item in pruned if item not in (None, "", [], {})]
     return value
 
 
-def yaml_read_field(text, field):
-    """Read a top-level YAML scalar field (simple regex, no library needed)."""
-    match = re.search(rf'^{field}:\s*"?([^"\n]+)"?', text, re.MULTILINE)
-    if match:
-        return match.group(1).strip().strip('"').strip("'")
-    return None
-
-
-def yaml_set_field(text, field, value):
-    """Set a top-level YAML scalar field."""
-    quoted = f'"{value}"'
-    new_text, count = re.subn(
-        rf'^{field}:\s*.*$',
-        f'{field}: {quoted}',
-        text,
-        count=1,
-        flags=re.MULTILINE,
-    )
-    if count == 0:
-        new_text = f'{field}: {quoted}\n' + text
-    return new_text
-
-
-def yaml_read_nested(text, parent, field):
-    """Read a field nested one level under a parent block."""
-    in_parent = False
-    for line in text.splitlines():
-        if re.match(rf"^{parent}:", line):
-            in_parent = True
-            continue
-        if in_parent:
-            if line and not line[0].isspace():
-                break
-            match = re.match(rf'^\s+{field}:\s*"?([^"\n]+)"?', line)
-            if match:
-                return match.group(1).strip().strip('"').strip("'")
-    return None
-
-
-def append_planning_log(text, summary, actor="cli"):
-    """Append a planning_log entry to the spec text."""
-    if re.search(r"^planning_log:", text, re.MULTILINE):
-        lines = text.splitlines(True)
-        insert_idx = None
-        in_log = False
-        bullet_indent = "  "
-        field_indent = "    "
-        for index, line in enumerate(lines):
-            if re.match(r"^planning_log:", line):
-                in_log = True
-                continue
-            if not in_log or not line.strip():
-                continue
-            if re.match(r"^\s*-\s", line):
-                bullet_indent = re.match(r"^(\s*)-\s", line).group(1)
-                field_indent = bullet_indent + "  "
-                continue
-            if not line[0].isspace():
-                insert_idx = index
-                break
-        entry = f'{bullet_indent}- timestamp: "{now_iso()}"\n{field_indent}actor: "{actor}"\n{field_indent}summary: "{summary}"'
-        if insert_idx is None:
-            return text.rstrip("\n") + "\n" + entry + "\n"
-        lines.insert(insert_idx, entry + "\n")
-        return "".join(lines)
-    entry = f'  - timestamp: "{now_iso()}"\n    actor: "{actor}"\n    summary: "{summary}"'
-    return text + f"\nplanning_log:\n{entry}\n"
+def append_planning_entry(data, summary, actor="cli"):
+    entry = {"timestamp": now_iso(), "actor": actor, "summary": summary}
+    entries = data.get("planning_log")
+    if not isinstance(entries, list):
+        entries = []
+    entries.append(entry)
+    data["planning_log"] = entries
+    return data
 
 
 def find_specs(root, task_id):
-    """Find all spec files across draft, approved, active, and archive directories."""
+    """Find all v2 Markdown spec files across lifecycle directories."""
     specs = []
     for folder in (DRAFTS_DIR, APPROVED_DIR, ACTIVE_DIR):
-        candidate = root / folder / f"{task_id}.yaml"
+        candidate = root / folder / f"{task_id}{SPEC_EXTENSION}"
         if candidate.exists():
             specs.append(candidate)
     archive_root = root / ARCHIVE_DIR
     if archive_root.is_dir():
         for month_dir in sorted(archive_root.iterdir(), reverse=True):
             if month_dir.is_dir():
-                candidate = month_dir / f"{task_id}.yaml"
+                candidate = month_dir / f"{task_id}{SPEC_EXTENSION}"
                 if candidate.exists():
                     specs.append(candidate)
     return specs
 
 
 def find_spec(root, task_id):
-    """Return the first matching spec path across lifecycle directories."""
+    """Return the first matching v2 spec path across lifecycle directories."""
     specs = find_specs(root, task_id)
     return specs[0] if specs else None
 
 
 def find_all_specs(root):
-    """Return all specs with their lifecycle bucket labels."""
+    """Return all v2 specs with their lifecycle bucket labels."""
     specs = []
     for label, folder in (("drafts", DRAFTS_DIR), ("approved", APPROVED_DIR), ("active", ACTIVE_DIR)):
         folder_path = root / folder
         if folder_path.is_dir():
-            for spec_path in sorted(folder_path.glob("*.yaml")):
+            for spec_path in sorted(folder_path.glob(f"*{SPEC_EXTENSION}")):
                 specs.append((spec_path, label))
     archive_root = root / ARCHIVE_DIR
     if archive_root.is_dir():
         for month_dir in sorted(archive_root.iterdir(), reverse=True):
             if month_dir.is_dir():
-                for spec_path in sorted(month_dir.glob("*.yaml")):
+                for spec_path in sorted(month_dir.glob(f"*{SPEC_EXTENSION}")):
                     specs.append((spec_path, f"archive/{month_dir.name}"))
     return specs
 
 
 def require_spec(root, task_id):
-    """Return one unambiguous spec path or raise a structured command error."""
+    """Return one unambiguous Markdown spec path or raise a structured command error."""
     specs = find_specs(root, task_id)
     if not specs:
         raise ScafldError(
@@ -235,9 +148,9 @@ def require_spec(root, task_id):
 
 
 def move_spec(root, spec_path, new_status):
-    """Move a spec to the correct lifecycle directory and update its metadata."""
-    text = spec_path.read_text(encoding="utf-8")
-    current_status = yaml_read_field(text, "status")
+    """Move a Markdown spec to the correct lifecycle directory and update managed state."""
+    data = load_spec_document(spec_path)
+    current_status = data.get("status")
     allowed = VALID_TRANSITIONS.get(current_status, [])
     if new_status not in allowed:
         allowed_display = ", ".join(allowed) if allowed else "none"
@@ -247,8 +160,8 @@ def move_spec(root, spec_path, new_status):
             code=ErrorCode.INVALID_TRANSITION,
         )
 
-    text = yaml_set_field(text, "status", new_status)
-    text = yaml_set_field(text, "updated", now_iso())
+    data["status"] = new_status
+    data["updated"] = now_iso()
     action_labels = {
         "approved": "Spec approved",
         "in_progress": "Execution started",
@@ -256,7 +169,8 @@ def move_spec(root, spec_path, new_status):
         "failed": "Spec marked failed",
         "cancelled": "Spec cancelled",
     }
-    text = append_planning_log(text, action_labels.get(new_status, f"Status changed to {new_status}"))
+    append_planning_entry(data, action_labels.get(new_status, f"Status changed to {new_status}"))
+    write_spec_document(spec_path, data)
 
     if new_status in ("completed", "failed", "cancelled"):
         month = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m")
@@ -266,7 +180,6 @@ def move_spec(root, spec_path, new_status):
     dest_dir.mkdir(parents=True, exist_ok=True)
     dest = dest_dir / spec_path.name
 
-    spec_path.write_text(text, encoding="utf-8")
     shutil.move(str(spec_path), str(dest))
     return SpecMoveResult(
         source=spec_path,

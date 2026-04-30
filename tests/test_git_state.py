@@ -119,12 +119,12 @@ class GitStateTest(unittest.TestCase):
             root = Path(temp_dir)
             init_repo(root)
 
-            ignored = root / ".ai" / "reviews" / "fixture.md"
+            ignored = root / ".scafld" / "reviews" / "fixture.md"
             ignored.parent.mkdir(parents=True, exist_ok=True)
             ignored.write_text("review\n", encoding="utf-8")
             (root / "tracked.txt").write_text("updated\n", encoding="utf-8")
 
-            changed, error = list_working_tree_changed_files(root, excluded_rels=[".ai/reviews/fixture.md"])
+            changed, error = list_working_tree_changed_files(root, excluded_rels=[".scafld/reviews/fixture.md"])
 
             self.assertIsNone(error)
             self.assertEqual(set(changed), {"tracked.txt"})
@@ -147,14 +147,14 @@ class GitStateTest(unittest.TestCase):
             root = Path(temp_dir)
             init_repo(root)
 
-            spec_file = root / ".ai" / "specs" / "active" / "fixture.yaml"
+            spec_file = root / ".scafld" / "specs" / "active" / "fixture.md"
             spec_file.parent.mkdir(parents=True, exist_ok=True)
             spec_file.write_text("status: in_progress\n", encoding="utf-8")
 
             sync = build_origin_sync_payload(
                 root,
                 {"git": {"branch": "main"}},
-                excluded_rels=[".ai/specs/", ".ai/reviews/", ".ai/runs/", ".ai/config.local.yaml"],
+                excluded_rels=[".scafld/specs/", ".scafld/reviews/", ".scafld/runs/", ".scafld/config.local.yaml"],
             )
 
             self.assertEqual(sync["status"], "in_sync")

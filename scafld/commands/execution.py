@@ -11,7 +11,7 @@ from scafld.execution_runtime import (
 )
 from scafld.output import emit_command_json, error_payload
 from scafld.runtime_bundle import DRAFTS_DIR
-from scafld.spec_store import require_spec, yaml_read_field
+from scafld.spec_store import load_spec_document, require_spec
 from scafld.terminal import C_BOLD, C_CYAN, C_DIM, C_GREEN, C_RED, C_YELLOW, c
 
 
@@ -50,7 +50,7 @@ def cmd_harden(args):
                     "harden",
                     ok=False,
                     task_id=args.task_id,
-                    state={"file": str(rel), "harden_status": yaml_read_field(spec.read_text(), "harden_status")},
+                    state={"file": str(rel), "harden_status": load_spec_document(spec).get("harden_status")},
                     error=error_payload(exc.message, code=exc.code, details=exc.details, next_action=exc.next_action, exit_code=exc.exit_code),
                 )
             else:

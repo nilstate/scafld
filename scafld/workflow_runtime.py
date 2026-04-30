@@ -7,7 +7,8 @@ from scafld.output import error_payload
 from scafld.runtime_bundle import DRAFTS_DIR
 from scafld.runtime_guidance import derive_task_guidance
 from scafld.session_store import load_session
-from scafld.spec_store import find_spec, load_spec_document, require_spec, yaml_read_field
+from scafld.spec_model import get_status
+from scafld.spec_store import find_spec, load_spec_document, require_spec
 
 
 def scafld_error_to_payload(exc):
@@ -25,7 +26,7 @@ def plan_snapshot(root, task_id, *, title=None, size=None, risk=None, command=No
 
     if existing_spec is not None:
         rel = existing_spec.relative_to(root)
-        status = yaml_read_field(existing_spec.read_text(), "status")
+        status = get_status(load_spec_document(existing_spec))
         if str(rel).startswith(DRAFTS_DIR):
             try:
                 harden_snapshot = harden_open_snapshot(root, task_id)
@@ -137,7 +138,7 @@ def plan_snapshot(root, task_id, *, title=None, size=None, risk=None, command=No
 
 def build_snapshot(root, task_id):
     spec = require_spec(root, task_id)
-    status = yaml_read_field(spec.read_text(), "status")
+    status = get_status(load_spec_document(spec))
 
     if status == "approved":
         try:
@@ -164,7 +165,7 @@ def build_snapshot(root, task_id):
             task_id,
             active_spec,
             load_spec_document(active_spec),
-            yaml_read_field(active_spec.read_text(), "status"),
+            get_status(load_spec_document(active_spec)),
             session,
             snapshot["result"].get("review_state"),
             snapshot["result"].get("review_gate"),
@@ -208,7 +209,7 @@ def build_snapshot(root, task_id):
             task_id,
             active_spec,
             load_spec_document(active_spec),
-            yaml_read_field(active_spec.read_text(), "status"),
+            get_status(load_spec_document(active_spec)),
             session,
             snapshot["result"].get("review_state"),
             snapshot["result"].get("review_gate"),

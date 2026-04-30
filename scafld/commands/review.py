@@ -9,7 +9,7 @@ from scafld.review_packet import metadata_canonical_sha256, read_review_packet_a
 from scafld.review_runner import is_review_cancelled, resolve_review_runner, run_external_review
 from scafld.review_runtime import review_snapshot
 from scafld.reviewing import (
-    build_spec_review_block,
+    normalize_review_pass_results,
     parse_review_file,
 )
 from scafld.review_workflow import (
@@ -22,14 +22,13 @@ from scafld.review_workflow import (
     evaluate_review_gate,
     load_configured_review_topology,
     review_passes_are_not_run,
-    upsert_review_block,
 )
 from scafld.runtime_bundle import REVIEWS_DIR
 from scafld.runtime_guidance import existing_review_handoff
 from scafld.runtime_contracts import archive_run_artifacts
 from scafld.session_store import ensure_session, load_session, record_challenge_verdict, record_human_override, record_provider_invocation
-from scafld.spec_parsing import parse_acceptance_criteria
-from scafld.spec_store import move_spec, require_spec, yaml_read_field
+from scafld.spec_model import get_status, parse_acceptance_criteria
+from scafld.spec_store import load_spec_document, move_spec, require_spec, write_spec_document
 from scafld.terminal import C_BOLD, C_CYAN, C_DIM, C_GREEN, C_RED, C_YELLOW, STATUS_COLORS, c
 
 
@@ -90,147 +89,59 @@ def print_move_result(root, move_result):
     print(f" {c(C_DIM, 'status')}: {c(STATUS_COLORS.get(transition['status'], ''), transition['status'])}")
 
 
-def normalize_completed_archive_truth(text):
+def normalize_completed_archive_truth(
+    data,
+    review_data,
+    topology,
+    *,
+    override_applied=False,
+    override_reason=None,
+    override_confirmed_at=None,
+):
     """Stamp terminal completion truth into the spec before archival."""
-    return _rewrite_completed_dod_statuses(_rewrite_completed_phase_statuses(text))
-
-
-def _rewrite_completed_phase_statuses(text):
-    lines = text.splitlines(True)
-    result = []
-    i = 0
-    in_phases = False
-
-    while i < len(lines):
-        line = lines[i]
-        stripped = line.strip()
-        indent = len(line) - len(line.lstrip())
-
-        if not in_phases:
-            result.append(line)
-            if re.match(r"^phases:\s*$", line):
-                in_phases = True
-            i += 1
-            continue
-
-        if stripped and indent == 0 and not stripped.startswith("- "):
-            in_phases = False
-            continue
-
-        match = re.match(r'^(\s*)-\s+id:\s*"?(phase\d+)"?\s*$', line)
-        if not match:
-            result.append(line)
-            i += 1
-            continue
-
-        item_indent = len(match.group(1))
-        field_indent = " " * (item_indent + 2)
-        result.append(line)
-        i += 1
-
-        preserved = []
-        insert_at = None
-        while i < len(lines):
-            field_line = lines[i]
-            if not field_line.strip():
-                preserved.append(field_line)
-                i += 1
-                continue
-
-            field_indent_level = len(field_line) - len(field_line.lstrip())
-            if field_indent_level <= item_indent:
-                break
-            if field_indent_level == item_indent and field_line.strip().startswith("- "):
-                break
-
-            if field_indent_level == len(field_indent) and re.match(
-                r'^\s+status:\s*"?(pending|in_progress|completed|failed|skipped)"?\s*$',
-                field_line,
-            ):
-                if insert_at is None:
-                    insert_at = len(preserved)
-                i += 1
-                continue
-
-            preserved.append(field_line)
-            i += 1
-
-        if insert_at is None:
-            insert_at = len(preserved)
-        preserved[insert_at:insert_at] = [f'{field_indent}status: "completed"\n']
-        result.extend(preserved)
-
-    return "".join(result)
-
-
-def _rewrite_completed_dod_statuses(text):
-    lines = text.splitlines(True)
-    result = []
-    i = 0
-    in_definition_of_done = False
-    block_indent = 0
-
-    while i < len(lines):
-        line = lines[i]
-        stripped = line.strip()
-        indent = len(line) - len(line.lstrip())
-
-        if not in_definition_of_done:
-            result.append(line)
-            if re.match(r"^\s*definition_of_done:\s*$", line):
-                in_definition_of_done = True
-                block_indent = indent
-            i += 1
-            continue
-
-        if stripped and indent <= block_indent:
-            in_definition_of_done = False
-            continue
-
-        match = re.match(r'^\s*-\s+id:\s*"?(dod\d+)"?\s*$', line)
-        if not match:
-            result.append(line)
-            i += 1
-            continue
-
-        item_indent = len(line) - len(line.lstrip())
-        field_indent = " " * (item_indent + 2)
-        result.append(line)
-        i += 1
-
-        preserved = []
-        insert_at = None
-        while i < len(lines):
-            field_line = lines[i]
-            if not field_line.strip():
-                preserved.append(field_line)
-                i += 1
-                continue
-
-            field_indent_level = len(field_line) - len(field_line.lstrip())
-            if field_indent_level <= item_indent:
-                break
-            if field_indent_level == item_indent and field_line.strip().startswith("- "):
-                break
-
-            if field_indent_level == len(field_indent) and re.match(
-                r'^\s+status:\s*"?(pending|in_progress|done)"?\s*$',
-                field_line,
-            ):
-                if insert_at is None:
-                    insert_at = len(preserved)
-                i += 1
-                continue
-
-            preserved.append(field_line)
-            i += 1
-
-        if insert_at is None:
-            insert_at = len(preserved)
-        preserved[insert_at:insert_at] = [f'{field_indent}status: "done"\n']
-        result.extend(preserved)
-
-    return "".join(result)
+    for phase in data.get("phases") or []:
+        if isinstance(phase, dict):
+            phase["status"] = "completed"
+    task = data.get("task") if isinstance(data.get("task"), dict) else {}
+    acceptance = task.get("acceptance") if isinstance(task.get("acceptance"), dict) else {}
+    for item in acceptance.get("definition_of_done") or []:
+        if isinstance(item, dict):
+            item["status"] = "done"
+    metadata = review_data.get("metadata") or {}
+    pass_results = normalize_review_pass_results(topology, review_data.get("pass_results"))
+    passes = []
+    for definition in topology:
+        pass_id = definition["id"]
+        passes.append({
+            "id": pass_id,
+            "title": definition.get("title"),
+            "result": pass_results.get(pass_id),
+        })
+    findings = []
+    for finding in review_data.get("blocking") or []:
+        findings.append({"summary": finding, "blocking": True})
+    for finding in review_data.get("non_blocking") or []:
+        findings.append({"summary": finding, "blocking": False})
+    data["review"] = {
+        "status": "override" if override_applied else (metadata.get("round_status") or "completed"),
+        "verdict": review_data.get("verdict") or "incomplete",
+        "timestamp": override_confirmed_at or metadata.get("reviewed_at"),
+        "review_rounds": review_data.get("review_count", 0),
+        "reviewer_mode": "human_override" if override_applied else (metadata.get("reviewer_mode") or ""),
+        "reviewer_session": "" if override_applied else (metadata.get("reviewer_session") or ""),
+        "round_status": "override" if override_applied else (metadata.get("round_status") or ""),
+        "override_applied": bool(override_applied),
+        "override_reason": override_reason if override_reason is not None else metadata.get("override_reason"),
+        "override_confirmed_at": override_confirmed_at,
+        "reviewed_head": metadata.get("reviewed_head"),
+        "reviewed_dirty": metadata.get("reviewed_dirty"),
+        "reviewed_diff": metadata.get("reviewed_diff"),
+        "blocking_count": len(review_data.get("blocking") or []),
+        "non_blocking_count": len(review_data.get("non_blocking") or []),
+        "passes": passes,
+        "findings": findings,
+    }
+    return data
 
 
 def _session_has_override_entry(root, task_id, spec_path, review_round):
@@ -272,9 +183,11 @@ def cmd_complete(args):
     topology = load_configured_review_topology(root)
     spec = require_spec(root, args.task_id)
     text = spec.read_text()
+    data = load_spec_document(spec)
+    status = get_status(data)
     json_mode = bool(getattr(args, "json", False))
 
-    has_results = any(ac.get("result") in ("pass", "fail") for ac in parse_acceptance_criteria(text))
+    has_results = any(ac.get("result") in ("pass", "fail") for ac in parse_acceptance_criteria(data))
     if not has_results and not json_mode:
         print(f"  {c(C_YELLOW, 'warn')}: no build results recorded. Run '{c(C_BOLD, f'scafld build {args.task_id}')}' first")
 
@@ -288,7 +201,7 @@ def cmd_complete(args):
                 "complete",
                 ok=False,
                 task_id=args.task_id,
-                state={"status": yaml_read_field(text, "status")},
+                state={"status": status},
                 error=error_payload(
                     "--reason requires --human-reviewed",
                     code=EC.INVALID_ARGUMENTS,
@@ -304,7 +217,7 @@ def cmd_complete(args):
                 "complete",
                 ok=False,
                 task_id=args.task_id,
-                state={"status": yaml_read_field(text, "status")},
+                state={"status": status},
                 error=error_payload(
                     "--reason is required with --human-reviewed",
                     code=EC.INVALID_ARGUMENTS,
@@ -327,15 +240,14 @@ def cmd_complete(args):
     gate_errors = gate["gate_errors"]
     current_git_state = gate["current_git_state"]
 
-    # Verify the review packet seal. 1.7.0 hard cutover:
+    # Verify the review packet seal:
     #
     #   - sealed external review with valid seal + matching body → pass
     #   - sealed external review with tampered seal or body → block
     #   - audited override round (round_status=override AND
     #     override_reason set) → bypass, but only when a real
     #     `--human-reviewed --reason` flow produced the round
-    #   - any other shape (no artifact, no seal, hand-written
-    #     "override" without a reason, pre-1.7 external review) → block
+    #   - hand-written "override" without a reason → block
     #
     # The discriminator for "sealed external review" is the existence
     # of the packet artifact on disk — out-of-band signal an operator
@@ -382,7 +294,7 @@ def cmd_complete(args):
                 if not seal_ok:
                     if seal_reason == "missing_seal":
                         gate_reason = (
-                            f"review file predates 1.7.0 seal; re-run "
+                            f"review packet seal missing; re-run "
                             f"`scafld review {args.task_id}` to refresh"
                         )
                     else:
@@ -463,9 +375,8 @@ def cmd_complete(args):
                             gate_errors = list(gate_errors) + ["body_severity_mismatch"]
             elif metadata_seal:
                 # Metadata claims a seal but the packet artifact is
-                # missing — either someone deleted it or this is a
-                # pre-1.7.0 external review whose canonical packet was
-                # never persisted. Either way, can't verify; refuse.
+                # missing. The canonical packet cannot be verified, so
+                # refuse rather than trusting the markdown body.
                 gate_reason = (
                     "review packet artifact missing; cannot verify seal"
                 )
@@ -510,7 +421,7 @@ def cmd_complete(args):
                     "complete",
                     ok=False,
                     task_id=args.task_id,
-                    state={"status": yaml_read_field(text, "status"), "review_verdict": verdict},
+                    state={"status": status, "review_verdict": verdict},
                     result={
                         "review_file": str(review_file.relative_to(root)),
                         "current_handoff": existing_review_handoff(root, args.task_id, review_data.get("metadata") or {}),
@@ -541,7 +452,7 @@ def cmd_complete(args):
                     "complete",
                     ok=False,
                     task_id=args.task_id,
-                    state={"status": yaml_read_field(text, "status"), "review_verdict": verdict},
+                    state={"status": status, "review_verdict": verdict},
                     result={
                         "review_file": str(review_file.relative_to(root)),
                         "blocking_count": len(blocking),
@@ -591,7 +502,7 @@ def cmd_complete(args):
                 "complete",
                 ok=False,
                 task_id=args.task_id,
-                state={"status": yaml_read_field(text, "status"), "review_verdict": verdict},
+                state={"status": status, "review_verdict": verdict},
                 error=error_payload(
                     "human-reviewed override requires interactive terminal output; rerun without --json",
                     code=EC.INTERACTIVE_REQUIRED,
@@ -634,7 +545,7 @@ def cmd_complete(args):
                 "complete",
                 ok=False,
                 task_id=args.task_id,
-                state={"status": yaml_read_field(text, "status")},
+                state={"status": status},
                 error=error_payload(
                     "--human-reviewed is only for blocked completion",
                     code=EC.INVALID_ARGUMENTS,
@@ -675,16 +586,16 @@ def cmd_complete(args):
                 if count:
                     print(f"    {c(C_DIM, f'{severity}: {count}')}")
 
-    review_block = build_spec_review_block(
+    data = normalize_completed_archive_truth(
+        data,
         review_data,
         topology,
         override_applied=override_applied,
         override_reason=override_reason if override_applied else None,
         override_confirmed_at=override_confirmed_at,
     )
-    text = upsert_review_block(text, review_block)
-    text = normalize_completed_archive_truth(text)
-    spec.write_text(text)
+    write_spec_document(spec, data)
+    text = spec.read_text()
 
     if not json_mode:
         check_self_eval(text, args.task_id)
@@ -828,7 +739,7 @@ def cmd_review(args):
                 print(f"  invocation id: {c(C_DIM, invocation_id)}")
             if idle_timeout and absolute_max:
                 print(f"  watchdog: {c(C_DIM, f'idle {idle_timeout}s / abs_max {absolute_max}s')}")
-            print(f"  track: {c(C_BOLD, f'scafld status {args.task_id} --json')}  ({c(C_DIM, f'.ai/runs/{args.task_id}/session.json')})")
+            print(f"  track: {c(C_BOLD, f'scafld status {args.task_id} --json')}  ({c(C_DIM, f'.scafld/runs/{args.task_id}/session.json')})")
             sys.stdout.flush()
 
         try:

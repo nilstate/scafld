@@ -12,11 +12,11 @@ from scafld.review_workflow import (
 
 def _workspace(*, gate_severity=None):
     tmp = Path(tempfile.mkdtemp(prefix="scafld-gate-severity-"))
-    (tmp / ".ai").mkdir()
+    (tmp / ".scafld").mkdir()
     config = "version: '1.0'\n"
     if gate_severity is not None:
         config += f"review:\n  gate_severity: {gate_severity!r}\n"
-    (tmp / ".ai" / "config.yaml").write_text(config, encoding="utf-8")
+    (tmp / ".scafld" / "config.yaml").write_text(config, encoding="utf-8")
     return tmp
 
 
@@ -106,7 +106,7 @@ class EvaluateReviewGateThresholdTest(unittest.TestCase):
     def _evaluate(self, root, review_data):
         # review_file path doesn't matter when we mock the git capture
         from pathlib import Path as P
-        review_file = root / ".ai" / "reviews" / "fixture.md"
+        review_file = root / ".scafld" / "reviews" / "fixture.md"
         review_file.parent.mkdir(parents=True, exist_ok=True)
         review_file.write_text("placeholder", encoding="utf-8")
         return evaluate_review_gate(root, review_file, review_data)
@@ -305,7 +305,7 @@ class DeriveTaskGuidanceThresholdBlockedBranchTest(unittest.TestCase):
             guidance = derive_task_guidance(
                 Path("/nonexistent"),
                 "task",
-                Path("/nonexistent/spec.yaml"),
+                Path("/nonexistent/spec.md"),
                 self._spec_data(),
                 "in_progress",
                 {"entries": []},
@@ -341,7 +341,7 @@ class DeriveTaskGuidanceThresholdBlockedBranchTest(unittest.TestCase):
             guidance = derive_task_guidance(
                 Path("/nonexistent"),
                 "task",
-                Path("/nonexistent/spec.yaml"),
+                Path("/nonexistent/spec.md"),
                 self._spec_data(),
                 "in_progress",
                 {"entries": []},
