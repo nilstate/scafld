@@ -54,6 +54,12 @@ Go:
 go install github.com/nilstate/scafld/v2/cmd/scafld@latest
 ```
 
+Homebrew:
+
+```bash
+brew install nilstate/tap/scafld
+```
+
 npm:
 
 ```bash
@@ -66,8 +72,18 @@ PyPI:
 pipx install scafld
 ```
 
-npm and PyPI packages are thin launchers. They download the native Go binary
-from the matching GitHub release and verify it against `checksums.txt`.
+Scoop:
+
+```powershell
+scoop bucket add nilstate https://github.com/nilstate/scoop-bucket
+scoop install scafld
+```
+
+WinGet is submitted upstream as `0state.scafld`; it becomes installable with
+`winget install 0state.scafld` after Microsoft package review.
+
+npm and PyPI packages are thin launchers. Homebrew, Scoop, and WinGet point at
+the same native Go release assets and checksums.
 
 ## Quick Start
 
@@ -305,7 +321,9 @@ Package-manager integrations are adapters over GitHub release assets:
 - GitHub Releases: native binaries, `checksums.txt`, `manifest.json`
 - Go modules: source/install channel
 - npm and PyPI: verified native-binary launchers
-- Homebrew, Scoop, WinGet, OCI: templates under `package/`
+- Homebrew and Scoop: published registry adapters
+- WinGet: upstream manifest submission
+- OCI: template under `package/`
 
 See [docs/distribution.md](docs/distribution.md),
 [docs/architecture.md](docs/architecture.md), and

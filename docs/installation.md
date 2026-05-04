@@ -27,6 +27,12 @@ Install with Go:
 go install github.com/nilstate/scafld/v2/cmd/scafld@latest
 ```
 
+Install with Homebrew:
+
+```bash
+brew install nilstate/tap/scafld
+```
+
 Install from npm:
 
 ```bash
@@ -39,8 +45,18 @@ Install from PyPI:
 pipx install scafld
 ```
 
-npm and PyPI packages are thin launchers. They download the native Go binary
-from the matching GitHub release and verify it against `checksums.txt`.
+Install from Scoop:
+
+```powershell
+scoop bucket add nilstate https://github.com/nilstate/scoop-bucket
+scoop install scafld
+```
+
+WinGet is submitted upstream as `0state.scafld`; it becomes installable with
+`winget install 0state.scafld` after Microsoft package review.
+
+npm and PyPI packages are thin launchers. Homebrew, Scoop, and WinGet point at
+the same native Go release assets and checksums.
 
 ## Verify
 

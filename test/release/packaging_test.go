@@ -118,3 +118,36 @@ func TestRegistryTemplatesPointAtPrimaryReleaseAssets(t *testing.T) {
 		}
 	}
 }
+
+func TestRegistryTemplatesUsePublicPackageIdentity(t *testing.T) {
+	t.Parallel()
+
+	homebrew, err := os.ReadFile(filepath.Join("..", "..", "package", "homebrew", "scafld.rb.tmpl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	homebrewText := string(homebrew)
+	for _, want := range []string{`license "MIT"`, `chmod 0755, bin/"scafld"`} {
+		if !strings.Contains(homebrewText, want) {
+			t.Fatalf("homebrew template missing %q", want)
+		}
+	}
+
+	for _, file := range []string{
+		filepath.Join("..", "..", "package", "winget", "scafld.installer.yaml.tmpl"),
+		filepath.Join("..", "..", "package", "winget", "scafld.version.yaml.tmpl"),
+		filepath.Join("..", "..", "package", "winget", "scafld.yaml.tmpl"),
+	} {
+		data, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		text := string(data)
+		if !strings.Contains(text, "PackageIdentifier: 0state.scafld") {
+			t.Fatalf("%s must use the public 0state package identifier", file)
+		}
+		if strings.Contains(text, "Nilstate.Scafld") {
+			t.Fatalf("%s must not expose the GitHub org as package identity", file)
+		}
+	}
+}
