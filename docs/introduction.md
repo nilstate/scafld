@@ -1,15 +1,22 @@
 ---
 title: Introduction
-description: Spec-driven orchestration for AI coding agents
+description: A deterministic protocol for multi-phase agent work
 ---
 
 # Introduction
+
+**A deterministic protocol for multi-phase agent work.**
+The agent passes through. The protocol stays.
+
+Plans outlive agents. Sessions hold the receipts. Reviews take nothing on faith.
+
+---
 
 Every serious engineering discipline separates planning from execution. Civil engineers don't wing it at the construction site. Aerospace engineers don't improvise turbine blade geometry. The separation exists because complex systems fail when the person holding the tool is also deciding what to build.
 
 AI coding agents have no such separation. You type a prompt, the agent writes code, and you hope the result matches what you meant. For trivial tasks this works. For anything that touches multiple files, crosses module boundaries, or carries real risk; it doesn't. The agent hallucinates scope, drifts from objectives, and produces code that technically compiles but misses the point.
 
-scafld enforces the separation. Every non-trivial task becomes a Markdown living specification before a single line of code changes. The spec declares what will change, why it will change, what constitutes success, and what must not break. The agent executes against the spec, not against a loose prompt. When the work is done, scafld validates the result against the spec's acceptance criteria and audits for scope drift.
+scafld enforces the separation. Every non-trivial task becomes a Markdown living specification before a single line of code changes. The spec declares what will change, why it will change, what constitutes success, and what must not break. The agent executes against the spec, not against a loose prompt. When the work is done, scafld validates acceptance evidence and sends the result through adversarial review.
 
 ## The core idea
 
@@ -21,7 +28,7 @@ A spec is a contract between the human who understands the problem and the agent
 - **Invariants** - project-wide rules that must never break
 - **Acceptance criteria** - concrete, executable validation
 
-The spec lives in version control alongside the code. It moves through a lifecycle: draft, review, approved, in-progress, review, completed. The filesystem is the state machine; directories represent states.
+The spec lives in version control alongside the code. It moves through a lifecycle: draft, approved, active, review, completed. The filesystem is the state machine; directories represent states.
 
 ## Agent-agnostic
 

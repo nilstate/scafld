@@ -3,6 +3,7 @@ package review
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -12,34 +13,61 @@ import (
 	"github.com/nilstate/scafld/v2/internal/core/spec"
 )
 
+// SpecStore is the spec persistence port used by review.
 type SpecStore interface {
 	Load(context.Context, string) (spec.Model, string, error)
 	Save(context.Context, string, spec.Model) error
 }
 
+// SessionStore is the session evidence port used by review.
 type SessionStore interface {
 	Append(context.Context, string, session.Entry, string) (session.Session, error)
 	Load(context.Context, string) (session.Session, error)
 }
 
+// Provider is the review provider port.
 type Provider interface {
 	Invoke(context.Context, review.Request) (review.Packet, error)
 }
 
+// WorkspaceStatus is the mutation-guard workspace state port.
 type WorkspaceStatus interface {
 	ChangedFiles(context.Context) ([]string, error)
 }
 
+// Clock supplies review timestamps.
 type Clock interface{ Now() time.Time }
 
+// Output describes a completed review run.
 type Output struct {
 	TaskID   string
 	Verdict  string
 	Findings []review.Finding
 }
 
+// Input describes the task and review agenda to run.
+type Input struct {
+	TaskID string
+	Passes []Pass
+}
+
+// Pass describes one configured review pass included in the provider prompt.
+type Pass struct {
+	ID          string
+	Category    string
+	Order       int
+	Title       string
+	Description string
+}
+
+// Run executes the review gate for taskID.
 func Run(ctx context.Context, specs SpecStore, sessions SessionStore, workspace WorkspaceStatus, provider Provider, clock Clock, taskID string) (Output, error) {
-	model, path, err := specs.Load(ctx, taskID)
+	return RunWithInput(ctx, specs, sessions, workspace, provider, clock, Input{TaskID: taskID})
+}
+
+// RunWithInput executes the review gate using an explicit review agenda.
+func RunWithInput(ctx context.Context, specs SpecStore, sessions SessionStore, workspace WorkspaceStatus, provider Provider, clock Clock, input Input) (Output, error) {
+	model, path, err := specs.Load(ctx, input.TaskID)
 	if err != nil {
 		return Output{}, err
 	}
@@ -47,7 +75,7 @@ func Run(ctx context.Context, specs SpecStore, sessions SessionStore, workspace 
 	if err != nil {
 		return Output{}, err
 	}
-	packet, err := provider.Invoke(ctx, review.Request{TaskID: model.TaskID, Prompt: promptForModel(model)})
+	packet, err := provider.Invoke(ctx, review.Request{TaskID: model.TaskID, Prompt: promptForModel(model, input.Passes)})
 	after, mutationErr := workspaceSnapshot(ctx, workspace)
 	if mutationErr != nil {
 		return Output{}, mutationErr
@@ -133,7 +161,7 @@ func nextForVerdict(taskID string, verdict string) (string, string) {
 	return "repair", "scafld handoff " + taskID
 }
 
-func promptForModel(model spec.Model) string {
+func promptForModel(model spec.Model, passes []Pass) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Review %s\n\n", model.TaskID)
 	fmt.Fprintf(&b, "Title: %s\nStatus: %s\n\n", model.Title, model.Status)
@@ -157,6 +185,36 @@ func promptForModel(model spec.Model) string {
 			fmt.Fprintf(&b, "  - Evidence: %s\n", criterion.Evidence)
 		}
 	}
+	writeReviewPasses(&b, passes)
 	b.WriteString("\nReview mode is read-only. Do not run build, test, or mutation commands; treat recorded acceptance evidence above as already executed. Return a ReviewPacket JSON object with `verdict` and `findings`. If your transport only supports line frames, emit `finding` frames with severity `blocking` or `non_blocking`, then a `verdict` frame with verdict `pass` or `fail`.\n")
 	return b.String()
+}
+
+func writeReviewPasses(b *strings.Builder, passes []Pass) {
+	if len(passes) == 0 {
+		return
+	}
+	sorted := append([]Pass(nil), passes...)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		if sorted[i].Order == sorted[j].Order {
+			return sorted[i].ID < sorted[j].ID
+		}
+		return sorted[i].Order < sorted[j].Order
+	})
+	b.WriteString("\n## Review Focus\n\n")
+	for _, pass := range sorted {
+		title := strings.TrimSpace(pass.Title)
+		if title == "" {
+			title = pass.ID
+		}
+		category := strings.TrimSpace(pass.Category)
+		if category == "" {
+			category = "review"
+		}
+		fmt.Fprintf(b, "- %s: %s", category, title)
+		if description := strings.TrimSpace(pass.Description); description != "" {
+			fmt.Fprintf(b, " - %s", description)
+		}
+		b.WriteString("\n")
+	}
 }

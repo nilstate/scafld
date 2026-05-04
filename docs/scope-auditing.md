@@ -1,56 +1,44 @@
 ---
-title: Scope Auditing
-description: Detecting scope drift with scafld audit
+title: Scope Discipline
+description: Keeping implementation inside the approved contract
 ---
 
-# Scope Auditing
+# Scope Discipline
 
-`scafld audit` compares the files declared in the spec against the current git change set. It catches scope creep -- changes the agent made that weren't in the plan.
+Scope discipline is still a core scafld idea: the spec says what work is in
+bounds, and review should challenge changes that drift outside that contract.
 
-## Usage
+The current Go binary does not expose a standalone scope-audit command. Scope
+checks are handled through the spec contract, acceptance evidence, and
+adversarial review.
 
-```bash
-scafld audit add-auth -b main
+## What to Put in the Spec
+
+Every phase should name the files or areas it expects to touch:
+
+```markdown
+Changes:
+- `internal/app/build/build.go` -- update phase execution behavior.
+- `internal/app/build/build_test.go` -- prove the lifecycle boundary.
 ```
 
-Without `-b`, `audit` inspects the live workspace: staged changes, unstaged changes, and untracked files. The `-b` flag switches to historical comparison against a git ref, while still including current untracked files.
+That gives the executor and challenger a concrete ownership boundary.
 
-## Output categories
+## What Review Should Attack
 
-| Category | Color | Meaning |
-|----------|-------|---------|
-| Declared and changed | Green | Files in the spec that were actually modified. Expected. |
-| Changed but not in spec | Red | Files modified in git but not declared in any phase. Scope creep. |
-| Shared with other active specs | Cyan | Files intentionally marked `ownership: shared` in every overlapping active spec. Safe shared coordination surface. |
-| Conflict with other active specs | Red | Files claimed by multiple active specs without every declaration being `ownership: shared`. Resolve the ownership conflict. |
-| In spec but not changed | Yellow | Files declared in the spec but not modified. Possibly incomplete work. |
+The challenger should compare the approved scope against the actual workspace:
 
-## Exit codes
+- files changed but not declared in the spec
+- declared files that were never touched
+- cross-cutting changes hidden inside a narrow phase
+- generated or package files changed without a release reason
+- prompt/core-bundle edits that alter agent behavior
 
-- `0` -- clean. All changes match the spec, including any explicitly shared coordination files.
-- `1` -- scope creep or active-spec ownership conflict detected.
+A legitimate scope expansion should be worked back into the spec and explained
+as a deviation before the work is completed.
 
-## How it works
+## Future Standalone Audit
 
-The audit collects every `file` path from all `phases[*].changes[*].file`
-entries in the spec, along with each change's optional `ownership` value. It
-then compares them against the current working-tree file set or an explicit
-base ref. Any changed file that doesn't appear in the spec's declared changes
-is flagged.
-
-If two active specs declare the same file, audit only treats that overlap as
-safe when every declaration marks the file `ownership: shared`. This is meant
-for coordination surfaces such as plans, shared docs, or workflow glue. Leave
-the field unset for normal code ownership so accidental overlap still fails.
-
-scafld's own execution artifacts under `.scafld/specs/`, `.scafld/reviews/`, and `.scafld/runs/`, plus the local override file `.scafld/config.local.yaml`, are ignored so the planning and review ledger does not pollute task scope checks.
-
-## Integration with review
-
-The `scope_drift` automated review pass runs `scafld audit` internally. If
-scope creep or active-spec ownership conflict is detected, the review fails and
-blocks completion.
-
-## When scope creep is legitimate
-
-Sometimes the agent discovers a necessary change that wasn't anticipated in the spec. The right response is to update the spec with the additional file, record a deviation, and re-run the audit. Ignoring scope creep defeats the purpose of the spec as a contract.
+A standalone audit command is a good fit once the Go runtime has a stable
+file-ownership model over Markdown phase changes. Until then, avoid advertising
+a command that does not exist; use adversarial review as the scope gate.

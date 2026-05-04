@@ -2,6 +2,7 @@ package execution
 
 import "time"
 
+// Request describes a command execution requested by an application use case.
 type Request struct {
 	Command              string
 	Args                 []string
@@ -15,6 +16,7 @@ type Request struct {
 	StdoutEventInspector func(string) string
 }
 
+// Result captures the observable outcome of a command execution.
 type Result struct {
 	ExitCode          int
 	Output            string

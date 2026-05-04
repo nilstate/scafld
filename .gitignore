@@ -26,6 +26,7 @@ coverage.out
 Thumbs.db
 
 # scafld runtime state
+.scafld/config.local.yaml
 .scafld/runs/
 .scafld/reviews/
 docs/node_modules/

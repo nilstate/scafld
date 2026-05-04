@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	osexec "os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -15,16 +16,93 @@ import (
 	"github.com/nilstate/scafld/v2/internal/core/review"
 )
 
+// ErrProviderFailed wraps provider transport and execution failures.
 var ErrProviderFailed = errors.New("provider failed")
 
+// Runner is the process execution port required by external providers.
 type Runner interface {
 	Run(context.Context, execution.Request) (execution.Result, error)
 }
 
+// Selection contains provider choice, model, timeout, and runner configuration.
+type Selection struct {
+	Provider       string
+	Command        string
+	Binary         string
+	Model          string
+	CodexModel     string
+	ClaudeModel    string
+	CodexBinary    string
+	ClaudeBinary   string
+	CWD            string
+	Runner         Runner
+	Timeout        time.Duration
+	Idle           time.Duration
+	FallbackPolicy string
+}
+
+// Select returns the configured review provider implementation.
+func Select(opts Selection) (interface {
+	Invoke(context.Context, review.Request) (review.Packet, error)
+}, error) {
+	if opts.Timeout == 0 {
+		opts.Timeout = 30 * time.Minute
+	}
+	if opts.Idle == 0 {
+		opts.Idle = 2 * time.Minute
+	}
+	if opts.Command != "" {
+		return CommandProvider{Command: opts.Command, CWD: opts.CWD, Runner: opts.Runner, Timeout: opts.Timeout, IdleTimeout: opts.Idle}, nil
+	}
+	switch opts.Provider {
+	case "", "auto":
+		return selectAuto(opts)
+	case "local":
+		return LocalProvider{}, nil
+	case "command":
+		return nil, errors.New("--provider=command requires --provider-command")
+	case "claude":
+		return ClaudeProvider{Binary: first(opts.Binary, opts.ClaudeBinary), Model: first(opts.Model, opts.ClaudeModel), CWD: opts.CWD, Runner: opts.Runner, Timeout: opts.Timeout, IdleTimeout: opts.Idle}, nil
+	case "codex":
+		return CodexProvider{Binary: first(opts.Binary, opts.CodexBinary), Model: first(opts.Model, opts.CodexModel), CWD: opts.CWD, Runner: opts.Runner, Timeout: opts.Timeout, IdleTimeout: opts.Idle}, nil
+	default:
+		return nil, fmt.Errorf("unknown review provider %q", opts.Provider)
+	}
+}
+
+func selectAuto(opts Selection) (interface {
+	Invoke(context.Context, review.Request) (review.Packet, error)
+}, error) {
+	if opts.Binary != "" {
+		return CodexProvider{Binary: opts.Binary, Model: opts.Model, CWD: opts.CWD, Runner: opts.Runner, Timeout: opts.Timeout, IdleTimeout: opts.Idle}, nil
+	}
+	if _, err := osexec.LookPath("codex"); err == nil {
+		return CodexProvider{Binary: opts.CodexBinary, Model: first(opts.Model, opts.CodexModel), CWD: opts.CWD, Runner: opts.Runner, Timeout: opts.Timeout, IdleTimeout: opts.Idle}, nil
+	}
+	if opts.FallbackPolicy == "disable" {
+		return nil, errors.New("codex review provider not found and review.external.fallback_policy is disable")
+	}
+	if _, err := osexec.LookPath("claude"); err == nil {
+		return ClaudeProvider{Binary: opts.ClaudeBinary, Model: first(opts.Model, opts.ClaudeModel), CWD: opts.CWD, Runner: opts.Runner, Timeout: opts.Timeout, IdleTimeout: opts.Idle}, nil
+	}
+	return nil, errors.New("no external review provider found; install codex or claude, use --provider command --provider-command <cmd>, or use --provider local for development smoke tests")
+}
+
+func first(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+// LocalProvider emits deterministic local review packets for development smoke tests.
 type LocalProvider struct {
 	Messages []string
 }
 
+// Invoke returns a packet from configured local messages.
 func (p LocalProvider) Invoke(ctx context.Context, req review.Request) (review.Packet, error) {
 	var lines []string
 	for _, msg := range p.Messages {
@@ -39,6 +117,7 @@ func (p LocalProvider) Invoke(ctx context.Context, req review.Request) (review.P
 	return review.ParseNDJSON(strings.Join(lines, "\n") + "\n")
 }
 
+// CommandProvider invokes an operator-supplied review command.
 type CommandProvider struct {
 	Command     string
 	CWD         string
@@ -48,6 +127,7 @@ type CommandProvider struct {
 	IdleTimeout time.Duration
 }
 
+// Invoke sends the review prompt to the command and parses stdout as a packet.
 func (p CommandProvider) Invoke(ctx context.Context, req review.Request) (review.Packet, error) {
 	if p.Runner == nil {
 		return review.Packet{}, fmt.Errorf("%w: runner is required", ErrProviderFailed)
@@ -84,6 +164,7 @@ func (p CommandProvider) Invoke(ctx context.Context, req review.Request) (review
 	return packet, nil
 }
 
+// ClaudeProvider invokes Claude in restricted stream-json review mode.
 type ClaudeProvider struct {
 	Binary      string
 	Model       string
@@ -96,6 +177,7 @@ type ClaudeProvider struct {
 	IdleTimeout time.Duration
 }
 
+// Invoke sends the review prompt to Claude and parses the resulting packet.
 func (p ClaudeProvider) Invoke(ctx context.Context, req review.Request) (review.Packet, error) {
 	if p.Runner == nil {
 		return review.Packet{}, fmt.Errorf("%w: runner is required", ErrProviderFailed)
@@ -129,6 +211,7 @@ func (p ClaudeProvider) Invoke(ctx context.Context, req review.Request) (review.
 	return packet, nil
 }
 
+// CodexProvider invokes Codex in read-only ephemeral review mode.
 type CodexProvider struct {
 	Binary      string
 	Model       string
@@ -141,6 +224,7 @@ type CodexProvider struct {
 	IdleTimeout time.Duration
 }
 
+// Invoke sends the review prompt to Codex and parses the resulting packet.
 func (p CodexProvider) Invoke(ctx context.Context, req review.Request) (review.Packet, error) {
 	if p.Runner == nil {
 		return review.Packet{}, fmt.Errorf("%w: runner is required", ErrProviderFailed)
@@ -193,6 +277,7 @@ func (p CodexProvider) Invoke(ctx context.Context, req review.Request) (review.P
 	return packet, nil
 }
 
+// ClaudeArgs builds the argv for restricted Claude review execution.
 func ClaudeArgs(binary string, model string, sessionID string, schemaJSON string) []string {
 	args := []string{
 		binary,
@@ -222,6 +307,7 @@ func ClaudeArgs(binary string, model string, sessionID string, schemaJSON string
 	return args
 }
 
+// CodexArgs builds the argv for read-only Codex review execution.
 func CodexArgs(binary string, root string, outputPath string, model string, schemaPath string) []string {
 	args := []string{
 		binary,
@@ -247,6 +333,7 @@ func CodexArgs(binary string, root string, outputPath string, model string, sche
 	return args
 }
 
+// ReviewPacketSchemaJSON returns the provider-facing review packet schema.
 func ReviewPacketSchemaJSON() string {
 	return `{"type":"object","additionalProperties":false,"required":["verdict","findings"],"properties":{"verdict":{"type":"string","enum":["pass","fail"]},"findings":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["id","severity","summary"],"properties":{"id":{"type":"string"},"severity":{"type":"string","enum":["blocking","non_blocking"]},"summary":{"type":"string"}}}}}}`
 }
@@ -318,6 +405,7 @@ func extractClaudeOutput(stdout string) claudeOutput {
 	return out
 }
 
+// ClaudeEventName extracts a liveness event name from one Claude stream frame.
 func ClaudeEventName(line string) string {
 	var event map[string]any
 	if err := json.Unmarshal([]byte(strings.TrimSpace(line)), &event); err != nil {

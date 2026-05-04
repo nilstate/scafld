@@ -5,6 +5,7 @@ import (
 	"github.com/nilstate/scafld/v2/internal/core/spec"
 )
 
+// PhaseBlockFields documents the session-backed fields projected into phase state.
 var PhaseBlockFields = map[string]string{
 	"status":     "projected phase state",
 	"reason":     "human-readable source reason",
@@ -12,11 +13,13 @@ var PhaseBlockFields = map[string]string{
 	"source_id":  "session entry identifier",
 }
 
+// Projection is the session-derived view that can be replayed into a spec.
 type Projection struct {
 	TaskID string
 	Lines  []string
 }
 
+// Idempotent returns a normalized projection without changing semantic state.
 func Idempotent(current Projection) Projection {
 	return Projection{
 		TaskID: current.TaskID,
@@ -24,6 +27,7 @@ func Idempotent(current Projection) Projection {
 	}
 }
 
+// FromSession projects replayed session state into a spec model.
 func FromSession(model spec.Model, ledger session.Session) spec.Model {
 	replayed := session.Replay(ledger)
 	next := model

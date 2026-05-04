@@ -10,22 +10,31 @@ import (
 	"github.com/nilstate/scafld/v2/internal/core/review"
 )
 
+// Mode selects the fake provider behavior.
 type Mode string
 
 const (
-	ModeStream        Mode = "stream"
-	ModeIdle          Mode = "idle"
-	ModeEndless       Mode = "endless"
-	ModeMutation      Mode = "mutation"
+	// ModeStream emits configured frames and exits successfully.
+	ModeStream Mode = "stream"
+	// ModeIdle blocks until context cancellation.
+	ModeIdle Mode = "idle"
+	// ModeEndless streams tick events until context cancellation.
+	ModeEndless Mode = "endless"
+	// ModeMutation emits a workspace mutation event.
+	ModeMutation Mode = "mutation"
+	// ModeInvalidPacket emits malformed provider output.
 	ModeInvalidPacket Mode = "invalid_packet"
-	ModeCrashMid      Mode = "crash_mid_stream"
+	// ModeCrashMid emits a partial frame and then fails.
+	ModeCrashMid Mode = "crash_mid_stream"
 )
 
+// Provider is a deterministic review provider fake.
 type Provider struct {
 	Mode   Mode
 	Frames []string
 }
 
+// Run writes fake provider output to w according to Mode.
 func (p Provider) Run(ctx context.Context, w io.Writer) error {
 	switch p.Mode {
 	case ModeStream:
@@ -64,6 +73,7 @@ func (p Provider) Run(ctx context.Context, w io.Writer) error {
 	}
 }
 
+// Invoke runs the fake provider and parses its packet output.
 func (p Provider) Invoke(ctx context.Context, req review.Request) (review.Packet, error) {
 	var out bytes.Buffer
 	err := p.Run(ctx, &out)

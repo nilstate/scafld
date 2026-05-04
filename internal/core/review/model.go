@@ -8,26 +8,34 @@ import (
 	"strings"
 )
 
+// Severity classifies whether a finding blocks completion.
 type Severity string
 
 const (
-	SeverityBlocking    Severity = "blocking"
+	// SeverityBlocking marks a finding that fails the review gate.
+	SeverityBlocking Severity = "blocking"
+	// SeverityNonBlocking marks a finding that does not fail the review gate.
 	SeverityNonBlocking Severity = "non_blocking"
 )
 
 const (
+	// VerdictPass marks a review packet with no blocking findings.
 	VerdictPass = "pass"
+	// VerdictFail marks a review packet with at least one blocking finding.
 	VerdictFail = "fail"
 )
 
+// ErrInvalidPacket wraps malformed or semantically invalid provider output.
 var ErrInvalidPacket = errors.New("invalid review packet")
 
+// Finding is one issue surfaced by a review provider.
 type Finding struct {
 	ID       string   `json:"id"`
 	Severity Severity `json:"severity"`
 	Summary  string   `json:"summary"`
 }
 
+// Packet is the normalized review-provider payload consumed by scafld.
 type Packet struct {
 	Verdict      string         `json:"verdict"`
 	Findings     []Finding      `json:"findings,omitempty"`
@@ -38,11 +46,13 @@ type Packet struct {
 	Raw          string         `json:"-"`
 }
 
+// Request is the provider-facing review prompt request.
 type Request struct {
 	TaskID string
 	Prompt string
 }
 
+// ParseText parses direct JSON packets or NDJSON review streams.
 func ParseText(text string) (Packet, error) {
 	trimmed := strings.TrimSpace(text)
 	if trimmed == "" {
@@ -69,6 +79,7 @@ func ParseText(text string) (Packet, error) {
 	return ParseNDJSON(text)
 }
 
+// ParseNDJSON parses newline-delimited review events into a packet.
 func ParseNDJSON(text string) (Packet, error) {
 	var packet Packet
 	scanner := bufio.NewScanner(strings.NewReader(text))
@@ -124,6 +135,7 @@ func ParseNDJSON(text string) (Packet, error) {
 	return packet, nil
 }
 
+// NormalizePacket fills derived packet defaults without changing findings.
 func NormalizePacket(packet Packet) Packet {
 	for i := range packet.Findings {
 		if packet.Findings[i].ID == "" {
@@ -139,6 +151,7 @@ func NormalizePacket(packet Packet) Packet {
 	return packet
 }
 
+// ValidatePacket verifies verdict and finding severities.
 func ValidatePacket(packet Packet) error {
 	if !ValidVerdict(packet.Verdict) {
 		return fmt.Errorf("%w: invalid verdict %q", ErrInvalidPacket, packet.Verdict)
@@ -151,6 +164,7 @@ func ValidatePacket(packet Packet) error {
 	return nil
 }
 
+// VerdictFromFindings derives the review verdict from finding severities.
 func VerdictFromFindings(findings []Finding) string {
 	for _, finding := range findings {
 		if finding.Severity == SeverityBlocking {
@@ -160,6 +174,7 @@ func VerdictFromFindings(findings []Finding) string {
 	return VerdictPass
 }
 
+// ValidVerdict reports whether verdict is supported by the review gate.
 func ValidVerdict(verdict string) bool {
 	switch verdict {
 	case VerdictPass, VerdictFail:
@@ -169,6 +184,7 @@ func ValidVerdict(verdict string) bool {
 	}
 }
 
+// ValidSeverity reports whether severity is supported by review packets.
 func ValidSeverity(severity Severity) bool {
 	switch severity {
 	case SeverityBlocking, SeverityNonBlocking:

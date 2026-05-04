@@ -19,7 +19,7 @@ func TestLifecycleJSONContractsAgentSurfaceFailCancelReviewProviderMutationGuard
 	run(t, bin, "plan", "--root", root, "lifecycle-task", "--title", "Lifecycle task", "--command", "test -f .scafld/config.yaml")
 	run(t, bin, "approve", "--root", root, "lifecycle-task")
 	run(t, bin, "build", "--root", root, "lifecycle-task")
-	run(t, bin, "review", "--root", root, "lifecycle-task")
+	run(t, bin, "review", "--root", root, "--provider", "local", "lifecycle-task")
 	run(t, bin, "complete", "--root", root, "lifecycle-task")
 	out := run(t, bin, "status", "--root", root, "lifecycle-task", "--json")
 	var envelope struct {

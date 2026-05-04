@@ -198,22 +198,29 @@ rubric:
 # Every spec gets the same review — no profiles.
 # Recommended: run the agent review in a fresh context/session.
 review:
-  runner: "external"
   external:
-    # auto avoids Codex self-review when another provider is available
+    # Runtime-supported providers: auto, codex, claude, command, local.
+    # local is for development smoke tests only.
     provider: "auto"
+    # Used when provider is command. CLI flag: --provider-command.
+    # command: "./reviewer"
+    # Optional override for the selected provider binary. CLI flag: --provider-binary.
+    # provider_binary: "/usr/local/bin/codex"
     # idle_timeout_seconds catches genuine hangs (no stdout bytes for N seconds);
     # absolute_max_seconds is the safety ceiling for runaway loops, not the
     # primary kill signal. Healthy reviews complete well before either trips.
     idle_timeout_seconds: 180
     absolute_max_seconds: 1800
+    # disable means provider:auto requires codex and will not fall back to claude.
     fallback_policy: "warn"
     codex:
       model: "gpt-5.5"
+      # binary: "codex"
     claude:
       model: "claude-opus-4-7"
+      # binary: "claude"
 
-  # Review pipeline is built from named built-in passes only.
+  # Review focus included in the external challenger's prompt.
   # Ordering is explicit; scafld sorts by `order`, not mapping insertion luck.
   automated_passes:
     spec_compliance:

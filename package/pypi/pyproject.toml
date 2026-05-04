@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "scafld"
-version = "2.1.0"
+version = "0.0.0"
 description = "Markdown-native task execution framework CLI."
 readme = "README.md"
 requires-python = ">=3.9"

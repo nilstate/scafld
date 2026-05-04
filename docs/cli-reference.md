@@ -1,19 +1,25 @@
 ---
 title: CLI Reference
-description: Default agent surface plus advanced operator tools
+description: Current scafld command surface
 ---
 
 # CLI Reference
 
-Default help teaches the agent-facing surface:
+scafld is intentionally small. The binary teaches the same command surface to
+humans, agents, wrappers, and package launchers:
 
 ```bash
 scafld init
 scafld plan <task-id>
+scafld harden <task-id>
+scafld validate <task-id>
 scafld approve <task-id>
 scafld build <task-id>
+scafld exec <task-id>
 scafld review <task-id>
 scafld complete <task-id>
+scafld fail <task-id>
+scafld cancel <task-id>
 scafld status <task-id>
 scafld list
 scafld report
@@ -21,43 +27,93 @@ scafld handoff <task-id>
 scafld update
 ```
 
-Use `scafld --help --advanced` for the full operator surface.
+Global flags:
 
-When the workspace includes them, these wrappers resolve the current handoff
-before the external agent acts:
-
-```bash
-.scafld/core/scripts/scafld-codex-build.sh <task-id>
-.scafld/core/scripts/scafld-codex-review.sh <task-id>
-.scafld/core/scripts/scafld-claude-build.sh <task-id>
-.scafld/core/scripts/scafld-claude-review.sh <task-id>
-```
+- `--root PATH`: operate on a specific workspace root.
+- `--json`: emit a stable JSON envelope when the command supports it.
+- `--version`: print the binary version.
 
 ## JSON Mode
 
-Automation-relevant commands support `--json` and emit one stable envelope:
+Automation-relevant commands emit one envelope:
 
 ```json
 {
   "ok": true,
   "command": "build",
-  "task_id": "add-auth",
-  "warnings": [],
-  "state": {},
-  "result": {},
-  "error": null
+  "result": {}
 }
 ```
+
+Failures use the same shape with `ok: false` and an `error` object carrying
+`code`, `message`, and `exit_code`.
+
+Exit codes:
+
+- `0`: success
+- `1`: generic runtime failure
+- `2`: invalid command or flag
+- `3`: validation or acceptance failure
+- `4`: review gate failure
+- `5`: cancelled context
+- `6`: workspace discovery or bootstrap failure
+
+## init
+
+```bash
+scafld init [--root PATH] [--json]
+```
+
+Bootstraps `.scafld/` in the workspace. It installs project-owned config and
+prompt files, creates spec/run/review directories, and installs managed core
+assets under `.scafld/core/`.
+
+## update
+
+```bash
+scafld update [--root PATH] [--json]
+```
+
+Refreshes managed `.scafld/core/` files from the bundled runtime. It preserves
+project-owned files such as `.scafld/config.yaml`, `.scafld/config.local.yaml`,
+`.scafld/prompts/*`, specs, runs, and reviews.
 
 ## plan
 
 ```bash
-scafld plan <task-id> [-t TITLE] [-s SIZE] [-r RISK] [--json]
+scafld plan <task-id> [--title TITLE] [--summary TEXT] [--size SIZE] [--risk RISK] [--command CMD] [--json]
 ```
 
-Creates the draft spec and immediately opens its harden round.
+Creates `.scafld/specs/drafts/<task-id>.md`. `--command` seeds the first
+executable acceptance criterion. Existing drafts are not overwritten.
 
-If the draft already exists, `plan` reopens harden instead of failing.
+## harden
+
+```bash
+scafld harden <task-id> [--mark-passed] [--json]
+```
+
+Hardening is the pre-build adversarial pass. It attacks the draft before
+approval: product goal, authority, ownership boundaries, halfway failure
+repair, hidden cutovers, testable invariants, golden examples, and recovery
+commands.
+
+Without flags, `harden` appends a round, sets `harden_status: in_progress`, and
+prints the active prompt from `.scafld/prompts/harden.md`, falling back to
+`.scafld/core/prompts/harden.md` and then the built-in prompt.
+
+With `--mark-passed`, it warning-checks the latest round's `Grounded in`
+citations, closes the round, and sets `harden_status: passed`.
+
+## validate
+
+```bash
+scafld validate <task-id> [--json]
+```
+
+Parses the Markdown spec into the normalized model and rejects malformed
+lifecycle state, phase identity, harden state, duplicate criteria, or
+non-executable acceptance criteria.
 
 ## approve
 
@@ -65,7 +121,8 @@ If the draft already exists, `plan` reopens harden instead of failing.
 scafld approve <task-id> [--json]
 ```
 
-Moves a validated draft to approved and records the approval in session.
+Moves a draft spec to approved and records the approval in the session ledger.
+Approval is explicit operator action; it is not implied by hardening.
 
 ## build
 
@@ -73,42 +130,72 @@ Moves a validated draft to approved and records the approval in session.
 scafld build <task-id> [--json]
 ```
 
-Wrapper behavior:
-
-- approved spec: activates the task and immediately runs execution
-- active spec: runs the next execution pass
-- default execution scope: current open phase only
-- if that phase passes, `build` emits the next phase handoff and stops there
-- later phases do not run until another explicit `build` or `exec`
-
-Important JSON fields:
-
-- `state.action == "start_exec"`
-- `result.executed_phase`
-- `result.initial_handoff`
-- `result.next_action`
-- `result.current_handoff`
-- `result.block_reason`
-
-`result.next_action` is the canonical next step. `result.current_handoff`
-describes the handoff the agent should read next when one is available.
+Activates approved work and runs executable acceptance criteria. Evidence is
+written to the session first and projected back into the Markdown spec.
 
 ## exec
 
 ```bash
-scafld exec <task-id> [--phase PHASE] [--resume] [--json]
+scafld exec <task-id> [--json]
 ```
 
-Default behavior matches `build`: without `--phase`, scafld resolves the
-current open phase and executes only that phase's criteria.
+Runs the execution path against the current task. It uses the same acceptance
+model and evidence-writing discipline as `build`.
 
-Important JSON fields:
+## review
 
-- `state.executed_phase`
-- `result.executed_phase`
-- `result.criteria`
-- `result.next_handoff`
-- `result.next_action`
+```bash
+scafld review <task-id> [--provider auto|codex|claude|command|local] [--provider-command CMD] [--provider-binary PATH] [--model MODEL] [--json]
+```
+
+`review` is the adversarial completion gate. Defaults come from
+`.scafld/config.yaml` under `review.external`. Fresh workspaces use
+`provider: auto`, which selects an installed external challenger (`codex`, then
+`claude`). If neither is available, the command fails and tells the operator to
+install a provider, use `--provider command`, or explicitly choose
+`--provider local` for development smoke tests.
+
+Provider modes:
+
+- `auto`: choose an installed external challenger.
+- `codex`: run Codex in read-only ephemeral mode.
+- `claude`: run Claude with read-only tools and structured JSON output.
+- `command`: run a custom reviewer command; requires `--provider-command`.
+- `local`: deterministic pass-through provider for development and tests only.
+
+Provider-specific model defaults come from
+`review.external.codex.model` and `review.external.claude.model`. `--provider`,
+`--provider-command`, `--provider-binary`, and `--model` override config for one
+invocation.
+
+The provider returns a ReviewPacket. scafld validates it, rejects workspace
+mutation, writes the review event to session, and projects the verdict back into
+the spec. `complete` will not archive the task unless the review verdict is
+`pass`.
+
+## complete
+
+```bash
+scafld complete <task-id> [--json]
+```
+
+Archives completed work only after the review gate has passed.
+
+## fail
+
+```bash
+scafld fail <task-id> [--reason TEXT] [--json]
+```
+
+Archives a task as failed and records the reason in session.
+
+## cancel
+
+```bash
+scafld cancel <task-id> [--reason TEXT] [--json]
+```
+
+Archives a task as cancelled and records the reason in session.
 
 ## status
 
@@ -116,153 +203,30 @@ Important JSON fields:
 scafld status <task-id> [--json]
 ```
 
-`status` is the control tower surface.
-
-Important JSON fields:
-
-- `result.next_action`
-- `result.current_handoff`
-- `result.block_reason`
-- `result.review_gate`
-- `result.lifecycle_flags.active_done_open`
-- `result.supersession`
-
-If a wrapper needs to know what to do next, it should start with `status --json`
-instead of reconstructing lifecycle state manually.
-
-## review
-
-```bash
-scafld review <task-id> [--runner external|local|manual] [--provider auto|codex|claude] [--model MODEL] [--json]
-```
-
-Default text-mode behavior:
-
-- run automated passes
-- append or refresh the latest review round
-- resolve the configured review runner
-- if `external`, execute a fresh external challenger, validate its
-  `ReviewPacket`, and let scafld write the completed review round only after
-  validation
-- if `local` or `manual`, emit the challenger prompt and leave the round
-  `in_progress`
-
-`--json` stays machine-facing snapshot mode: it returns the review prompt,
-handoff paths, required sections, and resolved runner/provider/model metadata
-without spawning the external reviewer. The JSON payload sets
-`snapshot_only: true`, `provider_invoked: false`, and `execute_command` when an
-external runner is configured, so automation can distinguish "handoff snapshot"
-from "reviewer executed".
-
-When text-mode review starts an external runner, scafld prints the provider,
-subprocess pid, invocation id, timeout, and a tracking command. While that
-subprocess is running, `status --json` exposes
-`runtime.active_provider_invocation` and `next_action.type: review_running`.
-
-External provider calls fail rather than hang when either
-`review.external.idle_timeout_seconds` or
-`review.external.absolute_max_seconds` is reached. Invalid external output also
-fails the review command; it leaves the latest round in progress and does not
-suggest `scafld complete`.
-
-For `provider: auto`, scafld avoids Codex self-review by preferring Claude when
-the current agent is detected as Codex. Otherwise it prefers Codex, then Claude.
-`review.external.fallback_policy` controls alternate-provider selection:
-`warn` allows it with a visible warning, `allow` allows it while recording the
-weaker isolation in provenance, and `disable` requires Codex.
-Codex review requests `--model gpt-5.5` by default. Claude review requests
-`--model claude-opus-4-7` by default unless `review.external.<provider>.model`
-or `--model` provides another value.
-
-Important JSON fields:
-
-- `handoff_file`
-- `handoff_json_file`
-- `handoff_role`
-- `handoff_gate`
-- `review_runner`
-- `current_handoff`
-- `next_action`
-
-## complete
-
-```bash
-scafld complete <task-id> [--json]
-scafld complete <task-id> --human-reviewed --reason "manual audit"
-```
-
-Archives only after the review gate passes, or after the audited human override
-path is explicitly confirmed after a completed challenger review round exists.
-
-## handoff
-
-```bash
-scafld handoff <task-id> [--phase PHASE | --recovery CRITERION | --review] [--json]
-```
-
-Defaults with no flags:
-
-- current active phase handoff while work is in progress
-- `phase1` when no phase is active yet
-- archived review handoff after completion
-
-Important JSON fields:
-
-- `role`
-- `gate`
-- `handoff_file`
-- `handoff_json_file`
-
-See `docs/integrations.md` for the wrapper behavior and provider boundary.
-
-## report
-
-```bash
-scafld report [--runtime-only] [--json]
-```
-
-Headlines:
-
-- `first_attempt_pass_rate`
-- `recovery_convergence_rate`
-- `challenge_override_rate`
-
-Use `--runtime-only` to limit the cohort to tasks with runtime session data.
-
-`report` also includes review-signal counts such as completed challenger rounds,
-grounded findings, and clean reviews with explicit attack evidence.
-
-The triage section highlights stale active specs whose phases are all complete
-but which still need review/completion or cancellation. Specs cancelled with
-supersession metadata are reported as `old-task -> replacement-task`.
+Shows lifecycle status and the next allowed follow-up command.
 
 ## list
 
 ```bash
-scafld list [filter]
+scafld list [--json]
 ```
 
-Useful filters:
+Lists all known specs by task id, status, and title.
 
-- `active`
-- `stale-active` for active specs with all phases complete
-- `superseded` for archived specs retired in favor of another spec
-- `archive`
-
-## Advanced Commands
-
-The operator surface remains available behind `--help --advanced`:
+## report
 
 ```bash
-scafld harden
-scafld validate
-scafld branch
-scafld sync
-scafld audit
-scafld diff
-scafld fail
-scafld cancel <task-id> [--reason TEXT] [--superseded-by TASK]
-scafld summary
-scafld checks
-scafld pr-body
+scafld report [--json]
 ```
+
+Aggregates workspace spec counts and runtime evidence. This is the reporting
+surface that will grow as session-derived metrics deepen.
+
+## handoff
+
+```bash
+scafld handoff <task-id>
+```
+
+Renders model-facing context from the current spec state. Handoffs are
+transport, not source of truth; scafld computes state from the spec and session.

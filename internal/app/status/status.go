@@ -7,14 +7,17 @@ import (
 	"github.com/nilstate/scafld/v2/internal/core/spec"
 )
 
+// SpecStore is the spec loading port used by status.
 type SpecStore interface {
 	Load(context.Context, string) (spec.Model, string, error)
 }
 
+// SessionStore is the session loading port used by status.
 type SessionStore interface {
 	Load(context.Context, string) (session.Session, error)
 }
 
+// Output describes the task status projection.
 type Output struct {
 	TaskID    string
 	Status    spec.Status
@@ -23,6 +26,7 @@ type Output struct {
 	SessionOK bool
 }
 
+// Run reads status for taskID.
 func Run(ctx context.Context, specs SpecStore, sessions SessionStore, taskID string) (Output, error) {
 	model, _, err := specs.Load(ctx, taskID)
 	if err != nil {

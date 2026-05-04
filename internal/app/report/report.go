@@ -6,15 +6,18 @@ import (
 	"github.com/nilstate/scafld/v2/internal/core/spec"
 )
 
+// SpecStore is the spec listing port used by reports.
 type SpecStore interface {
 	List(context.Context) ([]spec.Record, error)
 }
 
+// Output summarizes workspace task counts.
 type Output struct {
 	Total    int
 	ByStatus map[spec.Status]int
 }
 
+// Run aggregates spec records by status.
 func Run(ctx context.Context, store SpecStore) (Output, error) {
 	records, err := store.List(ctx)
 	if err != nil {

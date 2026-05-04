@@ -12,27 +12,33 @@ import (
 	"github.com/nilstate/scafld/v2/internal/core/spec"
 )
 
+// SpecStore is the spec persistence port used by build.
 type SpecStore interface {
 	Load(context.Context, string) (spec.Model, string, error)
 	Save(context.Context, string, spec.Model) error
 }
 
+// SessionStore is the session evidence port used by build.
 type SessionStore interface {
 	Append(context.Context, string, session.Entry, string) (session.Session, error)
 	Load(context.Context, string) (session.Session, error)
 }
 
+// Runner executes acceptance commands.
 type Runner interface {
 	Run(context.Context, execution.Request) (execution.Result, error)
 }
 
+// Clock supplies build timestamps.
 type Clock interface{ Now() time.Time }
 
+// Input describes the task and working directory to build.
 type Input struct {
 	TaskID string
 	CWD    string
 }
 
+// Output summarizes acceptance execution.
 type Output struct {
 	TaskID string
 	Status spec.Status
@@ -40,40 +46,68 @@ type Output struct {
 	Failed int
 }
 
+// Run executes acceptance criteria and projects evidence into the spec.
 func Run(ctx context.Context, specs SpecStore, sessions SessionStore, runner Runner, clock Clock, input Input) (Output, error) {
 	model, path, err := specs.Load(ctx, input.TaskID)
 	if err != nil {
 		return Output{}, err
 	}
 	model.Status = spec.StatusActive
-	var ledger session.Session
 	now := clock.Now().UTC().Format(time.RFC3339)
+	if err := runCriteria(ctx, sessions, runner, model, input.CWD, now); err != nil {
+		return Output{}, err
+	}
+	ledger, _ := sessions.Load(ctx, model.TaskID)
+	ledger, err = appendPhaseEvidence(ctx, sessions, model, ledger, now)
+	if err != nil {
+		return Output{}, err
+	}
+	replayed := session.Replay(ledger)
+	passed, failed := countCriterionStates(replayed)
+	applyPostBuildState(&model, failed)
+	model.Updated = now
+	model = reconcile.FromSession(model, ledger)
+	model.Status = mapStatus(failed)
+	if err := specs.Save(ctx, path, model); err != nil {
+		return Output{}, fmt.Errorf("save projected spec: %w", err)
+	}
+	return Output{TaskID: model.TaskID, Status: model.Status, Passed: passed, Failed: failed}, nil
+}
+
+func runCriteria(ctx context.Context, sessions SessionStore, runner Runner, model spec.Model, cwd string, now string) error {
 	for _, criterion := range model.AllCriteria() {
 		if criterion.Command == "" {
 			continue
 		}
-		result, runErr := runner.Run(ctx, execution.Request{Command: criterion.Command, CWD: input.CWD, Timeout: 30 * time.Second})
-		evaluation := acceptance.Evaluate(criterion.ExpectedKind, acceptance.Evidence{ExitCode: result.ExitCode, Output: result.Output})
-		if runErr != nil && evaluation.Status == "pass" {
-			evaluation.Status = "fail"
-			evaluation.Reason = runErr.Error()
-		}
-		entry := session.Entry{
-			Type:        "criterion",
-			CriterionID: criterion.ID,
-			PhaseID:     criterion.PhaseID,
-			Status:      evaluation.Status,
-			Reason:      evaluation.Reason,
-			Command:     criterion.Command,
-			ExitCode:    result.ExitCode,
-			Output:      snippet(result.Output),
-		}
-		ledger, err = sessions.Append(ctx, model.TaskID, entry, now)
-		if err != nil {
-			return Output{}, fmt.Errorf("append criterion evidence: %w", err)
+		entry := criterionEntry(ctx, runner, criterion, cwd)
+		if _, err := sessions.Append(ctx, model.TaskID, entry, now); err != nil {
+			return fmt.Errorf("append criterion evidence: %w", err)
 		}
 	}
-	ledger, _ = sessions.Load(ctx, model.TaskID)
+	return nil
+}
+
+func criterionEntry(ctx context.Context, runner Runner, criterion spec.Criterion, cwd string) session.Entry {
+	result, runErr := runner.Run(ctx, execution.Request{Command: criterion.Command, CWD: cwd, Timeout: 30 * time.Second})
+	evaluation := acceptance.Evaluate(criterion.ExpectedKind, acceptance.Evidence{ExitCode: result.ExitCode, Output: result.Output})
+	if runErr != nil && evaluation.Status == "pass" {
+		evaluation.Status = "fail"
+		evaluation.Reason = runErr.Error()
+	}
+	return session.Entry{
+		Type:        "criterion",
+		CriterionID: criterion.ID,
+		PhaseID:     criterion.PhaseID,
+		Status:      evaluation.Status,
+		Reason:      evaluation.Reason,
+		Command:     criterion.Command,
+		ExitCode:    result.ExitCode,
+		Output:      snippet(result.Output),
+	}
+}
+
+func appendPhaseEvidence(ctx context.Context, sessions SessionStore, model spec.Model, ledger session.Session, now string) (session.Session, error) {
+	var err error
 	for _, phase := range model.Phases {
 		status, reason := phaseEvidenceState(phase, ledger)
 		if status == "" {
@@ -86,36 +120,36 @@ func Run(ctx context.Context, specs SpecStore, sessions SessionStore, runner Run
 			Reason:  reason,
 		}, now)
 		if err != nil {
-			return Output{}, fmt.Errorf("append phase evidence: %w", err)
+			return ledger, fmt.Errorf("append phase evidence: %w", err)
 		}
 	}
-	replayed := session.Replay(ledger)
+	return ledger, nil
+}
+
+func countCriterionStates(replayed session.Session) (int, int) {
 	passed, failed := 0, 0
 	for _, state := range replayed.CriterionStates {
-		if state.Status == "pass" {
+		switch state.Status {
+		case "pass":
 			passed++
-		}
-		if state.Status == "fail" || state.Status == "invalid" {
+		case "fail", "invalid":
 			failed++
 		}
 	}
+	return passed, failed
+}
+
+func applyPostBuildState(model *spec.Model, failed int) {
 	if failed > 0 {
 		model.Status = spec.StatusBlocked
 		model.CurrentState.Next = "fail or repair"
 		model.CurrentState.AllowedFollowUp = "scafld status " + model.TaskID
-	} else {
-		model.Status = spec.StatusReview
-		model.CurrentState.Next = "review"
-		model.CurrentState.AllowedFollowUp = "scafld review " + model.TaskID
-		model.CurrentState.ReviewGate = "not_started"
+		return
 	}
-	model.Updated = now
-	model = reconcile.FromSession(model, ledger)
-	model.Status = mapStatus(failed)
-	if err := specs.Save(ctx, path, model); err != nil {
-		return Output{}, fmt.Errorf("save projected spec: %w", err)
-	}
-	return Output{TaskID: model.TaskID, Status: model.Status, Passed: passed, Failed: failed}, nil
+	model.Status = spec.StatusReview
+	model.CurrentState.Next = "review"
+	model.CurrentState.AllowedFollowUp = "scafld review " + model.TaskID
+	model.CurrentState.ReviewGate = "not_started"
 }
 
 func mapStatus(failed int) spec.Status {

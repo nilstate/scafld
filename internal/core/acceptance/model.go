@@ -2,15 +2,21 @@ package acceptance
 
 import "fmt"
 
+// ExpectedKind names the machine-checkable expectation for criterion evidence.
 type ExpectedKind string
 
 const (
-	ExpectedExitCodeZero    ExpectedKind = "exit_code_zero"
+	// ExpectedExitCodeZero passes when the command exits with code 0.
+	ExpectedExitCodeZero ExpectedKind = "exit_code_zero"
+	// ExpectedExitCodeNonzero passes when the command exits with a non-zero code.
 	ExpectedExitCodeNonzero ExpectedKind = "exit_code_nonzero"
-	ExpectedNoMatches       ExpectedKind = "no_matches"
-	ExpectedManual          ExpectedKind = "manual"
+	// ExpectedNoMatches passes when the captured output is empty.
+	ExpectedNoMatches ExpectedKind = "no_matches"
+	// ExpectedManual marks a criterion that requires human evidence.
+	ExpectedManual ExpectedKind = "manual"
 )
 
+// ValidExpectedKind reports whether kind is supported by the evaluator.
 func ValidExpectedKind(kind ExpectedKind) bool {
 	switch kind {
 	case ExpectedExitCodeZero, ExpectedExitCodeNonzero, ExpectedNoMatches, ExpectedManual:
@@ -20,16 +26,19 @@ func ValidExpectedKind(kind ExpectedKind) bool {
 	}
 }
 
+// Evidence is the command output used to evaluate an acceptance criterion.
 type Evidence struct {
 	ExitCode int
 	Output   string
 }
 
+// Result is the normalized pass/fail/pending outcome for criterion evidence.
 type Result struct {
 	Status string
 	Reason string
 }
 
+// Evaluate compares evidence with the requested expected kind.
 func Evaluate(kind ExpectedKind, evidence Evidence) Result {
 	switch kind {
 	case ExpectedExitCodeZero:

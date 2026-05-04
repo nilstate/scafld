@@ -16,21 +16,11 @@ func knownCommand(name string) bool {
 }
 
 func printHelp(w io.Writer) {
-	fmt.Fprintln(w, "scafld - evidence-backed AI coding workflow")
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  scafld <command> [flags]")
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "Commands:")
+	fmt.Fprint(w, "scafld - evidence-backed AI coding workflow\n\nUsage:\n  scafld <command> [flags]\n\nCommands:\n")
 	for _, cmd := range commands {
 		fmt.Fprintf(w, "  %-10s %s\n", cmd.name, cmd.summary)
 	}
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "Flags:")
-	fmt.Fprintln(w, "  --root PATH    Workspace root")
-	fmt.Fprintln(w, "  --json         Print JSON envelope")
-	fmt.Fprintln(w, "  -h, --help     Show help")
-	fmt.Fprintln(w, "  --version      Show version")
+	fmt.Fprint(w, "\nFlags:\n  --root PATH    Workspace root\n  --json         Print JSON envelope\n  -h, --help     Show help\n  --version      Show version\n")
 }
 
 func printCommandHelp(w io.Writer, name string) {

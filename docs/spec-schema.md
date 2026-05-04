@@ -80,16 +80,46 @@ Supported values:
 - `exit_code_nonzero`
 - `no_matches`
 
-Optional criterion fields include `expected_exit_code`, `cwd`,
-`timeout_seconds`, and `evidence_required`.
+The current executable fields are `Command` and `Expected kind`. Additional
+testing detail belongs in the criterion title or surrounding prose until it
+earns a runtime field.
+
+## Hardening
+
+`harden_status` is separate from lifecycle `status`. Values are `not_run`,
+`in_progress`, `passed`, and `failed`.
+
+`scafld harden <task-id>` appends a round under `## Harden Rounds`:
+
+````markdown
+## Harden Rounds
+
+### round-1
+
+Status: in_progress
+Started: 2026-05-04T00:00:00Z
+Ended: none
+
+Questions:
+- Which module owns session cleanup?
+  - Grounded in: code:src/auth/session.ts:84
+  - Recommended answer: Use the existing cleanupSession owner.
+  - If unanswered: Default to the existing cleanup path.
+  - Answered with: Use cleanupSession.
+````
+
+Each question should carry one `Grounded in` value matching
+`spec_gap:<field>`, `code:<file>:<line>`, or `archive:<task_id>`.
+`scafld harden <task-id> --mark-passed` warning-checks code and archive
+citations before closing the round.
 
 ## Reconcile Contract
 
 The session ledger records raw execution events. The spec is the living,
 human-readable projection plus task prose. Runtime writes append session first,
 then update the relevant spec sections. If a spec write fails after a session
-write, `scafld reconcile` can rebuild runner-derived sections from session data
-while preserving task prose.
+write, the reconcile package can rebuild runner-derived sections from session
+data while preserving task prose.
 
 Session phase state is stored as `phase_blocks[phase_id]` with `status`,
 optional `reason`, and `updated_at`. Reconciliation uses that map, not Markdown

@@ -1,14 +1,17 @@
 # scafld
 
-This package installs a `scafld` console script that downloads and runs the
-native Go CLI from the matching GitHub release.
+**A deterministic protocol for multi-phase agent work.**
+The agent passes through. The protocol stays.
+
+Plans outlive agents. Sessions hold the receipts. Reviews take nothing on faith.
 
 ```bash
 pipx install scafld
 scafld --version
 ```
 
-The Go binary is the product. This PyPI package is only a distribution shim.
+The Go binary is the product. This PyPI package is only a distribution shim
+that fetches the matching native binary from GitHub releases.
 
 Environment overrides:
 

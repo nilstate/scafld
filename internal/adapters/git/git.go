@@ -11,14 +11,17 @@ import (
 	"strings"
 )
 
+// State is the fingerprinted set of Git-visible workspace changes.
 type State struct {
 	Changed []string
 }
 
+// Adapter reads Git state from a workspace root.
 type Adapter struct {
 	Root string
 }
 
+// Status returns the current changed-file fingerprints.
 func (a Adapter) Status(ctx context.Context) (State, error) {
 	cmd := exec.CommandContext(ctx, "git", "status", "--porcelain=v1")
 	cmd.Dir = a.Root
@@ -40,6 +43,7 @@ func (a Adapter) Status(ctx context.Context) (State, error) {
 	return State{Changed: changed}, nil
 }
 
+// ChangedFiles returns changed-file fingerprints for mutation guards.
 func (a Adapter) ChangedFiles(ctx context.Context) ([]string, error) {
 	state, err := a.Status(ctx)
 	if err != nil {

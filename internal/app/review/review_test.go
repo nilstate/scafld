@@ -121,7 +121,16 @@ func TestReviewPromptCarriesTaskContractToProvider(t *testing.T) {
 
 	provider := &promptProvider{packet: corereview.Packet{Verdict: corereview.VerdictPass}}
 	specs := &fakeSpecs{model: spec.Model{TaskID: "task", Title: "Task", Summary: "Review this", Objectives: []string{"Keep evidence"}, Acceptance: spec.Acceptance{Criteria: []spec.Criterion{{ID: "ac1", Command: "go test ./...", ExpectedKind: "exit_code_zero", Status: "pass", Evidence: "exit code was 0"}}}}}
-	_, err := Run(context.Background(), specs, &fakeSessions{}, nil, provider, fakeClock{}, "task")
+	_, err := RunWithInput(context.Background(), specs, &fakeSessions{}, nil, provider, fakeClock{}, Input{
+		TaskID: "task",
+		Passes: []Pass{{
+			ID:          "regression_hunt",
+			Category:    "adversarial",
+			Order:       30,
+			Title:       "Regression Hunt",
+			Description: "Trace downstream consumers",
+		}},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,6 +139,9 @@ func TestReviewPromptCarriesTaskContractToProvider(t *testing.T) {
 	}
 	if !strings.Contains(provider.req.Prompt, "Evidence: exit code was 0") || !strings.Contains(provider.req.Prompt, "Do not run build, test, or mutation commands") {
 		t.Fatalf("provider request = %+v", provider.req)
+	}
+	if !strings.Contains(provider.req.Prompt, "## Review Focus") || !strings.Contains(provider.req.Prompt, "adversarial: Regression Hunt") {
+		t.Fatalf("provider request missing configured review focus = %+v", provider.req)
 	}
 }
 

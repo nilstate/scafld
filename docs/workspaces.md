@@ -5,11 +5,8 @@ description: Multi-repo and monorepo support
 
 # Workspaces
 
-For projects with multiple codebases -- an API, a frontend, an SDK, an MCP server -- the workspace pattern gives the agent visibility across all of them from a single root.
-
-## Setup
-
-Create a root repo, add your codebases as git submodules, then initialize scafld at the root:
+For projects with multiple codebases -- an API, frontend, SDK, worker, or docs
+site -- initialize scafld at the shared root:
 
 ```bash
 mkdir workspace && cd workspace
@@ -19,61 +16,49 @@ git submodule add git@github.com:org/frontend.git frontend
 scafld init
 ```
 
-The `.scafld/` directory lives at the workspace root. The agent sees the full picture.
+The `.scafld/` directory lives at the workspace root. Specs can describe work
+across subdirectories while acceptance commands choose the right working
+directory.
 
-## Per-criterion working directory
+## Working Directories
 
-Specs in a workspace typically run commands in different submodules. Use the `cwd` field to target the right directory:
+In Markdown specs, put the default working directory in context and make each
+criterion command explicit when needed:
 
-```yaml
-task:
-  context:
-    cwd: "api"                  # default for all criteria
+```markdown
+## Context
 
-phases:
-  - id: phase1
-    acceptance_criteria:
-      - id: ac1_1
-        command: "npm test"
-        cwd: "api"              # runs in api/
-      - id: ac1_2
-        command: "npm run build"
-        cwd: "frontend"         # runs in frontend/
+Working directory: `api`
+Packages:
+- `api`
+- `frontend`
+
+## Phase 1: API token validation
+
+Acceptance:
+- [ ] `ac1_1` test: API tests pass.
+  - Command: `cd api && npm test`
+  - Expected kind: `exit_code_zero`
+
+## Phase 2: Frontend auth state
+
+Acceptance:
+- [ ] `ac2_1` test: Frontend tests pass.
+  - Command: `cd frontend && npm test`
+  - Expected kind: `exit_code_zero`
 ```
 
-Working directory paths must be relative and cannot escape the workspace root.
+Commands should stay relative to the workspace root and must not escape it.
 
-## Cross-repo specs
+## Review in Workspaces
 
-A single spec can declare changes across multiple submodules. Scope auditing works across the full workspace, so changes in any submodule are tracked against the spec.
+Adversarial review should inspect the whole workspace state, not only the
+subdirectory where a command ran. The spec should make cross-repo ownership
+obvious enough that the challenger can tell expected multi-package work from
+scope drift.
 
-## Branch binding and sync
+## Branches
 
-`scafld branch <task-id>` binds a spec to the workspace git branch. In a normal
-repo that means "create or checkout the task branch and record it in
-`origin.git`." In a workspace repo it means the root workspace repo owns the
-binding; per-criterion `cwd` still controls which submodule each acceptance
-command runs inside.
-
-```bash
-scafld branch add-auth
-scafld branch add-auth --name feat/add-auth
-scafld branch add-auth --bind-current
-scafld sync add-auth
-```
-
-- `branch` is explicit and safety-first. It refuses dirty branch switches and
-  detached-HEAD mutation.
-- `--bind-current` is the escape hatch when you already created the branch
-  yourself and want scafld to record it without switching.
-- `sync` compares the recorded binding against the live git workspace and
-  reports drift in both human output and `--json`.
-
-When scafld evaluates branch drift, it ignores its own control-plane artifacts
-under `.scafld/specs/`, `.scafld/reviews/`, `.scafld/runs/`, plus `.scafld/config.local.yaml`.
-That keeps sync focused on engineering changes instead of flagging the planning
-ledger itself.
-
-## Per-submodule conventions
-
-Each submodule can have its own `CONVENTIONS.md`. The convention_check review pass will read conventions from both the workspace root and the relevant submodules.
+The current Go binary does not create or bind git branches. Use your normal git
+workflow or wrapper tooling for branch management, then let scafld own the local
+spec, session, and review gate.
