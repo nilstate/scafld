@@ -1,14 +1,17 @@
 # scafld
 
-This package installs the native `scafld` Go CLI from the matching GitHub
-release and exposes it as an npm `bin`.
+**A deterministic protocol for multi-phase agent work.**
+The agent passes through. The protocol stays.
+
+Plans outlive agents. Sessions hold the receipts. Reviews take nothing on faith.
 
 ```bash
 npm install -g scafld
 scafld --version
 ```
 
-The Go binary is the product. This npm package is only a distribution shim.
+The Go binary is the product. This npm package is only a distribution shim that
+fetches the matching native binary from GitHub releases.
 
 Environment overrides:
 

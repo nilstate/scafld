@@ -18,43 +18,28 @@ import (
 const defaultMaxCaptureBytes = 8 * 1024 * 1024
 
 var (
+	// ErrTimeout wraps absolute process timeout failures.
 	ErrTimeout = errors.New("process timeout")
-	ErrIdle    = errors.New("process idle timeout")
+	// ErrIdle wraps idle timeout failures.
+	ErrIdle = errors.New("process idle timeout")
 )
 
+// Runner executes external commands and writes optional diagnostics.
 type Runner struct {
 	DiagnosticsDir string
 }
 
+// Run executes req with streaming stdout/stderr capture and watchdogs.
 func (r Runner) Run(ctx context.Context, req execution.Request) (execution.Result, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if req.Command == "" && len(req.Args) == 0 {
-		return execution.Result{}, fmt.Errorf("command or args are required")
-	}
-	if req.Command != "" && len(req.Args) > 0 {
-		return execution.Result{}, fmt.Errorf("command and args are mutually exclusive")
-	}
 	if err := ctx.Err(); err != nil {
 		return execution.Result{ExitCode: -1, KillReason: "cancelled"}, err
 	}
-	displayCommand := req.Command
-	var cmd *exec.Cmd
-	if len(req.Args) > 0 {
-		if strings.TrimSpace(req.Args[0]) == "" {
-			return execution.Result{}, fmt.Errorf("args[0] is required")
-		}
-		cmd = exec.Command(req.Args[0], req.Args[1:]...)
-		displayCommand = strings.Join(req.Args, " ")
-	} else {
-		cmd = exec.Command("sh", "-c", req.Command)
-	}
-	if req.CWD != "" {
-		cmd.Dir = req.CWD
-	}
-	if req.Input != "" {
-		cmd.Stdin = strings.NewReader(req.Input)
+	cmd, displayCommand, err := commandForRequest(req)
+	if err != nil {
+		return execution.Result{}, err
 	}
 	cmd.Env = append(os.Environ(), req.Env...)
 	configureProcessGroup(cmd)
@@ -77,9 +62,8 @@ func (r Runner) Run(ctx context.Context, req execution.Request) (execution.Resul
 	go pump(&pumps, stderr, state, "stderr")
 	waitCh := make(chan error, 1)
 	go func() {
-		err := cmd.Wait()
 		pumps.Wait()
-		waitCh <- err
+		waitCh <- cmd.Wait()
 	}()
 	result, waitErr := waitProcess(ctx, cmd, waitCh, state, req)
 	result.Stdout, result.Stderr, result.Output, result.DroppedBytes, result.StdoutEvents = state.snapshot()
@@ -89,6 +73,36 @@ func (r Runner) Run(ctx context.Context, req execution.Request) (execution.Resul
 		}
 	}
 	return result, waitErr
+}
+
+func commandForRequest(req execution.Request) (*exec.Cmd, string, error) {
+	if req.Command == "" && len(req.Args) == 0 {
+		return nil, "", fmt.Errorf("command or args are required")
+	}
+	if req.Command != "" && len(req.Args) > 0 {
+		return nil, "", fmt.Errorf("command and args are mutually exclusive")
+	}
+	cmd, displayCommand, err := baseCommand(req)
+	if err != nil {
+		return nil, "", err
+	}
+	if req.CWD != "" {
+		cmd.Dir = req.CWD
+	}
+	if req.Input != "" {
+		cmd.Stdin = strings.NewReader(req.Input)
+	}
+	return cmd, displayCommand, nil
+}
+
+func baseCommand(req execution.Request) (*exec.Cmd, string, error) {
+	if len(req.Args) == 0 {
+		return exec.Command("sh", "-c", req.Command), req.Command, nil
+	}
+	if strings.TrimSpace(req.Args[0]) == "" {
+		return nil, "", fmt.Errorf("args[0] is required")
+	}
+	return exec.Command(req.Args[0], req.Args[1:]...), strings.Join(req.Args, " "), nil
 }
 
 type capture struct {

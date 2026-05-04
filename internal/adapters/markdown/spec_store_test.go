@@ -47,6 +47,19 @@ func TestRoundTripPreservesLiterateSpecFields(t *testing.T) {
 	model.Deviations = []string{"none observed"}
 	model.Metadata = map[string]string{"owner": "runtime"}
 	model.Origin = spec.Origin{CreatedBy: "test", Source: "golden"}
+	model.HardenStatus = spec.HardenInProgress
+	model.HardenRounds = []spec.HardenRound{{
+		ID:        "round-1",
+		Status:    string(spec.HardenInProgress),
+		StartedAt: "2026-05-04T00:00:00Z",
+		Questions: []spec.HardenQuestion{{
+			Question:          "What owns the parser contract?",
+			GroundedIn:        "code:internal/adapters/markdown/spec_store.go:1",
+			RecommendedAnswer: "The markdown adapter owns the grammar.",
+			IfUnanswered:      "Keep grammar changes in the adapter.",
+			AnsweredWith:      "Adapter-owned.",
+		}},
+	}}
 	model.Review = spec.ReviewState{Status: "pending", Verdict: "none"}
 	model.Phases[0].Dependencies = []string{"phase0"}
 	model.Phases[0].Acceptance[0].Status = "pass"
@@ -68,6 +81,12 @@ func TestRoundTripPreservesLiterateSpecFields(t *testing.T) {
 	}
 	if parsed.Metadata["owner"] != "runtime" || parsed.Origin.CreatedBy != "test" {
 		t.Fatalf("metadata/origin lost: %+v %+v", parsed.Metadata, parsed.Origin)
+	}
+	if parsed.HardenStatus != spec.HardenInProgress || len(parsed.HardenRounds) != 1 || parsed.HardenRounds[0].Status != string(spec.HardenInProgress) {
+		t.Fatalf("harden state lost: %s %+v", parsed.HardenStatus, parsed.HardenRounds)
+	}
+	if got := parsed.HardenRounds[0].Questions[0]; got.GroundedIn == "" || got.AnsweredWith != "Adapter-owned." {
+		t.Fatalf("harden question lost: %+v", got)
 	}
 	if got := parsed.Phases[0].Acceptance[0]; got.Evidence != "exit code was 0" || got.SourceEvent != "entry-1" {
 		t.Fatalf("criterion evidence lost: %+v", got)

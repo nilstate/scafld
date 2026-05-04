@@ -14,7 +14,7 @@ import (
 	"github.com/nilstate/scafld/v2/internal/adapters/markdown"
 	"github.com/nilstate/scafld/v2/internal/app/cancel"
 	"github.com/nilstate/scafld/v2/internal/app/complete"
-	"github.com/nilstate/scafld/v2/internal/app/contracts"
+	"github.com/nilstate/scafld/v2/internal/app/envelope"
 	"github.com/nilstate/scafld/v2/internal/app/fail"
 )
 
@@ -22,37 +22,40 @@ type options struct {
 	Root        string
 	JSON        bool
 	Values      map[string]string
+	Flags       map[string]bool
 	Positionals []string
 }
 
+var valueFlags = map[string]bool{
+	"root":             true,
+	"title":            true,
+	"summary":          true,
+	"command":          true,
+	"size":             true,
+	"risk":             true,
+	"reason":           true,
+	"provider":         true,
+	"provider-command": true,
+	"provider-binary":  true,
+	"model":            true,
+}
+
+var boolFlags = map[string]bool{
+	"mark-passed":   true,
+	"no-agent-docs": true,
+}
+
 func parseOptions(args []string) (options, error) {
-	opts := options{Values: map[string]string{}}
+	opts := options{Values: map[string]string{}, Flags: map[string]bool{}}
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		if arg == "--json" {
 			opts.JSON = true
 			continue
 		}
-		if arg == "--root" || arg == "--title" || arg == "--summary" || arg == "--command" || arg == "--size" || arg == "--risk" || arg == "--reason" || arg == "--provider" || arg == "--provider-command" || arg == "--provider-binary" || arg == "--model" {
-			if i+1 >= len(args) {
-				return opts, fmt.Errorf("%s requires a value", arg)
-			}
-			key := strings.TrimPrefix(arg, "--")
-			if key == "root" {
-				opts.Root = args[i+1]
-			} else {
-				opts.Values[key] = args[i+1]
-			}
-			i++
-			continue
-		}
-		if strings.HasPrefix(arg, "--root=") {
-			opts.Root = strings.TrimPrefix(arg, "--root=")
-			continue
-		}
-		if strings.HasPrefix(arg, "--") && strings.Contains(arg, "=") {
-			key, value, _ := strings.Cut(strings.TrimPrefix(arg, "--"), "=")
-			opts.Values[key] = value
+		if handled, err := parseFlagValue(args, &i, &opts); err != nil {
+			return opts, err
+		} else if handled {
 			continue
 		}
 		if strings.HasPrefix(arg, "-") {
@@ -61,6 +64,52 @@ func parseOptions(args []string) (options, error) {
 		opts.Positionals = append(opts.Positionals, arg)
 	}
 	return opts, nil
+}
+
+func parseFlagValue(args []string, index *int, opts *options) (bool, error) {
+	arg := args[*index]
+	if !strings.HasPrefix(arg, "--") {
+		return false, nil
+	}
+	if key, value, ok := strings.Cut(strings.TrimPrefix(arg, "--"), "="); ok {
+		if boolFlags[key] {
+			opts.Flags[key] = parseBoolFlag(value)
+			return true, nil
+		}
+		setOptionValue(opts, key, value)
+		return true, nil
+	}
+	key := strings.TrimPrefix(arg, "--")
+	if boolFlags[key] {
+		opts.Flags[key] = true
+		return true, nil
+	}
+	if !valueFlags[key] {
+		return false, nil
+	}
+	if *index+1 >= len(args) {
+		return true, fmt.Errorf("%s requires a value", arg)
+	}
+	setOptionValue(opts, key, args[*index+1])
+	*index = *index + 1
+	return true, nil
+}
+
+func parseBoolFlag(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+func setOptionValue(opts *options, key string, value string) {
+	if key == "root" {
+		opts.Root = value
+		return
+	}
+	opts.Values[key] = value
 }
 
 func normalizeGlobalFlags(args []string) []string {
@@ -120,7 +169,7 @@ func okOut[T any](w io.Writer, command string, result T, text string, asJSON boo
 		exit = code[0]
 	}
 	if asJSON {
-		_ = json.NewEncoder(w).Encode(contracts.Envelope[T]{OK: exit == ExitSuccess, Command: command, Result: result})
+		_ = json.NewEncoder(w).Encode(envelope.Envelope[T]{OK: exit == ExitSuccess, Command: command, Result: result})
 		return exit
 	}
 	fmt.Fprint(w, text)
@@ -135,9 +184,9 @@ func failOut(w io.Writer, err error, exit int, asJSON bool) int {
 		exit = ExitCancelled
 	}
 	if asJSON {
-		_ = json.NewEncoder(w).Encode(contracts.Envelope[map[string]any]{
+		_ = json.NewEncoder(w).Encode(envelope.Envelope[map[string]any]{
 			OK: false,
-			Error: &contracts.Error{
+			Error: &envelope.Error{
 				Code:     codeName(exit),
 				Message:  err.Error(),
 				ExitCode: exit,

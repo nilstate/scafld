@@ -1,26 +1,16 @@
 ---
 title: Execution
-description: Executor handoffs, recovery, and session-led execution
+description: Acceptance execution and session evidence
 ---
 
 # Execution
 
-The lifecycle is unchanged:
+Execution is deliberately less clever than the spec. It runs explicit commands,
+records evidence, and projects current state back into the Markdown file.
 
 ```text
 draft -> harden -> approve -> build -> review -> complete
 ```
-
-The runtime model underneath it is:
-
-- `spec`: reviewed contract
-- `session`: durable run ledger
-- `handoff`: generated transport for the next voice
-
-Execution uses two handoff shapes:
-
-- `executor × phase`
-- `executor × recovery`
 
 ## Build
 
@@ -28,99 +18,55 @@ Execution uses two handoff shapes:
 scafld build <task-id>
 ```
 
-`build` is the agent-facing executor wrapper:
+`build` loads the approved or active spec, marks it active while work is
+executed, runs every executable acceptance criterion, appends criterion evidence
+to the session ledger, and projects criterion/phase state back into the spec.
 
-- approved spec: initializes `session.json`, emits the first phase handoff, and runs execution
-- active spec: runs the next execution pass
-
-That means a fresh `build` call from `approved` advances work to the next
-handoff or block in one invocation instead of requiring a second `build`.
-
-In JSON mode, treat these as the canonical executor signals:
-
-- `result.next_action`
-- `result.current_handoff`
-- `result.block_reason`
-
-`status --json` mirrors the same guidance without moving the lifecycle.
-
-## Execution Passes
+If all criteria pass, the task moves to `review` and the allowed follow-up is:
 
 ```bash
-scafld build <task-id>
+scafld review <task-id>
 ```
 
-For each runnable criterion, execution:
+If any criterion fails, the task becomes `blocked`; use `status` and the
+recorded diagnostics to decide whether to repair, rerun build, fail, or cancel.
 
-1. runs the command
-2. records a short audit-friendly result snippet back into the spec
-3. appends the full attempt to `session.json`
-4. writes full diagnostics into `.scafld/runs/{task-id}/diagnostics/`
+## exec
 
-The spec stays concise. Session carries the real run history.
+```bash
+scafld exec <task-id>
+```
 
-## Recovery
+`exec` uses the same execution path as `build`. It exists as a narrower command
+name for wrappers that want to distinguish "execute acceptance" from the broader
+build lifecycle verb.
 
-Recovery is not a subsystem.
+## Evidence Flow
 
-It is:
+For each criterion, scafld records:
 
-- a `recovery` gate on the handoff
-- a counter in session
-- a max-attempt policy in config
+- command
+- exit code
+- matcher result
+- short output snippet
+- criterion id
+- phase id
 
-When a criterion fails inside the configured budget, scafld emits:
+The session ledger is written before the spec projection. That ordering is what
+lets scafld rebuild projected state from evidence if a write fails halfway.
 
-- `executor-recovery-{criterion}-{attempt}.md`
-- `executor-recovery-{criterion}-{attempt}.json`
+## Handoffs
 
-That handoff includes:
+```bash
+scafld handoff <task-id>
+```
 
-- failed criterion
-- expected result
-- diagnostic reference
-- prior attempts for the same criterion
-- current phase slice
-- prior phase summary
+The current Go handoff is a compact model-facing summary of title, status, and
+allowed next command. Handoff is transport only; it is never read back to compute
+state.
 
-Use `status --json` or `build --json` to discover whether recovery is pending.
-Use `scafld handoff <task-id> --recovery <criterion>` when you need the current
-recovery handoff without moving the lifecycle.
+## Process Safety
 
-## Phase Summaries
-
-At phase boundaries, scafld writes compact `phase_summary` entries into session.
-
-Later executor handoffs read those summaries instead of replaying old tool
-output. That is how long runs avoid linear context growth.
-
-## Recovery Cap
-
-`llm.recovery.max_attempts` is hard.
-
-When the next failure would exceed the cap, execution:
-
-- stops emitting recovery handoffs
-- records `failed_exhausted` in session
-- blocks the phase
-- returns `human_required` in JSON output
-
-## Honest Boundary
-
-scafld can generate a better executor handoff. It cannot force an external
-harness to use it. Session metrics measure outcomes, not handoff consumption.
-
-When the workspace includes them, the wrapper scripts remain optional handoff
-adapters for Codex and Claude Code:
-
-- `.scafld/core/scripts/scafld-codex-build.sh <task-id>`
-- `.scafld/core/scripts/scafld-claude-build.sh <task-id>`
-- `.scafld/core/scripts/scafld-codex-review.sh <task-id>`
-- `.scafld/core/scripts/scafld-claude-review.sh <task-id>`
-
-`scafld review` itself is now the default challenger entrypoint.
-
-Prompt ownership is also explicit:
-
-- `.scafld/prompts/exec.md` and `.scafld/prompts/recovery.md` are the active template sources
-- `.scafld/core/prompts/*.md` is the managed reset copy that `scafld update` refreshes
+The process runner supports command stdin, timeout, idle timeout, process-group
+termination, and diagnostic capture. Long-running provider review uses the same
+runner surface as acceptance execution.

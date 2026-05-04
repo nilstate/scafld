@@ -8,17 +8,21 @@ import (
 	"github.com/nilstate/scafld/v2/internal/core/spec"
 )
 
+// SpecStore is the spec persistence port used by cancellation.
 type SpecStore interface {
 	Load(context.Context, string) (spec.Model, string, error)
 	Save(context.Context, string, spec.Model) error
 }
 
+// SessionStore is the session evidence port used by cancellation.
 type SessionStore interface {
 	Append(context.Context, string, session.Entry, string) (session.Session, error)
 }
 
+// Clock supplies cancellation timestamps.
 type Clock interface{ Now() time.Time }
 
+// Run marks a task cancelled and records cancellation evidence.
 func Run(ctx context.Context, specs SpecStore, sessions SessionStore, clock Clock, taskID string, reason string) (spec.Model, error) {
 	model, path, err := specs.Load(ctx, taskID)
 	if err != nil {

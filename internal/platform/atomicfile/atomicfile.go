@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 )
 
+// Write atomically replaces path with data and fsyncs the containing directory.
 func Write(path string, data []byte, perm os.FileMode) error {
 	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".*.tmp")

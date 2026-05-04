@@ -29,9 +29,10 @@ In planning mode, the agent reads the project-owned `.scafld/prompts/plan.md` te
 4. **THOUGHT** -- update the spec, ask clarifying questions
 5. **REPEAT** until all required fields are filled
 
-The agent is in read-only mode during planning. It can explore anything but change nothing outside `.scafld/specs/`. Max 20 cycles. If blocked by uncertainty, it saves with `status: under_review` and documents what it needs.
+The agent is in read-only mode during planning. It can explore anything but change nothing outside `.scafld/specs/`. If blocked by uncertainty, it leaves the spec as `status: draft` and records the unanswered question in the planning log or the latest harden round.
 
-`scafld plan <task-id>` is idempotent for drafts: rerunning it on an existing draft reopens harden instead of erroring. That gives agents a clean retry path without forcing them down to `scafld harden`.
+`scafld plan <task-id>` creates the draft. Run `scafld harden <task-id>` after
+the draft is filled in to interrogate the contract before approval.
 
 ## Task sizing
 
@@ -61,7 +62,7 @@ Each objective should be independently verifiable.
 
 ## Defining scope
 
-Scope is a contract. In-scope items will change. Out-of-scope items will not be touched. This is what makes `scafld audit` possible.
+Scope is a contract. In-scope items will change. Out-of-scope items will not be touched. This is what makes adversarial review concrete instead of vibe-based.
 
 ```yaml
 scope:
@@ -133,6 +134,6 @@ Risk level determines the default validation profile:
 
 ## Hardening
 
-When a spec is finished but you want to stress-test it before approval, run `scafld harden <task-id>`. This enters HARDEN MODE: the agent interrogates the draft one question at a time, walking down the design tree and resolving upstream decisions before downstream ones. If a question can be answered by exploring the codebase, it should inspect the code instead of asking. Each recorded question carries a `grounded_in` value pointing to the spec gap, verified code location, or archived precedent that made the question worth asking. Do not invent citations; if you run out of real grounded questions, stop. The round is recorded in `harden_rounds` for audit.
+When a spec is finished but you want to stress-test it before approval, run `scafld harden <task-id>`. This enters HARDEN MODE: the agent interrogates the draft one question at a time, walking down the design tree and resolving upstream decisions before downstream ones. If a question can be answered by exploring the codebase, it should inspect the code instead of asking. When the contract is sharp enough to execute, run `scafld harden <task-id> --mark-passed`. The round is recorded in `harden_rounds` for audit.
 
-Hardening is optional and operator-driven. `scafld approve` does not require it. Run it on high-risk or ambiguous specs; skip it on trivial or well-understood ones. See [CLI reference](./cli-reference.md#scafld-harden) for flags.
+Hardening is optional and operator-driven. `scafld approve` does not require it. Run it on high-risk or ambiguous specs; skip it on trivial or well-understood ones. See [CLI reference](./cli-reference.md#harden) for flags.

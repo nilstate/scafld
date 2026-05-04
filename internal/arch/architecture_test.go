@@ -117,8 +117,17 @@ func TestCLIIsThin(t *testing.T) {
 	const maxLines = 700
 	total := 0
 	err := filepath.WalkDir(cliDir, func(path string, d os.DirEntry, err error) error {
-		if err != nil || d.IsDir() || strings.HasSuffix(path, "_test.go") || !strings.HasSuffix(path, ".go") {
+		if err != nil {
 			return err
+		}
+		if d.IsDir() {
+			if path != cliDir {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if strings.HasSuffix(path, "_test.go") || !strings.HasSuffix(path, ".go") {
+			return nil
 		}
 		data, err := os.ReadFile(path)
 		if err != nil {

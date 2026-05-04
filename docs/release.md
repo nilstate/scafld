@@ -7,7 +7,9 @@ This is a maintainer doc. Most contributors do not need it.
 The primary repository is `github.com/nilstate/scafld`. The Go module path is
 `github.com/nilstate/scafld/v2` because the product release line is already v2.
 
-Release tags are `vX.Y.Z`. The first Go-backed release is `v2.1.0`.
+Release tags are `vX.Y.Z`. The source tree keeps wrapper package metadata at
+the development placeholder version; release jobs stamp npm and PyPI metadata
+from the tag.
 
 ## Pipeline
 
@@ -27,20 +29,23 @@ is published.
 
 ## Versioning
 
-Use the same product version everywhere:
+Use the same product version everywhere in published artifacts:
 
-- GitHub tag: `v2.1.0`
-- npm: `scafld@2.1.0`
-- PyPI: `scafld==2.1.0`
-- Go module install: `go install github.com/nilstate/scafld/v2/cmd/scafld@v2.1.0`
+- GitHub tag: `vX.Y.Z`
+- npm: `scafld@X.Y.Z`
+- PyPI: `scafld==X.Y.Z`
+- Go module install: `go install github.com/nilstate/scafld/v2/cmd/scafld@vX.Y.Z`
 
 Before a release, run:
 
 ```bash
-scripts/set-release-version.sh 2.1.0
 make check
-make release-snapshot
+scripts/build-release-artifacts.sh X.Y.Z
 ```
+
+Do not commit generated wrapper version changes. `.github/workflows/release.yml`
+runs `scripts/set-release-version.sh "${GITHUB_REF_NAME#v}"` inside the release
+job before building npm and PyPI packages.
 
 ## Registry Publishing
 

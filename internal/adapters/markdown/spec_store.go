@@ -19,7 +19,9 @@ import (
 )
 
 var (
-	ErrSpecNotFound      = errors.New("spec not found")
+	// ErrSpecNotFound is returned when taskID cannot be found in spec directories.
+	ErrSpecNotFound = errors.New("spec not found")
+	// ErrMalformedMarkdown wraps spec Markdown grammar failures.
 	ErrMalformedMarkdown = errors.New("malformed markdown spec")
 	phaseHeadingPattern  = regexp.MustCompile(`^## Phase ([0-9]+):\s*(.+?)\s*$`)
 	criterionLinePattern = regexp.MustCompile(`^- \[[ xX]\] ` + "`" + `([^` + "`" + `]+)` + "`" + `\s+([^-]+?)\s+-\s*(.*)$`)
@@ -30,10 +32,12 @@ var (
 	sourceLinePattern    = regexp.MustCompile(`^\s+- Source event:\s*(.*)\s*$`)
 )
 
+// Store reads and writes Markdown task specs under a workspace root.
 type Store struct {
 	Root string
 }
 
+// CreateDraft writes model as a new draft spec and returns its path.
 func (s Store) CreateDraft(ctx context.Context, model spec.Model) (string, error) {
 	root := s.Root
 	if root == "" {
@@ -43,10 +47,12 @@ func (s Store) CreateDraft(ctx context.Context, model spec.Model) (string, error
 	return path, writeSpec(ctx, path, model)
 }
 
+// Save writes model to an existing spec path.
 func (s Store) Save(ctx context.Context, path string, model spec.Model) error {
 	return writeSpec(ctx, path, model)
 }
 
+// Load finds, parses, and returns a spec by task ID.
 func (s Store) Load(ctx context.Context, taskID string) (spec.Model, string, error) {
 	if err := ctx.Err(); err != nil {
 		return spec.Model{}, "", err
@@ -66,6 +72,7 @@ func (s Store) Load(ctx context.Context, taskID string) (spec.Model, string, err
 	return model, path, nil
 }
 
+// Find returns the path for taskID across active spec directories.
 func (s Store) Find(taskID string) (string, error) {
 	root := s.Root
 	if root == "" {
@@ -98,6 +105,7 @@ func (s Store) Find(taskID string) (string, error) {
 	return "", fmt.Errorf("%w: %s", ErrSpecNotFound, taskID)
 }
 
+// List returns summaries for current non-archived task specs.
 func (s Store) List(ctx context.Context) ([]spec.Record, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -129,6 +137,7 @@ func (s Store) List(ctx context.Context) ([]spec.Record, error) {
 	return records, nil
 }
 
+// Parse converts living Markdown spec bytes into a normalized model.
 func Parse(data []byte) (spec.Model, error) {
 	if !bytes.HasPrefix(data, []byte("---\n")) {
 		return spec.Model{}, fmt.Errorf("%w: front matter is required", ErrMalformedMarkdown)
@@ -137,197 +146,379 @@ func Parse(data []byte) (spec.Model, error) {
 	if len(lines) < 3 {
 		return spec.Model{}, fmt.Errorf("%w: front matter is incomplete", ErrMalformedMarkdown)
 	}
-	end := -1
+	end, err := frontMatterEnd(lines)
+	if err != nil {
+		return spec.Model{}, err
+	}
+	front := parseFrontMatter(lines[1:end])
+	parser := newParser(front)
+	if err := parser.parseBody(lines[end+1:]); err != nil {
+		return spec.Model{}, err
+	}
+	return parser.model, nil
+}
+
+func frontMatterEnd(lines []string) (int, error) {
 	inFence := false
-	phaseIDs := map[string]bool{}
 	for i := 1; i < len(lines); i++ {
 		if strings.HasPrefix(lines[i], "```") {
 			inFence = !inFence
 		}
 		if !inFence && lines[i] == "---" {
-			end = i
-			break
+			return i, nil
 		}
 	}
 	if inFence {
-		return spec.Model{}, fmt.Errorf("%w: unclosed code fence", ErrMalformedMarkdown)
+		return 0, fmt.Errorf("%w: unclosed code fence", ErrMalformedMarkdown)
 	}
-	if end < 0 {
-		return spec.Model{}, fmt.Errorf("%w: closing front matter fence is missing", ErrMalformedMarkdown)
+	return 0, fmt.Errorf("%w: closing front matter fence is missing", ErrMalformedMarkdown)
+}
+
+type parser struct {
+	model          spec.Model
+	section        string
+	phase          *spec.Phase
+	criterion      *spec.Criterion
+	hardenRound    *spec.HardenRound
+	hardenQuestion *spec.HardenQuestion
+	phaseField     string
+	hardenField    string
+	listTarget     *([]string)
+	phaseIDs       map[string]bool
+}
+
+func newParser(front map[string]string) *parser {
+	return &parser{
+		model: spec.Model{
+			Version:      front["spec_version"],
+			TaskID:       front["task_id"],
+			Created:      front["created"],
+			Updated:      front["updated"],
+			Status:       spec.Status(front["status"]),
+			HardenStatus: spec.HardenStatus(front["harden_status"]),
+			Size:         spec.Size(front["size"]),
+			RiskLevel:    spec.RiskLevel(front["risk_level"]),
+			Metadata:     map[string]string{},
+		},
+		phaseIDs: map[string]bool{},
 	}
-	front := parseFrontMatter(lines[1:end])
-	model := spec.Model{
-		Version:      front["spec_version"],
-		TaskID:       front["task_id"],
-		Created:      front["created"],
-		Updated:      front["updated"],
-		Status:       spec.Status(front["status"]),
-		HardenStatus: spec.HardenStatus(front["harden_status"]),
-		Size:         spec.Size(front["size"]),
-		RiskLevel:    spec.RiskLevel(front["risk_level"]),
-		Metadata:     map[string]string{},
-	}
-	body := lines[end+1:]
-	var section string
-	var phase *spec.Phase
-	var criterion *spec.Criterion
-	var phaseField string
-	var listTarget *[]string
-	inFence = false
-	for _, line := range body {
+}
+
+func (p *parser) parseBody(lines []string) error {
+	inFence := false
+	for _, line := range lines {
 		if strings.HasPrefix(line, "```") {
 			inFence = !inFence
 		}
 		if inFence {
 			continue
 		}
-		if strings.HasPrefix(line, "# ") {
-			model.Title = strings.TrimSpace(strings.TrimPrefix(line, "# "))
+		handled, err := p.handleHeading(line)
+		if err != nil {
+			return err
+		}
+		if handled {
 			continue
 		}
-		if strings.HasPrefix(line, "## ") {
-			if match := phaseHeadingPattern.FindStringSubmatch(line); match != nil {
-				number, _ := strconv.Atoi(match[1])
-				id := fmt.Sprintf("phase%d", number)
-				if phaseIDs[id] {
-					return spec.Model{}, fmt.Errorf("%w: duplicate phase heading %s", ErrMalformedMarkdown, id)
-				}
-				phaseIDs[id] = true
-				model.Phases = append(model.Phases, spec.Phase{ID: id, Number: number, Name: match[2], Status: "pending"})
-				phase = &model.Phases[len(model.Phases)-1]
-				section = "phase"
-				criterion = nil
-				phaseField = ""
-				continue
-			}
-			section = strings.ToLower(strings.TrimSpace(strings.TrimPrefix(line, "## ")))
-			phase = nil
-			criterion = nil
-			phaseField = ""
-			listTarget = listForSection(&model, section)
-			continue
-		}
-		if section == "summary" && strings.TrimSpace(line) != "" {
-			if model.Summary != "" {
-				model.Summary += "\n"
-			}
-			model.Summary += line
-			continue
-		}
-		if section == "current state" {
-			parseCurrentStateLine(&model, line)
-			continue
-		}
-		if section == "acceptance" {
-			if strings.HasPrefix(line, "Profile:") {
-				model.Acceptance.ValidationProfile = strings.TrimSpace(strings.TrimPrefix(line, "Profile:"))
-				continue
-			}
-			if line == "Validation:" {
-				continue
-			}
-		}
-		if section == "review" {
-			if strings.HasPrefix(line, "Status:") {
-				model.Review.Status = strings.TrimSpace(strings.TrimPrefix(line, "Status:"))
-				continue
-			}
-			if strings.HasPrefix(line, "Verdict:") {
-				model.Review.Verdict = strings.TrimSpace(strings.TrimPrefix(line, "Verdict:"))
-				continue
-			}
-		}
-		if section == "metadata" && strings.HasPrefix(line, "- ") {
-			key, value, ok := strings.Cut(strings.TrimPrefix(line, "- "), ":")
-			if ok && strings.TrimSpace(key) != "none" {
-				model.Metadata[strings.TrimSpace(key)] = strings.TrimSpace(value)
-			}
-			continue
-		}
-		if section == "origin" {
-			if strings.HasPrefix(line, "Created by:") {
-				model.Origin.CreatedBy = strings.TrimSpace(strings.TrimPrefix(line, "Created by:"))
-			}
-			if strings.HasPrefix(line, "Source:") {
-				model.Origin.Source = strings.TrimSpace(strings.TrimPrefix(line, "Source:"))
-			}
-			continue
-		}
-		if listTarget != nil && strings.HasPrefix(line, "- ") {
-			value := strings.TrimSpace(strings.TrimPrefix(line, "- "))
-			if value != "none" && value != "" {
-				*listTarget = append(*listTarget, value)
-			}
-			continue
-		}
-		if strings.HasPrefix(line, "Status:") {
-			status := strings.TrimSpace(strings.TrimPrefix(line, "Status:"))
-			if phase != nil {
-				phase.Status = status
-			}
-			continue
-		}
-		if phase != nil {
-			if strings.HasPrefix(line, "Objective:") {
-				phase.Objective = strings.TrimSpace(strings.TrimPrefix(line, "Objective:"))
-				continue
-			}
-			if strings.HasPrefix(line, "Dependencies:") {
-				phase.Dependencies = splitCSV(strings.TrimSpace(strings.TrimPrefix(line, "Dependencies:")))
-				continue
-			}
-			if line == "Changes:" {
-				phaseField = "changes"
-				continue
-			}
-			if line == "Acceptance:" {
-				phaseField = "acceptance"
-				continue
-			}
-			if phaseField == "changes" && strings.HasPrefix(line, "- ") {
-				value := strings.TrimSpace(strings.TrimPrefix(line, "- "))
-				if value != "none" {
-					phase.Changes = append(phase.Changes, value)
-				}
-				continue
-			}
-		}
-		if match := criterionLinePattern.FindStringSubmatch(line); match != nil {
-			c := spec.Criterion{ID: match[1], Type: strings.TrimSpace(match[2]), Title: strings.TrimSpace(match[3]), ExpectedKind: acceptance.ExpectedExitCodeZero, Status: "pending"}
-			if phase != nil {
-				c.PhaseID = phase.ID
-				phase.Acceptance = append(phase.Acceptance, c)
-				criterion = &phase.Acceptance[len(phase.Acceptance)-1]
-			} else {
-				model.Acceptance.Criteria = append(model.Acceptance.Criteria, c)
-				criterion = &model.Acceptance.Criteria[len(model.Acceptance.Criteria)-1]
-			}
-			continue
-		}
-		if criterion != nil {
-			if match := commandLinePattern.FindStringSubmatch(line); match != nil {
-				criterion.Command = match[1]
-			}
-			if match := expectedLinePattern.FindStringSubmatch(line); match != nil {
-				criterion.ExpectedKind = acceptance.ExpectedKind(match[1])
-			}
-			if match := statusLinePattern.FindStringSubmatch(line); match != nil {
-				criterion.Status = match[1]
-			}
-			if match := evidenceLinePattern.FindStringSubmatch(line); match != nil {
-				criterion.Evidence = match[1]
-			}
-			if match := sourceLinePattern.FindStringSubmatch(line); match != nil {
-				criterion.SourceEvent = match[1]
-			}
-		}
+		p.handleLine(line)
 	}
 	if inFence {
-		return spec.Model{}, fmt.Errorf("%w: unclosed code fence", ErrMalformedMarkdown)
+		return fmt.Errorf("%w: unclosed code fence", ErrMalformedMarkdown)
 	}
-	return model, nil
+	return nil
 }
 
+func (p *parser) handleHeading(line string) (bool, error) {
+	if strings.HasPrefix(line, "# ") {
+		p.model.Title = strings.TrimSpace(strings.TrimPrefix(line, "# "))
+		return true, nil
+	}
+	if !strings.HasPrefix(line, "## ") {
+		return false, nil
+	}
+	if match := phaseHeadingPattern.FindStringSubmatch(line); match != nil {
+		return true, p.startPhase(match)
+	}
+	p.startSection(strings.ToLower(strings.TrimSpace(strings.TrimPrefix(line, "## "))))
+	return true, nil
+}
+
+func (p *parser) startPhase(match []string) error {
+	number, _ := strconv.Atoi(match[1])
+	id := fmt.Sprintf("phase%d", number)
+	if p.phaseIDs[id] {
+		return fmt.Errorf("%w: duplicate phase heading %s", ErrMalformedMarkdown, id)
+	}
+	p.phaseIDs[id] = true
+	p.model.Phases = append(p.model.Phases, spec.Phase{ID: id, Number: number, Name: match[2], Status: "pending"})
+	p.phase = &p.model.Phases[len(p.model.Phases)-1]
+	p.section = "phase"
+	p.criterion = nil
+	p.hardenRound = nil
+	p.hardenQuestion = nil
+	p.phaseField = ""
+	p.hardenField = ""
+	p.listTarget = nil
+	return nil
+}
+
+func (p *parser) startSection(section string) {
+	p.section = section
+	p.phase = nil
+	p.criterion = nil
+	p.hardenRound = nil
+	p.hardenQuestion = nil
+	p.phaseField = ""
+	p.hardenField = ""
+	p.listTarget = listForSection(&p.model, section)
+}
+
+func (p *parser) handleLine(line string) {
+	switch {
+	case p.appendSummary(line):
+	case p.handleCurrentState(line):
+	case p.handleAcceptance(line):
+	case p.handleReview(line):
+	case p.handleMetadata(line):
+	case p.handleOrigin(line):
+	case p.handleHardenLine(line):
+	case p.handleListItem(line):
+	case p.handlePhaseLine(line):
+	case p.handleCriterionStart(line):
+	default:
+		p.handleCriterionDetail(line)
+	}
+}
+
+func (p *parser) appendSummary(line string) bool {
+	if p.section != "summary" || strings.TrimSpace(line) == "" {
+		return false
+	}
+	if p.model.Summary != "" {
+		p.model.Summary += "\n"
+	}
+	p.model.Summary += line
+	return true
+}
+
+func (p *parser) handleCurrentState(line string) bool {
+	if p.section != "current state" {
+		return false
+	}
+	parseCurrentStateLine(&p.model, line)
+	return true
+}
+
+func (p *parser) handleAcceptance(line string) bool {
+	if p.section != "acceptance" {
+		return false
+	}
+	if strings.HasPrefix(line, "Profile:") {
+		p.model.Acceptance.ValidationProfile = strings.TrimSpace(strings.TrimPrefix(line, "Profile:"))
+	}
+	return line == "Validation:" || strings.HasPrefix(line, "Profile:")
+}
+
+func (p *parser) handleReview(line string) bool {
+	if p.section != "review" {
+		return false
+	}
+	if strings.HasPrefix(line, "Status:") {
+		p.model.Review.Status = strings.TrimSpace(strings.TrimPrefix(line, "Status:"))
+	}
+	if strings.HasPrefix(line, "Verdict:") {
+		p.model.Review.Verdict = strings.TrimSpace(strings.TrimPrefix(line, "Verdict:"))
+	}
+	return strings.HasPrefix(line, "Status:") || strings.HasPrefix(line, "Verdict:")
+}
+
+func (p *parser) handleMetadata(line string) bool {
+	if p.section != "metadata" || !strings.HasPrefix(line, "- ") {
+		return false
+	}
+	key, value, ok := strings.Cut(strings.TrimPrefix(line, "- "), ":")
+	if ok && strings.TrimSpace(key) != "none" {
+		p.model.Metadata[strings.TrimSpace(key)] = strings.TrimSpace(value)
+	}
+	return true
+}
+
+func (p *parser) handleOrigin(line string) bool {
+	if p.section != "origin" {
+		return false
+	}
+	if strings.HasPrefix(line, "Created by:") {
+		p.model.Origin.CreatedBy = strings.TrimSpace(strings.TrimPrefix(line, "Created by:"))
+	}
+	if strings.HasPrefix(line, "Source:") {
+		p.model.Origin.Source = strings.TrimSpace(strings.TrimPrefix(line, "Source:"))
+	}
+	return true
+}
+
+func (p *parser) handleHardenLine(line string) bool {
+	if p.section != "harden rounds" {
+		return false
+	}
+	trimmed := strings.TrimSpace(line)
+	switch {
+	case trimmed == "":
+		return true
+	case strings.HasPrefix(line, "### "):
+		p.startHardenRound(strings.TrimSpace(strings.TrimPrefix(line, "### ")))
+		return true
+	case strings.HasPrefix(line, "Status:") && p.hardenRound != nil:
+		p.hardenRound.Status = strings.TrimSpace(strings.TrimPrefix(line, "Status:"))
+		return true
+	case strings.HasPrefix(line, "Started:") && p.hardenRound != nil:
+		p.hardenRound.StartedAt = noneToEmpty(strings.TrimSpace(strings.TrimPrefix(line, "Started:")))
+		return true
+	case strings.HasPrefix(line, "Ended:") && p.hardenRound != nil:
+		p.hardenRound.EndedAt = noneToEmpty(strings.TrimSpace(strings.TrimPrefix(line, "Ended:")))
+		return true
+	case line == "Questions:":
+		p.hardenField = "questions"
+		return true
+	}
+	if strings.HasPrefix(line, "- ") {
+		return p.handleHardenBullet(strings.TrimSpace(strings.TrimPrefix(line, "- ")))
+	}
+	if strings.HasPrefix(line, "  - ") {
+		return p.handleHardenQuestionDetail(strings.TrimSpace(strings.TrimPrefix(line, "  - ")))
+	}
+	return true
+}
+
+func (p *parser) startHardenRound(id string) {
+	p.model.HardenRounds = append(p.model.HardenRounds, spec.HardenRound{ID: id})
+	p.hardenRound = &p.model.HardenRounds[len(p.model.HardenRounds)-1]
+	p.hardenQuestion = nil
+	p.hardenField = ""
+}
+
+func (p *parser) handleHardenBullet(value string) bool {
+	if value == "" || value == "none" {
+		return true
+	}
+	if p.hardenRound == nil {
+		id, status, ok := strings.Cut(value, ":")
+		if ok {
+			p.model.HardenRounds = append(p.model.HardenRounds, spec.HardenRound{
+				ID:     strings.TrimSpace(id),
+				Status: strings.TrimSpace(status),
+			})
+		}
+		return true
+	}
+	if p.hardenField == "questions" {
+		p.hardenRound.Questions = append(p.hardenRound.Questions, spec.HardenQuestion{Question: value})
+		p.hardenQuestion = &p.hardenRound.Questions[len(p.hardenRound.Questions)-1]
+	}
+	return true
+}
+
+func (p *parser) handleHardenQuestionDetail(value string) bool {
+	if p.hardenQuestion == nil {
+		return true
+	}
+	key, body, ok := strings.Cut(value, ":")
+	if !ok {
+		return true
+	}
+	body = strings.TrimSpace(body)
+	switch strings.ToLower(strings.TrimSpace(key)) {
+	case "grounded in":
+		p.hardenQuestion.GroundedIn = body
+	case "recommended answer":
+		p.hardenQuestion.RecommendedAnswer = body
+	case "if unanswered":
+		p.hardenQuestion.IfUnanswered = body
+	case "answered with":
+		p.hardenQuestion.AnsweredWith = body
+	}
+	return true
+}
+
+func (p *parser) handleListItem(line string) bool {
+	if p.listTarget == nil || !strings.HasPrefix(line, "- ") {
+		return false
+	}
+	value := strings.TrimSpace(strings.TrimPrefix(line, "- "))
+	if value != "none" && value != "" {
+		*p.listTarget = append(*p.listTarget, value)
+	}
+	return true
+}
+
+func (p *parser) handlePhaseLine(line string) bool {
+	if p.phase == nil {
+		return false
+	}
+	switch {
+	case strings.HasPrefix(line, "Status:"):
+		p.phase.Status = strings.TrimSpace(strings.TrimPrefix(line, "Status:"))
+	case strings.HasPrefix(line, "Objective:"):
+		p.phase.Objective = strings.TrimSpace(strings.TrimPrefix(line, "Objective:"))
+	case strings.HasPrefix(line, "Dependencies:"):
+		p.phase.Dependencies = splitCSV(strings.TrimSpace(strings.TrimPrefix(line, "Dependencies:")))
+	case line == "Changes:":
+		p.phaseField = "changes"
+	case line == "Acceptance:":
+		p.phaseField = "acceptance"
+	case p.phaseField == "changes" && strings.HasPrefix(line, "- "):
+		p.appendPhaseChange(line)
+	default:
+		return false
+	}
+	return true
+}
+
+func (p *parser) appendPhaseChange(line string) {
+	value := strings.TrimSpace(strings.TrimPrefix(line, "- "))
+	if value != "none" {
+		p.phase.Changes = append(p.phase.Changes, value)
+	}
+}
+
+func (p *parser) handleCriterionStart(line string) bool {
+	match := criterionLinePattern.FindStringSubmatch(line)
+	if match == nil {
+		return false
+	}
+	c := spec.Criterion{ID: match[1], Type: strings.TrimSpace(match[2]), Title: strings.TrimSpace(match[3]), ExpectedKind: acceptance.ExpectedExitCodeZero, Status: "pending"}
+	if p.phase != nil {
+		c.PhaseID = p.phase.ID
+		p.phase.Acceptance = append(p.phase.Acceptance, c)
+		p.criterion = &p.phase.Acceptance[len(p.phase.Acceptance)-1]
+		return true
+	}
+	p.model.Acceptance.Criteria = append(p.model.Acceptance.Criteria, c)
+	p.criterion = &p.model.Acceptance.Criteria[len(p.model.Acceptance.Criteria)-1]
+	return true
+}
+
+func (p *parser) handleCriterionDetail(line string) {
+	if p.criterion == nil {
+		return
+	}
+	if match := commandLinePattern.FindStringSubmatch(line); match != nil {
+		p.criterion.Command = match[1]
+	}
+	if match := expectedLinePattern.FindStringSubmatch(line); match != nil {
+		p.criterion.ExpectedKind = acceptance.ExpectedKind(match[1])
+	}
+	if match := statusLinePattern.FindStringSubmatch(line); match != nil {
+		p.criterion.Status = match[1]
+	}
+	if match := evidenceLinePattern.FindStringSubmatch(line); match != nil {
+		p.criterion.Evidence = match[1]
+	}
+	if match := sourceLinePattern.FindStringSubmatch(line); match != nil {
+		p.criterion.SourceEvent = match[1]
+	}
+}
+
+// Render converts a normalized model into canonical living Markdown.
 func Render(model spec.Model) []byte {
 	var b strings.Builder
 	writeFrontMatter(&b, model)
@@ -396,7 +587,7 @@ func Render(model spec.Model) []byte {
 		fmt.Fprintf(&b, "- none\n")
 	} else {
 		for _, round := range model.HardenRounds {
-			fmt.Fprintf(&b, "- %s: %s\n", round.ID, round.Status)
+			renderHardenRound(&b, round)
 		}
 	}
 	fmt.Fprintf(&b, "\n## Planning Log\n\n")
@@ -408,6 +599,34 @@ func Render(model spec.Model) []byte {
 		}
 	}
 	return []byte(b.String())
+}
+
+func renderHardenRound(b *strings.Builder, round spec.HardenRound) {
+	fmt.Fprintf(b, "### %s\n\n", fallback(round.ID, "round"))
+	fmt.Fprintf(b, "Status: %s\n", fallback(round.Status, "in_progress"))
+	fmt.Fprintf(b, "Started: %s\n", fallback(round.StartedAt, "none"))
+	fmt.Fprintf(b, "Ended: %s\n\n", fallback(round.EndedAt, "none"))
+	fmt.Fprintf(b, "Questions:\n")
+	if len(round.Questions) == 0 {
+		fmt.Fprintf(b, "- none\n\n")
+		return
+	}
+	for _, question := range round.Questions {
+		fmt.Fprintf(b, "- %s\n", fallback(question.Question, "Question not recorded."))
+		if question.GroundedIn != "" {
+			fmt.Fprintf(b, "  - Grounded in: %s\n", question.GroundedIn)
+		}
+		if question.RecommendedAnswer != "" {
+			fmt.Fprintf(b, "  - Recommended answer: %s\n", question.RecommendedAnswer)
+		}
+		if question.IfUnanswered != "" {
+			fmt.Fprintf(b, "  - If unanswered: %s\n", question.IfUnanswered)
+		}
+		if question.AnsweredWith != "" {
+			fmt.Fprintf(b, "  - Answered with: %s\n", question.AnsweredWith)
+		}
+	}
+	fmt.Fprintf(b, "\n")
 }
 
 func writeSpec(ctx context.Context, path string, model spec.Model) error {
@@ -520,6 +739,13 @@ func checked(status string) string {
 func fallback(value, fb string) string {
 	if strings.TrimSpace(value) == "" {
 		return fb
+	}
+	return value
+}
+
+func noneToEmpty(value string) string {
+	if strings.EqualFold(strings.TrimSpace(value), "none") {
+		return ""
 	}
 	return value
 }

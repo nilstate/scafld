@@ -13,14 +13,17 @@ import (
 	"github.com/nilstate/scafld/v2/internal/platform/atomicfile"
 )
 
+// ErrSessionNotFound is returned when a task has no session ledger.
 var ErrSessionNotFound = errors.New("session not found")
 
+// SessionStore persists session ledgers below .scafld/runs.
 type SessionStore struct {
 	Root string
 }
 
 var lockMap sync.Map
 
+// Load reads and replays the session ledger for taskID.
 func (s SessionStore) Load(ctx context.Context, taskID string) (session.Session, error) {
 	if err := ctx.Err(); err != nil {
 		return session.Session{}, err
@@ -40,6 +43,7 @@ func (s SessionStore) Load(ctx context.Context, taskID string) (session.Session,
 	return session.Replay(ledger), nil
 }
 
+// Save atomically replaces the session ledger.
 func (s SessionStore) Save(ctx context.Context, ledger session.Session) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -51,6 +55,7 @@ func (s SessionStore) Save(ctx context.Context, ledger session.Session) error {
 	return s.writeLocked(path, session.Replay(ledger))
 }
 
+// Append appends one evidence entry and atomically writes the replayed ledger.
 func (s SessionStore) Append(ctx context.Context, taskID string, entry session.Entry, now string) (session.Session, error) {
 	if err := ctx.Err(); err != nil {
 		return session.Session{}, err

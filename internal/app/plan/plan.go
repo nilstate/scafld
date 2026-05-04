@@ -10,16 +10,20 @@ import (
 	"github.com/nilstate/scafld/v2/internal/core/spec"
 )
 
+// ErrMissingSpecStore is returned when planning has no spec store.
 var ErrMissingSpecStore = errors.New("missing spec store")
 
+// SpecStore is the spec creation port used by planning.
 type SpecStore interface {
 	CreateDraft(context.Context, spec.Model) (string, error)
 }
 
+// Clock supplies planning timestamps.
 type Clock interface {
 	Now() time.Time
 }
 
+// Input describes the operator-provided draft spec fields.
 type Input struct {
 	TaskID  string
 	Title   string
@@ -29,12 +33,14 @@ type Input struct {
 	Risk    string
 }
 
+// Output describes the created draft spec.
 type Output struct {
 	TaskID string
 	Path   string
 	Status spec.Status
 }
 
+// Run creates a draft spec from input.
 func Run(ctx context.Context, store SpecStore, clock Clock, input Input) (Output, error) {
 	if store == nil {
 		return Output{}, ErrMissingSpecStore

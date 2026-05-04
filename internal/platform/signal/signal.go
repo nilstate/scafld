@@ -8,20 +8,24 @@ import (
 	"syscall"
 )
 
+// Handler tracks interrupt state and stops signal handling.
 type Handler struct {
 	Interrupts atomic.Int32
 	escalated  atomic.Bool
 	stop       func()
 }
 
+// Options configures interrupt escalation behavior.
 type Options struct {
 	Escalate func()
 }
 
+// RootContext returns a cancellable root context controlled by OS interrupts.
 func RootContext(parent context.Context) (context.Context, *Handler) {
 	return RootContextWithOptions(parent, Options{})
 }
 
+// RootContextWithOptions returns an interrupt-controlled root context.
 func RootContextWithOptions(parent context.Context, opts Options) (context.Context, *Handler) {
 	if parent == nil {
 		parent = context.Background()
@@ -54,6 +58,7 @@ func (h *Handler) record(cancel context.CancelFunc, opts Options) {
 	cancel()
 }
 
+// Stop unregisters signal handling and cancels the root context.
 func (h *Handler) Stop() {
 	if h == nil || h.stop == nil {
 		return
@@ -62,6 +67,7 @@ func (h *Handler) Stop() {
 	h.stop = nil
 }
 
+// Escalated reports whether a second interrupt requested escalation.
 func (h *Handler) Escalated() bool {
 	return h != nil && h.escalated.Load()
 }

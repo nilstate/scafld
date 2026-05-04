@@ -5,10 +5,12 @@ import (
 	"testing"
 )
 
+// UpdateEnabled reports whether golden assertions should rewrite fixtures.
 func UpdateEnabled() bool {
 	return os.Getenv("SCAFLD_UPDATE_GOLDEN") == "1"
 }
 
+// Assert compares got to the golden file at path, optionally updating it.
 func Assert(t *testing.T, path string, got []byte) {
 	t.Helper()
 	if UpdateEnabled() {

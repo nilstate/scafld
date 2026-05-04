@@ -1,3 +1,4 @@
+// Package cli translates command-line arguments into application use cases.
 package cli
 
 import (
@@ -5,20 +6,22 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"runtime/debug"
 	"strings"
-	"time"
 
+	hardencli "github.com/nilstate/scafld/v2/internal/adapters/cli/harden"
+	reviewcli "github.com/nilstate/scafld/v2/internal/adapters/cli/review"
 	"github.com/nilstate/scafld/v2/internal/adapters/clock"
+	"github.com/nilstate/scafld/v2/internal/adapters/corebundle"
 	"github.com/nilstate/scafld/v2/internal/adapters/filesystem"
 	"github.com/nilstate/scafld/v2/internal/adapters/git"
 	"github.com/nilstate/scafld/v2/internal/adapters/markdown"
 	"github.com/nilstate/scafld/v2/internal/adapters/process"
-	"github.com/nilstate/scafld/v2/internal/adapters/providers"
 	"github.com/nilstate/scafld/v2/internal/app/approve"
 	"github.com/nilstate/scafld/v2/internal/app/bootstrap"
 	"github.com/nilstate/scafld/v2/internal/app/build"
-	execusecase "github.com/nilstate/scafld/v2/internal/app/execspec"
 	"github.com/nilstate/scafld/v2/internal/app/handoff"
+	"github.com/nilstate/scafld/v2/internal/app/harden"
 	listusecase "github.com/nilstate/scafld/v2/internal/app/list"
 	"github.com/nilstate/scafld/v2/internal/app/plan"
 	"github.com/nilstate/scafld/v2/internal/app/report"
@@ -27,21 +30,29 @@ import (
 	"github.com/nilstate/scafld/v2/internal/app/validate"
 )
 
-var version = "0.0.0-dev"
+var version string
 
 const (
-	ExitSuccess    = 0
-	ExitGeneric    = 1
-	ExitInvalid    = 2
+	// ExitSuccess indicates successful command completion.
+	ExitSuccess = 0
+	// ExitGeneric indicates an uncategorized runtime failure.
+	ExitGeneric = 1
+	// ExitInvalid indicates invalid command-line input.
+	ExitInvalid = 2
+	// ExitValidation indicates spec or acceptance validation failure.
 	ExitValidation = 3
-	ExitReview     = 4
-	ExitCancelled  = 5
-	ExitWorkspace  = 6
+	// ExitReview indicates the adversarial review gate failed.
+	ExitReview = 4
+	// ExitCancelled indicates cancellation by context or signal.
+	ExitCancelled = 5
+	// ExitWorkspace indicates workspace discovery or setup failure.
+	ExitWorkspace = 6
 )
 
 var commands = []command{
 	{"init", "Bootstrap a scafld workspace"},
 	{"plan", "Create a draft task spec"},
+	{"harden", "Stress-test a draft spec before approval"},
 	{"validate", "Validate a task spec"},
 	{"approve", "Approve a draft spec"},
 	{"build", "Execute approved work"},
@@ -58,7 +69,32 @@ var commands = []command{
 }
 
 type command struct{ name, summary string }
+type commandHandler func(context.Context, []string, io.Writer, io.Writer) int
 
+var commandHandlers = map[string]commandHandler{
+	"init":     runInit,
+	"plan":     runPlan,
+	"harden":   runHarden,
+	"validate": runValidate,
+	"approve":  runApprove,
+	"build": func(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer) int {
+		return runBuild(ctx, args, stdout, stderr, false)
+	},
+	"exec": func(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer) int {
+		return runBuild(ctx, args, stdout, stderr, true)
+	},
+	"review":   runReview,
+	"complete": runComplete,
+	"fail":     runFail,
+	"cancel":   runCancel,
+	"status":   runStatus,
+	"list":     runList,
+	"report":   runReport,
+	"handoff":  runHandoff,
+	"update":   runUpdate,
+}
+
+// Run executes the CLI command and returns the process exit code.
 func Run(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer) int {
 	if ctx == nil {
 		ctx = context.Background()
@@ -69,49 +105,52 @@ func Run(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer)
 		return ExitSuccess
 	}
 	if args[0] == "--version" || args[0] == "version" {
-		fmt.Fprintln(stdout, version)
+		fmt.Fprintln(stdout, displayVersion())
 		return ExitSuccess
 	}
 	if len(args) > 1 && (args[1] == "-h" || args[1] == "--help") && knownCommand(args[0]) {
 		printCommandHelp(stdout, args[0])
 		return ExitSuccess
 	}
-	switch args[0] {
-	case "init":
-		return runInit(ctx, args[1:], stdout, stderr)
-	case "plan":
-		return runPlan(ctx, args[1:], stdout, stderr)
-	case "validate":
-		return runValidate(ctx, args[1:], stdout, stderr)
-	case "approve":
-		return runApprove(ctx, args[1:], stdout, stderr)
-	case "build":
-		return runBuild(ctx, args[1:], stdout, stderr, false)
-	case "exec":
-		return runBuild(ctx, args[1:], stdout, stderr, true)
-	case "review":
-		return runReview(ctx, args[1:], stdout, stderr)
-	case "complete":
-		return runComplete(ctx, args[1:], stdout, stderr)
-	case "fail":
-		return runFail(ctx, args[1:], stdout, stderr)
-	case "cancel":
-		return runCancel(ctx, args[1:], stdout, stderr)
-	case "status":
-		return runStatus(ctx, args[1:], stdout, stderr)
-	case "list":
-		return runList(ctx, args[1:], stdout, stderr)
-	case "report":
-		return runReport(ctx, args[1:], stdout, stderr)
-	case "handoff":
-		return runHandoff(ctx, args[1:], stdout, stderr)
-	case "update":
-		fmt.Fprintln(stdout, "scafld core is up to date")
-		return ExitSuccess
-	default:
-		fmt.Fprintf(stderr, "error: unknown command %q\n", args[0])
-		return ExitInvalid
+	if handler := commandHandlers[args[0]]; handler != nil {
+		return handler(ctx, args[1:], stdout, stderr)
 	}
+	fmt.Fprintf(stderr, "error: unknown command %q\n", args[0])
+	return ExitInvalid
+}
+
+func displayVersion() string {
+	if version != "" {
+		return strings.TrimPrefix(version, "v")
+	}
+	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
+		return strings.TrimPrefix(info.Main.Version, "v")
+	}
+	return "dev"
+}
+
+func runUpdate(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer) int {
+	opts, err := parseOptions(args)
+	if err != nil {
+		return failOut(stderr, err, ExitInvalid, opts.JSON)
+	}
+	root, err := commandRoot(ctx, opts, false)
+	if err != nil {
+		return failOut(stderr, err, ExitWorkspace, opts.JSON)
+	}
+	result, err := corebundle.Update(ctx, root)
+	if err != nil {
+		return failOut(stderr, fmt.Errorf("update core bundle: %w", err), ExitGeneric, opts.JSON)
+	}
+	agentDocs, err := corebundle.RefreshAgentDocs(ctx, root)
+	if err != nil {
+		return failOut(stderr, fmt.Errorf("refresh agent docs: %w", err), ExitGeneric, opts.JSON)
+	}
+	result.Created = append(result.Created, agentDocs.Created...)
+	result.Updated = append(result.Updated, agentDocs.Updated...)
+	result.Skipped = append(result.Skipped, agentDocs.Skipped...)
+	text := fmt.Sprintf("refreshed scafld core: %d updated, %d created\n", len(result.Updated), len(result.Created))
+	return okOut(stdout, "update", result, text, opts.JSON)
 }
 
 func runInit(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer) int {
@@ -126,6 +165,18 @@ func runInit(ctx context.Context, args []string, stdout io.Writer, stderr io.Wri
 	result, err := bootstrap.Run(ctx, filesystem.WorkspaceStore{}, bootstrap.Input{Root: root})
 	if err != nil {
 		return failOut(stderr, fmt.Errorf("init workspace: %w", err), ExitWorkspace, opts.JSON)
+	}
+	bundle, err := corebundle.Init(ctx, result.Root)
+	if err != nil {
+		return failOut(stderr, fmt.Errorf("install core bundle: %w", err), ExitWorkspace, opts.JSON)
+	}
+	result.Created = append(result.Created, bundle.Created...)
+	if !opts.Flags["no-agent-docs"] {
+		agentDocs, err := corebundle.InitAgentDocs(ctx, result.Root)
+		if err != nil {
+			return failOut(stderr, fmt.Errorf("install agent docs: %w", err), ExitWorkspace, opts.JSON)
+		}
+		result.Created = append(result.Created, agentDocs.Created...)
 	}
 	return okOut(stdout, "init", result, fmt.Sprintf("initialized scafld workspace: %s\n", result.Root), opts.JSON)
 }
@@ -168,6 +219,39 @@ func runValidate(ctx context.Context, args []string, stdout io.Writer, stderr io
 	return okOut(stdout, "validate", out, fmt.Sprintf("valid spec: %s\n", out.TaskID), opts.JSON)
 }
 
+func runHarden(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer) int {
+	opts, err := oneTask(args, "harden")
+	if err != nil {
+		return failOut(stderr, err, ExitInvalid, opts.JSON)
+	}
+	store, _, code, err := stores(ctx, opts)
+	if err != nil {
+		return failOut(stderr, err, code, opts.JSON)
+	}
+	root, _ := commandRoot(ctx, opts, false)
+	out, err := harden.Run(ctx, store, clock.System{}, harden.Input{
+		TaskID:     opts.Positionals[0],
+		MarkPassed: opts.Flags["mark-passed"],
+		Root:       root,
+		Prompt:     hardencli.Prompt(ctx, root),
+	})
+	if err != nil {
+		return failOut(stderr, err, ExitValidation, opts.JSON)
+	}
+	if opts.JSON {
+		return okOut(stdout, "harden", out, "", true)
+	}
+	if out.MarkedPassed {
+		for _, warning := range out.Warnings {
+			fmt.Fprintf(stderr, "warn: %s\n", warning)
+		}
+		return okOut(stdout, "harden", out, fmt.Sprintf("harden passed: %s\nnext: %s\n", out.TaskID, out.NextCommand), false)
+	}
+	fmt.Fprint(stdout, out.Prompt)
+	fmt.Fprintf(stdout, "\n---\nspec: %s\nround: %s\nwhen done, mark the round passed: %s\n", out.Path, out.RoundID, out.NextCommand)
+	return ExitSuccess
+}
+
 func runApprove(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer) int {
 	opts, err := oneTask(args, "approve")
 	if err != nil {
@@ -184,7 +268,7 @@ func runApprove(ctx context.Context, args []string, stdout io.Writer, stderr io.
 	return okOut(stdout, "approve", out, fmt.Sprintf("approved spec: %s\n", out.TaskID), opts.JSON)
 }
 
-func runBuild(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer, selected bool) int {
+func runBuild(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer, _ bool) int {
 	opts, err := oneTask(args, "build")
 	if err != nil {
 		return failOut(stderr, err, ExitInvalid, opts.JSON)
@@ -195,10 +279,6 @@ func runBuild(ctx context.Context, args []string, stdout io.Writer, stderr io.Wr
 	}
 	root, _ := commandRoot(ctx, opts, false)
 	runner := process.Runner{DiagnosticsDir: root + "/.scafld/runs/" + opts.Positionals[0] + "/diagnostics"}
-	if selected {
-		out, err := execusecase.Run(ctx, store, sessions, runner, clock.System{}, execusecase.Input{TaskID: opts.Positionals[0], CWD: root})
-		return buildOut(stdout, stderr, out, err, opts.JSON)
-	}
 	out, err := build.Run(ctx, store, sessions, runner, clock.System{}, build.Input{TaskID: opts.Positionals[0], CWD: root})
 	return buildOut(stdout, stderr, out, err, opts.JSON)
 }
@@ -224,11 +304,21 @@ func runReview(ctx context.Context, args []string, stdout io.Writer, stderr io.W
 		return failOut(stderr, err, code, opts.JSON)
 	}
 	root, _ := commandRoot(ctx, opts, false)
-	provider, err := selectedReviewProvider(opts, root, opts.Positionals[0])
+	selected, err := reviewcli.Select(ctx, reviewcli.Options{
+		Root:           root,
+		TaskID:         opts.Positionals[0],
+		Provider:       opts.Values["provider"],
+		Command:        opts.Values["provider-command"],
+		ProviderBinary: opts.Values["provider-binary"],
+		Model:          opts.Values["model"],
+	})
 	if err != nil {
 		return failOut(stderr, err, ExitInvalid, opts.JSON)
 	}
-	out, err := review.Run(ctx, store, sessions, git.Adapter{Root: root}, provider, clock.System{}, opts.Positionals[0])
+	out, err := review.RunWithInput(ctx, store, sessions, git.Adapter{Root: root}, selected.Provider, clock.System{}, review.Input{
+		TaskID: opts.Positionals[0],
+		Passes: selected.Passes,
+	})
 	if err != nil {
 		return failOut(stderr, err, ExitReview, opts.JSON)
 	}
@@ -237,45 +327,6 @@ func runReview(ctx context.Context, args []string, stdout io.Writer, stderr io.W
 		exit = ExitReview
 	}
 	return okOut(stdout, "review", out, fmt.Sprintf("review verdict: %s\n", out.Verdict), opts.JSON, exit)
-}
-
-func selectedReviewProvider(opts options, root string, taskID string) (review.Provider, error) {
-	runner := process.Runner{DiagnosticsDir: root + "/.scafld/runs/" + taskID + "/diagnostics"}
-	if command := opts.Values["provider-command"]; command != "" {
-		return providers.CommandProvider{
-			Command:     command,
-			CWD:         root,
-			Runner:      runner,
-			Timeout:     30 * time.Minute,
-			IdleTimeout: 2 * time.Minute,
-		}, nil
-	}
-	switch provider := opts.Values["provider"]; provider {
-	case "", "local":
-		return providers.LocalProvider{}, nil
-	case "command":
-		return nil, errors.New("--provider=command requires --provider-command")
-	case "claude":
-		return providers.ClaudeProvider{
-			Binary:      opts.Values["provider-binary"],
-			Model:       opts.Values["model"],
-			CWD:         root,
-			Runner:      runner,
-			Timeout:     30 * time.Minute,
-			IdleTimeout: 2 * time.Minute,
-		}, nil
-	case "codex", "auto":
-		return providers.CodexProvider{
-			Binary:      opts.Values["provider-binary"],
-			Model:       opts.Values["model"],
-			CWD:         root,
-			Runner:      runner,
-			Timeout:     30 * time.Minute,
-			IdleTimeout: 2 * time.Minute,
-		}, nil
-	default:
-		return nil, fmt.Errorf("unknown review provider %q", provider)
-	}
 }
 
 func runComplete(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer) int {

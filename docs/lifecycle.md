@@ -1,156 +1,123 @@
 ---
 title: Lifecycle
-description: Spec states, transitions, and the filesystem state machine
+description: Spec states, transitions, and evidence flow
 ---
 
 # Lifecycle
 
-Every scafld spec moves through a defined lifecycle. The filesystem is the state machine; the directory a spec lives in determines its status. No database, no lock files, no hidden state.
+scafld keeps workflow state visible in the filesystem and durable in the
+session ledger. Specs move through `.scafld/specs/`; runtime evidence lives
+under `.scafld/runs/`.
 
 ## States
 
 | Status | Directory | Description |
 |--------|-----------|-------------|
-| `draft` | `drafts/` | Spec is being written. Not yet reviewed. |
-| `under_review` | `drafts/` | Spec is ready for human review. Status field updated, file stays in drafts. |
-| `approved` | `approved/` | Spec has been reviewed and accepted. Ready for execution. |
-| `in_progress` | `active/` | An agent is actively working against this spec. |
-| `review` | `active/` | Work is complete, undergoing automated and manual review. |
-| `completed` | `archive/YYYY-MM/` | All acceptance criteria passed. Archived with review artifact. |
-| `failed` | `archive/YYYY-MM/` | Work did not meet acceptance criteria. Archived with failure record. |
-| `cancelled` | `archive/YYYY-MM/` | Spec was abandoned before completion. |
+| `draft` | `drafts/` | Spec is being written and hardened. |
+| `approved` | `approved/` | Human accepted the contract. Ready to execute. |
+| `active` | `active/` | Acceptance criteria are being executed. |
+| `blocked` | `active/` | Execution found a blocking failure. |
+| `review` | `active/` | Work reached the adversarial review gate. |
+| `completed` | `archive/YYYY-MM/` | Review passed and work was archived. |
+| `failed` | `archive/YYYY-MM/` | Work was explicitly failed. |
+| `cancelled` | `archive/YYYY-MM/` | Work was abandoned before completion. |
 
-## Transitions
+Typical path:
 
-```
-draft ──→ under_review ──→ approved ──→ in_progress ──→ review ──→ completed
-                                                          │          │
-                                                          ├──→ failed
-                                                          │
-                                                    cancelled
+```text
+draft -> approved -> active -> review -> completed
 ```
 
-Each transition is triggered by a CLI command:
+Hardening is tracked separately with `harden_status` so it can be repeated and
+audited without inventing another lifecycle directory.
+
+## Commands
 
 ```bash
-scafld approve add-auth    # drafts/ → approved/
-scafld build add-auth      # approved/ → active/ and execution
-scafld complete add-auth   # active/ → archive/YYYY-MM/
-scafld fail add-auth       # active/ → archive/YYYY-MM/
-scafld cancel add-auth     # any → archive/YYYY-MM/
+scafld plan add-auth
+scafld harden add-auth
+scafld harden add-auth --mark-passed
+scafld validate add-auth
+scafld approve add-auth
+scafld build add-auth
+scafld review add-auth
+scafld complete add-auth
 ```
 
-Default execution is phase-scoped:
-
-- `scafld build` activates the task when needed, then runs the current open phase only
-- if that phase passes, scafld emits the next phase handoff and stops at that boundary
-- the next phase does not execute until another explicit `scafld build` or `scafld exec`
-- `scafld exec` follows the same default unless `--phase <id>` is supplied explicitly
-
-## Filesystem as state machine
-
-The directory structure enforces the lifecycle mechanically. A spec in
-`approved/` cannot be executed until `scafld build` activates it. A spec in
-`active/` cannot be archived until it passes review or is explicitly failed.
-
-This design is deliberate. The filesystem is auditable, diffable, and requires no runtime process. You can inspect the state of every spec with `ls`:
+Failure paths:
 
 ```bash
-ls .scafld/specs/drafts/      # what's being planned
-ls .scafld/specs/approved/     # what's ready to execute
-ls .scafld/specs/active/       # what's in flight
-ls .scafld/specs/archive/      # what's done
+scafld fail add-auth --reason "acceptance cannot be satisfied"
+scafld cancel add-auth --reason "replaced by narrower task"
 ```
 
-## Archive structure
+## Filesystem State
 
-Completed, failed, and cancelled specs are archived by month:
-
-```
-archive/
-  2026-04/
-    add-auth.md
-    refactor-db.md
-  2026-03/
-    upgrade-deps.md
+```text
+.scafld/specs/
+  drafts/
+  approved/
+  active/
+  archive/
+    2026-05/
 ```
 
-The archive preserves the full spec including the review artifact, self-evaluation, and any deviation records. It's a complete audit trail of every task the project has executed.
-
-## Concurrent specs
-
-Multiple specs can be active simultaneously. Each spec tracks its own state independently. If two specs touch overlapping files, the scope audit will flag the conflict.
-
-## Status queries
+The directory a spec lives in matches its lifecycle status. You should be able
+to answer "what is in flight?" with:
 
 ```bash
-# List all specs by status
-scafld list
-scafld list active
-scafld list draft
-scafld list stale-active
-scafld list superseded
+ls .scafld/specs/active
+```
 
-# Detailed status for a specific spec
+## Evidence Ordering
+
+When a command changes runtime state, scafld writes the session first and then
+projects the current state back into the Markdown spec.
+
+That gives scafld one authority rule:
+
+- session is the durable evidence source
+- spec is the readable contract plus current projection
+- handoff is transport for the next model voice
+
+If the spec projection and session ever disagree, reconciliation should rebuild
+the projected state from session evidence.
+
+## Hardening
+
+`harden_status` values:
+
+- `not_run`
+- `in_progress`
+- `passed`
+- `failed`
+
+`scafld harden <task-id>` appends a harden round while the spec is still a
+draft. The active prompt asks the agent to record grounded questions and work
+the answers back into the spec. `scafld harden <task-id> --mark-passed`
+warning-checks citations, closes the latest round, and records that the draft
+survived hardening.
+
+Approval remains explicit. Hardening makes the approval decision worth trusting.
+
+## Review Gate
+
+`scafld review` moves work to the review gate and writes the challenger verdict.
+`scafld complete` refuses to archive until the latest review verdict is `pass`.
+
+That separation is the core product stance: execution tries to finish the work;
+adversarial review tries to break confidence in the work.
+
+## Queries
+
+```bash
 scafld status add-auth
 scafld status add-auth --json
+scafld list
+scafld list --json
+scafld report
 ```
 
-`stale-active` lists active specs whose phases are all complete but which were
-never reviewed, completed, or cancelled. Cancelled specs may also record
-`superseded_by` metadata so `list`, `status`, and `report` show which newer
-spec replaced them.
-
-In JSON mode, lifecycle commands emit one shared envelope with `ok`,
-`command`, `task_id`, `warnings`, `state`, `result`, and `error`. That lets
-automation read lifecycle state, transitions, and acceptance results directly
-instead of scraping terminal output.
-
-Common machine-facing commands:
-
-- `scafld plan --json` -- draft file path, task metadata, repo context, and harden commands
-- `scafld status --json` -- lifecycle state plus stored origin metadata and live sync state
-- `scafld approve --json` / `scafld build --json` -- structured lifecycle transitions and execution state
-- default `build --json` / `exec --json` also report the actual `executed_phase` so wrappers know which phase just ran
-- `scafld branch --json` -- recorded repo/branch binding and post-bind sync state
-- `scafld sync --json` -- explicit current-vs-expected git drift report
-- `scafld audit --json` -- declared, matched, undeclared, and missing file sets
-- `scafld fail --json` / `scafld cancel --json` -- archived transition metadata
-
-## Git-bound task origins
-
-Lifecycle state answers "where is this spec in the workflow?" The optional
-`origin` block answers "what branch/repo/source does this workflow object
-belong to?"
-
-Use the explicit git-binding commands:
-
-```bash
-scafld branch add-auth
-scafld branch add-auth --bind-current
-scafld sync add-auth
-```
-
-- `scafld branch` records the repo remote, branch, base ref, and upstream in
-  the spec's `origin` block.
-- `scafld sync` compares that recorded binding to the live workspace and reports
-  drift such as branch mismatch, detached HEAD, or engineering changes.
-- `scafld status --json` includes both the stored `origin` metadata and the live
-  `sync` view so higher-level tools can consume it directly.
-
-This keeps scafld as the workflow source of truth while still letting branch,
-issue, PR, and CI tooling project off the same object.
-
-## Lifecycle discipline
-
-The lifecycle is intentionally rigid. You can't skip states. You can't move a draft directly to active. This friction is the point; it forces the planning-before-execution discipline that makes specs useful.
-
-If a spec needs changes after approval, cancel it and create a new one. Specs are cheap. Sloppy execution against a stale spec is expensive.
-
-## Harden status
-
-Separate from the lifecycle `status` field, every spec may carry a `harden_status` field recording whether the operator has interrogated the draft with `scafld harden`. Values: `not_run`, `in_progress`, `passed`. Missing field is treated as equivalent to `not_run`.
-
-`scafld approve` does **not** consult `harden_status`. Hardening is optional and operator-driven; you run it when you want to stress-test a draft and skip it for trivial or well-understood specs. The field exists for audit and reporting (`scafld report` shows adoption), not as a gate.
-
-Round semantics: `scafld harden <id>` appends a round and sets `harden_status: in_progress`. `scafld harden <id> --mark-passed` closes the latest round and sets `passed`. Re-running on a passed spec resets to `in_progress` and appends a new round; prior rounds are preserved as audit trail.
+`status --json` is the right integration surface for wrappers. It reports the
+current lifecycle state and the next allowed follow-up command without requiring
+the wrapper to scrape Markdown.

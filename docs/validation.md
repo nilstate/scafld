@@ -1,62 +1,48 @@
 ---
 title: Validation
-description: Validation profiles and acceptance criteria
+description: Spec validation and acceptance matchers
 ---
 
 # Validation
 
-scafld scales validation proportionate to risk. Not every change deserves the same scrutiny.
+`scafld validate <task-id>` checks the Markdown spec shape before execution:
 
-## Profiles
+- `spec_version` is `2.0`
+- `task_id` is stable and machine-safe
+- lifecycle status is valid
+- harden status is valid
+- phase ids are unique
+- criteria ids are unique
+- executable criteria use a known expected kind
 
-| Profile | Per phase | Pre commit |
-|---------|-----------|------------|
-| **light** | Compile check, acceptance criteria | Self-eval |
-| **standard** | + targeted tests | + full test suite, linter, typecheck, security scan |
-| **strict** | + boundary checks | Same as standard |
+## Acceptance Criteria
 
-The profile is set explicitly in `task.acceptance.validation_profile` or derived from `task.risk_level`:
+Executable criteria are Markdown checklist items with structured child lines:
 
-- `low` → light
-- `medium` → standard
-- `high` → strict
-
-## Acceptance criteria types
-
-| Type | Description | Automated? |
-|------|-------------|-----------|
-| `compile` | Build succeeds | Yes |
-| `test` | Tests pass | Yes |
-| `boundary` | Cross-module side effects checked | Yes |
-| `integration` | End-to-end validation | Yes |
-| `security` | Security scan passes | Yes |
-| `documentation` | Docs updated | Manual |
-| `custom` | Anything else | Depends on `command` |
-
-Automated types require a `command` field. Types without a command are marked as skipped during execution and must be checked manually.
-
-## Timeout
-
-Default timeout per criterion is 600 seconds. Override per-criterion:
-
-```yaml
-acceptance_criteria:
-  - id: ac1_1
-    command: "npm run e2e"
-    timeout_seconds: 900
+```markdown
+Acceptance:
+- [ ] `ac1_1` test: Unit tests pass.
+  - Command: `go test ./...`
+  - Expected kind: `exit_code_zero`
 ```
 
-Must be a positive integer. A timeout is recorded as a failure.
+Supported expected kinds:
 
-## Self-evaluation
+- `exit_code_zero`: command exits 0.
+- `exit_code_nonzero`: command exits non-zero.
+- `no_matches`: command produces no output or returns a no-match status.
 
-After all phases complete, the agent scores its work:
+Criteria without a known expected kind are rejected before execution. This is
+intentional: free-form `Expected:` prose is documentation, not an executable
+contract.
 
-| Dimension | Max | What it measures |
-|-----------|-----|-----------------|
-| completeness | 3 | Does it fully meet the ask? |
-| architecture_fidelity | 3 | Does it respect boundaries and patterns? |
-| spec_alignment | 2 | Does execution match the spec? |
-| validation_depth | 2 | How thorough is the testing? |
+## Build-Time Evaluation
 
-Total max is 10. Below the threshold (default 7) triggers a mandatory second pass. Scores of 8+ with zero noted deviations are flagged as rubber stamps.
+`scafld build` runs the command and evaluates the result against
+`Expected kind`. The full command output is captured in the session/diagnostic
+surface; the spec keeps only concise projected evidence.
+
+## Manual Evidence
+
+Manual work belongs in prose, harden rounds, review findings, or session notes
+produced by commands. The executable gate remains explicit command evidence.

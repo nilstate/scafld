@@ -19,9 +19,12 @@ func TestWorkspaceInitCreatesScafldLayout(t *testing.T) {
 		t.Fatal("root not recorded")
 	}
 	for _, rel := range []string{
-		".scafld/config.yaml",
-		".scafld/core/manifest.json",
+		".scafld",
+		".scafld/core",
+		".scafld/prompts",
 		".scafld/specs/drafts",
+		".scafld/specs/approved",
+		".scafld/specs/active",
 		".scafld/runs",
 		".scafld/reviews",
 	} {
