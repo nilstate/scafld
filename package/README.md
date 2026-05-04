@@ -7,11 +7,11 @@ adapter that installs or points at a GitHub release asset.
 
 - `npm/` publishes the `scafld` npm package.
 - `pypi/` publishes the `scafld` PyPI package.
+- `homebrew/` renders the `nilstate/homebrew-tap` formula.
+- `scoop/` renders the `nilstate/scoop-bucket` manifest.
 
 ## Registry templates
 
-- `homebrew/` is for `nilstate/homebrew-tap`.
-- `scoop/` is for `nilstate/scoop-bucket`.
 - `winget/` is for WinGet submissions.
 - `docker/` documents the OCI image shape.
 

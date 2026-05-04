@@ -8,23 +8,24 @@ and verify the matching GitHub release asset.
 
 - Go modules: `go install github.com/nilstate/scafld/v2/cmd/scafld@latest`
 - GitHub Releases: raw platform binaries plus `checksums.txt` and `manifest.json`
+- Homebrew: `brew install nilstate/tap/scafld`
 - npm: `npm install -g scafld`
 - PyPI: `pipx install scafld`
+- Scoop: `scoop bucket add nilstate https://github.com/nilstate/scoop-bucket`
+  then `scoop install scafld`
 
 ## Secondary channels
 
 These are generated from the GitHub release assets, not rebuilt from source in
 separate registry flows:
 
-- Homebrew tap: `nilstate/homebrew-tap`
-- Scoop bucket: `nilstate/scoop-bucket`
-- WinGet manifest submissions
+- WinGet manifest submission: `0state.scafld`
 - Docker/OCI image for CI runners
 - Debian/RPM/AUR/Nix packages based on release binaries and checksums
 
-Templates for Homebrew, Scoop, WinGet, and OCI live under `package/`. They are
-intentionally templates because those registries either require separate
-repositories or human/registry review.
+Templates for Homebrew, Scoop, WinGet, and OCI live under `package/`. Homebrew
+and Scoop render into owned registry repositories; WinGet requires upstream
+review in `microsoft/winget-pkgs`.
 
 ## Release Contract
 

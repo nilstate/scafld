@@ -2,6 +2,7 @@ class Scafld < Formula
   desc "Markdown-native task execution framework CLI"
   homepage "https://github.com/nilstate/scafld"
   version "{{VERSION}}"
+  license "MIT"
 
   on_macos do
     if Hardware::CPU.arm?
@@ -25,6 +26,7 @@ class Scafld < Formula
 
   def install
     bin.install Dir["scafld_*"].first => "scafld"
+    chmod 0755, bin/"scafld"
   end
 
   test do

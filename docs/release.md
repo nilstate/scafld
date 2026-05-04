@@ -60,7 +60,6 @@ download the matching native binary and verify it against `checksums.txt`.
 ## Cutting a Release
 
 ```bash
-scripts/set-release-version.sh X.Y.Z
 git add -A
 git commit -m "release: vX.Y.Z"
 git tag vX.Y.Z
@@ -74,3 +73,12 @@ Watch the Actions tab. Verify:
 - `npm install -g scafld@X.Y.Z` works.
 - `pipx install scafld==X.Y.Z` works.
 - `go install github.com/nilstate/scafld/v2/cmd/scafld@vX.Y.Z` works.
+
+## External Registry Follow-Up
+
+After the GitHub release is live, render package-manager manifests from release
+checksums:
+
+- Homebrew: update `nilstate/homebrew-tap` with `Formula/scafld.rb`.
+- Scoop: update `nilstate/scoop-bucket` with `bucket/scafld.json`.
+- WinGet: submit `0state.scafld` manifests to `microsoft/winget-pkgs`.
