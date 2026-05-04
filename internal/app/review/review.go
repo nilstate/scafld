@@ -1,0 +1,162 @@
+package review
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/nilstate/scafld/v2/internal/core/reconcile"
+	"github.com/nilstate/scafld/v2/internal/core/review"
+	"github.com/nilstate/scafld/v2/internal/core/session"
+	"github.com/nilstate/scafld/v2/internal/core/spec"
+)
+
+type SpecStore interface {
+	Load(context.Context, string) (spec.Model, string, error)
+	Save(context.Context, string, spec.Model) error
+}
+
+type SessionStore interface {
+	Append(context.Context, string, session.Entry, string) (session.Session, error)
+	Load(context.Context, string) (session.Session, error)
+}
+
+type Provider interface {
+	Invoke(context.Context, review.Request) (review.Packet, error)
+}
+
+type WorkspaceStatus interface {
+	ChangedFiles(context.Context) ([]string, error)
+}
+
+type Clock interface{ Now() time.Time }
+
+type Output struct {
+	TaskID   string
+	Verdict  string
+	Findings []review.Finding
+}
+
+func Run(ctx context.Context, specs SpecStore, sessions SessionStore, workspace WorkspaceStatus, provider Provider, clock Clock, taskID string) (Output, error) {
+	model, path, err := specs.Load(ctx, taskID)
+	if err != nil {
+		return Output{}, err
+	}
+	before, err := workspaceSnapshot(ctx, workspace)
+	if err != nil {
+		return Output{}, err
+	}
+	packet, err := provider.Invoke(ctx, review.Request{TaskID: model.TaskID, Prompt: promptForModel(model)})
+	after, mutationErr := workspaceSnapshot(ctx, workspace)
+	if mutationErr != nil {
+		return Output{}, mutationErr
+	}
+	if mutated := workspaceMutations(before, after); len(mutated) > 0 {
+		packet = review.Packet{
+			Verdict: review.VerdictFail,
+			Findings: []review.Finding{{
+				ID:       "workspace_mutation",
+				Severity: review.SeverityBlocking,
+				Summary:  "provider mutated workspace during review: " + strings.Join(mutated, ", "),
+			}},
+		}
+		err = nil
+	}
+	if err != nil {
+		return Output{}, err
+	}
+	if err := review.ValidatePacket(packet); err != nil {
+		return Output{}, err
+	}
+	now := clock.Now().UTC().Format(time.RFC3339)
+	model.Status = spec.StatusReview
+	model.Review.Status = "completed"
+	model.Review.Verdict = packet.Verdict
+	model.CurrentState.ReviewGate = packet.Verdict
+	next, command := nextForVerdict(model.TaskID, packet.Verdict)
+	model.CurrentState.Next = next
+	model.CurrentState.AllowedFollowUp = command
+	ledger, err := sessions.Append(ctx, model.TaskID, session.Entry{Type: "review", Status: packet.Verdict, Reason: "review gate " + packet.Verdict}, now)
+	if err != nil {
+		return Output{}, err
+	}
+	if loaded, loadErr := sessions.Load(ctx, model.TaskID); loadErr == nil {
+		ledger = loaded
+	}
+	model = reconcile.FromSession(model, ledger)
+	model.Status = spec.StatusReview
+	model.Review.Status = "completed"
+	model.Review.Verdict = packet.Verdict
+	model.CurrentState.ReviewGate = packet.Verdict
+	model.CurrentState.Next = next
+	model.CurrentState.AllowedFollowUp = command
+	if err := specs.Save(ctx, path, model); err != nil {
+		return Output{}, err
+	}
+	return Output{TaskID: model.TaskID, Verdict: packet.Verdict, Findings: packet.Findings}, nil
+}
+
+func workspaceSnapshot(ctx context.Context, workspace WorkspaceStatus) ([]string, error) {
+	if workspace == nil {
+		return nil, nil
+	}
+	files, err := workspace.ChangedFiles(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return append([]string(nil), files...), nil
+}
+
+func workspaceMutations(before []string, after []string) []string {
+	seen := map[string]bool{}
+	for _, path := range before {
+		seen[path] = true
+	}
+	var mutated []string
+	for _, path := range after {
+		if !seen[path] {
+			mutated = append(mutated, path)
+		}
+		delete(seen, path)
+	}
+	for path := range seen {
+		mutated = append(mutated, path)
+	}
+	return mutated
+}
+
+func nextForVerdict(taskID string, verdict string) (string, string) {
+	if verdict == "pass" {
+		return "complete", "scafld complete " + taskID
+	}
+	return "repair", "scafld handoff " + taskID
+}
+
+func promptForModel(model spec.Model) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "# Review %s\n\n", model.TaskID)
+	fmt.Fprintf(&b, "Title: %s\nStatus: %s\n\n", model.Title, model.Status)
+	if strings.TrimSpace(model.Summary) != "" {
+		fmt.Fprintf(&b, "## Summary\n\n%s\n\n", strings.TrimSpace(model.Summary))
+	}
+	if len(model.Objectives) > 0 {
+		b.WriteString("## Objectives\n\n")
+		for _, objective := range model.Objectives {
+			fmt.Fprintf(&b, "- %s\n", objective)
+		}
+		b.WriteString("\n")
+	}
+	b.WriteString("## Acceptance Criteria\n\n")
+	for _, criterion := range model.AllCriteria() {
+		fmt.Fprintf(&b, "- %s (%s): %s\n", criterion.ID, criterion.ExpectedKind, criterion.Command)
+		if strings.TrimSpace(criterion.Status) != "" {
+			fmt.Fprintf(&b, "  - Status: %s\n", criterion.Status)
+		}
+		if strings.TrimSpace(criterion.Evidence) != "" {
+			fmt.Fprintf(&b, "  - Evidence: %s\n", criterion.Evidence)
+		}
+	}
+	b.WriteString("\nReview mode is read-only. Do not run build, test, or mutation commands; treat recorded acceptance evidence above as already executed. Return a ReviewPacket JSON object with `verdict` and `findings`. If your transport only supports line frames, emit `finding` frames with severity `blocking` or `non_blocking`, then a `verdict` frame with verdict `pass` or `fail`.\n")
+	return b.String()
+}

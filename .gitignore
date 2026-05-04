@@ -7,10 +7,19 @@ __pycache__/
 .ruff_cache/
 .coverage
 .coverage.*
-build/
-dist/
+/build/
+/dist/
+/bin/
+.tools/
 *.egg-info/
 *.tgz
+*.test
+coverage.out
+
+# package build outputs
+/package/pypi/build/
+/package/pypi/dist/
+/package/pypi/src/*.egg-info/
 
 # OS
 .DS_Store

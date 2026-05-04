@@ -1,0 +1,15 @@
+PackageIdentifier: Nilstate.Scafld
+PackageVersion: {{VERSION}}
+InstallerLocale: en-US
+InstallerType: portable
+Commands:
+  - scafld
+Installers:
+  - Architecture: x64
+    InstallerUrl: https://github.com/nilstate/scafld/releases/download/v{{VERSION}}/scafld_{{VERSION}}_windows_amd64.exe
+    InstallerSha256: {{SHA256_WINDOWS_AMD64}}
+  - Architecture: arm64
+    InstallerUrl: https://github.com/nilstate/scafld/releases/download/v{{VERSION}}/scafld_{{VERSION}}_windows_arm64.exe
+    InstallerSha256: {{SHA256_WINDOWS_ARM64}}
+ManifestType: installer
+ManifestVersion: 1.9.0

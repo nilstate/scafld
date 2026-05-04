@@ -1,47 +1,70 @@
 #!/usr/bin/env sh
-# scafld installer
-#
-# One-liner:
-#   curl -fsSL https://raw.githubusercontent.com/nilstate/scafld/main/install.sh | sh
-#
-# Or after cloning:
-#   git clone https://github.com/nilstate/scafld.git ~/.scafld
-#   ~/.scafld/install.sh
-set -e
+set -eu
 
-SCAFLD_HOME="${SCAFLD_HOME:-$HOME/.scafld}"
+REPO="${SCAFLD_GITHUB_REPOSITORY:-nilstate/scafld}"
+VERSION="${VERSION:-}"
 BIN_DIR="${BIN_DIR:-$HOME/.local/bin}"
 
-echo "Installing scafld..."
+os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+arch="$(uname -m)"
 
-# Clone or update
-if [ -d "$SCAFLD_HOME/.git" ]; then
-    echo "  Updating $SCAFLD_HOME"
-    git -C "$SCAFLD_HOME" pull --quiet
-else
-    # If running from curl, clone fresh. If running from existing clone, skip.
-    SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-    if [ "$SCRIPT_DIR" = "$SCAFLD_HOME" ]; then
-        echo "  Using $SCAFLD_HOME"
-    else
-        echo "  Cloning to $SCAFLD_HOME"
-        git clone --quiet -b main https://github.com/nilstate/scafld.git "$SCAFLD_HOME"
-    fi
-fi
-
-# Symlink CLI
-mkdir -p "$BIN_DIR"
-ln -sf "$SCAFLD_HOME/cli/scafld" "$BIN_DIR/scafld"
-chmod +x "$SCAFLD_HOME/cli/scafld"
-echo "  Linked scafld -> $BIN_DIR/scafld"
-
-# Check PATH
-case ":$PATH:" in
-    *":$BIN_DIR:"*) ;;
-    *) echo ""
-       echo "  Add $BIN_DIR to your PATH:"
-       echo "    export PATH=\"\$HOME/.local/bin:\$PATH\"" ;;
+case "$os" in
+  darwin) goos="darwin" ;;
+  linux) goos="linux" ;;
+  *) echo "unsupported OS: $os" >&2; exit 2 ;;
 esac
 
-echo ""
-echo "Done! Run 'scafld init' in any project to get started."
+case "$arch" in
+  x86_64|amd64) goarch="amd64" ;;
+  arm64|aarch64) goarch="arm64" ;;
+  *) echo "unsupported architecture: $arch" >&2; exit 2 ;;
+esac
+
+if [ -z "$VERSION" ]; then
+  VERSION="$(
+    curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" |
+      sed -n 's/.*"tag_name": "v\([^"]*\)".*/\1/p' |
+      head -n 1
+  )"
+fi
+
+if [ -z "$VERSION" ]; then
+  echo "could not resolve latest scafld release version" >&2
+  exit 1
+fi
+
+asset="scafld_${VERSION}_${goos}_${goarch}"
+base="https://github.com/$REPO/releases/download/v$VERSION"
+tmpdir="$(mktemp -d)"
+trap 'rm -rf "$tmpdir"' EXIT INT TERM
+
+echo "Installing scafld v$VERSION for $goos/$goarch..."
+curl -fsSL "$base/checksums.txt" -o "$tmpdir/checksums.txt"
+curl -fsSL "$base/$asset" -o "$tmpdir/scafld"
+
+expected="$(awk -v asset="$asset" '$2 == asset || $2 == "*" asset { print $1 }' "$tmpdir/checksums.txt")"
+if [ -z "$expected" ]; then
+  echo "checksums.txt does not contain $asset" >&2
+  exit 1
+fi
+
+actual="$(shasum -a 256 "$tmpdir/scafld" | awk '{ print $1 }')"
+if [ "$actual" != "$expected" ]; then
+  echo "checksum mismatch for $asset" >&2
+  echo "expected: $expected" >&2
+  echo "actual:   $actual" >&2
+  exit 1
+fi
+
+mkdir -p "$BIN_DIR"
+install -m 0755 "$tmpdir/scafld" "$BIN_DIR/scafld"
+echo "Installed scafld -> $BIN_DIR/scafld"
+
+case ":$PATH:" in
+  *":$BIN_DIR:"*) ;;
+  *)
+    echo ""
+    echo "Add $BIN_DIR to your PATH:"
+    echo "  export PATH=\"$BIN_DIR:\$PATH\""
+    ;;
+esac

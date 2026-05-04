@@ -1,0 +1,33 @@
+class Scafld < Formula
+  desc "Markdown-native task execution framework CLI"
+  homepage "https://github.com/nilstate/scafld"
+  version "{{VERSION}}"
+
+  on_macos do
+    if Hardware::CPU.arm?
+      url "https://github.com/nilstate/scafld/releases/download/v{{VERSION}}/scafld_{{VERSION}}_darwin_arm64"
+      sha256 "{{SHA256_DARWIN_ARM64}}"
+    else
+      url "https://github.com/nilstate/scafld/releases/download/v{{VERSION}}/scafld_{{VERSION}}_darwin_amd64"
+      sha256 "{{SHA256_DARWIN_AMD64}}"
+    end
+  end
+
+  on_linux do
+    if Hardware::CPU.arm? && Hardware::CPU.is_64_bit?
+      url "https://github.com/nilstate/scafld/releases/download/v{{VERSION}}/scafld_{{VERSION}}_linux_arm64"
+      sha256 "{{SHA256_LINUX_ARM64}}"
+    else
+      url "https://github.com/nilstate/scafld/releases/download/v{{VERSION}}/scafld_{{VERSION}}_linux_amd64"
+      sha256 "{{SHA256_LINUX_AMD64}}"
+    end
+  end
+
+  def install
+    bin.install Dir["scafld_*"].first => "scafld"
+  end
+
+  test do
+    assert_match version.to_s, shell_output("#{bin}/scafld --version")
+  end
+end

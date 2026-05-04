@@ -7,18 +7,25 @@ description: Install and configure scafld
 
 ## Requirements
 
-- Python 3 (ships as a single-file CLI)
-- Git (for scope auditing and diff tracking)
+- Git
+- A supported OS/architecture for the native binary:
+  - macOS amd64/arm64
+  - Linux amd64/arm64
+  - Windows amd64/arm64
 
 ## Install
 
-Install from PyPI:
+Install the latest GitHub release binary:
 
 ```bash
-pip install scafld
+curl -fsSL https://raw.githubusercontent.com/nilstate/scafld/main/install.sh | sh
 ```
 
-The PyPI package installs `PyYAML` automatically as a runtime dependency.
+Install with Go:
+
+```bash
+go install github.com/nilstate/scafld/v2/cmd/scafld@latest
+```
 
 Install from npm:
 
@@ -26,25 +33,14 @@ Install from npm:
 npm install -g scafld
 ```
 
-The npm package ships the same CLI/runtime bundle, but the executable still requires `python3` at runtime. Commands that edit Markdown spec front matter, such as `scafld harden`, also need `PyYAML` installed in that Python runtime:
+Install from PyPI:
 
 ```bash
-python3 -m pip install PyYAML
+pipx install scafld
 ```
 
-Clone the repo and run the install script:
-
-```bash
-git clone https://github.com/nilstate/scafld.git ~/.scafld && ~/.scafld/install.sh
-```
-
-Or as a one-liner:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/nilstate/scafld/main/install.sh | sh
-```
-
-This clones scafld to `~/.scafld` and symlinks the `scafld` command to `~/.local/bin/`.
+npm and PyPI packages are thin launchers. They download the native Go binary
+from the matching GitHub release and verify it against `checksums.txt`.
 
 ## Verify
 
@@ -52,25 +48,7 @@ This clones scafld to `~/.scafld` and symlinks the `scafld` command to `~/.local
 scafld --version
 ```
 
-## Update
-
-```bash
-scafld update --self
-```
-
-To refresh the current workspace's managed bundle:
-
-```bash
-scafld update
-```
-
-To refresh every scafld workspace under a root directory:
-
-```bash
-scafld update --scan-root ~/dev
-```
-
-## Initialize a project
+## Initialize a Project
 
 Navigate to your project root and run:
 
@@ -78,60 +56,19 @@ Navigate to your project root and run:
 scafld init
 ```
 
-This scaffolds the full `.scafld/` structure:
+This creates the `.scafld/` workspace structure:
 
-```
-  .scafld/
-  scafld/               # Managed reset copy refreshed by `scafld update`
-  config.yaml            # Validation rules, rubric, safety controls
-  config.local.yaml      # Your overrides (build/test/lint commands)
-  prompts/               # Active project-owned handoff template sources
-    plan.md
-    exec.md
-    recovery.md
-    review.md
-    harden.md
-  schemas/               # Spec validation schema
-    spec.json
+```text
+.scafld/
+  config.yaml
+  config.local.yaml
+  core/
+  prompts/
+  runs/
   specs/
-    drafts/              # Planning in progress
-    approved/            # Ready for execution
-    active/              # Currently executing
-    archive/             # Completed work
-    examples/            # Reference specs
-  reviews/               # Review findings (gitignored)
-AGENTS.md                # Your project's invariants and policies
-CONVENTIONS.md           # Coding standards
+AGENTS.md
+CONVENTIONS.md
 ```
 
-The `.scafld/specs/` directory and `AGENTS.md` should be committed to version control. Specs are project artifacts, not personal notes.
-
-When `scafld init` sees common repo markers such as `package.json`, lockfiles, `pyproject.toml`, or `requirements.txt`, it now seeds `.scafld/config.local.yaml` with suggested build, test, lint, and typecheck commands. Unknown repo shapes keep the existing safe placeholder commands.
-
-Prompt precedence is intentional:
-
-- `.scafld/prompts/*` is the active layer
-- `.scafld/core/prompts/*` is the managed reset source
-
-## Configuration
-
-scafld uses two config files in `.scafld/`:
-
-- `.scafld/core/config.yaml` -- framework-managed defaults refreshed by `scafld update`
-- `config.yaml` -- project-level configuration and overrides committed with the repo
-- `config.local.yaml` -- project-specific overrides (build/test/lint commands)
-
-The local config merges on top of the project config, which itself layers on top of the managed bundle. See [Configuration](configuration) for the full reference.
-
-## Editor integration
-
-scafld specs are Markdown files validated against `.scafld/core/schemas/spec.json`. Point your editor's YAML language server at the schema for autocompletion:
-
-```json
-// .vscode/settings.json
-{
-  "yaml.schemas": {
-    ".scafld/core/schemas/spec.json": ".scafld/specs/**/*.md"
-  }
-}
-```
+Specs are project artifacts. Commit `.scafld/specs/`, `AGENTS.md`, and
+`CONVENTIONS.md` when they describe shared project behavior.
