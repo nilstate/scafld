@@ -41,12 +41,21 @@ Automation-relevant commands emit one envelope:
 {
   "ok": true,
   "command": "build",
-  "result": {}
+  "result": {
+    "task_id": "add-auth",
+    "status": "review",
+    "passed": 1,
+    "failed": 0
+  }
 }
 ```
 
 Failures use the same shape with `ok: false` and an `error` object carrying
 `code`, `message`, and `exit_code`.
+
+The envelope and every command `result` use `snake_case` JSON keys. The
+Markdown spec schema, session ledger, and CLI automation output therefore share
+one public casing convention.
 
 Exit codes:
 

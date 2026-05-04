@@ -13,8 +13,8 @@ type SpecStore interface {
 
 // Output summarizes workspace task counts.
 type Output struct {
-	Total    int
-	ByStatus map[spec.Status]int
+	Total    int                 `json:"total"`
+	ByStatus map[spec.Status]int `json:"by_status"`
 }
 
 // Run aggregates spec records by status.

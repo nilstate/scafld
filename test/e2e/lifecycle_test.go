@@ -15,22 +15,16 @@ func TestLifecycleJSONContractsAgentSurfaceFailCancelReviewProviderMutationGuard
 
 	bin := testBinary(t)
 	root := t.TempDir()
-	run(t, bin, "init", "--root", root)
-	run(t, bin, "plan", "--root", root, "lifecycle-task", "--title", "Lifecycle task", "--command", "test -f .scafld/config.yaml")
-	run(t, bin, "approve", "--root", root, "lifecycle-task")
-	run(t, bin, "build", "--root", root, "lifecycle-task")
-	run(t, bin, "review", "--root", root, "--provider", "local", "lifecycle-task")
-	run(t, bin, "complete", "--root", root, "lifecycle-task")
-	out := run(t, bin, "status", "--root", root, "lifecycle-task", "--json")
-	var envelope struct {
-		OK bool `json:"ok"`
-	}
-	if err := json.Unmarshal(out, &envelope); err != nil {
-		t.Fatal(err)
-	}
-	if !envelope.OK {
-		t.Fatalf("status envelope not ok: %s", out)
-	}
+	assertSnakeEnvelope(t, run(t, bin, "init", "--root", root, "--json"), "root")
+	assertSnakeEnvelope(t, run(t, bin, "plan", "--root", root, "lifecycle-task", "--title", "Lifecycle task", "--command", "test -f .scafld/config.yaml", "--json"), "task_id")
+	assertSnakeEnvelope(t, run(t, bin, "validate", "--root", root, "lifecycle-task", "--json"), "valid")
+	assertSnakeEnvelope(t, run(t, bin, "approve", "--root", root, "lifecycle-task", "--json"), "status")
+	assertSnakeEnvelope(t, run(t, bin, "build", "--root", root, "lifecycle-task", "--json"), "passed")
+	assertSnakeEnvelope(t, run(t, bin, "review", "--root", root, "--provider", "local", "lifecycle-task", "--json"), "verdict")
+	assertSnakeEnvelope(t, run(t, bin, "complete", "--root", root, "lifecycle-task", "--json"), "current_state")
+	assertSnakeEnvelope(t, run(t, bin, "status", "--root", root, "lifecycle-task", "--json"), "session_ok")
+	assertSnakeEnvelope(t, run(t, bin, "list", "--root", root, "--json"), "task_id")
+	assertSnakeEnvelope(t, run(t, bin, "report", "--root", root, "--json"), "by_status")
 	if _, err := os.Stat(filepath.Join(root, ".scafld", "runs", "lifecycle-task", "session.json")); err != nil {
 		t.Fatal(err)
 	}
@@ -157,4 +151,53 @@ func run(t *testing.T, bin string, args ...string) []byte {
 		t.Fatalf("%s %s failed: %v\nstdout:\n%s\nstderr:\n%s", bin, strings.Join(args, " "), err, out.String(), errOut.String())
 	}
 	return out.Bytes()
+}
+
+func assertSnakeEnvelope(t *testing.T, data []byte, requiredResultKey string) {
+	t.Helper()
+	var envelope map[string]any
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		t.Fatalf("decode envelope: %v\n%s", err, data)
+	}
+	if envelope["ok"] != true {
+		t.Fatalf("envelope not ok: %s", data)
+	}
+	assertSnakeKeys(t, envelope, "$")
+	result, ok := envelope["result"].(map[string]any)
+	if !ok {
+		if records, recordsOK := envelope["result"].([]any); recordsOK {
+			if len(records) == 0 {
+				t.Fatalf("result list is empty: %s", data)
+			}
+			result, ok = records[0].(map[string]any)
+		}
+	}
+	if !ok {
+		t.Fatalf("result is not an object or non-empty object list: %s", data)
+	}
+	if _, ok := result[requiredResultKey]; !ok {
+		t.Fatalf("result missing %q: %s", requiredResultKey, data)
+	}
+}
+
+func assertSnakeKeys(t *testing.T, value any, path string) {
+	t.Helper()
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, nested := range typed {
+			for _, r := range key {
+				if r >= 'A' && r <= 'Z' {
+					t.Fatalf("non-snake JSON key at %s.%s", path, key)
+				}
+			}
+			assertSnakeKeys(t, nested, path+"."+key)
+		}
+	case []any:
+		for i, nested := range typed {
+			assertSnakeKeys(t, nested, path+"[]")
+			if i > 10 {
+				break
+			}
+		}
+	}
 }

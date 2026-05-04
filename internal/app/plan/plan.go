@@ -35,9 +35,9 @@ type Input struct {
 
 // Output describes the created draft spec.
 type Output struct {
-	TaskID string
-	Path   string
-	Status spec.Status
+	TaskID string      `json:"task_id"`
+	Path   string      `json:"path"`
+	Status spec.Status `json:"status"`
 }
 
 // Run creates a draft spec from input.

@@ -25,9 +25,9 @@ type Clock interface{ Now() time.Time }
 
 // Output describes the approved task.
 type Output struct {
-	TaskID string
-	Status spec.Status
-	Path   string
+	TaskID string      `json:"task_id"`
+	Status spec.Status `json:"status"`
+	Path   string      `json:"path"`
 }
 
 // Run approves a draft spec and records approval evidence.

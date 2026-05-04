@@ -14,10 +14,10 @@ type SpecStore interface {
 
 // Output reports spec validation status.
 type Output struct {
-	TaskID string
-	Path   string
-	Valid  bool
-	Errors []string
+	TaskID string   `json:"task_id"`
+	Path   string   `json:"path"`
+	Valid  bool     `json:"valid"`
+	Errors []string `json:"errors"`
 }
 
 // Run validates a spec without mutating workspace state.

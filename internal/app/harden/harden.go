@@ -45,14 +45,14 @@ type Input struct {
 
 // Output describes the opened or completed hardening round.
 type Output struct {
-	TaskID       string
-	Path         string
-	HardenStatus spec.HardenStatus
-	RoundID      string
-	MarkedPassed bool
-	NextCommand  string
-	Prompt       string
-	Warnings     []string
+	TaskID       string            `json:"task_id"`
+	Path         string            `json:"path"`
+	HardenStatus spec.HardenStatus `json:"harden_status"`
+	RoundID      string            `json:"round_id"`
+	MarkedPassed bool              `json:"marked_passed"`
+	NextCommand  string            `json:"next_command"`
+	Prompt       string            `json:"prompt"`
+	Warnings     []string          `json:"warnings"`
 }
 
 // Run opens a hardening round or marks the latest round passed.

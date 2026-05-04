@@ -77,151 +77,151 @@ var (
 
 // Model is the normalized in-memory representation of a living Markdown spec.
 type Model struct {
-	Version      string
-	TaskID       string
-	Created      string
-	Updated      string
-	Title        string
-	Summary      string
-	Status       Status
-	HardenStatus HardenStatus
-	Size         Size
-	RiskLevel    RiskLevel
-	CurrentState CurrentState
-	Context      Context
-	Objectives   []string
-	Scope        []string
-	Dependencies []string
-	Assumptions  []string
-	Touchpoints  []string
-	Risks        []Risk
-	Acceptance   Acceptance
-	Phases       []Phase
-	Rollback     []string
-	Review       ReviewState
-	SelfEval     []string
-	Deviations   []string
-	Metadata     map[string]string
-	Origin       Origin
-	HardenRounds []HardenRound
-	PlanningLog  []PlanningEvent
+	Version      string            `json:"spec_version"`
+	TaskID       string            `json:"task_id"`
+	Created      string            `json:"created"`
+	Updated      string            `json:"updated"`
+	Title        string            `json:"title"`
+	Summary      string            `json:"summary"`
+	Status       Status            `json:"status"`
+	HardenStatus HardenStatus      `json:"harden_status"`
+	Size         Size              `json:"size"`
+	RiskLevel    RiskLevel         `json:"risk_level"`
+	CurrentState CurrentState      `json:"current_state"`
+	Context      Context           `json:"context"`
+	Objectives   []string          `json:"objectives"`
+	Scope        []string          `json:"scope"`
+	Dependencies []string          `json:"dependencies"`
+	Assumptions  []string          `json:"assumptions"`
+	Touchpoints  []string          `json:"touchpoints"`
+	Risks        []Risk            `json:"risks"`
+	Acceptance   Acceptance        `json:"acceptance"`
+	Phases       []Phase           `json:"phases"`
+	Rollback     []string          `json:"rollback"`
+	Review       ReviewState       `json:"review"`
+	SelfEval     []string          `json:"self_eval"`
+	Deviations   []string          `json:"deviations"`
+	Metadata     map[string]string `json:"metadata"`
+	Origin       Origin            `json:"origin"`
+	HardenRounds []HardenRound     `json:"harden_rounds"`
+	PlanningLog  []PlanningEvent   `json:"planning_log"`
 }
 
 // Record is a compact listing entry for a task spec.
 type Record struct {
-	TaskID string
-	Status Status
-	Path   string
-	Title  string
+	TaskID string `json:"task_id"`
+	Status Status `json:"status"`
+	Path   string `json:"path"`
+	Title  string `json:"title"`
 }
 
 // Phase describes a numbered execution phase and its evidence-derived state.
 type Phase struct {
-	ID             string
-	Number         int
-	Name           string
-	Status         string
-	Reason         string
-	Dependencies   []string
-	Objective      string
-	Changes        []string
-	Acceptance     []Criterion
-	DefinitionDone []ChecklistItem
+	ID             string          `json:"id"`
+	Number         int             `json:"number"`
+	Name           string          `json:"name"`
+	Status         string          `json:"status"`
+	Reason         string          `json:"reason"`
+	Dependencies   []string        `json:"dependencies"`
+	Objective      string          `json:"objective"`
+	Changes        []string        `json:"changes"`
+	Acceptance     []Criterion     `json:"acceptance"`
+	DefinitionDone []ChecklistItem `json:"definition_done"`
 }
 
 // Acceptance groups global definition-of-done and criterion checks.
 type Acceptance struct {
-	ValidationProfile string
-	DefinitionDone    []ChecklistItem
-	Criteria          []Criterion
+	ValidationProfile string          `json:"validation_profile"`
+	DefinitionDone    []ChecklistItem `json:"definition_done"`
+	Criteria          []Criterion     `json:"criteria"`
 }
 
 // Criterion is a machine-checkable acceptance item.
 type Criterion struct {
-	ID           string
-	Title        string
-	Type         string
-	PhaseID      string
-	Command      string
-	ExpectedKind acceptance.ExpectedKind
-	Status       string
-	Evidence     string
-	SourceEvent  string
+	ID           string                  `json:"id"`
+	Title        string                  `json:"title"`
+	Type         string                  `json:"type"`
+	PhaseID      string                  `json:"phase_id"`
+	Command      string                  `json:"command"`
+	ExpectedKind acceptance.ExpectedKind `json:"expected_kind"`
+	Status       string                  `json:"status"`
+	Evidence     string                  `json:"evidence"`
+	SourceEvent  string                  `json:"source_event"`
 }
 
 // ChecklistItem is one human-readable checklist row.
 type ChecklistItem struct {
-	ID      string
-	Text    string
-	Checked bool
+	ID      string `json:"id"`
+	Text    string `json:"text"`
+	Checked bool   `json:"checked"`
 }
 
 // CurrentState is the readable projection of the next task action.
 type CurrentState struct {
-	CurrentPhase       string
-	Next               string
-	Reason             string
-	Blockers           string
-	AllowedFollowUp    string
-	LatestRunnerUpdate string
-	ReviewGate         string
+	CurrentPhase       string `json:"current_phase"`
+	Next               string `json:"next"`
+	Reason             string `json:"reason"`
+	Blockers           string `json:"blockers"`
+	AllowedFollowUp    string `json:"allowed_follow_up"`
+	LatestRunnerUpdate string `json:"latest_runner_update"`
+	ReviewGate         string `json:"review_gate"`
 }
 
 // Context captures workspace and codebase surfaces relevant to the task.
 type Context struct {
-	CWD           string
-	Packages      []string
-	FilesImpacted []string
-	Invariants    []string
-	RelatedDocs   []string
+	CWD           string   `json:"cwd"`
+	Packages      []string `json:"packages"`
+	FilesImpacted []string `json:"files_impacted"`
+	Invariants    []string `json:"invariants"`
+	RelatedDocs   []string `json:"related_docs"`
 }
 
 // Risk captures one known risk and its mitigation.
 type Risk struct {
-	Description string
-	Mitigation  string
+	Description string `json:"description"`
+	Mitigation  string `json:"mitigation"`
 }
 
 // ReviewState stores the latest review gate projection.
 type ReviewState struct {
-	Status  string
-	Verdict string
+	Status  string `json:"status"`
+	Verdict string `json:"verdict"`
 }
 
 // Origin records where the spec came from.
 type Origin struct {
-	CreatedBy string
-	Source    string
+	CreatedBy string `json:"created_by"`
+	Source    string `json:"source"`
 }
 
 // HardenRound records one pre-approval hardening pass.
 type HardenRound struct {
-	ID        string
-	Status    string
-	StartedAt string
-	EndedAt   string
-	Questions []HardenQuestion
+	ID        string           `json:"id"`
+	Status    string           `json:"status"`
+	StartedAt string           `json:"started_at"`
+	EndedAt   string           `json:"ended_at"`
+	Questions []HardenQuestion `json:"questions"`
 }
 
 // HardenQuestion is one grounded question from a hardening round.
 type HardenQuestion struct {
-	Question          string
-	GroundedIn        string
-	RecommendedAnswer string
-	IfUnanswered      string
-	AnsweredWith      string
+	Question          string `json:"question"`
+	GroundedIn        string `json:"grounded_in"`
+	RecommendedAnswer string `json:"recommended_answer"`
+	IfUnanswered      string `json:"if_unanswered"`
+	AnsweredWith      string `json:"answered_with"`
 }
 
 // PlanningEvent records a timestamped planning log entry.
 type PlanningEvent struct {
-	Time string
-	Text string
+	Time string `json:"time"`
+	Text string `json:"text"`
 }
 
 // Validation reports whether a spec model satisfies runtime requirements.
 type Validation struct {
-	Valid  bool
-	Errors []string
+	Valid  bool     `json:"valid"`
+	Errors []string `json:"errors"`
 }
 
 func (v Validation) Error() string {
