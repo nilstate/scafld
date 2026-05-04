@@ -24,9 +24,9 @@ type Options struct {
 
 // Result summarizes files created, updated, or skipped during installation.
 type Result struct {
-	Created []string
-	Updated []string
-	Skipped []string
+	Created []string `json:"created"`
+	Updated []string `json:"updated"`
+	Skipped []string `json:"skipped"`
 }
 
 // Init installs managed core assets for a newly bootstrapped workspace.

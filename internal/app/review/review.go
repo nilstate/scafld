@@ -40,9 +40,9 @@ type Clock interface{ Now() time.Time }
 
 // Output describes a completed review run.
 type Output struct {
-	TaskID   string
-	Verdict  string
-	Findings []review.Finding
+	TaskID   string           `json:"task_id"`
+	Verdict  string           `json:"verdict"`
+	Findings []review.Finding `json:"findings"`
 }
 
 // Input describes the task and review agenda to run.

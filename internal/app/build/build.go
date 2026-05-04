@@ -40,10 +40,10 @@ type Input struct {
 
 // Output summarizes acceptance execution.
 type Output struct {
-	TaskID string
-	Status spec.Status
-	Passed int
-	Failed int
+	TaskID string      `json:"task_id"`
+	Status spec.Status `json:"status"`
+	Passed int         `json:"passed"`
+	Failed int         `json:"failed"`
 }
 
 // Run executes acceptance criteria and projects evidence into the spec.

@@ -19,11 +19,11 @@ type SessionStore interface {
 
 // Output describes the task status projection.
 type Output struct {
-	TaskID    string
-	Status    spec.Status
-	Title     string
-	Next      string
-	SessionOK bool
+	TaskID    string      `json:"task_id"`
+	Status    spec.Status `json:"status"`
+	Title     string      `json:"title"`
+	Next      string      `json:"next"`
+	SessionOK bool        `json:"session_ok"`
 }
 
 // Run reads status for taskID.
