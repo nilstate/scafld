@@ -1,0 +1,38 @@
+{
+  "name": "scafld",
+  "version": "2.1.0",
+  "description": "Markdown-native task execution framework CLI.",
+  "author": "0state",
+  "license": "MIT",
+  "homepage": "https://github.com/nilstate/scafld#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nilstate/scafld.git",
+    "directory": "package/npm"
+  },
+  "bugs": {
+    "url": "https://github.com/nilstate/scafld/issues"
+  },
+  "bin": {
+    "scafld": "bin/scafld.js"
+  },
+  "files": [
+    "bin",
+    "lib",
+    "README.md"
+  ],
+  "scripts": {
+    "postinstall": "node lib/install.js",
+    "test": "node --check bin/scafld.js && node --check lib/install.js && node --check lib/platform.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "cli",
+    "go",
+    "markdown",
+    "agents",
+    "workflow"
+  ]
+}

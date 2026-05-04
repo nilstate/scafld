@@ -42,7 +42,7 @@ criterion requires an explicit structured matcher:
 ```yaml
 - id: "ac1_1"
   type: "test"
-  command: "python3 -m unittest tests.test_X"
+  command: "go test ./..."
   expected_kind: "exit_code_zero"
 ```
 
@@ -110,10 +110,8 @@ review-time `scope_drift` to surface them.
 ## Review seal
 
 Each external-reviewer round writes `canonical_response_sha256` into
-the review markdown's metadata block (computed in
-[`scafld/review_runner.py`](../scafld/review_runner.py) over the
-canonical `{packet, projection}` shape) and persists the canonical
-packet body to `.scafld/runs/<task>/review-packets/review-<n>.json`.
+the review metadata (computed over the canonical `{packet, projection}` shape)
+and persists the canonical packet body under the task run directory.
 
 `scafld complete` recomputes the hash from the parsed packet artifact
 and refuses to advance on mismatch with `EC.REVIEW_GATE_BLOCKED`.
@@ -156,8 +154,8 @@ When advisory findings exist under the threshold, `scafld complete`
 prints an `advisory: N finding(s)` summary with a per-severity
 breakdown so the operator/agent knows what was deferred.
 
-Findings must declare severity (already enforced by the review parser
-via `FINDING_LINE_RE` in `scafld/reviewing.py`).
+Findings must declare severity; the review packet validator rejects unknown
+severity values before a verdict can advance the lifecycle.
 
 ## Review Topology
 
@@ -223,8 +221,8 @@ The reviewer's response shape is enforced at generation time by the provider
 CLI. scafld passes the ReviewPacket schema to claude via `--json-schema`
 (inline JSON) and to codex via `--output-schema <path>` (temporary file).
 The model is constrained to produce JSON matching the schema; no prose
-preface, no markdown fences. Python-side `normalize_review_packet` remains
-authoritative at runtime.
+preface, no markdown fences. The Go review packet parser remains authoritative
+at runtime.
 
 The schema lives at `.scafld/core/schemas/review_packet.json` and is bundled by
 `scafld init` and `scafld update`. Operator overrides in the workspace are

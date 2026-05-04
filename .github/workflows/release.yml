@@ -19,13 +19,10 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
 
-      - name: Set up Python
-        uses: actions/setup-python@v6
+      - name: Set up Go
+        uses: actions/setup-go@v5
         with:
-          python-version: "3.12"
-
-      - name: Install runtime dependencies
-        run: python3 -m pip install --upgrade pip PyYAML
+          go-version-file: go.mod
 
       - name: Set up Node
         uses: actions/setup-node@v6
@@ -33,29 +30,52 @@ jobs:
           node-version: 24
           package-manager-cache: false
 
-      - name: Validate canonical version against tag
-        run: python3 scripts/sync_version.py --check --tag "${GITHUB_REF_NAME#v}"
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
 
-      - name: Validate Python syntax
-        run: PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile cli/scafld setup.py $(find scafld scripts -name '*.py' -print)
+      - name: Validate release version
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          case "$version" in
+            *[!0-9.]*|*.*.*.*|.*|*.) echo "invalid release version: $version" >&2; exit 2 ;;
+          esac
+          scripts/set-release-version.sh "$version"
 
-      - name: Run review gate smoke
-        run: bash tests/review_gate_smoke.sh all
+      - name: Run release checks
+        run: make check
 
-      - name: Run harden smoke
-        run: bash tests/harden_smoke.sh
+      - name: Build release snapshot
+        run: scripts/build-release-artifacts.sh "${GITHUB_REF_NAME#v}"
 
-      - name: Run update smoke
-        run: bash tests/update_smoke.sh
-
-      - name: Run package smoke
-        run: bash tests/package_smoke.sh
-
-      - name: Run challenge override smoke
-        run: bash tests/challenge_override_smoke.sh
-
-  build:
+  github-release:
     needs: validate
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build native release artifacts
+        run: scripts/build-release-artifacts.sh "${GITHUB_REF_NAME#v}"
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v3
+        with:
+          generate_release_notes: true
+          files: |
+            dist/*
+
+  publish-pypi:
+    needs: github-release
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -69,53 +89,24 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Set up Node
-        uses: actions/setup-node@v6
-        with:
-          node-version: 24
-          package-manager-cache: false
+      - name: Set wrapper version
+        run: scripts/set-release-version.sh "${GITHUB_REF_NAME#v}"
 
-      - name: Validate canonical version against tag
-        run: python3 scripts/sync_version.py --check --tag "${GITHUB_REF_NAME#v}"
-
-      - name: Install Python build tooling
-        run: python3 -m pip install --upgrade pip build
-
-      - name: Build Python artifacts
+      - name: Build PyPI wrapper
+        working-directory: package/pypi
         run: |
-          rm -rf release-artifacts dist build scafld.egg-info
-          mkdir -p release-artifacts/dist
-          python3 -m build --outdir release-artifacts/dist
-
-      - name: Upload release artifacts
-        uses: actions/upload-artifact@v7
-        with:
-          name: release-artifacts
-          path: release-artifacts/**
-          if-no-files-found: error
-
-  publish-pypi:
-    needs: build
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: read
-
-    steps:
-      - name: Download release artifacts
-        uses: actions/download-artifact@v8
-        with:
-          name: release-artifacts
-          path: release-artifacts
+          python3 -m pip install --upgrade pip build
+          python3 -m build
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          packages-dir: release-artifacts/dist
+          packages-dir: package/pypi/dist
           password: ${{ secrets.PYPI_API_TOKEN }}
           skip-existing: true
 
   publish-npm:
-    needs: build
+    needs: github-release
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -131,10 +122,15 @@ jobs:
           registry-url: https://registry.npmjs.org
           package-manager-cache: false
 
-      - name: Validate canonical version against tag
-        run: python3 scripts/sync_version.py --check --tag "${GITHUB_REF_NAME#v}"
+      - name: Set wrapper version
+        run: scripts/set-release-version.sh "${GITHUB_REF_NAME#v}"
+
+      - name: Validate npm wrapper
+        working-directory: package/npm
+        run: npm test
 
       - name: Publish to npm
+        working-directory: package/npm
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
@@ -147,26 +143,4 @@ jobs:
             echo "scafld@$version already exists on npm; skipping publish"
             exit 0
           fi
-          npm publish
-
-  github-release:
-    needs:
-      - publish-pypi
-      - publish-npm
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: write
-
-    steps:
-      - name: Download release artifacts
-        uses: actions/download-artifact@v8
-        with:
-          name: release-artifacts
-          path: release-artifacts
-
-      - name: Create GitHub release
-        uses: softprops/action-gh-release@v3
-        with:
-          generate_release_notes: true
-          files: |
-            release-artifacts/dist/*
+          npm publish --access public
