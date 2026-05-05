@@ -1,12 +1,14 @@
 package review
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/nilstate/scafld/v2/internal/adapters/process"
 	"github.com/nilstate/scafld/v2/internal/adapters/providers"
 )
 
@@ -42,6 +44,19 @@ review:
 	}
 	if len(selected.Passes) == 0 {
 		t.Fatalf("review passes should be supplied from config defaults")
+	}
+	var progress bytes.Buffer
+	selected, err = Select(context.Background(), Options{Root: root, TaskID: "task", Progress: &progress})
+	if err != nil {
+		t.Fatal(err)
+	}
+	codex = selected.Provider.(providers.CodexProvider)
+	runner, ok := codex.Runner.(process.Runner)
+	if !ok {
+		t.Fatalf("runner = %T, want process.Runner", codex.Runner)
+	}
+	if runner.Progress != &progress || runner.ProgressLabel != "review provider" {
+		t.Fatalf("review runner did not carry progress stream: %+v", runner)
 	}
 	selected, err = Select(context.Background(), Options{Root: root, TaskID: "task", Model: "gpt-flag"})
 	if err != nil {

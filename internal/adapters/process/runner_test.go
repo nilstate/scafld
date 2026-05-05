@@ -1,6 +1,7 @@
 package process
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -80,6 +81,39 @@ func TestCommandCapsOutputAndRecordsEvents(t *testing.T) {
 	}
 	if result.StdoutEvents["system"] != 1 || result.StdoutEvents["result.success"] != 1 {
 		t.Fatalf("events = %+v", result.StdoutEvents)
+	}
+}
+
+func TestCommandStreamsProgressToReporter(t *testing.T) {
+	t.Parallel()
+
+	var progress bytes.Buffer
+	result, err := (Runner{Progress: &progress, ProgressLabel: "review provider"}).Run(context.Background(), execution.Request{
+		Command: `printf '{"type":"result","subtype":"success"}\n'; printf 'thinking\n' >&2`,
+		Timeout: time.Second,
+		StdoutEventInspector: func(line string) string {
+			if strings.Contains(line, "result") {
+				return "result.success"
+			}
+			return ""
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.StdoutEvents["result.success"] != 1 {
+		t.Fatalf("events = %+v", result.StdoutEvents)
+	}
+	body := progress.String()
+	for _, want := range []string{
+		"scafld review provider: started",
+		"scafld review provider: event result.success",
+		"scafld review provider: stderr thinking",
+		"scafld review provider: completed exit=0",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("progress missing %q:\n%s", want, body)
+		}
 	}
 }
 

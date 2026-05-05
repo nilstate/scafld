@@ -310,6 +310,7 @@ func runReview(ctx context.Context, args []string, stdout io.Writer, stderr io.W
 		Command:        opts.Values["provider-command"],
 		ProviderBinary: opts.Values["provider-binary"],
 		Model:          opts.Values["model"],
+		Progress:       stderr,
 	})
 	if err != nil {
 		return failOut(stderr, err, ExitInvalid, opts.JSON)
