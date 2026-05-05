@@ -36,15 +36,20 @@ func Run(ctx context.Context, specs SpecStore, sessions SessionStore, clock Cloc
 	if err != nil {
 		return spec.Model{}, err
 	}
-	if model.Review.Status != "completed" || model.Review.Verdict != corereview.VerdictPass {
+	ledger, err := sessions.Load(ctx, model.TaskID)
+	if err != nil {
 		return spec.Model{}, fmt.Errorf("%w: run scafld review %s first", ErrReviewGate, model.TaskID)
 	}
+	reviewEntry, ok := latestReviewEntry(ledger)
+	if !ok || reviewEntry.Status != corereview.VerdictPass {
+		return spec.Model{}, fmt.Errorf("%w: run scafld review %s first", ErrReviewGate, model.TaskID)
+	}
+	if reviewEntry.Provider == "local" {
+		return spec.Model{}, fmt.Errorf("%w: local review provider cannot complete real work", ErrReviewGate)
+	}
+	model = reconcile.FromSession(model, ledger)
 	now := clock.Now().UTC().Format(time.RFC3339)
-	model.Status = spec.StatusCompleted
-	model.Updated = now
-	model.CurrentState.Next = "done"
-	model.CurrentState.AllowedFollowUp = "none"
-	ledger, err := sessions.Append(ctx, model.TaskID, session.Entry{Type: "complete", Status: "completed", Reason: "task completed"}, now)
+	ledger, err = sessions.Append(ctx, model.TaskID, session.Entry{Type: "complete", Status: "completed", Reason: "task completed"}, now)
 	if err != nil {
 		return spec.Model{}, err
 	}
@@ -60,4 +65,13 @@ func Run(ctx context.Context, specs SpecStore, sessions SessionStore, clock Cloc
 		return spec.Model{}, err
 	}
 	return model, nil
+}
+
+func latestReviewEntry(ledger session.Session) (session.Entry, bool) {
+	for i := len(ledger.Entries) - 1; i >= 0; i-- {
+		if ledger.Entries[i].Type == "review" {
+			return ledger.Entries[i], true
+		}
+	}
+	return session.Entry{}, false
 }

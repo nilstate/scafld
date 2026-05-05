@@ -95,7 +95,7 @@ func TestRunRejectsNonDraftSpec(t *testing.T) {
 	}
 }
 
-func TestRunMarkPassedWarnsOnUngroundedQuestions(t *testing.T) {
+func TestRunMarkPassedRejectsUngroundedQuestions(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
@@ -116,8 +116,8 @@ func TestRunMarkPassedWarnsOnUngroundedQuestions(t *testing.T) {
 	store := newMemorySpecStore(model)
 	store.path = filepath.Join(root, ".scafld", "specs", "drafts", "fixture-task.md")
 	out, err := Run(context.Background(), store, fixedClock{}, Input{TaskID: "fixture-task", MarkPassed: true, Root: root})
-	if err != nil {
-		t.Fatal(err)
+	if !errors.Is(err, ErrInvalidHardenEvidence) {
+		t.Fatalf("error = %v, want %v", err, ErrInvalidHardenEvidence)
 	}
 	if len(out.Warnings) != 2 {
 		t.Fatalf("warnings = %+v, want 2", out.Warnings)
@@ -125,6 +125,9 @@ func TestRunMarkPassedWarnsOnUngroundedQuestions(t *testing.T) {
 	joined := strings.Join(out.Warnings, "\n")
 	if !strings.Contains(joined, "missing.go") || !strings.Contains(joined, "missing grounded_in") {
 		t.Fatalf("warnings did not explain citation issues: %+v", out.Warnings)
+	}
+	if store.model.HardenStatus == spec.HardenPassed {
+		t.Fatalf("hardening passed despite invalid citations: %+v", store.model.HardenRounds)
 	}
 }
 

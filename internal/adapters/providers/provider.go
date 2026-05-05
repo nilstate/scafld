@@ -114,7 +114,9 @@ func (p LocalProvider) Invoke(ctx context.Context, req review.Request) (review.P
 	if len(lines) == 0 {
 		lines = []string{`{"type":"verdict","verdict":"pass"}`}
 	}
-	return review.ParseNDJSON(strings.Join(lines, "\n") + "\n")
+	packet, err := review.ParseNDJSON(strings.Join(lines, "\n") + "\n")
+	packet.Provider = "local"
+	return packet, err
 }
 
 // CommandProvider invokes an operator-supplied review command.
@@ -161,6 +163,7 @@ func (p CommandProvider) Invoke(ctx context.Context, req review.Request) (review
 	if result.ExitCode != 0 && packet.Verdict != review.VerdictFail {
 		return review.Packet{}, fmt.Errorf("%w: exit code %d", ErrProviderFailed, result.ExitCode)
 	}
+	packet.Provider = "command"
 	return packet, nil
 }
 

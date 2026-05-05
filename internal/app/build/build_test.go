@@ -2,6 +2,7 @@ package build
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -50,7 +51,7 @@ func (fakeBuildClock) Now() time.Time { return time.Date(2026, 5, 1, 0, 0, 0, 0,
 func TestPhaseCriterionEvidence(t *testing.T) {
 	t.Parallel()
 
-	specs := &fakeSpecs{model: spec.Model{TaskID: "task", Phases: []spec.Phase{{ID: "phase1", Name: "Phase", Acceptance: []spec.Criterion{{ID: "ac1", PhaseID: "phase1", Command: "true", ExpectedKind: acceptance.ExpectedExitCodeZero}}}}}}
+	specs := &fakeSpecs{model: spec.Model{TaskID: "task", Status: spec.StatusApproved, Phases: []spec.Phase{{ID: "phase1", Name: "Phase", Acceptance: []spec.Criterion{{ID: "ac1", PhaseID: "phase1", Command: "true", ExpectedKind: acceptance.ExpectedExitCodeZero}}}}}}
 	sessions := &fakeSessions{}
 	out, err := Run(context.Background(), specs, sessions, fakeRunner{}, fakeBuildClock{}, Input{TaskID: "task"})
 	if err != nil {
@@ -64,5 +65,33 @@ func TestPhaseCriterionEvidence(t *testing.T) {
 	}
 	if specs.model.CurrentState.AllowedFollowUp != "scafld review task" {
 		t.Fatalf("next action = %q", specs.model.CurrentState.AllowedFollowUp)
+	}
+	latest := sessions.ledger.Entries[len(sessions.ledger.Entries)-1]
+	if latest.Type != "build" || latest.Status != string(spec.StatusReview) {
+		t.Fatalf("latest session entry = %+v, want build review result", latest)
+	}
+}
+
+func TestBuildBlocksWhenCriterionHasNoEvidence(t *testing.T) {
+	t.Parallel()
+
+	specs := &fakeSpecs{model: spec.Model{TaskID: "task", Status: spec.StatusApproved, Phases: []spec.Phase{{ID: "phase1", Name: "Phase", Acceptance: []spec.Criterion{{ID: "ac1", PhaseID: "phase1", ExpectedKind: acceptance.ExpectedExitCodeZero}}}}}}
+	sessions := &fakeSessions{}
+	out, err := Run(context.Background(), specs, sessions, fakeRunner{}, fakeBuildClock{}, Input{TaskID: "task"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Status != spec.StatusBlocked || out.Failed != 1 {
+		t.Fatalf("output = %+v, want blocked with one failed/pending criterion", out)
+	}
+}
+
+func TestBuildRejectsDraft(t *testing.T) {
+	t.Parallel()
+
+	specs := &fakeSpecs{model: spec.Model{TaskID: "task", Status: spec.StatusDraft}}
+	_, err := Run(context.Background(), specs, &fakeSessions{}, fakeRunner{}, fakeBuildClock{}, Input{TaskID: "task"})
+	if !errors.Is(err, ErrSpecNotBuildable) {
+		t.Fatalf("error = %v, want %v", err, ErrSpecNotBuildable)
 	}
 }

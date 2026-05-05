@@ -108,10 +108,11 @@ func RunWithInput(ctx context.Context, specs SpecStore, sessions SessionStore, w
 	model.CurrentState.Next = next
 	model.CurrentState.AllowedFollowUp = command
 	ledger, err := sessions.Append(ctx, model.TaskID, session.Entry{
-		Type:   "review",
-		Status: packet.Verdict,
-		Reason: reviewReason(packet),
-		Output: review.EncodeFindings(packet.Findings),
+		Type:     "review",
+		Status:   packet.Verdict,
+		Reason:   reviewReason(packet),
+		Provider: packet.Provider,
+		Output:   review.EncodeFindings(packet.Findings),
 	}, now)
 	if err != nil {
 		return Output{}, err

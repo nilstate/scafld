@@ -29,7 +29,6 @@ Project-owned:
 - `.scafld/prompts/*`
 - `.scafld/specs/**`
 - `.scafld/runs/**`
-- `.scafld/reviews/**`
 
 Managed by scafld:
 
@@ -40,7 +39,7 @@ Managed by scafld:
 - `.scafld/core/specs/examples/*`
 
 `scafld update` refreshes only `.scafld/core/`. It must not overwrite project
-prompt overrides, specs, sessions, reviews, or local config.
+prompt overrides, specs, sessions, or local config.
 
 ## Prompt Overrides
 
@@ -128,7 +127,7 @@ defaults come from `review.external.codex.model` and
 `review.external.claude.model`; `--model` overrides either.
 
 `local` exists for tests and smoke runs; it is not a substitute for adversarial
-review.
+review and cannot satisfy `scafld complete`.
 
 Named `automated_passes` and `adversarial_passes` are included in the review
 prompt in `order` sequence. They are the configurable review agenda; they do
@@ -143,4 +142,5 @@ hardened before approval.
 The active harden prompt asks the agent to record grounded questions under the
 latest `## Harden Rounds` entry. `harden.max_questions_per_round` is read from
 config and injected into that prompt as a cap, not a target. `--mark-passed`
-warning-checks the cited code or archive references and closes the round.
+verifies the cited code or archive references and refuses to close the round
+when they do not resolve.

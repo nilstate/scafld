@@ -24,4 +24,4 @@ scafld handoff <task-id>
 - Use `scafld handoff` for compact model context without moving state.
 
 For real review, use `--provider claude` or `--provider codex`.
-`--provider local` is smoke-test only.
+`--provider local` is smoke-test only and cannot satisfy `complete`.

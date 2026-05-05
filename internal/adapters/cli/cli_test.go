@@ -247,6 +247,54 @@ func TestRunHardenLifecycle(t *testing.T) {
 	}
 }
 
+func TestRunLifecycleMovesSpecsByState(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	runCLI(t, []string{"init", "--root", root, "--no-agent-docs"})
+	runCLI(t, []string{"plan", "--root", root, "lifecycle-task", "--command", "true"})
+	draftPath := filepath.Join(root, ".scafld", "specs", "drafts", "lifecycle-task.md")
+	approvedPath := filepath.Join(root, ".scafld", "specs", "approved", "lifecycle-task.md")
+	activePath := filepath.Join(root, ".scafld", "specs", "active", "lifecycle-task.md")
+	if _, err := os.Stat(draftPath); err != nil {
+		t.Fatalf("draft missing: %v", err)
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run(context.Background(), []string{"build", "--root", root, "lifecycle-task"}, &stdout, &stderr)
+	if code == ExitSuccess {
+		t.Fatalf("build before approve succeeded unexpectedly: stdout=%q stderr=%q", stdout.String(), stderr.String())
+	}
+
+	runCLI(t, []string{"approve", "--root", root, "lifecycle-task"})
+	if _, err := os.Stat(draftPath); !os.IsNotExist(err) {
+		t.Fatalf("draft path should move after approve: %v", err)
+	}
+	if _, err := os.Stat(approvedPath); err != nil {
+		t.Fatalf("approved path missing: %v", err)
+	}
+
+	runCLI(t, []string{"build", "--root", root, "lifecycle-task"})
+	if _, err := os.Stat(approvedPath); !os.IsNotExist(err) {
+		t.Fatalf("approved path should move after build: %v", err)
+	}
+	if _, err := os.Stat(activePath); err != nil {
+		t.Fatalf("active path missing: %v", err)
+	}
+
+	command := `printf '{"verdict":"pass","findings":[]}'`
+	runCLI(t, []string{"review", "--root", root, "lifecycle-task", "--provider", "command", "--provider-command", command})
+	runCLI(t, []string{"complete", "--root", root, "lifecycle-task"})
+	if _, err := os.Stat(activePath); !os.IsNotExist(err) {
+		t.Fatalf("active path should move after complete: %v", err)
+	}
+	matches, err := filepath.Glob(filepath.Join(root, ".scafld", "specs", "archive", "*", "lifecycle-task.md"))
+	if err != nil || len(matches) != 1 {
+		t.Fatalf("archive match = %v err=%v, want one archived spec", matches, err)
+	}
+}
+
 func TestRunReviewSurfacesFindingsInReviewStatusAndHandoff(t *testing.T) {
 	t.Parallel()
 

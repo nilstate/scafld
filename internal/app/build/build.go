@@ -2,6 +2,7 @@ package build
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -11,6 +12,9 @@ import (
 	"github.com/nilstate/scafld/v2/internal/core/session"
 	"github.com/nilstate/scafld/v2/internal/core/spec"
 )
+
+// ErrSpecNotBuildable is returned when execution is attempted before approval or after terminal state.
+var ErrSpecNotBuildable = errors.New("build requires approved, active, blocked, or review state")
 
 // SpecStore is the spec persistence port used by build.
 type SpecStore interface {
@@ -52,26 +56,47 @@ func Run(ctx context.Context, specs SpecStore, sessions SessionStore, runner Run
 	if err != nil {
 		return Output{}, err
 	}
+	if !buildable(model.Status) {
+		return Output{}, fmt.Errorf("%w: %s", ErrSpecNotBuildable, model.Status)
+	}
 	model.Status = spec.StatusActive
 	now := clock.Now().UTC().Format(time.RFC3339)
+	if _, err := sessions.Append(ctx, model.TaskID, session.Entry{Type: "build", Status: "active", Reason: "build started"}, now); err != nil {
+		return Output{}, fmt.Errorf("append build start: %w", err)
+	}
 	if err := runCriteria(ctx, sessions, runner, model, input.CWD, now); err != nil {
 		return Output{}, err
 	}
-	ledger, _ := sessions.Load(ctx, model.TaskID)
+	ledger, err := sessions.Load(ctx, model.TaskID)
+	if err != nil {
+		return Output{}, fmt.Errorf("load session evidence: %w", err)
+	}
 	ledger, err = appendPhaseEvidence(ctx, sessions, model, ledger, now)
 	if err != nil {
 		return Output{}, err
 	}
 	replayed := session.Replay(ledger)
-	passed, failed := countCriterionStates(replayed)
+	passed, failed := countCriterionOutcomes(model, replayed)
 	applyPostBuildState(&model, failed)
 	model.Updated = now
+	ledger, err = sessions.Append(ctx, model.TaskID, session.Entry{Type: "build", Status: string(model.Status), Reason: "build completed"}, now)
+	if err != nil {
+		return Output{}, fmt.Errorf("append build result: %w", err)
+	}
 	model = reconcile.FromSession(model, ledger)
-	model.Status = mapStatus(failed)
 	if err := specs.Save(ctx, path, model); err != nil {
 		return Output{}, fmt.Errorf("save projected spec: %w", err)
 	}
 	return Output{TaskID: model.TaskID, Status: model.Status, Passed: passed, Failed: failed}, nil
+}
+
+func buildable(status spec.Status) bool {
+	switch status {
+	case spec.StatusApproved, spec.StatusActive, spec.StatusBlocked, spec.StatusReview:
+		return true
+	default:
+		return false
+	}
 }
 
 func runCriteria(ctx context.Context, sessions SessionStore, runner Runner, model spec.Model, cwd string, now string) error {
@@ -126,13 +151,18 @@ func appendPhaseEvidence(ctx context.Context, sessions SessionStore, model spec.
 	return ledger, nil
 }
 
-func countCriterionStates(replayed session.Session) (int, int) {
+func countCriterionOutcomes(model spec.Model, replayed session.Session) (int, int) {
 	passed, failed := 0, 0
-	for _, state := range replayed.CriterionStates {
+	for _, criterion := range model.AllCriteria() {
+		state, ok := replayed.CriterionStates[criterion.ID]
+		if !ok {
+			failed++
+			continue
+		}
 		switch state.Status {
 		case "pass":
 			passed++
-		case "fail", "invalid":
+		default:
 			failed++
 		}
 	}
@@ -150,13 +180,6 @@ func applyPostBuildState(model *spec.Model, failed int) {
 	model.CurrentState.Next = "review"
 	model.CurrentState.AllowedFollowUp = "scafld review " + model.TaskID
 	model.CurrentState.ReviewGate = "not_started"
-}
-
-func mapStatus(failed int) spec.Status {
-	if failed > 0 {
-		return spec.StatusBlocked
-	}
-	return spec.StatusReview
 }
 
 func snippet(s string) string {

@@ -200,7 +200,7 @@ rubric:
 review:
   external:
     # Runtime-supported providers: auto, codex, claude, command, local.
-    # local is for development smoke tests only.
+    # local is for development smoke tests only; it cannot satisfy complete.
     provider: "auto"
     # Used when provider is command. CLI flag: --provider-command.
     # command: "./reviewer"

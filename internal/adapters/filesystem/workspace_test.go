@@ -26,7 +26,6 @@ func TestWorkspaceInitCreatesScafldLayout(t *testing.T) {
 		".scafld/specs/approved",
 		".scafld/specs/active",
 		".scafld/runs",
-		".scafld/reviews",
 	} {
 		if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(rel))); err != nil {
 			t.Fatalf("%s missing: %v", rel, err)

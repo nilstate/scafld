@@ -19,7 +19,7 @@ func TestProviderContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if packet.Verdict != "fail" || len(packet.Findings) != 1 {
+	if packet.Verdict != "fail" || packet.Provider != "local" || len(packet.Findings) != 1 {
 		t.Fatalf("packet = %+v", packet)
 	}
 }
@@ -58,7 +58,7 @@ func TestCommandProviderParsesStdoutOnlyAndPassesTimeouts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if packet.Verdict != review.VerdictFail || len(packet.Findings) != 1 {
+	if packet.Verdict != review.VerdictFail || packet.Provider != "command" || len(packet.Findings) != 1 {
 		t.Fatalf("packet = %+v", packet)
 	}
 	if runner.req.CWD != "/tmp/work" || runner.req.Timeout != time.Minute || runner.req.IdleTimeout != time.Second || runner.req.Input != "prompt" {

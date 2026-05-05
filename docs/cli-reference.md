@@ -111,8 +111,9 @@ Without flags, `harden` appends a round, sets `harden_status: in_progress`, and
 prints the active prompt from `.scafld/prompts/harden.md`, falling back to
 `.scafld/core/prompts/harden.md` and then the built-in prompt.
 
-With `--mark-passed`, it warning-checks the latest round's `Grounded in`
-citations, closes the round, and sets `harden_status: passed`.
+With `--mark-passed`, it verifies the latest round's `Grounded in` citations,
+closes the round, and sets `harden_status: passed`. Unresolved citations fail
+closed and leave the round in progress.
 
 ## validate
 
@@ -130,8 +131,9 @@ non-executable acceptance criteria.
 scafld approve <task-id> [--json]
 ```
 
-Moves a draft spec to approved and records the approval in the session ledger.
-Approval is explicit operator action; it is not implied by hardening.
+Records approval in the session ledger, then moves the draft spec to
+`.scafld/specs/approved/`. Approval is explicit operator action; it is not
+implied by hardening.
 
 ## build
 
@@ -139,8 +141,9 @@ Approval is explicit operator action; it is not implied by hardening.
 scafld build <task-id> [--json]
 ```
 
-Activates approved work and runs executable acceptance criteria. Evidence is
-written to the session first and projected back into the Markdown spec.
+Activates approved, active, blocked, or review-state work and runs executable
+acceptance criteria. Evidence is written to the session first and projected back
+into the Markdown spec. Drafts and terminal specs are rejected.
 
 ## exec
 
@@ -162,7 +165,8 @@ scafld review <task-id> [--provider auto|codex|claude|command|local] [--provider
 `provider: auto`, which selects an installed external challenger (`codex`, then
 `claude`). If neither is available, the command fails and tells the operator to
 install a provider, use `--provider command`, or explicitly choose
-`--provider local` for development smoke tests.
+`--provider local` for development smoke tests. Local verdicts cannot satisfy
+`complete`.
 
 Provider modes:
 
@@ -170,7 +174,8 @@ Provider modes:
 - `codex`: run Codex in read-only ephemeral mode.
 - `claude`: run Claude with read-only tools and structured JSON output.
 - `command`: run a custom reviewer command; requires `--provider-command`.
-- `local`: deterministic pass-through provider for development and tests only.
+- `local`: deterministic pass-through provider for development and tests only;
+  its verdict cannot satisfy `complete`.
 
 Provider-specific model defaults come from
 `review.external.codex.model` and `review.external.claude.model`. `--provider`,
@@ -192,7 +197,8 @@ review entry, and the spec `## Review` section.
 scafld complete <task-id> [--json]
 ```
 
-Archives completed work only after the review gate has passed.
+Archives completed work only after the latest session review event has a
+non-local `pass` verdict.
 
 ## fail
 
@@ -200,7 +206,7 @@ Archives completed work only after the review gate has passed.
 scafld fail <task-id> [--reason TEXT] [--json]
 ```
 
-Archives a task as failed and records the reason in session.
+Records the failure in session, then archives the spec.
 
 ## cancel
 
@@ -208,7 +214,7 @@ Archives a task as failed and records the reason in session.
 scafld cancel <task-id> [--reason TEXT] [--json]
 ```
 
-Archives a task as cancelled and records the reason in session.
+Records the cancellation in session, then archives the spec.
 
 ## status
 
@@ -216,7 +222,8 @@ Archives a task as cancelled and records the reason in session.
 scafld status <task-id> [--json]
 ```
 
-Shows lifecycle status and the next allowed follow-up command.
+Shows lifecycle status, the next allowed follow-up command, and latest review
+findings when present.
 
 ## list
 
@@ -241,5 +248,6 @@ surface that will grow as session-derived metrics deepen.
 scafld handoff <task-id>
 ```
 
-Renders model-facing context from the current spec state. Handoffs are
-transport, not source of truth; scafld computes state from the spec and session.
+Renders model-facing context from the current spec and session state. Handoffs
+include latest review findings when present. They are transport, not source of
+truth.

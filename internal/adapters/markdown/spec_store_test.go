@@ -2,6 +2,7 @@ package markdown
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -200,6 +201,57 @@ func TestSpecStoreCreateLoadListAndValidate(t *testing.T) {
 	}
 	if len(records) != 1 {
 		t.Fatalf("records = %d, want 1", len(records))
+	}
+}
+
+func TestCreateDraftDoesNotOverwriteExistingSpec(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	store := Store{Root: root}
+	if _, err := store.CreateDraft(context.Background(), fixtureModel()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateDraft(context.Background(), fixtureModel()); !errors.Is(err, ErrSpecExists) {
+		t.Fatalf("CreateDraft error = %v, want %v", err, ErrSpecExists)
+	}
+}
+
+func TestSaveMovesSpecToLifecycleDirectory(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	store := Store{Root: root}
+	model := fixtureModel()
+	path, err := store.CreateDraft(context.Background(), model)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	model.Status = spec.StatusApproved
+	model.Updated = "2026-05-05T00:00:00Z"
+	if err := store.Save(context.Background(), path, model); err != nil {
+		t.Fatal(err)
+	}
+	approved := filepath.Join(root, ".scafld", "specs", "approved", "fixture-task.md")
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("draft path still exists: %v", err)
+	}
+	if _, err := os.Stat(approved); err != nil {
+		t.Fatalf("approved path missing: %v", err)
+	}
+
+	model.Status = spec.StatusCompleted
+	model.Updated = "2026-05-05T01:00:00Z"
+	if err := store.Save(context.Background(), approved, model); err != nil {
+		t.Fatal(err)
+	}
+	archived := filepath.Join(root, ".scafld", "specs", "archive", "2026-05", "fixture-task.md")
+	if _, err := os.Stat(approved); !os.IsNotExist(err) {
+		t.Fatalf("approved path still exists after archive: %v", err)
+	}
+	if _, err := os.Stat(archived); err != nil {
+		t.Fatalf("archive path missing: %v", err)
 	}
 }
 

@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/nilstate/scafld/v2/internal/core/acceptance"
 	corereview "github.com/nilstate/scafld/v2/internal/core/review"
@@ -22,6 +23,8 @@ import (
 var (
 	// ErrSpecNotFound is returned when taskID cannot be found in spec directories.
 	ErrSpecNotFound = errors.New("spec not found")
+	// ErrSpecExists is returned when a write would overwrite another task spec.
+	ErrSpecExists = errors.New("spec already exists")
 	// ErrMalformedMarkdown wraps spec Markdown grammar failures.
 	ErrMalformedMarkdown = errors.New("malformed markdown spec")
 	phaseHeadingPattern  = regexp.MustCompile(`^## Phase ([0-9]+):\s*(.+?)\s*$`)
@@ -46,12 +49,21 @@ func (s Store) CreateDraft(ctx context.Context, model spec.Model) (string, error
 		root = "."
 	}
 	path := filepath.Join(root, ".scafld", "specs", "drafts", model.TaskID+".md")
+	if _, err := os.Stat(path); err == nil {
+		return "", fmt.Errorf("%w: %s", ErrSpecExists, path)
+	} else if !os.IsNotExist(err) {
+		return "", fmt.Errorf("stat draft spec: %w", err)
+	}
 	return path, writeSpec(ctx, path, model)
 }
 
 // Save writes model to an existing spec path.
 func (s Store) Save(ctx context.Context, path string, model spec.Model) error {
-	return updateSpec(ctx, path, model)
+	root := s.Root
+	if root == "" {
+		root = "."
+	}
+	return updateSpec(ctx, root, path, model)
 }
 
 // Load finds, parses, and returns a spec by task ID.
@@ -652,7 +664,7 @@ func writeSpec(ctx context.Context, path string, model spec.Model) error {
 	return nil
 }
 
-func updateSpec(ctx context.Context, path string, model spec.Model) error {
+func updateSpec(ctx context.Context, root string, path string, model spec.Model) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -671,10 +683,68 @@ func updateSpec(ctx context.Context, path string, model spec.Model) error {
 	if err != nil {
 		return err
 	}
-	if err := atomicfile.Write(path, data, 0o644); err != nil {
+	target := targetPath(root, model)
+	if samePath(path, target) {
+		if err := atomicfile.Write(path, data, 0o644); err != nil {
+			return fmt.Errorf("write spec: %w", err)
+		}
+		return nil
+	}
+	if err := writeMovedSpec(path, target, data); err != nil {
 		return fmt.Errorf("write spec: %w", err)
 	}
 	return nil
+}
+
+func targetPath(root string, model spec.Model) string {
+	dir := "active"
+	switch model.Status {
+	case spec.StatusDraft:
+		dir = "drafts"
+	case spec.StatusApproved:
+		dir = "approved"
+	case spec.StatusCompleted, spec.StatusFailed, spec.StatusCancelled:
+		return filepath.Join(root, ".scafld", "specs", "archive", archiveMonth(model.Updated), model.TaskID+".md")
+	}
+	return filepath.Join(root, ".scafld", "specs", dir, model.TaskID+".md")
+}
+
+func archiveMonth(updated string) string {
+	if ts, err := time.Parse(time.RFC3339, updated); err == nil {
+		return ts.UTC().Format("2006-01")
+	}
+	if len(updated) >= len("2006-01") {
+		return updated[:len("2006-01")]
+	}
+	return time.Now().UTC().Format("2006-01")
+}
+
+func writeMovedSpec(source string, target string, data []byte) error {
+	if _, err := os.Stat(target); err == nil {
+		return fmt.Errorf("%w: %s", ErrSpecExists, target)
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("stat target: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		return fmt.Errorf("create target dir: %w", err)
+	}
+	if err := atomicfile.Write(target, data, 0o644); err != nil {
+		return err
+	}
+	if err := os.Remove(source); err != nil {
+		_ = os.Remove(target)
+		return fmt.Errorf("remove old spec: %w", err)
+	}
+	return nil
+}
+
+func samePath(a string, b string) bool {
+	absA, errA := filepath.Abs(a)
+	absB, errB := filepath.Abs(b)
+	if errA == nil && errB == nil {
+		return filepath.Clean(absA) == filepath.Clean(absB)
+	}
+	return filepath.Clean(a) == filepath.Clean(b)
 }
 
 // updateSpecMarkdown applies only the sections whose normalized model changed.

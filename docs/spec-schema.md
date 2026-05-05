@@ -110,8 +110,8 @@ Questions:
 
 Each question should carry one `Grounded in` value matching
 `spec_gap:<field>`, `code:<file>:<line>`, or `archive:<task_id>`.
-`scafld harden <task-id> --mark-passed` warning-checks code and archive
-citations before closing the round.
+`scafld harden <task-id> --mark-passed` verifies code and archive citations
+before closing the round.
 
 ## Reconcile Contract
 

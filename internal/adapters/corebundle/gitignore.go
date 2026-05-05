@@ -25,7 +25,6 @@ var scafldGitignoreBlock = []byte(`# scafld runtime state
 !.scafld/specs/**
 .scafld/config.local.yaml
 .scafld/runs/
-.scafld/reviews/
 `)
 
 // InitGitignore installs the scafld ignore contract into the workspace gitignore.

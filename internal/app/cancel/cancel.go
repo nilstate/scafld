@@ -29,6 +29,9 @@ func Run(ctx context.Context, specs SpecStore, sessions SessionStore, clock Cloc
 		return spec.Model{}, err
 	}
 	now := clock.Now().UTC().Format(time.RFC3339)
+	if _, err := sessions.Append(ctx, model.TaskID, session.Entry{Type: "cancel", Status: "cancelled", Reason: reason}, now); err != nil {
+		return spec.Model{}, err
+	}
 	model.Status = spec.StatusCancelled
 	model.Updated = now
 	model.CurrentState.Reason = reason
@@ -36,6 +39,5 @@ func Run(ctx context.Context, specs SpecStore, sessions SessionStore, clock Cloc
 	if err := specs.Save(ctx, path, model); err != nil {
 		return spec.Model{}, err
 	}
-	_, err = sessions.Append(ctx, model.TaskID, session.Entry{Type: "cancel", Status: "cancelled", Reason: reason}, now)
-	return model, err
+	return model, nil
 }

@@ -44,7 +44,6 @@ func TestInitGitignoreCreatesScafldRules(t *testing.T) {
 		"!.scafld/specs/**",
 		".scafld/config.local.yaml",
 		".scafld/runs/",
-		".scafld/reviews/",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf(".gitignore missing %q:\n%s", want, text)
@@ -94,7 +93,6 @@ func TestInitGitignoreIsIdempotentAndOverridesBroadScafldIgnore(t *testing.T) {
 		t.Fatalf("git init: %v", err)
 	}
 	assertGitIgnore(t, root, ".scafld/runs/task/session.json", true)
-	assertGitIgnore(t, root, ".scafld/reviews/task.md", true)
 	assertGitIgnore(t, root, ".scafld/config.local.yaml", true)
 	assertGitIgnore(t, root, ".scafld/specs/drafts/task.md", false)
 	assertGitIgnore(t, root, ".scafld/config.yaml", false)

@@ -22,6 +22,8 @@ var (
 	ErrNoHardenRound = errors.New("no harden round exists")
 	// ErrSpecNotDraft is returned when hardening a non-draft spec.
 	ErrSpecNotDraft = errors.New("harden only operates on drafts")
+	// ErrInvalidHardenEvidence is returned when a hardening round has unverified citations.
+	ErrInvalidHardenEvidence = errors.New("invalid harden evidence")
 )
 
 // SpecStore is the spec persistence port used by hardening.
@@ -109,6 +111,9 @@ func markPassed(ctx context.Context, store SpecStore, path string, model spec.Mo
 	}
 	latest := len(model.HardenRounds) - 1
 	warnings := verifyHardenRoundCitations(root, model.HardenRounds[latest])
+	if len(warnings) > 0 {
+		return Output{TaskID: model.TaskID, Path: path, HardenStatus: model.HardenStatus, RoundID: model.HardenRounds[latest].ID, Warnings: warnings}, fmt.Errorf("%w: %s", ErrInvalidHardenEvidence, strings.Join(warnings, "; "))
+	}
 	model.HardenRounds[latest].Status = string(spec.HardenPassed)
 	model.HardenRounds[latest].EndedAt = now
 	model.HardenStatus = spec.HardenPassed

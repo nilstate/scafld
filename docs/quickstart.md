@@ -73,7 +73,8 @@ scafld review add-auth --provider command --provider-command "./reviewer"
 
 With no provider flag, scafld uses `--provider auto` and selects an installed
 external challenger. If none is installed, review fails closed. Use
-`--provider local` only for development smoke tests.
+`--provider local` only for development smoke tests; local verdicts cannot
+satisfy `complete`.
 
 ## Complete
 
@@ -81,8 +82,9 @@ external challenger. If none is installed, review fails closed. Use
 scafld complete add-auth
 ```
 
-`complete` archives only reviewed work. If review returns a blocking finding,
-repair the work, rerun `build` as needed, then rerun `review`.
+`complete` archives only work with a non-local passing review in the session. If
+review returns a blocking finding, repair the work, rerun `build` as needed,
+then rerun `review`.
 
 ## Inspect State
 

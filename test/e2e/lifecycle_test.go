@@ -20,10 +20,10 @@ func TestLifecycleJSONContractsAgentSurfaceFailCancelReviewProviderMutationGuard
 	assertSnakeEnvelope(t, run(t, bin, "validate", "--root", root, "lifecycle-task", "--json"), "valid")
 	assertSnakeEnvelope(t, run(t, bin, "approve", "--root", root, "lifecycle-task", "--json"), "status")
 	assertSnakeEnvelope(t, run(t, bin, "build", "--root", root, "lifecycle-task", "--json"), "passed")
-	assertSnakeEnvelope(t, run(t, bin, "review", "--root", root, "--provider", "local", "lifecycle-task", "--json"), "verdict")
+	assertSnakeEnvelope(t, run(t, bin, "list", "--root", root, "--json"), "task_id")
+	assertSnakeEnvelope(t, run(t, bin, "review", "--root", root, "--provider", "command", "--provider-command", `printf '{"verdict":"pass","findings":[]}'`, "lifecycle-task", "--json"), "verdict")
 	assertSnakeEnvelope(t, run(t, bin, "complete", "--root", root, "lifecycle-task", "--json"), "current_state")
 	assertSnakeEnvelope(t, run(t, bin, "status", "--root", root, "lifecycle-task", "--json"), "session_ok")
-	assertSnakeEnvelope(t, run(t, bin, "list", "--root", root, "--json"), "task_id")
 	assertSnakeEnvelope(t, run(t, bin, "report", "--root", root, "--json"), "by_status")
 	if _, err := os.Stat(filepath.Join(root, ".scafld", "runs", "lifecycle-task", "session.json")); err != nil {
 		t.Fatal(err)
