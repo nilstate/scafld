@@ -2,6 +2,8 @@ package markdown
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -120,6 +122,55 @@ func TestUpdateSpecMarkdownIgnoresHeadingLikeTextInsideCodeFences(t *testing.T) 
 	}
 	if len(parsed.Phases) != 1 {
 		t.Fatalf("phase count = %d, want 1", len(parsed.Phases))
+	}
+}
+
+func TestSavePreservesUnparsedSectionsWhenUpdatingHardenState(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	store := Store{Root: root}
+	path, err := store.CreateDraft(context.Background(), fixtureModel())
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := string(Render(fixtureModel()))
+	original = strings.Replace(original, "## Objectives\n\n", "## Context\n\nFiles impacted:\n- `src/app.ts` - keep this human-owned detail\n\n## Objectives\n\n", 1)
+	original = strings.Replace(original, "## Risks\n\n- none\n", "## Risks\n\n- Data loss during harden - preserve sections the parser does not own\n  - Mitigation: targeted section writes\n", 1)
+	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	model, loadedPath, err := store.Load(context.Background(), "fixture-task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	model.HardenStatus = spec.HardenInProgress
+	model.HardenRounds = append(model.HardenRounds, spec.HardenRound{
+		ID:        "round-1",
+		Status:    string(spec.HardenInProgress),
+		StartedAt: "2026-05-04T00:00:00Z",
+	})
+	model.CurrentState.Next = "harden"
+	model.CurrentState.AllowedFollowUp = "scafld harden fixture-task --mark-passed"
+	if err := store.Save(context.Background(), loadedPath, model); err != nil {
+		t.Fatal(err)
+	}
+
+	updated, err := os.ReadFile(filepath.Clean(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(updated)
+	for _, want := range []string{
+		"Files impacted:\n- `src/app.ts` - keep this human-owned detail",
+		"Data loss during harden - preserve sections the parser does not own",
+		"harden_status: in_progress",
+		"## Harden Rounds\n\n### round-1",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("saved spec lost %q:\n%s", want, text)
+		}
 	}
 }
 
