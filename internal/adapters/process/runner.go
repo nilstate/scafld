@@ -27,6 +27,8 @@ var (
 // Runner executes external commands and writes optional diagnostics.
 type Runner struct {
 	DiagnosticsDir string
+	Progress       io.Writer
+	ProgressLabel  string
 }
 
 // Run executes req with streaming stdout/stderr capture and watchdogs.
@@ -54,12 +56,14 @@ func (r Runner) Run(ctx context.Context, req execution.Request) (execution.Resul
 	if err := cmd.Start(); err != nil {
 		return execution.Result{}, fmt.Errorf("start command: %w", err)
 	}
+	progress := newProgressReporter(r.Progress, r.ProgressLabel)
+	progress.line("started %s", summarizeCommand(displayCommand))
 	state := newCapture(maxCaptureBytes(req.MaxCaptureBytes))
 	state.touch()
 	var pumps sync.WaitGroup
 	pumps.Add(2)
-	go pump(&pumps, stdout, state, "stdout", req.StdoutEventInspector)
-	go pump(&pumps, stderr, state, "stderr")
+	go pump(&pumps, stdout, state, "stdout", progress, req.StdoutEventInspector)
+	go pump(&pumps, stderr, state, "stderr", progress, nil)
 	waitCh := make(chan error, 1)
 	go func() {
 		pumps.Wait()
@@ -67,6 +71,7 @@ func (r Runner) Run(ctx context.Context, req execution.Request) (execution.Resul
 	}()
 	result, waitErr := waitProcess(ctx, cmd, waitCh, state, req)
 	result.Stdout, result.Stderr, result.Output, result.DroppedBytes, result.StdoutEvents = state.snapshot()
+	progress.result(result, waitErr)
 	if r.DiagnosticsDir != "" {
 		if path, writeErr := r.writeDiagnostic(displayCommand, result); writeErr == nil {
 			result.DiagnosticPath = path
@@ -166,46 +171,51 @@ func (c *capture) lastActivity() time.Time {
 	return c.last
 }
 
-func pump(wg *sync.WaitGroup, reader io.Reader, state *capture, stream string, inspectors ...func(string) string) {
+func pump(wg *sync.WaitGroup, reader io.Reader, state *capture, stream string, progress *progressReporter, inspector func(string) string) {
 	defer wg.Done()
 	buf := make([]byte, 32*1024)
 	var lineBuffer strings.Builder
-	var inspector func(string) string
-	if len(inspectors) > 0 {
-		inspector = inspectors[0]
-	}
+	lineMode := inspector != nil || progress != nil
 	for {
 		n, err := reader.Read(buf)
 		if n > 0 {
 			chunk := buf[:n]
 			state.write(stream, chunk)
-			if inspector != nil {
-				dispatchLines(&lineBuffer, string(chunk), inspector, state)
+			if lineMode {
+				dispatchLines(&lineBuffer, string(chunk), stream, inspector, state, progress)
 			}
 		}
 		if err != nil {
-			if inspector != nil && lineBuffer.Len() > 0 {
-				if event := inspector(lineBuffer.String()); event != "" {
-					state.recordEvent(event)
-				}
+			if lineMode && lineBuffer.Len() > 0 {
+				handleLine(lineBuffer.String(), stream, inspector, state, progress)
 			}
 			return
 		}
 	}
 }
 
-func dispatchLines(lineBuffer *strings.Builder, chunk string, inspector func(string) string, state *capture) {
+func dispatchLines(lineBuffer *strings.Builder, chunk string, stream string, inspector func(string) string, state *capture, progress *progressReporter) {
 	for _, part := range strings.SplitAfter(chunk, "\n") {
 		if strings.HasSuffix(part, "\n") {
 			lineBuffer.WriteString(strings.TrimSuffix(part, "\n"))
 			line := lineBuffer.String()
 			lineBuffer.Reset()
-			if event := inspector(line); event != "" {
-				state.recordEvent(event)
-			}
+			handleLine(line, stream, inspector, state, progress)
 			continue
 		}
 		lineBuffer.WriteString(part)
+	}
+}
+
+func handleLine(line string, stream string, inspector func(string) string, state *capture, progress *progressReporter) {
+	if inspector != nil {
+		if event := inspector(line); event != "" {
+			state.recordEvent(event)
+			progress.event(event)
+		}
+	}
+	if stream == "stderr" {
+		progress.stream(stream, line)
 	}
 }
 
@@ -300,6 +310,71 @@ func maxCaptureBytes(value int) int {
 		return defaultMaxCaptureBytes
 	}
 	return value
+}
+
+type progressReporter struct {
+	mu    sync.Mutex
+	out   io.Writer
+	label string
+}
+
+func newProgressReporter(out io.Writer, label string) *progressReporter {
+	if strings.TrimSpace(label) == "" {
+		label = "process"
+	}
+	return &progressReporter{out: out, label: strings.TrimSpace(label)}
+}
+
+func (p *progressReporter) line(format string, args ...interface{}) {
+	if p == nil || p.out == nil {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	fmt.Fprintf(p.out, "scafld %s: %s\n", p.label, fmt.Sprintf(format, args...))
+}
+
+func (p *progressReporter) stream(stream string, line string) {
+	line = strings.TrimRight(line, "\r\n")
+	if strings.TrimSpace(line) == "" {
+		return
+	}
+	p.line("%s %s", stream, line)
+}
+
+func (p *progressReporter) event(event string) {
+	if strings.TrimSpace(event) == "" {
+		return
+	}
+	p.line("event %s", event)
+}
+
+func (p *progressReporter) result(result execution.Result, err error) {
+	elapsed := result.WallElapsed.Round(time.Millisecond)
+	since := result.TimeSinceLastByte.Round(time.Millisecond)
+	if err != nil || result.KillReason != "" {
+		reason := result.KillReason
+		if reason == "" {
+			reason = err.Error()
+		}
+		p.line("stopped reason=%s exit=%d elapsed=%s last_output=%s", reason, result.ExitCode, elapsed, since)
+		return
+	}
+	p.line("completed exit=%d elapsed=%s last_output=%s", result.ExitCode, elapsed, since)
+}
+
+func summarizeCommand(command string) string {
+	fields := strings.Fields(command)
+	if len(fields) == 0 {
+		return "(empty command)"
+	}
+	fields[0] = filepath.Base(fields[0])
+	summary := strings.Join(fields, " ")
+	const max = 240
+	if len(summary) > max {
+		return summary[:max] + "...[truncated]"
+	}
+	return summary
 }
 
 func (r Runner) writeDiagnostic(command string, result execution.Result) (string, error) {

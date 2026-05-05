@@ -3,6 +3,7 @@ package review
 import (
 	"context"
 	"fmt"
+	"io"
 	"time"
 
 	configadapter "github.com/nilstate/scafld/v2/internal/adapters/config"
@@ -20,6 +21,7 @@ type Options struct {
 	ProviderBinary  string
 	Model           string
 	DiagnosticsPath string
+	Progress        io.Writer
 }
 
 // Selection is the provider and review agenda chosen for a review run.
@@ -49,7 +51,7 @@ func Select(ctx context.Context, opts Options) (Selection, error) {
 		CodexBinary:    external.Codex.Binary,
 		ClaudeBinary:   external.Claude.Binary,
 		CWD:            opts.Root,
-		Runner:         process.Runner{DiagnosticsDir: diagnosticsPath},
+		Runner:         process.Runner{DiagnosticsDir: diagnosticsPath, Progress: opts.Progress, ProgressLabel: "review provider"},
 		Timeout:        time.Duration(external.AbsoluteMaxSeconds) * time.Second,
 		Idle:           time.Duration(external.IdleTimeoutSeconds) * time.Second,
 		FallbackPolicy: external.FallbackPolicy,
