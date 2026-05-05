@@ -149,5 +149,8 @@ func TestRegistryTemplatesUsePublicPackageIdentity(t *testing.T) {
 		if strings.Contains(text, "Nilstate.Scafld") {
 			t.Fatalf("%s must not expose the GitHub org as package identity", file)
 		}
+		if !strings.HasPrefix(text, "# yaml-language-server: $schema=https://aka.ms/winget-manifest.") {
+			t.Fatalf("%s must start with the Winget schema header", file)
+		}
 	}
 }
