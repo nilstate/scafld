@@ -72,6 +72,23 @@ func TestReviewCommandProviderBlockingFindingExitsReviewFailure(t *testing.T) {
 	if !strings.Contains(out.String(), "review verdict: fail") {
 		t.Fatalf("stdout %q does not contain fail verdict", out.String())
 	}
+	for _, want := range []string{
+		"findings:",
+		"[blocking] finding-1: bug",
+		"next: scafld handoff provider-task",
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("stdout missing %q:\n%s", want, out.String())
+		}
+	}
+	status := string(run(t, bin, "status", "--root", root, "provider-task"))
+	if !strings.Contains(status, "review: fail") || !strings.Contains(status, "[blocking] finding-1: bug") {
+		t.Fatalf("status did not surface review findings:\n%s", status)
+	}
+	handoff := string(run(t, bin, "handoff", "--root", root, "provider-task"))
+	if !strings.Contains(handoff, "bug") || !strings.Contains(handoff, "blocking") {
+		t.Fatalf("handoff did not surface review findings:\n%s", handoff)
+	}
 }
 
 func TestReviewProviderMutationGuardFailsReview(t *testing.T) {
@@ -106,6 +123,93 @@ func TestReviewProviderMutationGuardFailsReview(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "review verdict: fail") {
 		t.Fatalf("stdout %q does not contain mutation failure verdict", out.String())
+	}
+}
+
+func TestHardenPreservesHumanOwnedSpecSections(t *testing.T) {
+	t.Parallel()
+
+	bin := testBinary(t)
+	root := t.TempDir()
+	run(t, bin, "init", "--root", root)
+	run(t, bin, "plan", "--root", root, "harden-preserve", "--title", "Harden preserve", "--command", "true")
+	specPath := filepath.Join(root, ".scafld", "specs", "drafts", "harden-preserve.md")
+	data, err := os.ReadFile(specPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	text = strings.Replace(text, "## Objectives\n\n", "## Context\n\nFiles impacted:\n- `backend/app.go` - preserve this human-owned detail\n\n```text\n## Phase 99: Not a real phase\n```\n\n## Objectives\n\n", 1)
+	text = strings.Replace(text, "## Risks\n\n- none\n", "## Risks\n\n- Hardening can erase detail if section replacement is too broad\n  - Mitigation: keep targeted section writes under test\n", 1)
+	if err := os.WriteFile(specPath, []byte(text), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	run(t, bin, "harden", "--root", root, "harden-preserve")
+	updated, err := os.ReadFile(specPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(updated)
+	for _, want := range []string{
+		"Files impacted:\n- `backend/app.go` - preserve this human-owned detail",
+		"## Phase 99: Not a real phase",
+		"Hardening can erase detail if section replacement is too broad",
+		"harden_status: in_progress",
+		"## Harden Rounds\n\n### round-1",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("hardened spec lost %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestInitUpdatePreservesProjectOwnedFilesAndGitignore(t *testing.T) {
+	t.Parallel()
+
+	bin := testBinary(t)
+	root := t.TempDir()
+	run(t, bin, "init", "--root", root)
+	projectPrompt := filepath.Join(root, ".scafld", "prompts", "harden.md")
+	if err := os.WriteFile(projectPrompt, []byte("# Project harden prompt\n\nKeep this exact prompt.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	agentsPath := filepath.Join(root, "AGENTS.md")
+	agents, err := os.ReadFile(agentsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	agents = append(agents, []byte("\n# Project Agent Rules\n\nKeep local instructions.\n")...)
+	if err := os.WriteFile(agentsPath, agents, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	run(t, bin, "init", "--root", root)
+	run(t, bin, "update", "--root", root)
+
+	prompt, err := os.ReadFile(projectPrompt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(prompt) != "# Project harden prompt\n\nKeep this exact prompt.\n" {
+		t.Fatalf("project prompt was clobbered:\n%s", prompt)
+	}
+	agents, err = os.ReadFile(agentsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(agents), "# scafld Agent Contract") || !strings.Contains(string(agents), "# Project Agent Rules") {
+		t.Fatalf("agent docs did not preserve scafld and project sections:\n%s", agents)
+	}
+	gitignore, err := os.ReadFile(filepath.Join(root, ".gitignore"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count := strings.Count(string(gitignore), "# scafld runtime state"); count != 1 {
+		t.Fatalf("scafld gitignore block count = %d:\n%s", count, gitignore)
+	}
+	if !strings.Contains(string(gitignore), ".scafld/runs/") || !strings.Contains(string(gitignore), "!.scafld/specs/**") {
+		t.Fatalf("gitignore missing scafld tracked/runtime rules:\n%s", gitignore)
 	}
 }
 
