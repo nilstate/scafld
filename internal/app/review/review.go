@@ -43,6 +43,7 @@ type Output struct {
 	TaskID   string           `json:"task_id"`
 	Verdict  string           `json:"verdict"`
 	Findings []review.Finding `json:"findings"`
+	Next     string           `json:"next"`
 }
 
 // Input describes the task and review agenda to run.
@@ -101,11 +102,17 @@ func RunWithInput(ctx context.Context, specs SpecStore, sessions SessionStore, w
 	model.Status = spec.StatusReview
 	model.Review.Status = "completed"
 	model.Review.Verdict = packet.Verdict
+	model.Review.Findings = packet.Findings
 	model.CurrentState.ReviewGate = packet.Verdict
 	next, command := nextForVerdict(model.TaskID, packet.Verdict)
 	model.CurrentState.Next = next
 	model.CurrentState.AllowedFollowUp = command
-	ledger, err := sessions.Append(ctx, model.TaskID, session.Entry{Type: "review", Status: packet.Verdict, Reason: "review gate " + packet.Verdict}, now)
+	ledger, err := sessions.Append(ctx, model.TaskID, session.Entry{
+		Type:   "review",
+		Status: packet.Verdict,
+		Reason: reviewReason(packet),
+		Output: review.EncodeFindings(packet.Findings),
+	}, now)
 	if err != nil {
 		return Output{}, err
 	}
@@ -116,13 +123,22 @@ func RunWithInput(ctx context.Context, specs SpecStore, sessions SessionStore, w
 	model.Status = spec.StatusReview
 	model.Review.Status = "completed"
 	model.Review.Verdict = packet.Verdict
+	model.Review.Findings = packet.Findings
 	model.CurrentState.ReviewGate = packet.Verdict
 	model.CurrentState.Next = next
 	model.CurrentState.AllowedFollowUp = command
 	if err := specs.Save(ctx, path, model); err != nil {
 		return Output{}, err
 	}
-	return Output{TaskID: model.TaskID, Verdict: packet.Verdict, Findings: packet.Findings}, nil
+	return Output{TaskID: model.TaskID, Verdict: packet.Verdict, Findings: packet.Findings, Next: command}, nil
+}
+
+func reviewReason(packet review.Packet) string {
+	blocking := review.CountBlocking(packet.Findings)
+	if len(packet.Findings) == 0 {
+		return "review gate " + packet.Verdict
+	}
+	return fmt.Sprintf("review gate %s: %d finding(s), %d blocking", packet.Verdict, len(packet.Findings), blocking)
 }
 
 func workspaceSnapshot(ctx context.Context, workspace WorkspaceStatus) ([]string, error) {

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/nilstate/scafld/v2/internal/core/acceptance"
+	corereview "github.com/nilstate/scafld/v2/internal/core/review"
 	"github.com/nilstate/scafld/v2/internal/core/spec"
 )
 
@@ -62,7 +63,7 @@ func TestRoundTripPreservesLiterateSpecFields(t *testing.T) {
 			AnsweredWith:      "Adapter-owned.",
 		}},
 	}}
-	model.Review = spec.ReviewState{Status: "pending", Verdict: "none"}
+	model.Review = spec.ReviewState{Status: "completed", Verdict: corereview.VerdictFail, Findings: []corereview.Finding{{ID: "f1", Severity: corereview.SeverityBlocking, Summary: "bug"}}}
 	model.Phases[0].Dependencies = []string{"phase0"}
 	model.Phases[0].Acceptance[0].Status = "pass"
 	model.Phases[0].Acceptance[0].Evidence = "exit code was 0"
@@ -92,6 +93,9 @@ func TestRoundTripPreservesLiterateSpecFields(t *testing.T) {
 	}
 	if got := parsed.Phases[0].Acceptance[0]; got.Evidence != "exit code was 0" || got.SourceEvent != "entry-1" {
 		t.Fatalf("criterion evidence lost: %+v", got)
+	}
+	if got := parsed.Review.Findings; len(got) != 1 || got[0].Summary != "bug" {
+		t.Fatalf("review findings lost: %+v", got)
 	}
 }
 

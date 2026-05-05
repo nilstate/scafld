@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/nilstate/scafld/v2/internal/core/acceptance"
+	corereview "github.com/nilstate/scafld/v2/internal/core/review"
 )
 
 // Status names a task's lifecycle state in the normalized spec model.
@@ -184,8 +185,9 @@ type Risk struct {
 
 // ReviewState stores the latest review gate projection.
 type ReviewState struct {
-	Status  string `json:"status"`
-	Verdict string `json:"verdict"`
+	Status   string               `json:"status"`
+	Verdict  string               `json:"verdict"`
+	Findings []corereview.Finding `json:"findings,omitempty"`
 }
 
 // Origin records where the spec came from.

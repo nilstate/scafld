@@ -247,6 +247,32 @@ func TestRunHardenLifecycle(t *testing.T) {
 	}
 }
 
+func TestRunReviewSurfacesFindingsInReviewStatusAndHandoff(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	runCLI(t, []string{"init", "--root", root, "--no-agent-docs"})
+	runCLI(t, []string{"plan", "--root", root, "review-task", "--command", "true"})
+	command := `printf '{"verdict":"fail","findings":[{"id":"f1","severity":"blocking","summary":"bug"}]}'`
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run(context.Background(), []string{"review", "--root", root, "review-task", "--provider", "command", "--provider-command", command}, &stdout, &stderr)
+	if code != ExitReview {
+		t.Fatalf("review exit = %d, want %d; stderr=%q stdout=%q", code, ExitReview, stderr.String(), stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "findings:") || !strings.Contains(stdout.String(), "bug") || !strings.Contains(stdout.String(), "next: scafld handoff review-task") {
+		t.Fatalf("review output hides findings:\n%s", stdout.String())
+	}
+	status := runCLI(t, []string{"status", "--root", root, "review-task"})
+	if !strings.Contains(status, "review: fail") || !strings.Contains(status, "bug") {
+		t.Fatalf("status output hides review findings:\n%s", status)
+	}
+	handoff := runCLI(t, []string{"handoff", "--root", root, "review-task"})
+	if !strings.Contains(handoff, "## Review Findings") || !strings.Contains(handoff, "bug") {
+		t.Fatalf("handoff hides review findings:\n%s", handoff)
+	}
+}
+
 func TestExitCodeTable(t *testing.T) {
 	t.Parallel()
 

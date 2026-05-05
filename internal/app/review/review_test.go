@@ -87,6 +87,9 @@ func TestProviderVerdictDrivesReviewState(t *testing.T) {
 	if specs.model.CurrentState.AllowedFollowUp != "scafld handoff task" {
 		t.Fatalf("next action = %q", specs.model.CurrentState.AllowedFollowUp)
 	}
+	if len(sessions.ledger.Entries) != 1 || !strings.Contains(sessions.ledger.Entries[0].Output, "bug") {
+		t.Fatalf("review findings were not recorded in session: %+v", sessions.ledger.Entries)
+	}
 }
 
 func TestProviderTimeoutMutationInvalidOutputPacketRepairFindingSignal(t *testing.T) {
