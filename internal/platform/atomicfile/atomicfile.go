@@ -40,11 +40,3 @@ func Write(path string, data []byte, perm os.FileMode) error {
 	return syncDir(dir)
 }
 
-func syncDir(dir string) error {
-	f, err := os.Open(dir)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	return f.Sync()
-}
