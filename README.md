@@ -10,6 +10,9 @@ The agent passes through. The protocol stays.
 
 Plans outlive agents. Sessions hold the receipts. Reviews take nothing on faith.
 
+Given the same spec and session ledger, scafld derives the same state, next
+command, and review gate.
+
 The work starts from an explicit spec, gets hardened before real effort,
 executes phase-bounded, and ships only through adversarial review. The
 differentiator is simple: **the agent does not get to grade its own homework**.

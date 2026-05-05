@@ -11,6 +11,7 @@ export default {
     tabs: [
       {
         tab: "Documentation",
+        slug: "",
         groups: [
           {
             group: "Getting Started",

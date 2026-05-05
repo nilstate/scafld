@@ -16,7 +16,7 @@ func knownCommand(name string) bool {
 }
 
 func printHelp(w io.Writer) {
-	fmt.Fprint(w, "scafld - evidence-backed AI coding workflow\n\nUsage:\n  scafld <command> [flags]\n\nCommands:\n")
+	fmt.Fprint(w, "scafld - deterministic protocol for multi-phase agent work\n\nUsage:\n  scafld <command> [flags]\n\nCommands:\n")
 	for _, cmd := range commands {
 		fmt.Fprintf(w, "  %-10s %s\n", cmd.name, cmd.summary)
 	}
