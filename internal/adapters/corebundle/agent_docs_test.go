@@ -30,6 +30,24 @@ func TestInitAgentDocsCreatesRootDocs(t *testing.T) {
 	}
 }
 
+func TestAgentDocResetCopiesMatchRootTemplates(t *testing.T) {
+	t.Parallel()
+
+	for _, name := range agentDocFiles {
+		rootTemplate, err := assets.ReadFile("assets/agentdocs/" + name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		coreTemplate, err := assets.ReadFile("assets/core/agentdocs/" + name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(rootTemplate) != string(coreTemplate) {
+			t.Fatalf("%s root template and core reset copy drifted", name)
+		}
+	}
+}
+
 func TestInitAgentDocsPrependsExistingDocs(t *testing.T) {
 	t.Parallel()
 

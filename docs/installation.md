@@ -78,13 +78,28 @@ This creates the `.scafld/` workspace structure:
 .scafld/
   config.yaml
   config.local.yaml
-  core/
-  prompts/
-  runs/
-  specs/
+  core/                 # managed reset copy: schemas, prompts, scripts, agent docs
+    agentdocs/
+      AGENTS.md
+      CLAUDE.md
+  prompts/             # project-owned prompt overrides
+  runs/                # local runtime evidence and diagnostics
+  specs/               # committed living specs
 AGENTS.md
-CONVENTIONS.md
+CLAUDE.md
 ```
 
-Specs are project artifacts. Commit `.scafld/specs/`, `AGENTS.md`, and
-`CONVENTIONS.md` when they describe shared project behavior.
+Root `AGENTS.md` and `CLAUDE.md` are real merged files, not symlinks. They are
+installed at the repository root because that is the discovery surface most
+agents read before doing work. scafld owns only the top-level scafld section and
+preserves project-owned headings below it.
+
+Use `scafld init --no-agent-docs` only when you will wire the agent contract
+yourself. The CLI still installs `.scafld/core/agentdocs/` so the canonical
+contract remains inspectable.
+
+Commit `.scafld/config.yaml`, `.scafld/core/`, `.scafld/prompts/`,
+`.scafld/specs/`, `AGENTS.md`, and `CLAUDE.md` when they describe shared
+project behavior. Keep `.scafld/config.local.yaml` and `.scafld/runs/` local.
+`CONVENTIONS.md` is project-owned: scafld references it when present but does
+not create a placeholder conventions file.
