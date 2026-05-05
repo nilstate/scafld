@@ -30,6 +30,24 @@ export default {
           },
         ],
       },
+      {
+        tab: "Go API",
+        godoc: {
+          module: "..",
+          packages: [
+            "./cmd/scafld",
+            "./internal/core/...",
+            "./internal/app/...",
+            "./internal/adapters/...",
+            "./internal/platform/...",
+          ],
+          sourceBasePath: "",
+          mode: "live",
+          includeTests: true,
+          includeUnexported: false,
+          hideUndocumented: false,
+        },
+      },
     ],
   },
   navbar: {
