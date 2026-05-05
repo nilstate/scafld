@@ -192,9 +192,9 @@ scafld harden add-cache --mark-passed
 The first command enters HARDEN MODE, prints the active harden prompt, and
 records a round in the spec. Questions in that round carry `Grounded in`
 citations such as `spec_gap:scope`, `code:internal/app/build/build.go:42`, or
-`archive:previous-cutover`. The second command warning-checks those citations
-and marks the latest round passed once the contract has been tightened. Approval
-is still an explicit operator decision, but a complete plan spec should be
+`archive:previous-cutover`. The second command verifies those citations and
+refuses to close the round when they do not resolve. Approval is still an
+explicit operator decision, but a complete plan spec should be
 hardened when the task is ambiguous, high-risk, cross-cutting, or likely to
 outlive one agent turn.
 
@@ -267,8 +267,9 @@ The review agenda is configurable too. `review.automated_passes` and
 `review.adversarial_passes` are included in the challenger prompt in explicit
 order, so the project can state what "adversarial" means without changing code.
 
-The local provider is useful for development and smoke tests only. The product
-value comes from an independent adversarial pass that can say no.
+The local provider is useful for development and smoke tests only; local
+verdicts cannot satisfy `scafld complete`. The product value comes from an
+independent adversarial pass that can say no.
 
 ## Success Metrics
 

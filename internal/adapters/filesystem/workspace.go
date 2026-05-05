@@ -40,7 +40,6 @@ func (WorkspaceStore) Init(ctx context.Context, root string) (workspace.InitResu
 		".scafld/specs/approved",
 		".scafld/specs/active",
 		".scafld/runs",
-		".scafld/reviews",
 	} {
 		if err := ctx.Err(); err != nil {
 			return workspace.InitResult{}, err

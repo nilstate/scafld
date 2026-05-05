@@ -18,9 +18,10 @@ draft -> harden -> approve -> build -> review -> complete
 scafld build <task-id>
 ```
 
-`build` loads the approved or active spec, marks it active while work is
-executed, runs every executable acceptance criterion, appends criterion evidence
-to the session ledger, and projects criterion/phase state back into the spec.
+`build` loads approved work, or previously active/blocked/review work that is
+being repaired. It marks the task active while work is executed, runs executable
+acceptance criteria, appends criterion evidence to the session ledger, and
+projects criterion/phase state back into the spec.
 
 If all criteria pass, the task moves to `review` and the allowed follow-up is:
 
@@ -28,8 +29,9 @@ If all criteria pass, the task moves to `review` and the allowed follow-up is:
 scafld review <task-id>
 ```
 
-If any criterion fails, the task becomes `blocked`; use `status` and the
-recorded diagnostics to decide whether to repair, rerun build, fail, or cancel.
+If any criterion is missing evidence, fails, or cannot be evaluated, the task
+becomes `blocked`; use `status`, the spec projection, and any recorded
+diagnostics to decide whether to repair, rerun build, fail, or cancel.
 
 ## exec
 
@@ -61,9 +63,9 @@ lets scafld rebuild projected state from evidence if a write fails halfway.
 scafld handoff <task-id>
 ```
 
-The current Go handoff is a compact model-facing summary of title, status, and
-allowed next command. Handoff is transport only; it is never read back to compute
-state.
+The handoff is a compact model-facing summary of title, status, allowed next
+command, and latest review findings when present. Handoff is transport only; it
+is never read back to compute state.
 
 ## Process Safety
 

@@ -22,6 +22,7 @@ type Entry struct {
 	PhaseID     string `json:"phase_id,omitempty"`
 	Status      string `json:"status,omitempty"`
 	Reason      string `json:"reason,omitempty"`
+	Provider    string `json:"provider,omitempty"`
 	Command     string `json:"command,omitempty"`
 	ExitCode    int    `json:"exit_code,omitempty"`
 	Output      string `json:"output,omitempty"`

@@ -57,6 +57,7 @@ func FromSession(model spec.Model, ledger session.Session) spec.Model {
 		next.CurrentState.LatestRunnerUpdate = last.RecordedAt
 		next.CurrentState.Reason = last.Reason
 	}
+	projectLifecycle(&next, replayed)
 	for i := len(replayed.Entries) - 1; i >= 0; i-- {
 		entry := replayed.Entries[i]
 		if entry.Type != "review" {
@@ -68,4 +69,29 @@ func FromSession(model spec.Model, ledger session.Session) spec.Model {
 		break
 	}
 	return next
+}
+
+func projectLifecycle(model *spec.Model, ledger session.Session) {
+	for i := len(ledger.Entries) - 1; i >= 0; i-- {
+		switch ledger.Entries[i].Type {
+		case "approval":
+			model.Status = spec.StatusApproved
+			return
+		case "build":
+			model.Status = spec.Status(ledger.Entries[i].Status)
+			return
+		case "review":
+			model.Status = spec.StatusReview
+			return
+		case "complete":
+			model.Status = spec.StatusCompleted
+			return
+		case "fail":
+			model.Status = spec.StatusFailed
+			return
+		case "cancel":
+			model.Status = spec.StatusCancelled
+			return
+		}
+	}
 }

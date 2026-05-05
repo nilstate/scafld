@@ -45,7 +45,8 @@ scafld review my-task --provider claude
 scafld review my-task --provider command --provider-command "./reviewer"
 ```
 
-`--provider local` is for development smoke tests, not production review.
+`--provider local` is for development smoke tests, not production review, and
+local verdicts cannot satisfy `scafld complete`.
 
 ## Metrics
 

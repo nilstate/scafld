@@ -32,6 +32,24 @@ func TestFromSessionProjectsLatestReviewFindings(t *testing.T) {
 	}
 }
 
+func TestFromSessionProjectsLifecycleState(t *testing.T) {
+	t.Parallel()
+
+	ledger := session.New("task", "now")
+	ledger = ledger.WithEntry(session.Entry{Type: "approval", Status: "approved"})
+	ledger = ledger.WithEntry(session.Entry{Type: "build", Status: string(spec.StatusReview)})
+	ledger = ledger.WithEntry(session.Entry{Type: "complete", Status: "completed"})
+	projected := FromSession(spec.Model{TaskID: "task", Status: spec.StatusDraft}, ledger)
+	if projected.Status != spec.StatusCompleted {
+		t.Fatalf("status = %s, want completed", projected.Status)
+	}
+
+	buildProjected := FromSession(spec.Model{TaskID: "task", Status: spec.StatusApproved}, session.New("task", "now").WithEntry(session.Entry{Type: "build", Status: string(spec.StatusBlocked)}))
+	if buildProjected.Status != spec.StatusBlocked {
+		t.Fatalf("build status = %s, want blocked", buildProjected.Status)
+	}
+}
+
 func TestReconcileContentionRaceScenario(t *testing.T) {
 	t.Parallel()
 

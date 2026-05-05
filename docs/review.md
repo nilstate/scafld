@@ -54,7 +54,7 @@ Provider meanings:
 - `command`: custom reviewer command. It receives the review prompt on stdin and
   must emit a ReviewPacket-compatible response.
 - `local`: deterministic local pass-through provider for development and smoke
-  tests. It is not an adversarial review.
+  tests. It is not an adversarial review and cannot satisfy `complete`.
 
 ## What scafld Sends
 
@@ -119,8 +119,9 @@ scafld complete <task-id>
 
 `complete` refuses unless:
 
-- review has completed
-- the review verdict is `pass`
+- the latest session review event exists
+- the latest review verdict is `pass`
+- the latest review provider is not `local`
 
 If review fails, repair the work, rerun acceptance as needed, rerun review, then
 complete only after the challenger clears the gate.

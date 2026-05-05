@@ -47,7 +47,8 @@ scafld approve my-task
 
 ### 3. Execution
 
-AI moves spec to `active/`, sets `status: "in_progress"`, and executes phases.
+`scafld build my-task` moves approved work to `active/`, records acceptance
+evidence in session first, and projects the result back into the spec.
 
 ### 4. Review
 
@@ -55,12 +56,14 @@ Run adversarial review before completing:
 
 ```bash
 scafld review my-task
-# Fill in findings in .scafld/reviews/my-task.md
 ```
+
+Findings are printed by `review`, stored in session, projected into `## Review`,
+and repeated by `status` and `handoff`.
 
 ### 5. Completion
 
-Mark complete (reads review, records verdict, moves to `archive/YYYY-MM/`):
+Mark complete after a non-local passing review in session:
 
 ```bash
 scafld complete my-task

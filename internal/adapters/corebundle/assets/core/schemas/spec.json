@@ -158,7 +158,20 @@
       "additionalProperties": false,
       "properties": {
         "status": {"type": "string"},
-        "verdict": {"type": "string", "enum": ["pass", "fail", ""]}
+        "verdict": {"type": "string", "enum": ["pass", "fail", "none", ""]},
+        "findings": {
+          "type": "array",
+          "items": {"$ref": "#/definitions/review_finding"}
+        }
+      }
+    },
+    "review_finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {"type": "string"},
+        "severity": {"type": "string", "enum": ["blocking", "non_blocking"]},
+        "summary": {"type": "string"}
       }
     },
     "origin": {

@@ -93,28 +93,25 @@ Do not file weak findings. Sharpen them into strong ones or drop them.
 
 ## Attack Plan
 
-1. Read the generated challenge contract and automated pass results.
-2. Read the spec, changed files, and the surrounding code the diff touches.
-3. Read the latest review scaffold in `.scafld/reviews/{task-id}.md`.
-4. Work the Attack Angles. For each, say what you checked and what you found.
-5. Write the latest review round so a human can see why the gate should pass,
-   fail, or pass with issues.
+1. Read the review prompt, spec contract, acceptance evidence, changed files,
+   and the surrounding code the diff touches.
+2. Work the Attack Angles. For each, say what you checked and what you found.
+3. Return a ReviewPacket JSON object. Do not write files, update scaffolds, or
+   treat diagnostics as the primary finding surface.
 
 ## Output Contract
 
-- fill only the latest review round; keep prior rounds intact
-- use blocking vs non-blocking findings only
-- every configured adversarial section must contain findings or an explicit
-  "No issues found" note naming concrete files, callers, rules, or paths checked
-- every blocking and non-blocking bullet must use the required severity and
-  file:line format
-- update the metadata truthfully
-- do not modify code from this handoff
+- emit only the ReviewPacket JSON object expected by scafld
+- `verdict` must be `pass` or `fail`
+- `findings` must be an array of objects with `id`, `severity`, and `summary`
+- `severity` must be `blocking` or `non_blocking`
+- any blocking finding must cite concrete evidence in the summary
+- do not modify code, specs, prompts, review files, or session files
 
 ## Verdict Rules
 
 - any blocking finding means `fail`
-- non-blocking findings only means `pass_with_issues`
+- non-blocking findings only means `pass`
 - a clean review means `pass`
 
 A clean review is allowed, but it must still explain the attack that was

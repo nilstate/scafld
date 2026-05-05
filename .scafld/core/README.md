@@ -28,12 +28,13 @@ plan -> harden -> approve -> build -> review -> complete
     harden.md
   runs/
     {task-id}/
-      handoffs/
       diagnostics/
       session.json
-    archive/{YYYY-MM}/{task-id}/
-  reviews/
   specs/
+    drafts/
+    approved/
+    active/
+    archive/YYYY-MM/
   core/
     prompts/
     schemas/
@@ -47,19 +48,9 @@ Prompt ownership:
 
 ## Handoffs
 
-Each handoff is a sibling pair:
-
-- `*.md` for the model
-- `*.json` for the harness
-
-Current runtime handoffs:
-
-- `executor-phase-*`
-- `executor-recovery-*`
-- `challenger-review`
-
-The handoff is one-way. scafld emits it; the system observes outcomes through
-the filesystem and criteria runs.
+`scafld handoff <task-id>` renders current model-facing context to stdout from
+the spec and session. It is one-way transport: scafld emits it, the next model
+reads it, and scafld never reads it back for state.
 
 ## Default Integrations
 
@@ -80,9 +71,10 @@ Challenge fires at `review`.
 
 That means:
 
-- one challenger handoff per task
+- one accepted review packet per review run, recorded in session
 - one completion gate that matters
-- one attribution metric that stays honest: `challenge_override_rate`
+- findings are visible in `review`, `status`, `handoff`, and the spec
+- diagnostics are transport evidence, not the primary finding surface
 
 ## Metrics
 

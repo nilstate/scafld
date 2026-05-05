@@ -95,8 +95,8 @@ the projected state from session evidence.
 `scafld harden <task-id>` appends a harden round while the spec is still a
 draft. The active prompt asks the agent to record grounded questions and work
 the answers back into the spec. `scafld harden <task-id> --mark-passed`
-warning-checks citations, closes the latest round, and records that the draft
-survived hardening.
+verifies citations, closes the latest round, and records that the draft
+survived hardening. Unresolved citations fail closed and leave the round open.
 
 Approval remains explicit. Hardening makes the approval decision worth trusting.
 

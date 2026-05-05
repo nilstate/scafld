@@ -2,6 +2,7 @@ package approve
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -9,10 +10,14 @@ import (
 	"github.com/nilstate/scafld/v2/internal/core/spec"
 )
 
+// ErrSpecNotDraft is returned when approval is attempted outside draft state.
+var ErrSpecNotDraft = errors.New("approve only operates on drafts")
+
 // SpecStore is the spec persistence port used by approval.
 type SpecStore interface {
 	Load(context.Context, string) (spec.Model, string, error)
 	Save(context.Context, string, spec.Model) error
+	Find(string) (string, error)
 }
 
 // SessionStore is the session evidence port used by approval.
@@ -36,19 +41,26 @@ func Run(ctx context.Context, specs SpecStore, sessions SessionStore, clock Cloc
 	if err != nil {
 		return Output{}, err
 	}
-	model.Status = spec.StatusApproved
-	model.CurrentState.Next = "build"
-	model.CurrentState.AllowedFollowUp = "scafld build " + model.TaskID
-	now := clock.Now().UTC().Format(time.RFC3339)
-	model.Updated = now
-	if err := specs.Save(ctx, path, model); err != nil {
-		return Output{}, fmt.Errorf("save approved spec: %w", err)
+	if model.Status != spec.StatusDraft {
+		return Output{}, fmt.Errorf("%w: %s", ErrSpecNotDraft, model.Status)
 	}
+	now := clock.Now().UTC().Format(time.RFC3339)
 	if sessions != nil {
 		_, err = sessions.Append(ctx, model.TaskID, session.Entry{Type: "approval", Status: "approved", Reason: "spec approved"}, now)
 		if err != nil {
 			return Output{}, fmt.Errorf("append approval: %w", err)
 		}
+	}
+	model.Status = spec.StatusApproved
+	model.CurrentState.Next = "build"
+	model.CurrentState.AllowedFollowUp = "scafld build " + model.TaskID
+	model.Updated = now
+	if err := specs.Save(ctx, path, model); err != nil {
+		return Output{}, fmt.Errorf("save approved spec: %w", err)
+	}
+	path, err = specs.Find(model.TaskID)
+	if err != nil {
+		return Output{}, fmt.Errorf("find approved spec: %w", err)
 	}
 	return Output{TaskID: model.TaskID, Status: model.Status, Path: path}, nil
 }
