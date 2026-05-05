@@ -3,8 +3,10 @@ package corebundle
 import (
 	"bytes"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -19,6 +21,94 @@ func TestEmbeddedAssetsDoNotDriftFromWorkspaceAssets(t *testing.T) {
 	root := repoRoot(t)
 	assertAssetTreeMatches(t, filepath.Join(root, ".scafld", "core"), filepath.Join(root, "internal", "adapters", "corebundle", "assets", "core"), ".scafld/core")
 	assertAssetTreeMatches(t, filepath.Join(root, ".scafld", "prompts"), filepath.Join(root, "internal", "adapters", "corebundle", "assets", "prompts"), ".scafld/prompts")
+}
+
+func TestInitGitignoreCreatesScafldRules(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	result, err := InitGitignore(t.Context(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Created) != 1 || result.Created[0] != ".gitignore" {
+		t.Fatalf("created = %v, want .gitignore", result.Created)
+	}
+	data, err := os.ReadFile(filepath.Join(root, ".gitignore"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, want := range []string{
+		"# scafld runtime state",
+		"!.scafld/specs/**",
+		".scafld/config.local.yaml",
+		".scafld/runs/",
+		".scafld/reviews/",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf(".gitignore missing %q:\n%s", want, text)
+		}
+	}
+}
+
+func TestInitGitignoreIsIdempotentAndOverridesBroadScafldIgnore(t *testing.T) {
+	t.Parallel()
+
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, ".gitignore"), []byte("node_modules/\n.scafld/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	result, err := InitGitignore(t.Context(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Updated) != 1 || result.Updated[0] != ".gitignore" {
+		t.Fatalf("updated = %v, want .gitignore", result.Updated)
+	}
+	first, err := os.ReadFile(filepath.Join(root, ".gitignore"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err = InitGitignore(t.Context(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Skipped) != 1 || result.Skipped[0] != ".gitignore" {
+		t.Fatalf("second init skipped = %v, want .gitignore", result.Skipped)
+	}
+	second, err := os.ReadFile(filepath.Join(root, ".gitignore"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(first, second) {
+		t.Fatalf(".gitignore changed on second init:\nfirst:\n%s\nsecond:\n%s", first, second)
+	}
+	if count := strings.Count(string(second), "# scafld runtime state"); count != 1 {
+		t.Fatalf("scafld block count = %d, want 1:\n%s", count, second)
+	}
+	if err := exec.Command("git", "-C", root, "init").Run(); err != nil {
+		t.Fatalf("git init: %v", err)
+	}
+	assertGitIgnore(t, root, ".scafld/runs/task/session.json", true)
+	assertGitIgnore(t, root, ".scafld/reviews/task.md", true)
+	assertGitIgnore(t, root, ".scafld/config.local.yaml", true)
+	assertGitIgnore(t, root, ".scafld/specs/drafts/task.md", false)
+	assertGitIgnore(t, root, ".scafld/config.yaml", false)
+}
+
+func assertGitIgnore(t *testing.T, root string, rel string, wantIgnored bool) {
+	t.Helper()
+
+	cmd := exec.Command("git", "-C", root, "check-ignore", "--quiet", rel)
+	err := cmd.Run()
+	gotIgnored := err == nil
+	if gotIgnored != wantIgnored {
+		t.Fatalf("git ignore for %s = %v, want %v", rel, gotIgnored, wantIgnored)
+	}
 }
 
 func assertAssetTreeMatches(t *testing.T, canonicalRoot string, embeddedRoot string, label string) {

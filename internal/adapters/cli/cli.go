@@ -33,20 +33,13 @@ import (
 var version string
 
 const (
-	// ExitSuccess indicates successful command completion.
-	ExitSuccess = 0
-	// ExitGeneric indicates an uncategorized runtime failure.
-	ExitGeneric = 1
-	// ExitInvalid indicates invalid command-line input.
-	ExitInvalid = 2
-	// ExitValidation indicates spec or acceptance validation failure.
+	ExitSuccess    = 0
+	ExitGeneric    = 1
+	ExitInvalid    = 2
 	ExitValidation = 3
-	// ExitReview indicates the adversarial review gate failed.
-	ExitReview = 4
-	// ExitCancelled indicates cancellation by context or signal.
-	ExitCancelled = 5
-	// ExitWorkspace indicates workspace discovery or setup failure.
-	ExitWorkspace = 6
+	ExitReview     = 4
+	ExitCancelled  = 5
+	ExitWorkspace  = 6
 )
 
 var commands = []command{
@@ -170,15 +163,20 @@ func runInit(ctx context.Context, args []string, stdout io.Writer, stderr io.Wri
 	if err != nil {
 		return failOut(stderr, fmt.Errorf("install core bundle: %w", err), ExitWorkspace, opts.JSON)
 	}
-	result.Created = append(result.Created, bundle.Created...)
+	result.Merge(bundle.Created, bundle.Updated, bundle.Skipped)
 	if !opts.Flags["no-agent-docs"] {
 		agentDocs, err := corebundle.InitAgentDocs(ctx, result.Root)
 		if err != nil {
 			return failOut(stderr, fmt.Errorf("install agent docs: %w", err), ExitWorkspace, opts.JSON)
 		}
-		result.Created = append(result.Created, agentDocs.Created...)
+		result.Merge(agentDocs.Created, agentDocs.Updated, agentDocs.Skipped)
 	}
-	return okOut(stdout, "init", result, fmt.Sprintf("initialized scafld workspace: %s\n", result.Root), opts.JSON)
+	gitignore, err := corebundle.InitGitignore(ctx, result.Root)
+	if err != nil {
+		return failOut(stderr, fmt.Errorf("install gitignore: %w", err), ExitWorkspace, opts.JSON)
+	}
+	result.Merge(gitignore.Created, gitignore.Updated, gitignore.Skipped)
+	return okOut(stdout, "init", result, bootstrap.Message(result), opts.JSON)
 }
 
 func runPlan(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer) int {

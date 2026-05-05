@@ -78,6 +78,7 @@ func TestRunInit(t *testing.T) {
 		t.Fatalf("config not created: %v", err)
 	}
 	for _, rel := range []string{
+		".gitignore",
 		".scafld/core/config.yaml",
 		".scafld/core/prompts/harden.md",
 		".scafld/core/schemas/spec.json",
@@ -98,11 +99,53 @@ func TestRunInit(t *testing.T) {
 	if strings.Contains(string(agents), "scafld:contract") || !strings.Contains(string(agents), "scafld Agent Contract") || !strings.Contains(string(agents), "Do Not") {
 		t.Fatalf("AGENTS.md does not include the scafld contract:\n%s", agents)
 	}
+	gitignore, err := os.ReadFile(filepath.Join(root, ".gitignore"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(gitignore), "# scafld runtime state") || !strings.Contains(string(gitignore), ".scafld/config.local.yaml") {
+		t.Fatalf(".gitignore does not include scafld rules:\n%s", gitignore)
+	}
 	if info, err := os.Stat(filepath.Join(root, ".scafld", "core", "scripts", "scafld-codex-build.sh")); err != nil || info.Mode()&0o111 == 0 {
 		t.Fatalf("core script should be executable, info=%v err=%v", info, err)
 	}
 	if _, err := os.Stat(filepath.Join(root, ".ai")); !os.IsNotExist(err) {
 		t.Fatalf(".ai should not be created, stat error = %v", err)
+	}
+}
+
+func TestRunInitIsIdempotent(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	runCLI(t, []string{"init", "--root", root})
+	agentsPath := filepath.Join(root, "AGENTS.md")
+	gitignorePath := filepath.Join(root, ".gitignore")
+	firstAgents, err := os.ReadFile(agentsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstGitignore, err := os.ReadFile(gitignorePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdout := runCLI(t, []string{"init", "--root", root})
+	if !strings.Contains(stdout, "already initialized") {
+		t.Fatalf("second init stdout %q does not report idempotent no-op", stdout)
+	}
+	secondAgents, err := os.ReadFile(agentsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondGitignore, err := os.ReadFile(gitignorePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(firstAgents) != string(secondAgents) {
+		t.Fatalf("AGENTS.md changed on second init")
+	}
+	if string(firstGitignore) != string(secondGitignore) {
+		t.Fatalf(".gitignore changed on second init:\nfirst:\n%s\nsecond:\n%s", firstGitignore, secondGitignore)
 	}
 }
 
