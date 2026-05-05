@@ -96,6 +96,21 @@ The authority order stays the same:
 Invalid packet output fails review. Workspace mutation during review becomes a
 blocking finding, even if the provider returned `pass`.
 
+## Failed Review Output
+
+Review findings are normal workflow data, not hidden diagnostics.
+
+When review fails:
+
+- `scafld review` prints the findings and the next repair command.
+- `scafld status` repeats the latest review verdict and findings.
+- `scafld handoff` includes the latest review findings for the next model voice.
+- the session review entry stores the finding payload.
+- the spec projects the latest verdict and findings under `## Review`.
+
+Diagnostics remain for provider transport failures, invalid packets, timeouts,
+and other cases where scafld could not accept normal review output.
+
 ## Complete Gate
 
 ```bash

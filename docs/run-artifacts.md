@@ -90,8 +90,11 @@ provider provenance; scafld records provider, model, session, timing, isolation,
 hashes, diagnostics, and artifact references in review metadata and session
 entries.
 
-The packet is canonical for machine-to-machine repair context. The markdown
-review remains canonical for the human-readable completion gate.
+The accepted packet is promoted into the normal workflow. Findings are recorded
+on the session review entry, projected into the spec `## Review` section, shown
+by `scafld status`, and included by `scafld handoff` for the next repair agent.
+Diagnostics are only the fallback surface for provider transport failures,
+invalid packets, timeouts, and other unaccepted output.
 
 ## Session
 
@@ -106,23 +109,20 @@ It records:
 - phase summaries
 - optional usage data
 
-Important typed entries in v1:
+Important typed entries:
 
 - `approval`
-- `attempt`
-- `phase_summary`
-- `challenge_verdict`
-- `human_override`
-- `provider_invocation`
+- `criterion`
+- `phase`
+- `review`
+- `complete`
+- `fail`
+- `cancel`
 
-Successful external review `provider_invocation` entries may point at
-`review_packet`, `repair_handoff`, and `repair_handoff_json` so reports and
-agents can locate the packet-derived repair material from the session ledger.
-Long-running external review calls first write the same entry with
-`status: running`, `invocation_id`, subprocess `pid`, and timeout metadata.
-Completion, timeout, provider failure, invalid output, or workspace mutation
-updates that invocation in place, leaving stale `running` entries visible only
-when the scafld process itself is interrupted before it can finalize telemetry.
+Review entries store the verdict in `status`, a concise summary in `reason`,
+and the accepted findings payload in `output`. Replayed criterion and phase
+state lives in `criterion_states` and `phase_blocks`; the Markdown spec is
+rendered from this evidence instead of being trusted as the source of state.
 
 ## Retention
 

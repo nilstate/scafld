@@ -182,6 +182,10 @@ mutation, writes the review event to session, and projects the verdict back into
 the spec. `complete` will not archive the task unless the review verdict is
 `pass`.
 
+On review failure, the text output prints the findings and next repair command.
+The same findings appear in `scafld status`, `scafld handoff`, the session
+review entry, and the spec `## Review` section.
+
 ## complete
 
 ```bash

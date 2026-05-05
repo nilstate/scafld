@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	hardencli "github.com/nilstate/scafld/v2/internal/adapters/cli/harden"
+	"github.com/nilstate/scafld/v2/internal/adapters/cli/output"
 	reviewcli "github.com/nilstate/scafld/v2/internal/adapters/cli/review"
 	"github.com/nilstate/scafld/v2/internal/adapters/clock"
 	"github.com/nilstate/scafld/v2/internal/adapters/corebundle"
@@ -324,7 +325,7 @@ func runReview(ctx context.Context, args []string, stdout io.Writer, stderr io.W
 	if out.Verdict != "pass" {
 		exit = ExitReview
 	}
-	return okOut(stdout, "review", out, fmt.Sprintf("review verdict: %s\n", out.Verdict), opts.JSON, exit)
+	return okOut(stdout, "review", out, output.Review(out), opts.JSON, exit)
 }
 
 func runComplete(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer) int {
@@ -352,7 +353,7 @@ func runStatus(ctx context.Context, args []string, stdout io.Writer, stderr io.W
 	if err != nil {
 		return failOut(stderr, err, ExitGeneric, opts.JSON)
 	}
-	return okOut(stdout, "status", out, fmt.Sprintf("%s: %s\nnext: %s\n", out.TaskID, out.Status, out.Next), opts.JSON)
+	return okOut(stdout, "status", out, output.Status(out), opts.JSON)
 }
 
 func runList(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer) int {
@@ -398,11 +399,11 @@ func runHandoff(ctx context.Context, args []string, stdout io.Writer, stderr io.
 	if err != nil {
 		return failOut(stderr, err, ExitInvalid, opts.JSON)
 	}
-	store, _, code, err := stores(ctx, opts)
+	store, sessions, code, err := stores(ctx, opts)
 	if err != nil {
 		return failOut(stderr, err, code, opts.JSON)
 	}
-	out, err := handoff.Run(ctx, store, opts.Positionals[0])
+	out, err := handoff.Run(ctx, store, sessions, opts.Positionals[0])
 	if err != nil {
 		return failOut(stderr, err, ExitGeneric, opts.JSON)
 	}

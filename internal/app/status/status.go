@@ -3,6 +3,7 @@ package status
 import (
 	"context"
 
+	corereview "github.com/nilstate/scafld/v2/internal/core/review"
 	"github.com/nilstate/scafld/v2/internal/core/session"
 	"github.com/nilstate/scafld/v2/internal/core/spec"
 )
@@ -24,6 +25,13 @@ type Output struct {
 	Title     string      `json:"title"`
 	Next      string      `json:"next"`
 	SessionOK bool        `json:"session_ok"`
+	Review    ReviewInfo  `json:"review,omitempty"`
+}
+
+// ReviewInfo is the latest review evidence visible from status.
+type ReviewInfo struct {
+	Verdict  string               `json:"verdict,omitempty"`
+	Findings []corereview.Finding `json:"findings,omitempty"`
 }
 
 // Run reads status for taskID.
@@ -34,9 +42,24 @@ func Run(ctx context.Context, specs SpecStore, sessions SessionStore, taskID str
 	}
 	out := Output{TaskID: model.TaskID, Status: model.Status, Title: model.Title, Next: model.CurrentState.AllowedFollowUp}
 	if sessions != nil {
-		if _, err := sessions.Load(ctx, model.TaskID); err == nil {
+		if ledger, err := sessions.Load(ctx, model.TaskID); err == nil {
 			out.SessionOK = true
+			out.Review = latestReviewInfo(ledger)
 		}
 	}
 	return out, nil
+}
+
+func latestReviewInfo(ledger session.Session) ReviewInfo {
+	for i := len(ledger.Entries) - 1; i >= 0; i-- {
+		entry := ledger.Entries[i]
+		if entry.Type != "review" {
+			continue
+		}
+		return ReviewInfo{
+			Verdict:  entry.Status,
+			Findings: corereview.DecodeFindings(entry.Output),
+		}
+	}
+	return ReviewInfo{}
 }

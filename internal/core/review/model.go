@@ -35,6 +35,41 @@ type Finding struct {
 	Summary  string   `json:"summary"`
 }
 
+// EncodeFindings serializes findings for session storage.
+func EncodeFindings(findings []Finding) string {
+	if len(findings) == 0 {
+		return ""
+	}
+	data, err := json.Marshal(findings)
+	if err != nil {
+		return ""
+	}
+	return string(data)
+}
+
+// DecodeFindings parses findings recorded in a session review entry.
+func DecodeFindings(text string) []Finding {
+	if strings.TrimSpace(text) == "" {
+		return nil
+	}
+	var findings []Finding
+	if err := json.Unmarshal([]byte(text), &findings); err != nil {
+		return nil
+	}
+	return findings
+}
+
+// CountBlocking returns the number of blocking findings.
+func CountBlocking(findings []Finding) int {
+	count := 0
+	for _, finding := range findings {
+		if finding.Severity == SeverityBlocking {
+			count++
+		}
+	}
+	return count
+}
+
 // Packet is the normalized review-provider payload consumed by scafld.
 type Packet struct {
 	Verdict      string         `json:"verdict"`

@@ -1,6 +1,7 @@
 package reconcile
 
 import (
+	corereview "github.com/nilstate/scafld/v2/internal/core/review"
 	"github.com/nilstate/scafld/v2/internal/core/session"
 	"github.com/nilstate/scafld/v2/internal/core/spec"
 )
@@ -55,6 +56,16 @@ func FromSession(model spec.Model, ledger session.Session) spec.Model {
 		last := replayed.Entries[len(replayed.Entries)-1]
 		next.CurrentState.LatestRunnerUpdate = last.RecordedAt
 		next.CurrentState.Reason = last.Reason
+	}
+	for i := len(replayed.Entries) - 1; i >= 0; i-- {
+		entry := replayed.Entries[i]
+		if entry.Type != "review" {
+			continue
+		}
+		next.Review.Status = "completed"
+		next.Review.Verdict = entry.Status
+		next.Review.Findings = corereview.DecodeFindings(entry.Output)
+		break
 	}
 	return next
 }

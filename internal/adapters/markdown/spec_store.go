@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/nilstate/scafld/v2/internal/core/acceptance"
+	corereview "github.com/nilstate/scafld/v2/internal/core/review"
 	"github.com/nilstate/scafld/v2/internal/core/spec"
 	"github.com/nilstate/scafld/v2/internal/platform/atomicfile"
 )
@@ -30,6 +31,7 @@ var (
 	statusLinePattern    = regexp.MustCompile(`^\s+- Status:\s*([a-z_]+)\s*$`)
 	evidenceLinePattern  = regexp.MustCompile(`^\s+- Evidence:\s*(.*)\s*$`)
 	sourceLinePattern    = regexp.MustCompile(`^\s+- Source event:\s*(.*)\s*$`)
+	findingLinePattern   = regexp.MustCompile(`^- \[([a-z_]+)\]\s+` + "`" + `([^` + "`" + `]+)` + "`" + `\s+(.*)$`)
 )
 
 // Store reads and writes Markdown task specs under a workspace root.
@@ -329,6 +331,13 @@ func (p *parser) handleReview(line string) bool {
 	if strings.HasPrefix(line, "Verdict:") {
 		p.model.Review.Verdict = strings.TrimSpace(strings.TrimPrefix(line, "Verdict:"))
 	}
+	if line == "Findings:" {
+		return true
+	}
+	if match := findingLinePattern.FindStringSubmatch(line); match != nil {
+		p.model.Review.Findings = append(p.model.Review.Findings, reviewFinding(match[2], match[1], match[3]))
+		return true
+	}
 	return strings.HasPrefix(line, "Status:") || strings.HasPrefix(line, "Verdict:")
 }
 
@@ -565,7 +574,7 @@ func Render(model spec.Model) []byte {
 		fmt.Fprintf(&b, "\n")
 	}
 	renderStringList(&b, "Rollback", model.Rollback)
-	fmt.Fprintf(&b, "## Review\n\nStatus: %s\nVerdict: %s\n\n", fallback(model.Review.Status, "not_started"), fallback(model.Review.Verdict, "none"))
+	renderReview(&b, model.Review)
 	renderStringList(&b, "Self Eval", model.SelfEval)
 	renderStringList(&b, "Deviations", model.Deviations)
 	fmt.Fprintf(&b, "## Metadata\n\n")
@@ -964,6 +973,18 @@ func renderRisks(b *strings.Builder, risks []spec.Risk) {
 	fmt.Fprintf(b, "\n")
 }
 
+func renderReview(b *strings.Builder, review spec.ReviewState) {
+	fmt.Fprintf(b, "## Review\n\nStatus: %s\nVerdict: %s\n\nFindings:\n", fallback(review.Status, "not_started"), fallback(review.Verdict, "none"))
+	if len(review.Findings) == 0 {
+		fmt.Fprintf(b, "- none\n\n")
+		return
+	}
+	for _, finding := range review.Findings {
+		fmt.Fprintf(b, "- [%s] `%s` %s\n", fallback(string(finding.Severity), string(corereview.SeverityNonBlocking)), fallback(finding.ID, "finding"), fallback(finding.Summary, "No summary recorded."))
+	}
+	fmt.Fprintf(b, "\n")
+}
+
 func renderBullets(b *strings.Builder, items []string) {
 	if len(items) == 0 {
 		fmt.Fprintf(b, "- none\n")
@@ -989,6 +1010,10 @@ func renderCriteria(b *strings.Builder, criteria []spec.Criterion) {
 			fmt.Fprintf(b, "  - Source event: %s\n", c.SourceEvent)
 		}
 	}
+}
+
+func reviewFinding(id string, severity string, summary string) corereview.Finding {
+	return corereview.Finding{ID: strings.TrimSpace(id), Severity: corereview.Severity(strings.TrimSpace(severity)), Summary: strings.TrimSpace(summary)}
 }
 
 func checked(status string) string {
