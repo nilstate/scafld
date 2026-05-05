@@ -39,4 +39,3 @@ func Write(path string, data []byte, perm os.FileMode) error {
 	cleanup = false
 	return syncDir(dir)
 }
-
