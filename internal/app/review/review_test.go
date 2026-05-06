@@ -152,7 +152,7 @@ func TestWorkspaceMutationGuardOverridesCleanProviderPacket(t *testing.T) {
 	t.Parallel()
 
 	specs := &fakeSpecs{model: spec.Model{TaskID: "task", Title: "Task"}}
-	workspace := &fakeWorkspace{snapshots: [][]string{{"hash-a existing"}, {"hash-b existing"}}}
+	workspace := &fakeWorkspace{snapshots: [][]string{{"?? hash-a existing"}, {"?? hash-b existing"}}}
 	out, err := Run(context.Background(), specs, &fakeSessions{}, workspace, fakeProvider{packet: corereview.Packet{Verdict: corereview.VerdictPass}}, fakeClock{}, "task")
 	if err != nil {
 		t.Fatal(err)
@@ -160,13 +160,45 @@ func TestWorkspaceMutationGuardOverridesCleanProviderPacket(t *testing.T) {
 	if out.Verdict != corereview.VerdictFail || len(out.Findings) != 1 || out.Findings[0].ID != "workspace_mutation" {
 		t.Fatalf("mutation guard output = %+v", out)
 	}
+	if !strings.Contains(out.Findings[0].Summary, "workspace changed during review") || !strings.Contains(out.Findings[0].Summary, "changed existing") {
+		t.Fatalf("mutation guard summary = %q", out.Findings[0].Summary)
+	}
+}
+
+func TestWorkspaceMutationGuardPreservesProviderFindings(t *testing.T) {
+	t.Parallel()
+
+	specs := &fakeSpecs{model: spec.Model{TaskID: "task", Title: "Task"}}
+	workspace := &fakeWorkspace{snapshots: [][]string{{}, {"?? hash-new added"}}}
+	providerPacket := corereview.Packet{
+		Verdict:  corereview.VerdictFail,
+		Findings: []corereview.Finding{{ID: "provider-finding", Severity: corereview.SeverityBlocking, Summary: "provider bug"}},
+	}
+	out, err := Run(context.Background(), specs, &fakeSessions{}, workspace, fakeProvider{packet: providerPacket}, fakeClock{}, "task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Verdict != corereview.VerdictFail || len(out.Findings) != 2 {
+		t.Fatalf("mutation guard output = %+v", out)
+	}
+	if out.Findings[0].ID != "provider-finding" || out.Findings[1].ID != "workspace_mutation" {
+		t.Fatalf("findings should preserve provider finding then append guard finding: %+v", out.Findings)
+	}
 }
 
 func TestWorkspaceMutationsDetectsAddModifyAndDelete(t *testing.T) {
 	t.Parallel()
 
-	mutated := workspaceMutations([]string{"hash-a same", "hash-old modified", "hash-delete deleted"}, []string{"hash-a same", "hash-new modified", "hash-add added"})
-	if len(mutated) != 4 {
+	mutated := workspaceMutations(
+		[]string{" M hash-a same", " M hash-old modified", " D deleted removed"},
+		[]string{" M hash-a same", " M hash-new modified", "?? hash-add added"},
+	)
+	if len(mutated) != 3 {
 		t.Fatalf("mutations = %+v", mutated)
+	}
+	for _, want := range []string{"added added", "changed modified", "removed removed"} {
+		if !strings.Contains(strings.Join(mutated, "\n"), want) {
+			t.Fatalf("mutations missing %q: %+v", want, mutated)
+		}
 	}
 }

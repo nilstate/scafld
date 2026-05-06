@@ -154,7 +154,7 @@ func ParseNDJSON(text string) (Packet, error) {
 			}
 			packet.Findings = append(packet.Findings, Finding{ID: frame.ID, Severity: frame.Severity, Summary: frame.Summary})
 		case "workspace_mutation":
-			packet.Findings = append(packet.Findings, Finding{ID: "workspace_mutation", Severity: SeverityBlocking, Summary: "provider mutated workspace during review"})
+			packet.Findings = append(packet.Findings, Finding{ID: "workspace_mutation", Severity: SeverityBlocking, Summary: "provider reported workspace mutation during review"})
 		case "tick", "partial":
 		default:
 			return Packet{}, fmt.Errorf("%w: unknown frame type %q", ErrInvalidPacket, frame.Type)

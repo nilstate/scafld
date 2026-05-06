@@ -82,14 +82,12 @@ func RunWithInput(ctx context.Context, specs SpecStore, sessions SessionStore, w
 		return Output{}, mutationErr
 	}
 	if mutated := workspaceMutations(before, after); len(mutated) > 0 {
-		packet = review.Packet{
-			Verdict: review.VerdictFail,
-			Findings: []review.Finding{{
-				ID:       "workspace_mutation",
-				Severity: review.SeverityBlocking,
-				Summary:  "provider mutated workspace during review: " + strings.Join(mutated, ", "),
-			}},
-		}
+		packet.Verdict = review.VerdictFail
+		packet.Findings = append(packet.Findings, review.Finding{
+			ID:       "workspace_mutation",
+			Severity: review.SeverityBlocking,
+			Summary:  "workspace changed during review: " + strings.Join(mutated, ", "),
+		})
 		err = nil
 	}
 	if err != nil {
@@ -154,21 +152,67 @@ func workspaceSnapshot(ctx context.Context, workspace WorkspaceStatus) ([]string
 }
 
 func workspaceMutations(before []string, after []string) []string {
-	seen := map[string]bool{}
-	for _, path := range before {
-		seen[path] = true
+	beforeByPath := workspaceEntriesByPath(before)
+	afterByPath := workspaceEntriesByPath(after)
+	paths := map[string]bool{}
+	for path := range beforeByPath {
+		paths[path] = true
 	}
-	var mutated []string
-	for _, path := range after {
-		if !seen[path] {
-			mutated = append(mutated, path)
+	for path := range afterByPath {
+		paths[path] = true
+	}
+
+	var changed []string
+	for path := range paths {
+		beforeEntry, hadBefore := beforeByPath[path]
+		afterEntry, hasAfter := afterByPath[path]
+		switch {
+		case !hadBefore && hasAfter:
+			changed = append(changed, fmt.Sprintf("added %s (%s)", path, afterEntry.State))
+		case hadBefore && !hasAfter:
+			changed = append(changed, fmt.Sprintf("removed %s (was %s)", path, beforeEntry.State))
+		case hadBefore && hasAfter && beforeEntry.Raw != afterEntry.Raw:
+			changed = append(changed, fmt.Sprintf("changed %s (%s -> %s)", path, beforeEntry.State, afterEntry.State))
 		}
-		delete(seen, path)
 	}
-	for path := range seen {
-		mutated = append(mutated, path)
+	sort.Strings(changed)
+	return changed
+}
+
+type workspaceEntry struct {
+	Raw   string
+	State string
+	Path  string
+}
+
+func workspaceEntriesByPath(snapshot []string) map[string]workspaceEntry {
+	entries := map[string]workspaceEntry{}
+	for _, raw := range snapshot {
+		entry := parseWorkspaceEntry(raw)
+		entries[entry.Path] = entry
 	}
-	return mutated
+	return entries
+}
+
+func parseWorkspaceEntry(raw string) workspaceEntry {
+	text := strings.TrimSpace(raw)
+	if len(text) < 3 {
+		return workspaceEntry{Raw: raw, State: "changed", Path: text}
+	}
+	status := strings.TrimSpace(text[:2])
+	if status == "" {
+		status = "changed"
+	}
+	rest := strings.TrimSpace(text[2:])
+	fingerprint, path, ok := strings.Cut(rest, " ")
+	if !ok || strings.TrimSpace(path) == "" {
+		return workspaceEntry{Raw: raw, State: status, Path: text}
+	}
+	return workspaceEntry{
+		Raw:   raw,
+		State: status + " " + fingerprint,
+		Path:  strings.TrimSpace(path),
+	}
 }
 
 func nextForVerdict(taskID string, verdict string) (string, string) {

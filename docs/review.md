@@ -83,9 +83,9 @@ Any blocking finding forces verdict `fail`.
 
 ## What scafld Trusts
 
-scafld validates the packet, checks that the workspace did not mutate during
-review, records the review event in session, then projects the verdict back into
-the spec.
+scafld validates the packet, checks whether Git-visible workspace state changed
+during review, records the review event in session, then projects the verdict
+back into the spec.
 
 The authority order stays the same:
 
@@ -93,8 +93,10 @@ The authority order stays the same:
 - spec shows the readable current projection
 - provider output is accepted only after validation
 
-Invalid packet output fails review. Workspace mutation during review becomes a
-blocking finding, even if the provider returned `pass`.
+Invalid packet output fails review. Workspace changes during review become a
+blocking finding, even if the provider returned `pass`. If the provider also
+returned findings, scafld keeps them and appends the workspace-change finding so
+the original review signal is not hidden.
 
 ## Failed Review Output
 
