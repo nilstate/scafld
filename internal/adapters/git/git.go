@@ -31,7 +31,7 @@ func (a Adapter) Status(ctx context.Context) (State, error) {
 		return State{}, err
 	}
 	var changed []string
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+	for _, line := range strings.Split(string(out), "\n") {
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
@@ -55,13 +55,19 @@ func (a Adapter) ChangedFiles(ctx context.Context) ([]string, error) {
 
 func (a Adapter) fingerprint(ctx context.Context, status string, rel string) string {
 	path := filepath.Join(a.Root, filepath.FromSlash(rel))
+	return a.fingerprintPath(ctx, status, rel, path, true)
+}
+
+func (a Adapter) fingerprintPath(ctx context.Context, status string, rel string, path string, detectGitWorktree bool) string {
 	info, err := os.Stat(path)
 	if err != nil {
 		return status + " deleted " + rel
 	}
 	if info.IsDir() {
-		if fp, ok := a.gitWorktreeFingerprint(ctx, status, rel, path); ok {
-			return fp
+		if detectGitWorktree {
+			if fp, ok := a.gitWorktreeFingerprint(ctx, status, rel, path); ok {
+				return fp
+			}
 		}
 		sum, err := directoryHash(path)
 		if err != nil {
@@ -88,8 +94,35 @@ func (a Adapter) gitWorktreeFingerprint(ctx context.Context, status string, rel 
 	if err != nil {
 		return "", false
 	}
-	sum := sha256.Sum256(append([]byte(strings.TrimSpace(string(headOut))+"\n"), stateOut...))
-	return fmt.Sprintf("%s %x %s", status, sum, rel), true
+	h := sha256.New()
+	if _, err := io.WriteString(h, "HEAD "+strings.TrimSpace(string(headOut))+"\n"); err != nil {
+		return "", false
+	}
+	for _, fp := range a.gitWorktreeChangedFingerprints(ctx, rel, path, string(stateOut)) {
+		if _, err := io.WriteString(h, fp+"\n"); err != nil {
+			return "", false
+		}
+	}
+	return fmt.Sprintf("%s %x %s", status, h.Sum(nil), rel), true
+}
+
+func (a Adapter) gitWorktreeChangedFingerprints(ctx context.Context, rel string, path string, statusText string) []string {
+	var changed []string
+	for _, line := range strings.Split(statusText, "\n") {
+		if strings.TrimSpace(line) == "" || len(line) <= 3 {
+			continue
+		}
+		status := line[:2]
+		nestedRel := strings.TrimSpace(line[3:])
+		if _, renamedTo, ok := strings.Cut(nestedRel, " -> "); ok {
+			nestedRel = strings.TrimSpace(renamedTo)
+		}
+		displayRel := filepath.ToSlash(filepath.Join(rel, filepath.FromSlash(nestedRel)))
+		abs := filepath.Join(path, filepath.FromSlash(nestedRel))
+		changed = append(changed, a.fingerprintPath(ctx, status, displayRel, abs, false))
+	}
+	sort.Strings(changed)
+	return changed
 }
 
 func directoryHash(path string) (string, error) {

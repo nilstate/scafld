@@ -94,3 +94,37 @@ func TestChangedFilesFingerprintsNestedGitWorktreesWithoutDeletedFalsePositive(t
 		t.Fatalf("nested git worktree mutation did not change fingerprint: %q", before)
 	}
 }
+
+func TestChangedFilesFingerprintsNestedGitWorktreeDirtyContentChanges(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	sub := filepath.Join(root, "cloud")
+	if out, err := exec.Command("git", "init", sub).CombinedOutput(); err != nil {
+		t.Skipf("git init unavailable: %v\n%s", err, out)
+	}
+	if err := os.WriteFile(filepath.Join(sub, "README.md"), []byte("base"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("git", "-C", sub, "-c", "user.name=scafld", "-c", "user.email=scafld@example.invalid", "add", "README.md")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git add: %v\n%s", err, out)
+	}
+	cmd = exec.Command("git", "-C", sub, "-c", "user.name=scafld", "-c", "user.email=scafld@example.invalid", "commit", "-m", "init")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git commit: %v\n%s", err, out)
+	}
+
+	if err := os.WriteFile(filepath.Join(sub, "README.md"), []byte("dirty one"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	adapter := Adapter{Root: root}
+	before := adapter.fingerprint(context.Background(), " M", "cloud")
+	if err := os.WriteFile(filepath.Join(sub, "README.md"), []byte("dirty two"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	after := adapter.fingerprint(context.Background(), " M", "cloud")
+	if before == after {
+		t.Fatalf("nested git worktree dirty content mutation did not change fingerprint: %q", before)
+	}
+}
