@@ -35,3 +35,19 @@ func TestStatusIncludesLatestReviewFindings(t *testing.T) {
 		t.Fatalf("review info = %+v", out.Review)
 	}
 }
+
+func TestStatusShowsRunningReviewAttemptInsteadOfPreviousReview(t *testing.T) {
+	t.Parallel()
+
+	ledger := session.New("task", "2026-05-05T00:00:00Z")
+	findings := []corereview.Finding{{ID: "old", Severity: corereview.SeverityBlocking, Summary: "old blocker"}}
+	ledger = ledger.WithEntry(session.Entry{Type: "review", Status: corereview.VerdictFail, Output: corereview.EncodeFindings(findings)})
+	ledger = ledger.WithEntry(session.Entry{Type: "review_attempt", Status: "running", Reason: "review provider running"})
+	out, err := Run(context.Background(), fakeSpecStore{model: spec.Model{TaskID: "task", Status: spec.StatusReview}}, fakeSessionStore{ledger: ledger}, "task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !out.Review.Running || out.Review.Verdict != "" || len(out.Review.Findings) != 0 {
+		t.Fatalf("review info should expose running attempt instead of stale review: %+v", out.Review)
+	}
+}

@@ -16,9 +16,10 @@ scafld installs a small project-owned control plane:
 ```
 
 The current Go runtime treats the spec and session as the hard behavioral
-contract. Config controls operator defaults such as review provider, model, and
-timeouts; the runtime-critical gates are enforced by the Markdown spec,
-acceptance criteria, review packet validation, and lifecycle commands.
+contract. Config controls the invariant catalog, harden prompt limits, review
+provider, model, timeouts, and review focus. Runtime-critical gates are still
+enforced by the Markdown spec, acceptance criteria, review packet validation,
+and lifecycle commands.
 
 ## Managed vs Project-Owned
 
@@ -38,8 +39,9 @@ Managed by scafld:
 - `.scafld/core/scripts/*`
 - `.scafld/core/specs/examples/*`
 
-`scafld update` refreshes only `.scafld/core/`. It must not overwrite project
-prompt overrides, specs, sessions, or local config.
+`scafld update` refreshes `.scafld/core/` and safely refreshes project prompt
+copies that are still known defaults. Customized project prompts are skipped.
+Specs, sessions, reviews, and local config are never overwritten.
 
 ## Prompt Overrides
 
@@ -52,7 +54,8 @@ built-in fallback
 ```
 
 Use project prompts for local voice and policy. Keep core prompts as the reset
-copy that package upgrades can refresh.
+copy that package upgrades can refresh. If you have not customized a project
+prompt, `scafld update` keeps it aligned with the bundled prompt contract.
 
 ## Acceptance Strictness
 
@@ -73,6 +76,61 @@ Supported `Expected kind` values:
 
 Criteria without a known expected kind are rejected before execution. Free-form
 prose can explain intent, but the matcher is what scafld executes.
+
+## Convention Surface
+
+scafld does not require a `CONVENTIONS.md` file. Convention adherence is
+surfaced through protocol artifacts that the runtime and reviewers already use:
+
+- `.scafld/config.yaml` names canonical invariant IDs and review passes.
+- Specs select the invariants that apply to the task and declare scope,
+  out-of-scope work, touchpoints, risks, and acceptance criteria.
+- `AGENTS.md` and `CLAUDE.md` give agents the short operating contract at the
+  root discovery surface.
+- Optional project docs can explain local style, but they are only binding when
+  a spec, invariant, or review pass explicitly cites them.
+
+This keeps conventions close to enforcement. Prose can help, but config and
+specs are the contract.
+
+Invariant IDs live in config:
+
+```yaml
+invariants:
+  canonical:
+    domain_boundaries: "Respect layer separation and ownership boundaries."
+    tenant_isolation: "Do not leak data across tenants."
+```
+
+Specs select the relevant IDs for a task. Harden prints the configured catalog
+so the agent can choose the right constraint while tightening the draft. Review
+prompts include the invariants selected by the spec.
+
+## Configure Proposals
+
+`scafld init` installs a truthful default config. It does not ask an agent to
+guess project policy.
+
+Use `scafld configure` when a repo needs project-specific tightening:
+
+```bash
+scafld configure
+```
+
+The command scans recognizable project surfaces, writes
+`.scafld/config.proposed.yaml`, and prints CONFIGURE MODE instructions. The
+proposal is evidence-backed: every suggested command or invariant cites the
+file that implied it. Open questions are explicit when scafld cannot infer a
+safe answer. If an existing config contains old keys the Go runtime does not
+read, the proposal includes a `legacy_ignored_config_keys` warning so cleanup is
+explicit rather than silent.
+
+The proposal is not automatically applied. An operator or agent should inspect
+the cited sources, then copy only verified invariant IDs or local review
+defaults into `.scafld/config.yaml`. Commands and review focus are guidance for
+future specs or real `review.automated_passes` / `review.adversarial_passes`
+entries. If scafld does not read a field, do not add it to config as if it were
+enforced.
 
 ## Review Provider Selection
 

@@ -119,6 +119,35 @@ func TestRunInit(t *testing.T) {
 	}
 }
 
+func TestRunConfigureWritesProposal(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	runCLI(t, []string{"init", "--root", root})
+	if err := os.WriteFile(filepath.Join(root, "Makefile"), []byte("check:\n\tgo test ./...\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	archPath := filepath.Join(root, "internal", "arch", "architecture_test.go")
+	if err := os.MkdirAll(filepath.Dir(archPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(archPath, []byte("package arch\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out := runCLI(t, []string{"configure", "--root", root})
+	if !strings.Contains(out, "CONFIGURE MODE") || !strings.Contains(out, ".scafld/config.proposed.yaml") {
+		t.Fatalf("configure output = %q", out)
+	}
+	proposal, err := os.ReadFile(filepath.Join(root, ".scafld", "config.proposed.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(proposal), "full_check") || !strings.Contains(string(proposal), "architecture_boundaries") {
+		t.Fatalf("proposal missing grounded suggestions:\n%s", proposal)
+	}
+}
+
 func TestRunInitIsIdempotent(t *testing.T) {
 	t.Parallel()
 

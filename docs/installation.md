@@ -101,5 +101,15 @@ contract remains inspectable.
 Commit `.scafld/config.yaml`, `.scafld/core/`, `.scafld/prompts/`,
 `.scafld/specs/`, `AGENTS.md`, and `CLAUDE.md` when they describe shared
 project behavior. Keep `.scafld/config.local.yaml` and `.scafld/runs/` local.
-`CONVENTIONS.md` is project-owned: scafld references it when present but does
-not create a placeholder conventions file.
+Project convention docs are optional context. scafld does not require a
+specific conventions filename; convention enforcement comes from config
+invariants, spec scope, acceptance criteria, and review agenda.
+
+To tighten config for a real project, run:
+
+```bash
+scafld configure
+```
+
+This writes `.scafld/config.proposed.yaml` with evidence-backed suggestions.
+Review the cited sources before copying anything into `.scafld/config.yaml`.

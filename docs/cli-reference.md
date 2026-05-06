@@ -77,15 +77,31 @@ Bootstraps `.scafld/` in the workspace. It installs project-owned config and
 prompt files, creates spec/run/review directories, and installs managed core
 assets under `.scafld/core/`.
 
+`init` is deterministic. It does not ask an agent to infer project policy.
+
+## configure
+
+```bash
+scafld configure [--root PATH] [--json]
+```
+
+Scans the workspace in read-only mode and writes
+`.scafld/config.proposed.yaml`. The proposal contains cited evidence,
+suggested invariant IDs, discovered validation commands, and open questions.
+
+`configure` does not mutate `.scafld/config.yaml`. The operator or agent must
+open the cited sources and copy only verified changes into the real config.
+
 ## update
 
 ```bash
 scafld update [--root PATH] [--json]
 ```
 
-Refreshes managed `.scafld/core/` files from the bundled runtime. It preserves
-project-owned files such as `.scafld/config.yaml`, `.scafld/config.local.yaml`,
-`.scafld/prompts/*`, specs, runs, and reviews.
+Refreshes managed `.scafld/core/` files from the bundled runtime. It also
+refreshes `.scafld/prompts/*` copies that are still known defaults, while
+skipping customized project prompts. Specs, runs, reviews, and local config are
+preserved.
 
 ## plan
 

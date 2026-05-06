@@ -5,7 +5,9 @@ description: Non-negotiable architectural rules
 
 # Invariants
 
-Invariants are architectural constraints the agent cannot violate regardless of the task. They're defined in `config.yaml` and documented in `AGENTS.md`.
+Invariants are architectural constraints the agent cannot violate regardless of
+the task. They are named in `.scafld/config.yaml`, selected by each spec, and
+summarized in root agent guidance so the executor sees them before acting.
 
 ## Default invariants
 
@@ -18,9 +20,19 @@ Invariants are architectural constraints the agent cannot violate regardless of 
 | `public_api_stable` | HTTP contracts and event schemas don't change without explicit approval |
 | `config_from_env` | Never hardcoded secrets or configuration |
 
+## Contract Hierarchy
+
+Convention enforcement has one hierarchy:
+
+1. `.scafld/config.yaml` names the canonical invariant IDs and review agenda.
+2. Each spec selects the invariants that apply to the task.
+3. `AGENTS.md` and `CLAUDE.md` carry the short operating contract for agents.
+4. Optional project docs can explain local style, but they are context, not a
+   required scafld control file.
+
 ## How they're used
 
-Every spec declares which invariants must be preserved in `task.context.invariants`:
+Every spec declares which invariants must be preserved:
 
 ```yaml
 task:
@@ -35,18 +47,18 @@ During execution, if the agent's changes would violate a declared invariant, it 
 
 ## Defining your own
 
-Add invariants to `AGENTS.md` and reference them by name in `config.yaml`:
+Add invariant IDs to `.scafld/config.yaml`:
 
 ```yaml
-# config.yaml
 invariants:
   canonical:
-    - domain_boundaries
-    - error_envelope
-    - my_custom_invariant
+    domain_boundaries: "Respect layer separation and ownership boundaries."
+    my_custom_invariant: "Explain the rule in one concrete sentence."
 ```
 
-Document the rule clearly in `AGENTS.md` so the agent understands what to enforce.
+Then make the spec select the IDs it must preserve. Keep the root agent docs
+short; they should tell agents to obey declared scope and invariants, not become
+an exhaustive style guide.
 
 ## Deviations
 

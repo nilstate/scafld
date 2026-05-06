@@ -29,6 +29,9 @@ func (f *fakeSessions) Append(_ context.Context, taskID string, entry session.En
 	if f.ledger.TaskID == "" {
 		f.ledger = session.New(taskID, now)
 	}
+	if entry.RecordedAt == "" {
+		entry.RecordedAt = now
+	}
 	f.ledger = f.ledger.WithEntry(entry)
 	return f.ledger, nil
 }
@@ -87,9 +90,37 @@ func TestProviderVerdictDrivesReviewState(t *testing.T) {
 	if specs.model.CurrentState.AllowedFollowUp != "scafld handoff task" {
 		t.Fatalf("next action = %q", specs.model.CurrentState.AllowedFollowUp)
 	}
-	if len(sessions.ledger.Entries) != 1 || !strings.Contains(sessions.ledger.Entries[0].Output, "bug") {
+	if len(sessions.ledger.Entries) != 2 ||
+		sessions.ledger.Entries[0].Type != "review_attempt" ||
+		sessions.ledger.Entries[0].Status != "running" ||
+		sessions.ledger.Entries[1].Type != "review" ||
+		!strings.Contains(sessions.ledger.Entries[1].Output, "bug") {
 		t.Fatalf("review findings were not recorded in session: %+v", sessions.ledger.Entries)
 	}
+}
+
+func TestReviewRecordsRunningAttemptBeforeProviderReturns(t *testing.T) {
+	t.Parallel()
+
+	specs := &fakeSpecs{model: spec.Model{TaskID: "task", Title: "Task"}}
+	sessions := &fakeSessions{}
+	provider := providerFunc(func(context.Context, corereview.Request) (corereview.Packet, error) {
+		if len(sessions.ledger.Entries) != 1 ||
+			sessions.ledger.Entries[0].Type != "review_attempt" ||
+			sessions.ledger.Entries[0].Status != "running" {
+			t.Fatalf("review attempt was not recorded before provider invocation: %+v", sessions.ledger.Entries)
+		}
+		return corereview.Packet{Verdict: corereview.VerdictPass}, nil
+	})
+	if _, err := Run(context.Background(), specs, sessions, nil, provider, fakeClock{}, "task"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+type providerFunc func(context.Context, corereview.Request) (corereview.Packet, error)
+
+func (f providerFunc) Invoke(ctx context.Context, req corereview.Request) (corereview.Packet, error) {
+	return f(ctx, req)
 }
 
 func TestProviderTimeoutMutationInvalidOutputPacketRepairFindingSignal(t *testing.T) {
@@ -123,7 +154,7 @@ func TestReviewPromptCarriesTaskContractToProvider(t *testing.T) {
 	t.Parallel()
 
 	provider := &promptProvider{packet: corereview.Packet{Verdict: corereview.VerdictPass}}
-	specs := &fakeSpecs{model: spec.Model{TaskID: "task", Title: "Task", Summary: "Review this", Objectives: []string{"Keep evidence"}, Acceptance: spec.Acceptance{Criteria: []spec.Criterion{{ID: "ac1", Command: "go test ./...", ExpectedKind: "exit_code_zero", Status: "pass", Evidence: "exit code was 0"}}}}}
+	specs := &fakeSpecs{model: spec.Model{TaskID: "task", Title: "Task", Summary: "Review this", Objectives: []string{"Keep evidence"}, Context: spec.Context{Invariants: []string{"tenant_isolation"}}, Acceptance: spec.Acceptance{Criteria: []spec.Criterion{{ID: "ac1", Command: "go test ./...", ExpectedKind: "exit_code_zero", Status: "pass", Evidence: "exit code was 0"}}}}}
 	_, err := RunWithInput(context.Background(), specs, &fakeSessions{}, nil, provider, fakeClock{}, Input{
 		TaskID: "task",
 		Passes: []Pass{{
@@ -142,6 +173,9 @@ func TestReviewPromptCarriesTaskContractToProvider(t *testing.T) {
 	}
 	if !strings.Contains(provider.req.Prompt, "Evidence: exit code was 0") || !strings.Contains(provider.req.Prompt, "Do not run build, test, or mutation commands") {
 		t.Fatalf("provider request = %+v", provider.req)
+	}
+	if !strings.Contains(provider.req.Prompt, "## Declared Invariants") || !strings.Contains(provider.req.Prompt, "tenant_isolation") {
+		t.Fatalf("provider request missing declared invariants = %+v", provider.req)
 	}
 	if !strings.Contains(provider.req.Prompt, "## Review Focus") || !strings.Contains(provider.req.Prompt, "adversarial: Regression Hunt") {
 		t.Fatalf("provider request missing configured review focus = %+v", provider.req)

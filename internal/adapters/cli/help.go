@@ -7,12 +7,7 @@ import (
 )
 
 func knownCommand(name string) bool {
-	for _, cmd := range commands {
-		if cmd.name == name {
-			return true
-		}
-	}
-	return false
+	return commandHandlers[name] != nil
 }
 
 func printHelp(w io.Writer) {

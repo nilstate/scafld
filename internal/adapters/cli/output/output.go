@@ -29,10 +29,20 @@ func Review(out appreview.Output) string {
 func Status(out appstatus.Output) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s: %s\nnext: %s\n", out.TaskID, out.Status, out.Next)
-	if out.Review.Verdict != "" {
+	if out.Review.Running {
+		fmt.Fprintf(&b, "review: running\n")
+		if out.Review.Reason != "" {
+			fmt.Fprintf(&b, "reason: %s\n", out.Review.Reason)
+		}
+	} else if out.Review.Verdict != "" {
 		fmt.Fprintf(&b, "review: %s\n", out.Review.Verdict)
 		for _, finding := range out.Review.Findings {
 			fmt.Fprintf(&b, "- [%s] %s: %s\n", finding.Severity, finding.ID, finding.Summary)
+		}
+	} else if out.Review.AttemptStatus != "" {
+		fmt.Fprintf(&b, "review: %s\n", out.Review.AttemptStatus)
+		if out.Review.Reason != "" {
+			fmt.Fprintf(&b, "reason: %s\n", out.Review.Reason)
 		}
 	}
 	return b.String()

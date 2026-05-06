@@ -76,9 +76,22 @@ func RunWithInput(ctx context.Context, specs SpecStore, sessions SessionStore, w
 	if err != nil {
 		return Output{}, err
 	}
+	now := clock.Now().UTC().Format(time.RFC3339)
+	if _, err := sessions.Append(ctx, model.TaskID, session.Entry{
+		Type:   "review_attempt",
+		Status: "running",
+		Reason: "review provider running",
+	}, now); err != nil {
+		return Output{}, err
+	}
 	packet, err := provider.Invoke(ctx, review.Request{TaskID: model.TaskID, Prompt: promptForModel(model, input.Passes)})
 	after, mutationErr := workspaceSnapshot(ctx, workspace)
 	if mutationErr != nil {
+		_, _ = sessions.Append(context.WithoutCancel(ctx), model.TaskID, session.Entry{
+			Type:   "review_attempt",
+			Status: "failed",
+			Reason: "review workspace snapshot failed: " + mutationErr.Error(),
+		}, now)
 		return Output{}, mutationErr
 	}
 	if mutated := workspaceMutations(before, after); len(mutated) > 0 {
@@ -91,12 +104,21 @@ func RunWithInput(ctx context.Context, specs SpecStore, sessions SessionStore, w
 		err = nil
 	}
 	if err != nil {
+		_, _ = sessions.Append(context.WithoutCancel(ctx), model.TaskID, session.Entry{
+			Type:   "review_attempt",
+			Status: "failed",
+			Reason: "review provider failed: " + err.Error(),
+		}, now)
 		return Output{}, err
 	}
 	if err := review.ValidatePacket(packet); err != nil {
+		_, _ = sessions.Append(context.WithoutCancel(ctx), model.TaskID, session.Entry{
+			Type:   "review_attempt",
+			Status: "failed",
+			Reason: "review packet invalid: " + err.Error(),
+		}, now)
 		return Output{}, err
 	}
-	now := clock.Now().UTC().Format(time.RFC3339)
 	model.Status = spec.StatusReview
 	model.Review.Status = "completed"
 	model.Review.Verdict = packet.Verdict
@@ -233,6 +255,15 @@ func promptForModel(model spec.Model, passes []Pass) string {
 		b.WriteString("## Objectives\n\n")
 		for _, objective := range model.Objectives {
 			fmt.Fprintf(&b, "- %s\n", objective)
+		}
+		b.WriteString("\n")
+	}
+	if len(model.Context.Invariants) > 0 {
+		b.WriteString("## Declared Invariants\n\n")
+		for _, invariant := range model.Context.Invariants {
+			if strings.TrimSpace(invariant) != "" {
+				fmt.Fprintf(&b, "- %s\n", invariant)
+			}
 		}
 		b.WriteString("\n")
 	}
