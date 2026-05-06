@@ -118,6 +118,74 @@ A weak spec should not become approved work.
 issue, scafld sends the task to repair instead of letting the implementation
 agent wave itself through.
 
+For a new repository, or after project policy changes, run `scafld configure`
+once to write an evidence-backed config proposal. It is setup discipline, not a
+per-task lifecycle step.
+
+## Concrete Artifacts
+
+scafld is not a wrapper around a prompt. It writes artifacts the next agent can
+read and the runtime can project deterministically.
+
+A draft is ordinary Markdown:
+
+```markdown
+---
+spec_version: "2.0"
+task_id: add-cache
+status: draft
+harden_status: in_progress
+---
+
+# Add Cache
+
+## Acceptance
+
+- [ ] `ac1` test - cache package tests pass.
+  - Command: `go test ./internal/cache`
+  - Expected kind: `exit_code_zero`
+
+## Harden Rounds
+
+### round-1
+
+Status: in_progress
+Started: 2026-05-07T09:15:00Z
+Ended: none
+
+Questions:
+- Which invariant makes cache invalidation safe across tenants?
+  - Grounded in: spec_gap:Context
+  - Recommended answer: Add `tenant_isolation` to the task invariants and test it with a cross-tenant fixture.
+  - Answered with: Accepted; phase 2 now owns the fixture and assertion.
+```
+
+Status exposes the same state without scraping Markdown:
+
+```json
+{
+  "task_id": "add-cache",
+  "status": "review",
+  "title": "Add Cache",
+  "next": "scafld review add-cache",
+  "session_ok": true,
+  "review": {
+    "running": true,
+    "attempt_status": "running",
+    "reason": "review provider running"
+  }
+}
+```
+
+Review failure is structured, not a vibe:
+
+```text
+review verdict: fail
+findings:
+- [blocking] cache-tenant-leak: internal/cache/store.go:88 invalidation keys omit tenant id.
+next: scafld handoff add-cache
+```
+
 ## Command Surface
 
 The daily surface is small:
@@ -141,6 +209,7 @@ scafld update
 Wrapper intent:
 
 - `plan`: create a draft Markdown spec
+- `configure`: propose evidence-backed project config without applying it
 - `harden`: stress-test the draft before approval
 - `validate`: reject malformed or non-executable spec structure
 - `approve`: accept a spec only after it is clear enough to execute
@@ -238,6 +307,9 @@ Prompt ownership is deliberate:
 
 - `.scafld/prompts/*` is the active project-owned layer
 - `.scafld/core/prompts/*` is the managed reset copy refreshed by `scafld update`
+
+`scafld update` refreshes default project prompt copies when they are still
+known defaults. Customized project prompts are skipped.
 
 ## Adversarial Review
 

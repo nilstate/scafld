@@ -16,6 +16,16 @@ scafld init
 `.scafld/core/`, and creates project-owned prompt files under
 `.scafld/prompts/`.
 
+For a new repository, generate a grounded config proposal before the first
+serious spec:
+
+```bash
+scafld configure
+```
+
+Review `.scafld/config.proposed.yaml` and copy only verified invariant IDs or
+local review defaults into `.scafld/config.yaml`.
+
 ## Create a Draft Spec
 
 ```bash

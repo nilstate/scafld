@@ -43,6 +43,7 @@ Hardening attacks the draft. Review attacks the result.
 
 - Edit outside declared scope, objectives, or invariants.
 - Reconstruct lifecycle state by scraping Markdown. Use `status --json`.
+- Use legacy `.ai/` scafld files. `.scafld/` is the only active protocol home.
 - Mutate `.scafld/core/` by hand. Use `scafld update`.
 - Run `--provider local` for real review.
 - Cite files, commands, or review findings you have not verified.

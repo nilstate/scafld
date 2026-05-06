@@ -2,6 +2,7 @@ package corebundle
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -21,6 +22,172 @@ func TestEmbeddedAssetsDoNotDriftFromWorkspaceAssets(t *testing.T) {
 	root := repoRoot(t)
 	assertAssetTreeMatches(t, filepath.Join(root, ".scafld", "core"), filepath.Join(root, "internal", "adapters", "corebundle", "assets", "core"), ".scafld/core")
 	assertAssetTreeMatches(t, filepath.Join(root, ".scafld", "prompts"), filepath.Join(root, "internal", "adapters", "corebundle", "assets", "prompts"), ".scafld/prompts")
+}
+
+func TestUpdateRefreshesUnmodifiedProjectPromptsFromManifest(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	if _, err := Init(t.Context(), root); err != nil {
+		t.Fatal(err)
+	}
+	promptPath := filepath.Join(root, ".scafld", "prompts", "review.md")
+	oldPrompt := []byte("# old default review prompt\n")
+	if err := os.WriteFile(promptPath, oldPrompt, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeTestPromptManifest(t, root, map[string]string{"review.md": sha256Hex(oldPrompt)})
+
+	result, err := Update(t.Context(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsPath(result.Updated, ".scafld/prompts/review.md") {
+		t.Fatalf("updated = %v, want review prompt refreshed", result.Updated)
+	}
+	got, err := os.ReadFile(promptPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := assets.ReadFile("assets/prompts/review.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("review prompt not refreshed from bundle")
+	}
+}
+
+func TestUpdateSkipsFilesThatAlreadyMatchBundle(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	if _, err := Init(t.Context(), root); err != nil {
+		t.Fatal(err)
+	}
+	result, err := Update(t.Context(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Updated) != 0 || len(result.Created) != 0 {
+		t.Fatalf("update should be content-idempotent, got created=%v updated=%v", result.Created, result.Updated)
+	}
+}
+
+func TestUpdateSkipsCustomizedProjectPrompt(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	if _, err := Init(t.Context(), root); err != nil {
+		t.Fatal(err)
+	}
+	promptPath := filepath.Join(root, ".scafld", "prompts", "review.md")
+	custom := []byte("# custom review prompt\n")
+	if err := os.WriteFile(promptPath, custom, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := Update(t.Context(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsPath(result.Skipped, ".scafld/prompts/review.md") {
+		t.Fatalf("skipped = %v, want customized review prompt skipped", result.Skipped)
+	}
+	got, err := os.ReadFile(promptPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, custom) {
+		t.Fatalf("custom prompt was overwritten:\n%s", got)
+	}
+}
+
+func TestUpdateMigratesLegacyReviewPromptWithoutManifest(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	promptDir := filepath.Join(root, ".scafld", "prompts")
+	if err := os.MkdirAll(promptDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	legacy := []byte(`# ADVERSARIAL REVIEW HANDOFF TEMPLATE
+
+## Attack Plan
+
+1. Read the generated challenge contract and automated pass results.
+2. Read the latest review scaffold in ` + "`.scafld/reviews/{task-id}.md`" + `.
+3. Write the latest review round.
+
+## Output Contract
+
+- fill only the latest review round; keep prior rounds intact
+- update the metadata truthfully
+
+## Verdict Rules
+
+- any blocking finding means ` + "`fail`" + `
+- non-blocking findings only means ` + "`pass_with_issues`" + `
+- a clean review means ` + "`pass`" + `
+`)
+	if err := os.WriteFile(filepath.Join(promptDir, "review.md"), legacy, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := Update(t.Context(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsPath(result.Updated, ".scafld/prompts/review.md") {
+		t.Fatalf("updated = %v, want legacy review prompt migrated", result.Updated)
+	}
+	got, err := os.ReadFile(filepath.Join(promptDir, "review.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(got)
+	for _, bad := range []string{".scafld/reviews", ".ai/reviews", "fill only the latest review round", "pass_with_issues"} {
+		if strings.Contains(text, bad) {
+			t.Fatalf("legacy review prompt still contains %q:\n%s", bad, text)
+		}
+	}
+	for _, want := range []string{"Return a ReviewPacket JSON object", "emit only the ReviewPacket JSON object expected by scafld", "non-blocking findings only means `pass`"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("migrated review prompt missing %q:\n%s", want, text)
+		}
+	}
+}
+
+func TestUpdateMigratesLegacyHardenPromptWithoutManifest(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	promptDir := filepath.Join(root, ".scafld", "prompts")
+	if err := os.MkdirAll(promptDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	legacy := []byte("Record why each question exists with a single `grounded_in` value:\n\nUse `grounded_in` as audit trail.\n\nIf useful, include `if_unanswered` with the default.\n\nRecord each question in this Markdown shape under the latest harden round:\n")
+	if err := os.WriteFile(filepath.Join(promptDir, "harden.md"), legacy, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := Update(t.Context(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsPath(result.Updated, ".scafld/prompts/harden.md") {
+		t.Fatalf("updated = %v, want legacy harden prompt migrated", result.Updated)
+	}
+	got, err := os.ReadFile(filepath.Join(promptDir, "harden.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(got)
+	for _, want := range []string{"single `Grounded in:` value", "Use `Grounded in:` as", "include `If unanswered:`", "Do not use YAML object keys"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("migrated harden prompt missing %q:\n%s", want, text)
+		}
+	}
 }
 
 func TestInitGitignoreCreatesScafldRules(t *testing.T) {
@@ -49,6 +216,29 @@ func TestInitGitignoreCreatesScafldRules(t *testing.T) {
 			t.Fatalf(".gitignore missing %q:\n%s", want, text)
 		}
 	}
+}
+
+func writeTestPromptManifest(t *testing.T, root string, prompts map[string]string) {
+	t.Helper()
+
+	manifest := promptManifest{Version: 1, Prompts: prompts}
+	data, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, ".scafld", "prompts", ".manifest.json")
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func containsPath(paths []string, want string) bool {
+	for _, path := range paths {
+		if path == want {
+			return true
+		}
+	}
+	return false
 }
 
 func TestInitGitignoreIsIdempotentAndOverridesBroadScafldIgnore(t *testing.T) {
@@ -158,7 +348,11 @@ func collectAssetTree(t *testing.T, root string) map[string]assetFile {
 		if err != nil {
 			return err
 		}
-		files[filepath.ToSlash(rel)] = assetFile{
+		rel = filepath.ToSlash(rel)
+		if rel == ".manifest.json" {
+			return nil
+		}
+		files[rel] = assetFile{
 			data: data,
 			exec: info.Mode()&0o111 != 0,
 		}

@@ -12,10 +12,16 @@ import (
 
 // Config is the merged runtime configuration for a scafld workspace.
 type Config struct {
-	Version string       `yaml:"version"`
-	LLM     LLMConfig    `yaml:"llm"`
-	Harden  HardenConfig `yaml:"harden"`
-	Review  ReviewConfig `yaml:"review"`
+	Version    string          `yaml:"version"`
+	Invariants InvariantConfig `yaml:"invariants"`
+	LLM        LLMConfig       `yaml:"llm"`
+	Harden     HardenConfig    `yaml:"harden"`
+	Review     ReviewConfig    `yaml:"review"`
+}
+
+// InvariantConfig names project-level invariant IDs available to specs.
+type InvariantConfig struct {
+	Canonical map[string]string `yaml:"canonical"`
 }
 
 // LLMConfig contains shared model-profile settings.
@@ -101,8 +107,15 @@ func readConfigFile(path string, optional bool) (Config, error) {
 func Default() Config {
 	return Config{
 		Version: "1.0",
-		LLM:     LLMConfig{ModelProfile: "default"},
-		Harden:  HardenConfig{MaxQuestionsPerRound: 8},
+		Invariants: InvariantConfig{Canonical: map[string]string{
+			"domain_boundaries":           "Respect layer separation and ownership boundaries.",
+			"no_legacy_code":              "Do not add dual-reads, dual-writes, runtime fallbacks, or compatibility shims.",
+			"no_test_logic_in_production": "Keep fixtures, mocks, and test-only branches out of production paths.",
+			"public_api_stable":           "Do not change public schemas, migrations, HTTP contracts, or event shapes without explicit approval.",
+			"config_from_env":             "Keep secrets and environment-specific configuration out of source code.",
+		}},
+		LLM:    LLMConfig{ModelProfile: "default"},
+		Harden: HardenConfig{MaxQuestionsPerRound: 8},
 		Review: ReviewConfig{
 			External: ExternalReviewConfig{
 				Provider:           "auto",
@@ -118,7 +131,7 @@ func Default() Config {
 			},
 			AdversarialPasses: map[string]ReviewPassConfig{
 				"regression_hunt":  {Order: 30, Title: "Regression Hunt", Description: "Trace callers, importers, and downstream consumers for regressions"},
-				"convention_check": {Order: 40, Title: "Convention Check", Description: "Check changed code against CONVENTIONS.md and AGENTS.md"},
+				"convention_check": {Order: 40, Title: "Convention Check", Description: "Check changed code against declared invariants, spec constraints, and root agent guidance"},
 				"dark_patterns":    {Order: 50, Title: "Dark Patterns", Description: "Hunt for subtle bugs, hardcodes, races, and safety gaps"},
 			},
 		},
@@ -129,6 +142,7 @@ func overlay(base Config, local Config) Config {
 	if local.Version != "" {
 		base.Version = local.Version
 	}
+	base.Invariants.Canonical = overlayStrings(base.Invariants.Canonical, local.Invariants.Canonical)
 	if local.LLM.ModelProfile != "" {
 		base.LLM.ModelProfile = local.LLM.ModelProfile
 	}
@@ -199,11 +213,26 @@ func overlayPasses(base map[string]ReviewPassConfig, local map[string]ReviewPass
 	return next
 }
 
+func overlayStrings(base map[string]string, local map[string]string) map[string]string {
+	if len(base) == 0 && len(local) == 0 {
+		return nil
+	}
+	next := make(map[string]string, len(base)+len(local))
+	for key, value := range base {
+		next[key] = value
+	}
+	for key, value := range local {
+		next[key] = value
+	}
+	return next
+}
+
 func withDefaults(cfg Config) Config {
 	defaults := Default()
 	if cfg.Version == "" {
 		cfg.Version = defaults.Version
 	}
+	cfg.Invariants.Canonical = overlayStrings(defaults.Invariants.Canonical, cfg.Invariants.Canonical)
 	if cfg.LLM.ModelProfile == "" {
 		cfg.LLM.ModelProfile = defaults.LLM.ModelProfile
 	}
@@ -231,4 +260,37 @@ func withDefaults(cfg Config) Config {
 	cfg.Review.AutomatedPasses = overlayPasses(defaults.Review.AutomatedPasses, cfg.Review.AutomatedPasses)
 	cfg.Review.AdversarialPasses = overlayPasses(defaults.Review.AdversarialPasses, cfg.Review.AdversarialPasses)
 	return cfg
+}
+
+// UnmarshalYAML accepts the current mapping form and the older list-only
+// canonical form so existing workspaces keep loading after the config cleanup.
+func (cfg *InvariantConfig) UnmarshalYAML(value *yaml.Node) error {
+	cfg.Canonical = map[string]string{}
+	if value == nil || value.Kind != yaml.MappingNode {
+		return nil
+	}
+	for i := 0; i+1 < len(value.Content); i += 2 {
+		key := value.Content[i]
+		val := value.Content[i+1]
+		if key.Value != "canonical" {
+			continue
+		}
+		switch val.Kind {
+		case yaml.SequenceNode:
+			for _, item := range val.Content {
+				if item.Value != "" {
+					cfg.Canonical[item.Value] = ""
+				}
+			}
+		case yaml.MappingNode:
+			for j := 0; j+1 < len(val.Content); j += 2 {
+				name := val.Content[j].Value
+				description := val.Content[j+1].Value
+				if name != "" {
+					cfg.Canonical[name] = description
+				}
+			}
+		}
+	}
+	return nil
 }

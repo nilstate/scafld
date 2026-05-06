@@ -30,8 +30,11 @@ type Output struct {
 
 // ReviewInfo is the latest review evidence visible from status.
 type ReviewInfo struct {
-	Verdict  string               `json:"verdict,omitempty"`
-	Findings []corereview.Finding `json:"findings,omitempty"`
+	Verdict       string               `json:"verdict,omitempty"`
+	Findings      []corereview.Finding `json:"findings,omitempty"`
+	Running       bool                 `json:"running,omitempty"`
+	AttemptStatus string               `json:"attempt_status,omitempty"`
+	Reason        string               `json:"reason,omitempty"`
 }
 
 // Run reads status for taskID.
@@ -53,12 +56,19 @@ func Run(ctx context.Context, specs SpecStore, sessions SessionStore, taskID str
 func latestReviewInfo(ledger session.Session) ReviewInfo {
 	for i := len(ledger.Entries) - 1; i >= 0; i-- {
 		entry := ledger.Entries[i]
-		if entry.Type != "review" {
-			continue
-		}
-		return ReviewInfo{
-			Verdict:  entry.Status,
-			Findings: corereview.DecodeFindings(entry.Output),
+		switch entry.Type {
+		case "review":
+			return ReviewInfo{
+				Verdict:  entry.Status,
+				Findings: corereview.DecodeFindings(entry.Output),
+			}
+		case "review_attempt":
+			info := ReviewInfo{
+				Running:       entry.Status == "running",
+				AttemptStatus: entry.Status,
+				Reason:        entry.Reason,
+			}
+			return info
 		}
 	}
 	return ReviewInfo{}

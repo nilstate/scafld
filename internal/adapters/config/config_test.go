@@ -17,6 +17,9 @@ func TestConfigLoad(t *testing.T) {
 version: "1.0"
 llm:
   model_profile: "team-default"
+invariants:
+  canonical:
+    tenant_isolation: "Do not leak data across tenants."
 harden:
   max_questions_per_round: 5
 review:
@@ -51,6 +54,9 @@ review:
 	if cfg.Harden.MaxQuestionsPerRound != 5 {
 		t.Fatalf("harden config = %+v", cfg.Harden)
 	}
+	if cfg.Invariants.Canonical["tenant_isolation"] != "Do not leak data across tenants." {
+		t.Fatalf("invariants = %+v", cfg.Invariants.Canonical)
+	}
 	if cfg.Review.External.Provider != "codex" || cfg.Review.External.Codex.Model != "gpt-config" || cfg.Review.External.Claude.Model != "claude-config" {
 		t.Fatalf("review config = %+v", cfg.Review.External)
 	}
@@ -59,6 +65,29 @@ review:
 	}
 	if cfg.Review.AutomatedPasses["spec_compliance"].Title != "Spec Compliance" || cfg.Review.AdversarialPasses["regression_hunt"].Order != 30 {
 		t.Fatalf("review passes = %+v %+v", cfg.Review.AutomatedPasses, cfg.Review.AdversarialPasses)
+	}
+}
+
+func TestConfigAcceptsLegacyInvariantList(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".scafld"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".scafld", "config.yaml"), []byte(`
+invariants:
+  canonical:
+    - domain_boundaries
+    - no_legacy_code
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := cfg.Invariants.Canonical["domain_boundaries"]; !ok {
+		t.Fatalf("legacy invariant list did not load: %+v", cfg.Invariants.Canonical)
 	}
 }
 

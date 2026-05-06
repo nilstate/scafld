@@ -9,17 +9,17 @@ import (
 	"runtime/debug"
 	"strings"
 
+	configurecli "github.com/nilstate/scafld/v2/internal/adapters/cli/configure"
 	hardencli "github.com/nilstate/scafld/v2/internal/adapters/cli/harden"
+	initcmd "github.com/nilstate/scafld/v2/internal/adapters/cli/initcmd"
 	"github.com/nilstate/scafld/v2/internal/adapters/cli/output"
 	reviewcli "github.com/nilstate/scafld/v2/internal/adapters/cli/review"
 	"github.com/nilstate/scafld/v2/internal/adapters/clock"
 	"github.com/nilstate/scafld/v2/internal/adapters/corebundle"
-	"github.com/nilstate/scafld/v2/internal/adapters/filesystem"
 	"github.com/nilstate/scafld/v2/internal/adapters/git"
 	"github.com/nilstate/scafld/v2/internal/adapters/markdown"
 	"github.com/nilstate/scafld/v2/internal/adapters/process"
 	"github.com/nilstate/scafld/v2/internal/app/approve"
-	"github.com/nilstate/scafld/v2/internal/app/bootstrap"
 	"github.com/nilstate/scafld/v2/internal/app/build"
 	"github.com/nilstate/scafld/v2/internal/app/handoff"
 	"github.com/nilstate/scafld/v2/internal/app/harden"
@@ -45,6 +45,7 @@ const (
 
 var commands = []command{
 	{"init", "Bootstrap a scafld workspace"},
+	{"configure", "Propose evidence-backed workspace config"},
 	{"plan", "Create a draft task spec"},
 	{"harden", "Stress-test a draft spec before approval"},
 	{"validate", "Validate a task spec"},
@@ -66,11 +67,12 @@ type command struct{ name, summary string }
 type commandHandler func(context.Context, []string, io.Writer, io.Writer) int
 
 var commandHandlers = map[string]commandHandler{
-	"init":     runInit,
-	"plan":     runPlan,
-	"harden":   runHarden,
-	"validate": runValidate,
-	"approve":  runApprove,
+	"init":      runInit,
+	"configure": runConfigure,
+	"plan":      runPlan,
+	"harden":    runHarden,
+	"validate":  runValidate,
+	"approve":   runApprove,
 	"build": func(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer) int {
 		return runBuild(ctx, args, stdout, stderr, false)
 	},
@@ -156,28 +158,28 @@ func runInit(ctx context.Context, args []string, stdout io.Writer, stderr io.Wri
 	if root == "" {
 		root = "."
 	}
-	result, err := bootstrap.Run(ctx, filesystem.WorkspaceStore{}, bootstrap.Input{Root: root})
+	result, err := initcmd.Run(ctx, root, !opts.Flags["no-agent-docs"])
 	if err != nil {
-		return failOut(stderr, fmt.Errorf("init workspace: %w", err), ExitWorkspace, opts.JSON)
+		return failOut(stderr, err, ExitWorkspace, opts.JSON)
 	}
-	bundle, err := corebundle.Init(ctx, result.Root)
+	return okOut(stdout, "init", result, initcmd.Message(result), opts.JSON)
+}
+
+func runConfigure(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer) int {
+	opts, err := parseOptions(args)
 	if err != nil {
-		return failOut(stderr, fmt.Errorf("install core bundle: %w", err), ExitWorkspace, opts.JSON)
+		return failOut(stderr, err, ExitInvalid, opts.JSON)
 	}
-	result.Merge(bundle.Created, bundle.Updated, bundle.Skipped)
-	if !opts.Flags["no-agent-docs"] {
-		agentDocs, err := corebundle.InitAgentDocs(ctx, result.Root)
-		if err != nil {
-			return failOut(stderr, fmt.Errorf("install agent docs: %w", err), ExitWorkspace, opts.JSON)
-		}
-		result.Merge(agentDocs.Created, agentDocs.Updated, agentDocs.Skipped)
-	}
-	gitignore, err := corebundle.InitGitignore(ctx, result.Root)
+	root, err := commandRoot(ctx, opts, false)
 	if err != nil {
-		return failOut(stderr, fmt.Errorf("install gitignore: %w", err), ExitWorkspace, opts.JSON)
+		return failOut(stderr, err, ExitWorkspace, opts.JSON)
 	}
-	result.Merge(gitignore.Created, gitignore.Updated, gitignore.Skipped)
-	return okOut(stdout, "init", result, bootstrap.Message(result), opts.JSON)
+	out, err := configurecli.Run(ctx, root)
+	if err != nil {
+		return failOut(stderr, err, ExitGeneric, opts.JSON)
+	}
+	text := out.Prompt + fmt.Sprintf("\n---\nproposal: %s\nreview before copying changes into .scafld/config.yaml\n", out.Path)
+	return okOut(stdout, "configure", out, text, opts.JSON)
 }
 
 func runPlan(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer) int {
