@@ -100,6 +100,117 @@ func TestRoundTripPreservesLiterateSpecFields(t *testing.T) {
 	}
 }
 
+func TestParseNormalizesMixedHardenQuestionFormats(t *testing.T) {
+	t.Parallel()
+
+	input := string(Render(fixtureModel()))
+	harden := `## Harden Rounds
+
+### round-1
+
+Status: in_progress
+Started: 2026-05-04T00:00:00Z
+Ended: none
+
+Questions:
+- question: "Should the implementation hard-block compose tool calls unless the client proves it read ` + "`" + `nitro://email-design` + "`" + `?"
+  grounded_in: "spec_gap:Scope"
+  recommended_answer: "No. Additive MCP resource reads are not statefully tied to later tool calls."
+  resolution: "Accepted in scope/out-of-scope and risks."
+- Should the implementation hard-block compose tool calls unless the client proves it read ` + "`" + `nitro://email-design` + "`" + `?
+  - Grounded in: spec_gap:Scope
+  - Recommended answer: No. Additive MCP resource reads are not statefully tied to later tool calls.
+  - Answered with: Accepted in scope/out-of-scope and risks.
+
+## Planning Log`
+	input = strings.Replace(input, "## Harden Rounds\n\n- none\n\n## Planning Log", harden, 1)
+
+	parsed, err := Parse([]byte(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(parsed.HardenRounds) != 1 {
+		t.Fatalf("harden rounds = %+v", parsed.HardenRounds)
+	}
+	questions := parsed.HardenRounds[0].Questions
+	if len(questions) != 1 {
+		t.Fatalf("questions = %+v", questions)
+	}
+	got := questions[0]
+	if got.GroundedIn != "spec_gap:Scope" || got.RecommendedAnswer == "" || got.AnsweredWith != "Accepted in scope/out-of-scope and risks." {
+		t.Fatalf("question fields = %+v", got)
+	}
+
+	rendered := string(Render(parsed))
+	if strings.Contains(rendered, "- question:") || strings.Contains(rendered, "grounded_in:") || strings.Contains(rendered, "resolution:") {
+		t.Fatalf("render kept noncanonical harden fields:\n%s", rendered)
+	}
+	if count := strings.Count(rendered, "Should the implementation hard-block compose tool calls"); count != 1 {
+		t.Fatalf("rendered duplicate harden questions (%d):\n%s", count, rendered)
+	}
+}
+
+func TestParseNormalizesAlternateLivingSpecLabels(t *testing.T) {
+	t.Parallel()
+
+	input := string(Render(fixtureModel()))
+	replacements := map[string]string{
+		"Current phase: none": "current_phase: phase1",
+		"Allowed follow-up command: `scafld status fixture-task`": "allowed_follow_up: `scafld review fixture-task`",
+		"Latest runner update: none":                              "latest_runner_update: 2026-05-04T00:00:00Z",
+		"Review gate: not_started":                                "review_gate: fail",
+		"Profile: standard":                                       "profile: strict",
+		"## Phase 1: Implementation\n\nStatus: pending":           "## Phase 1: Implementation\n\nstatus: active",
+		"Objective: Build the slice.":                             "objective: Build the stricter slice.",
+		"  - Expected kind: `exit_code_zero`":                     "  - expected_kind: `exit_code_zero`",
+		"  - Status: pending":                                     "  - status: pass\n  - source_event: entry-1",
+		"Created by: scafld":                                      "created_by: tester",
+	}
+	for old, newValue := range replacements {
+		input = strings.Replace(input, old, newValue, 1)
+	}
+
+	parsed, err := Parse([]byte(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.CurrentState.CurrentPhase != "phase1" || parsed.CurrentState.AllowedFollowUp != "scafld review fixture-task" || parsed.CurrentState.ReviewGate != "fail" {
+		t.Fatalf("current state labels not normalized: %+v", parsed.CurrentState)
+	}
+	if parsed.Acceptance.ValidationProfile != "strict" {
+		t.Fatalf("acceptance profile = %q", parsed.Acceptance.ValidationProfile)
+	}
+	if parsed.Origin.CreatedBy != "tester" {
+		t.Fatalf("origin = %+v", parsed.Origin)
+	}
+	if got := parsed.Phases[0]; got.Status != "active" || got.Objective != "Build the stricter slice." {
+		t.Fatalf("phase labels not normalized: %+v", got)
+	}
+	if got := parsed.Phases[0].Acceptance[0]; got.Status != "pass" || got.SourceEvent != "entry-1" {
+		t.Fatalf("criterion labels not normalized: %+v", got)
+	}
+
+	rendered := string(Render(parsed))
+	for _, bad := range []string{"current_phase:", "allowed_follow_up:", "latest_runner_update:", "review_gate:", "expected_kind:", "source_event:", "created_by:"} {
+		if strings.Contains(rendered, bad) {
+			t.Fatalf("render kept noncanonical label %q:\n%s", bad, rendered)
+		}
+	}
+	for _, want := range []string{
+		"Current phase: phase1",
+		"Allowed follow-up command: `scafld review fixture-task`",
+		"Latest runner update: 2026-05-04T00:00:00Z",
+		"Review gate: fail",
+		"  - Expected kind: `exit_code_zero`",
+		"  - Source event: entry-1",
+		"Created by: tester",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("render missing canonical label %q:\n%s", want, rendered)
+		}
+	}
+}
+
 func TestRejectMalformedFrontMatterDuplicatePhaseUnclosedFenceAndMismatch(t *testing.T) {
 	t.Parallel()
 
