@@ -30,15 +30,16 @@ Work these harden questions before polishing wording:
 
 Ask one question at a time. For each question, provide your recommended answer.
 If a question can be answered by exploring the codebase, explore the codebase instead of asking.
-Every question must carry one grounded_in value: spec_gap:<field>, code:<file>:<line>, or archive:<task_id>.
+Every question must carry one Grounded in value: spec_gap:<field>, code:<file>:<line>, or archive:<task_id>.
 
-Use grounded_in as audit trail, not ceremony. Do not invent citations. Do not cite code you have not read. Do not ask about behavior the spec already settles.
+Use Grounded in as audit trail, not ceremony. Do not invent citations. Do not cite code you have not read. Do not ask about behavior the spec already settles.
 
-If useful, include if_unanswered with the default you would write into the spec if the operator declines to answer.
+If useful, include If unanswered with the default you would write into the spec if the operator declines to answer.
 
 If you cannot form a genuine grounded question, stop. Do not pad the round.
 
-Record each question in this Markdown shape under the latest harden round:
+Record each question in this exact Markdown shape under the latest harden round.
+Do not use YAML object keys such as question:, grounded_in:, recommended_answer:, or resolution.
 
 ` + "```markdown" + `
 Questions:

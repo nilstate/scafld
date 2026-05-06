@@ -29,11 +29,6 @@ var (
 	ErrMalformedMarkdown = errors.New("malformed markdown spec")
 	phaseHeadingPattern  = regexp.MustCompile(`^## Phase ([0-9]+):\s*(.+?)\s*$`)
 	criterionLinePattern = regexp.MustCompile(`^- \[[ xX]\] ` + "`" + `([^` + "`" + `]+)` + "`" + `\s+([^-]+?)\s+-\s*(.*)$`)
-	commandLinePattern   = regexp.MustCompile(`^\s+- Command:\s*` + "`" + `(.*)` + "`" + `\s*$`)
-	expectedLinePattern  = regexp.MustCompile(`^\s+- Expected kind:\s*` + "`" + `?([^` + "`" + `\s]+)` + "`" + `?\s*$`)
-	statusLinePattern    = regexp.MustCompile(`^\s+- Status:\s*([a-z_]+)\s*$`)
-	evidenceLinePattern  = regexp.MustCompile(`^\s+- Evidence:\s*(.*)\s*$`)
-	sourceLinePattern    = regexp.MustCompile(`^\s+- Source event:\s*(.*)\s*$`)
 	findingLinePattern   = regexp.MustCompile(`^- \[([a-z_]+)\]\s+` + "`" + `([^` + "`" + `]+)` + "`" + `\s+(.*)$`)
 )
 
@@ -327,30 +322,41 @@ func (p *parser) handleAcceptance(line string) bool {
 	if p.section != "acceptance" {
 		return false
 	}
-	if strings.HasPrefix(line, "Profile:") {
-		p.model.Acceptance.ValidationProfile = strings.TrimSpace(strings.TrimPrefix(line, "Profile:"))
+	key, value, ok := parseSpecKeyValue(line)
+	if !ok {
+		return false
 	}
-	return line == "Validation:" || strings.HasPrefix(line, "Profile:")
+	switch normalizeSpecKey(key) {
+	case "profile":
+		p.model.Acceptance.ValidationProfile = value
+	case "validation":
+	default:
+		return false
+	}
+	return true
 }
 
 func (p *parser) handleReview(line string) bool {
 	if p.section != "review" {
 		return false
 	}
-	if strings.HasPrefix(line, "Status:") {
-		p.model.Review.Status = strings.TrimSpace(strings.TrimPrefix(line, "Status:"))
-	}
-	if strings.HasPrefix(line, "Verdict:") {
-		p.model.Review.Verdict = strings.TrimSpace(strings.TrimPrefix(line, "Verdict:"))
-	}
-	if line == "Findings:" {
-		return true
+	if key, value, ok := parseSpecKeyValue(line); ok {
+		switch normalizeSpecKey(key) {
+		case "status":
+			p.model.Review.Status = value
+			return true
+		case "verdict":
+			p.model.Review.Verdict = value
+			return true
+		case "findings":
+			return true
+		}
 	}
 	if match := findingLinePattern.FindStringSubmatch(line); match != nil {
 		p.model.Review.Findings = append(p.model.Review.Findings, reviewFinding(match[2], match[1], match[3]))
 		return true
 	}
-	return strings.HasPrefix(line, "Status:") || strings.HasPrefix(line, "Verdict:")
+	return false
 }
 
 func (p *parser) handleMetadata(line string) bool {
@@ -368,11 +374,17 @@ func (p *parser) handleOrigin(line string) bool {
 	if p.section != "origin" {
 		return false
 	}
-	if strings.HasPrefix(line, "Created by:") {
-		p.model.Origin.CreatedBy = strings.TrimSpace(strings.TrimPrefix(line, "Created by:"))
+	key, value, ok := parseSpecKeyValue(line)
+	if !ok {
+		return false
 	}
-	if strings.HasPrefix(line, "Source:") {
-		p.model.Origin.Source = strings.TrimSpace(strings.TrimPrefix(line, "Source:"))
+	switch normalizeSpecKey(key) {
+	case "created by":
+		p.model.Origin.CreatedBy = value
+	case "source":
+		p.model.Origin.Source = value
+	default:
+		return false
 	}
 	return true
 }
@@ -388,24 +400,37 @@ func (p *parser) handleHardenLine(line string) bool {
 	case strings.HasPrefix(line, "### "):
 		p.startHardenRound(strings.TrimSpace(strings.TrimPrefix(line, "### ")))
 		return true
-	case strings.HasPrefix(line, "Status:") && p.hardenRound != nil:
-		p.hardenRound.Status = strings.TrimSpace(strings.TrimPrefix(line, "Status:"))
-		return true
-	case strings.HasPrefix(line, "Started:") && p.hardenRound != nil:
-		p.hardenRound.StartedAt = noneToEmpty(strings.TrimSpace(strings.TrimPrefix(line, "Started:")))
-		return true
-	case strings.HasPrefix(line, "Ended:") && p.hardenRound != nil:
-		p.hardenRound.EndedAt = noneToEmpty(strings.TrimSpace(strings.TrimPrefix(line, "Ended:")))
-		return true
-	case line == "Questions:":
-		p.hardenField = "questions"
-		return true
+	}
+	if key, value, ok := parseSpecKeyValue(line); ok {
+		switch normalizeSpecKey(key) {
+		case "status":
+			if p.hardenRound != nil {
+				p.hardenRound.Status = value
+			}
+			return true
+		case "started":
+			if p.hardenRound != nil {
+				p.hardenRound.StartedAt = noneToEmpty(value)
+			}
+			return true
+		case "ended":
+			if p.hardenRound != nil {
+				p.hardenRound.EndedAt = noneToEmpty(value)
+			}
+			return true
+		case "questions":
+			p.hardenField = "questions"
+			return true
+		}
 	}
 	if strings.HasPrefix(line, "- ") {
 		return p.handleHardenBullet(strings.TrimSpace(strings.TrimPrefix(line, "- ")))
 	}
 	if strings.HasPrefix(line, "  - ") {
 		return p.handleHardenQuestionDetail(strings.TrimSpace(strings.TrimPrefix(line, "  - ")))
+	}
+	if strings.HasPrefix(line, "  ") {
+		return p.handleHardenQuestionDetail(strings.TrimSpace(line))
 	}
 	return true
 }
@@ -432,32 +457,61 @@ func (p *parser) handleHardenBullet(value string) bool {
 		return true
 	}
 	if p.hardenField == "questions" {
-		p.hardenRound.Questions = append(p.hardenRound.Questions, spec.HardenQuestion{Question: value})
-		p.hardenQuestion = &p.hardenRound.Questions[len(p.hardenRound.Questions)-1]
+		if key, body, ok := parseSpecKeyValue(value); ok && normalizeSpecKey(key) == "question" {
+			p.startHardenQuestion(body)
+			return true
+		}
+		p.startHardenQuestion(value)
 	}
 	return true
 }
 
-func (p *parser) handleHardenQuestionDetail(value string) bool {
-	if p.hardenQuestion == nil {
-		return true
+func (p *parser) startHardenQuestion(value string) {
+	if p.hardenRound == nil {
+		return
 	}
-	key, body, ok := strings.Cut(value, ":")
+	value = cleanSpecValue(value)
+	if value == "" {
+		return
+	}
+	normalized := normalizeHardenQuestion(value)
+	for i := range p.hardenRound.Questions {
+		if normalizeHardenQuestion(p.hardenRound.Questions[i].Question) == normalized {
+			p.hardenQuestion = &p.hardenRound.Questions[i]
+			return
+		}
+	}
+	p.hardenRound.Questions = append(p.hardenRound.Questions, spec.HardenQuestion{Question: value})
+	p.hardenQuestion = &p.hardenRound.Questions[len(p.hardenRound.Questions)-1]
+}
+
+func (p *parser) handleHardenQuestionDetail(value string) bool {
+	key, body, ok := parseSpecKeyValue(value)
 	if !ok {
 		return true
 	}
-	body = strings.TrimSpace(body)
-	switch strings.ToLower(strings.TrimSpace(key)) {
+	if normalizeSpecKey(key) == "question" {
+		p.startHardenQuestion(body)
+		return true
+	}
+	if p.hardenQuestion == nil {
+		return true
+	}
+	switch normalizeSpecKey(key) {
 	case "grounded in":
 		p.hardenQuestion.GroundedIn = body
 	case "recommended answer":
 		p.hardenQuestion.RecommendedAnswer = body
 	case "if unanswered":
 		p.hardenQuestion.IfUnanswered = body
-	case "answered with":
+	case "answered with", "resolution":
 		p.hardenQuestion.AnsweredWith = body
 	}
 	return true
+}
+
+func normalizeHardenQuestion(value string) string {
+	return strings.Join(strings.Fields(strings.ToLower(strings.TrimSpace(value))), " ")
 }
 
 func (p *parser) handleListItem(line string) bool {
@@ -475,19 +529,28 @@ func (p *parser) handlePhaseLine(line string) bool {
 	if p.phase == nil {
 		return false
 	}
-	switch {
-	case strings.HasPrefix(line, "Status:"):
-		p.phase.Status = strings.TrimSpace(strings.TrimPrefix(line, "Status:"))
-	case strings.HasPrefix(line, "Objective:"):
-		p.phase.Objective = strings.TrimSpace(strings.TrimPrefix(line, "Objective:"))
-	case strings.HasPrefix(line, "Dependencies:"):
-		p.phase.Dependencies = splitCSV(strings.TrimSpace(strings.TrimPrefix(line, "Dependencies:")))
-	case line == "Changes:":
-		p.phaseField = "changes"
-	case line == "Acceptance:":
-		p.phaseField = "acceptance"
-	case p.phaseField == "changes" && strings.HasPrefix(line, "- "):
+	if p.phaseField == "changes" && strings.HasPrefix(line, "- ") {
 		p.appendPhaseChange(line)
+		return true
+	}
+	if strings.HasPrefix(strings.TrimSpace(line), "- ") {
+		return false
+	}
+	key, value, ok := parseSpecKeyValue(line)
+	if !ok {
+		return false
+	}
+	switch normalizeSpecKey(key) {
+	case "status":
+		p.phase.Status = value
+	case "objective":
+		p.phase.Objective = value
+	case "dependencies":
+		p.phase.Dependencies = splitCSV(value)
+	case "changes":
+		p.phaseField = "changes"
+	case "acceptance":
+		p.phaseField = "acceptance"
 	default:
 		return false
 	}
@@ -522,20 +585,21 @@ func (p *parser) handleCriterionDetail(line string) {
 	if p.criterion == nil {
 		return
 	}
-	if match := commandLinePattern.FindStringSubmatch(line); match != nil {
-		p.criterion.Command = match[1]
+	key, value, ok := parseSpecListKeyValue(line)
+	if !ok {
+		return
 	}
-	if match := expectedLinePattern.FindStringSubmatch(line); match != nil {
-		p.criterion.ExpectedKind = acceptance.ExpectedKind(match[1])
-	}
-	if match := statusLinePattern.FindStringSubmatch(line); match != nil {
-		p.criterion.Status = match[1]
-	}
-	if match := evidenceLinePattern.FindStringSubmatch(line); match != nil {
-		p.criterion.Evidence = match[1]
-	}
-	if match := sourceLinePattern.FindStringSubmatch(line); match != nil {
-		p.criterion.SourceEvent = match[1]
+	switch normalizeSpecKey(key) {
+	case "command":
+		p.criterion.Command = value
+	case "expected kind":
+		p.criterion.ExpectedKind = acceptance.ExpectedKind(value)
+	case "status":
+		p.criterion.Status = value
+	case "evidence":
+		p.criterion.Evidence = value
+	case "source event":
+		p.criterion.SourceEvent = value
 	}
 }
 
@@ -1141,12 +1205,11 @@ func listForSection(model *spec.Model, section string) *[]string {
 }
 
 func parseCurrentStateLine(model *spec.Model, line string) {
-	key, value, ok := strings.Cut(line, ":")
+	key, value, ok := parseSpecKeyValue(line)
 	if !ok {
 		return
 	}
-	value = strings.Trim(strings.TrimSpace(value), "`")
-	switch strings.ToLower(strings.TrimSpace(key)) {
+	switch normalizeSpecKey(key) {
 	case "current phase":
 		model.CurrentState.CurrentPhase = value
 	case "next":
@@ -1155,13 +1218,55 @@ func parseCurrentStateLine(model *spec.Model, line string) {
 		model.CurrentState.Reason = value
 	case "blockers":
 		model.CurrentState.Blockers = value
-	case "allowed follow-up command":
+	case "allowed follow up", "allowed follow up command":
 		model.CurrentState.AllowedFollowUp = value
 	case "latest runner update":
 		model.CurrentState.LatestRunnerUpdate = value
 	case "review gate":
 		model.CurrentState.ReviewGate = value
 	}
+}
+
+func parseSpecListKeyValue(value string) (string, string, bool) {
+	trimmed := strings.TrimSpace(value)
+	if strings.HasPrefix(trimmed, "- ") {
+		trimmed = strings.TrimSpace(strings.TrimPrefix(trimmed, "- "))
+	}
+	return parseSpecKeyValue(trimmed)
+}
+
+func parseSpecKeyValue(value string) (string, string, bool) {
+	key, body, ok := strings.Cut(value, ":")
+	if !ok || strings.TrimSpace(key) == "" {
+		return "", "", false
+	}
+	return strings.TrimSpace(key), cleanSpecValue(body), true
+}
+
+func cleanSpecValue(value string) string {
+	value = strings.TrimSpace(value)
+	if len(value) < 2 {
+		return value
+	}
+	quote := value[0]
+	if value[len(value)-1] != quote {
+		return value
+	}
+	switch quote {
+	case '"', '`':
+		if unquoted, err := strconv.Unquote(value); err == nil {
+			return unquoted
+		}
+	case '\'':
+		return value[1 : len(value)-1]
+	}
+	return value
+}
+
+func normalizeSpecKey(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	value = strings.NewReplacer("_", " ", "-", " ").Replace(value)
+	return strings.Join(strings.Fields(value), " ")
 }
 
 func splitCSV(value string) []string {
