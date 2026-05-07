@@ -144,3 +144,181 @@ jobs:
             exit 0
           fi
           npm publish --access public
+
+  package-managers:
+    needs: github-release
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Render package-manager manifests
+        run: OUT_DIR=.stage/package-managers/rendered scripts/render-package-managers.sh "${GITHUB_REF_NAME#v}"
+
+      - name: Attach package-manager manifests to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tar -C .stage/package-managers -czf .stage/package-managers-rendered.tar.gz rendered
+          gh release upload "$GITHUB_REF_NAME" .stage/package-managers-rendered.tar.gz --clobber
+
+      - name: Upload package-manager manifests
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-managers-rendered
+          path: .stage/package-managers/rendered
+
+  publish-homebrew:
+    needs: package-managers
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check Homebrew publish credentials
+        id: gate
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          PACKAGES_REPO_TOKEN: ${{ secrets.PACKAGES_REPO_TOKEN }}
+        run: |
+          if [[ -n "${HOMEBREW_TAP_TOKEN:-}" || -n "${PACKAGES_REPO_TOKEN:-}" ]]; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping Homebrew publish: HOMEBREW_TAP_TOKEN or PACKAGES_REPO_TOKEN is not configured."
+          fi
+
+      - name: Check out repository
+        if: steps.gate.outputs.publish == 'true'
+        uses: actions/checkout@v6
+
+      - name: Download rendered manifests
+        if: steps.gate.outputs.publish == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: package-managers-rendered
+          path: .stage/package-managers/rendered
+
+      - name: Check out Homebrew tap
+        if: steps.gate.outputs.publish == 'true'
+        uses: actions/checkout@v6
+        with:
+          repository: nilstate/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN || secrets.PACKAGES_REPO_TOKEN }}
+          path: .stage/homebrew-tap
+
+      - name: Publish formula
+        if: steps.gate.outputs.publish == 'true'
+        env:
+          TAP_REPO_DIR: ${{ github.workspace }}/.stage/homebrew-tap
+        run: scripts/publish-homebrew.sh
+
+      - name: Commit formula update
+        if: steps.gate.outputs.publish == 'true'
+        run: |
+          git -C .stage/homebrew-tap config user.name "github-actions[bot]"
+          git -C .stage/homebrew-tap config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C .stage/homebrew-tap add Formula/scafld.rb
+          if git -C .stage/homebrew-tap diff --cached --quiet; then
+            exit 0
+          fi
+          git -C .stage/homebrew-tap commit -m "scafld ${GITHUB_REF_NAME#v}"
+          git -C .stage/homebrew-tap push
+
+  publish-scoop:
+    needs: package-managers
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check Scoop publish credentials
+        id: gate
+        env:
+          SCOOP_BUCKET_TOKEN: ${{ secrets.SCOOP_BUCKET_TOKEN }}
+          PACKAGES_REPO_TOKEN: ${{ secrets.PACKAGES_REPO_TOKEN }}
+        run: |
+          if [[ -n "${SCOOP_BUCKET_TOKEN:-}" || -n "${PACKAGES_REPO_TOKEN:-}" ]]; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping Scoop publish: SCOOP_BUCKET_TOKEN or PACKAGES_REPO_TOKEN is not configured."
+          fi
+
+      - name: Check out repository
+        if: steps.gate.outputs.publish == 'true'
+        uses: actions/checkout@v6
+
+      - name: Download rendered manifests
+        if: steps.gate.outputs.publish == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: package-managers-rendered
+          path: .stage/package-managers/rendered
+
+      - name: Check out Scoop bucket
+        if: steps.gate.outputs.publish == 'true'
+        uses: actions/checkout@v6
+        with:
+          repository: nilstate/scoop-bucket
+          token: ${{ secrets.SCOOP_BUCKET_TOKEN || secrets.PACKAGES_REPO_TOKEN }}
+          path: .stage/scoop-bucket
+
+      - name: Publish Scoop manifest
+        if: steps.gate.outputs.publish == 'true'
+        env:
+          SCOOP_BUCKET_DIR: ${{ github.workspace }}/.stage/scoop-bucket
+        run: scripts/publish-scoop.sh
+
+      - name: Commit Scoop update
+        if: steps.gate.outputs.publish == 'true'
+        run: |
+          git -C .stage/scoop-bucket config user.name "github-actions[bot]"
+          git -C .stage/scoop-bucket config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C .stage/scoop-bucket add bucket/scafld.json
+          if git -C .stage/scoop-bucket diff --cached --quiet; then
+            exit 0
+          fi
+          git -C .stage/scoop-bucket commit -m "scafld ${GITHUB_REF_NAME#v}"
+          git -C .stage/scoop-bucket push
+
+  publish-oci:
+    needs: github-release
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve release version
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Publish OCI image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: package/docker/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          build-args: |
+            VERSION=${{ steps.version.outputs.version }}
+          tags: |
+            ghcr.io/nilstate/scafld:v${{ steps.version.outputs.version }}
+            ghcr.io/nilstate/scafld:latest

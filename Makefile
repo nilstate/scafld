@@ -1,6 +1,6 @@
 GOFILES := $(shell find . -path './.tools' -prune -o -name '*.go' -print)
 
-.PHONY: fmt vet test race arch package-check release-snapshot check
+.PHONY: fmt vet test race arch package-check package-manager-check release-snapshot check
 
 fmt:
 	@test -z "$$(gofmt -l $(GOFILES))"
@@ -23,8 +23,12 @@ package-check:
 	@node --check package/npm/lib/platform.js
 	@cd package/npm && npm pack --dry-run --ignore-scripts >/dev/null
 	@python3 -m compileall -q package/pypi/src
+	@bash -n scripts/render-package-managers.sh scripts/publish-homebrew.sh scripts/publish-scoop.sh
+
+package-manager-check:
+	@tmp="$$(mktemp -d)"; trap 'rm -rf "$$tmp"' EXIT; CHECKSUMS_FILE=package/testdata/checksums.txt OUT_DIR="$$tmp" scripts/render-package-managers.sh 0.0.0 >/dev/null
 
 release-snapshot:
 	@scripts/build-release-artifacts.sh 0.0.0-snapshot
 
-check: fmt vet arch package-check test race
+check: fmt vet arch package-check package-manager-check test race
