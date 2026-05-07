@@ -36,7 +36,7 @@ func TestStatusIncludesLatestReviewFindings(t *testing.T) {
 	}
 }
 
-func TestStatusShowsRunningReviewAttemptInsteadOfPreviousReview(t *testing.T) {
+func TestStatusShowsRunningReviewAttemptAndLatestAcceptedReview(t *testing.T) {
 	t.Parallel()
 
 	ledger := session.New("task", "2026-05-05T00:00:00Z")
@@ -47,7 +47,44 @@ func TestStatusShowsRunningReviewAttemptInsteadOfPreviousReview(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !out.Review.Running || out.Review.Verdict != "" || len(out.Review.Findings) != 0 {
-		t.Fatalf("review info should expose running attempt instead of stale review: %+v", out.Review)
+	if !out.Review.Running || out.Review.AttemptStatus != "running" {
+		t.Fatalf("review attempt info missing: %+v", out.Review)
+	}
+	if out.Review.Attempt == nil || !out.Review.Attempt.Running || out.Review.Attempt.Status != "running" {
+		t.Fatalf("nested review attempt info missing: %+v", out.Review)
+	}
+	if out.Review.Verdict != corereview.VerdictFail || len(out.Review.Findings) != 1 {
+		t.Fatalf("latest accepted review should remain visible: %+v", out.Review)
+	}
+}
+
+func TestStatusIncludesBlockedRepairContract(t *testing.T) {
+	t.Parallel()
+
+	model := spec.Model{
+		TaskID: "task",
+		Status: spec.StatusBlocked,
+		Title:  "Task",
+		CurrentState: spec.CurrentState{
+			Reason:          "acceptance criteria failed",
+			AllowedFollowUp: "scafld handoff task",
+		},
+		Acceptance: spec.Acceptance{Criteria: []spec.Criterion{{
+			ID:          "v1",
+			Title:       "tests pass",
+			Status:      "fail",
+			Evidence:    "exit code was 1",
+			SourceEvent: "entry-1",
+		}}},
+	}
+	out, err := Run(context.Background(), fakeSpecStore{model: model}, fakeSessionStore{ledger: session.New("task", "now")}, "task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Gate != "build" || out.TrustedState == "" || out.AllowedFollowUp != "scafld handoff task" {
+		t.Fatalf("status repair surface missing: %+v", out)
+	}
+	if out.Repair == nil || out.Repair.Expected != "all acceptance criteria pass" || len(out.Repair.Blockers) != 1 || len(out.Repair.Evidence) != 1 {
+		t.Fatalf("repair contract = %+v", out.Repair)
 	}
 }

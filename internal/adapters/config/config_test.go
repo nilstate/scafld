@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -17,6 +18,11 @@ func TestConfigLoad(t *testing.T) {
 version: "1.0"
 llm:
   model_profile: "team-default"
+execution:
+  path_prepend:
+    - "$HOME/.rbenv/shims"
+  env:
+    BUNDLE_GEMFILE: "api/Gemfile"
 invariants:
   canonical:
     tenant_isolation: "Do not leak data across tenants."
@@ -53,6 +59,9 @@ review:
 	}
 	if cfg.Harden.MaxQuestionsPerRound != 5 {
 		t.Fatalf("harden config = %+v", cfg.Harden)
+	}
+	if len(cfg.Execution.PathPrepend) != 1 || cfg.Execution.PathPrepend[0] != "$HOME/.rbenv/shims" || cfg.Execution.Env["BUNDLE_GEMFILE"] != "api/Gemfile" {
+		t.Fatalf("execution config = %+v", cfg.Execution)
 	}
 	if cfg.Invariants.Canonical["tenant_isolation"] != "Do not leak data across tenants." {
 		t.Fatalf("invariants = %+v", cfg.Invariants.Canonical)
@@ -111,6 +120,11 @@ review:
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(root, ".scafld", "config.local.yaml"), []byte(`
+execution:
+  path_prepend:
+    - "$HOME/.local/bin"
+  env:
+    RUBYOPT: "-W0"
 review:
   external:
     provider: "claude"
@@ -135,8 +149,29 @@ review:
 	if cfg.Harden.MaxQuestionsPerRound != 8 {
 		t.Fatalf("default harden config not applied: %+v", cfg.Harden)
 	}
+	if len(cfg.Execution.PathPrepend) != 1 || cfg.Execution.PathPrepend[0] != "$HOME/.local/bin" || cfg.Execution.Env["RUBYOPT"] != "-W0" {
+		t.Fatalf("execution overlay did not apply: %+v", cfg.Execution)
+	}
 	if cfg.Review.AdversarialPasses["regression_hunt"].Description != "Local override" {
 		t.Fatalf("review pass overlay did not apply: %+v", cfg.Review.AdversarialPasses)
+	}
+}
+
+func TestExecutionEnvExpandsPathPrependAndEnv(t *testing.T) {
+	t.Setenv("HOME", "/tmp/scafld-home")
+	t.Setenv("PATH", "/usr/bin")
+
+	env := (ExecutionConfig{
+		PathPrepend: []string{"$HOME/.rbenv/shims", "~/.rbenv/bin"},
+		Env:         map[string]string{"BUNDLE_GEMFILE": "$HOME/app/Gemfile"},
+	}).ProcessEnv()
+	joined := strings.Join(env, "\n")
+	if !strings.Contains(joined, "BUNDLE_GEMFILE=/tmp/scafld-home/app/Gemfile") {
+		t.Fatalf("env did not expand env vars: %+v", env)
+	}
+	wantPath := "PATH=/tmp/scafld-home/.rbenv/shims" + string(os.PathListSeparator) + "/tmp/scafld-home/.rbenv/bin" + string(os.PathListSeparator) + "/usr/bin"
+	if !strings.Contains(joined, wantPath) {
+		t.Fatalf("PATH override missing %q in %+v", wantPath, env)
 	}
 }
 

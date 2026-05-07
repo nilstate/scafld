@@ -4,16 +4,18 @@ import "time"
 
 // Request describes a command execution requested by an application use case.
 type Request struct {
-	Command              string
-	Args                 []string
-	Input                string
-	CWD                  string
-	Env                  []string
-	Timeout              time.Duration
-	IdleTimeout          time.Duration
-	TerminateGrace       time.Duration
-	MaxCaptureBytes      int
-	StdoutEventInspector func(string) string
+	Command                string
+	Args                   []string
+	Input                  string
+	CWD                    string
+	Env                    []string
+	Timeout                time.Duration
+	IdleTimeout            time.Duration
+	TerminateGrace         time.Duration
+	MaxCaptureBytes        int
+	ProgressInterval       time.Duration
+	SuppressProgressStderr bool
+	StdoutEventInspector   func(string) string
 }
 
 // Result captures the observable outcome of a command execution.

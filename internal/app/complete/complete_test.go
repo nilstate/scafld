@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nilstate/scafld/v2/internal/core/gate"
 	corereview "github.com/nilstate/scafld/v2/internal/core/review"
 	"github.com/nilstate/scafld/v2/internal/core/session"
 	"github.com/nilstate/scafld/v2/internal/core/spec"
@@ -52,6 +53,10 @@ func TestCompleteRequiresPassedReviewGate(t *testing.T) {
 	if !errors.Is(err, ErrReviewGate) {
 		t.Fatalf("error = %v, want %v", err, ErrReviewGate)
 	}
+	var gateErr gate.Error
+	if !errors.As(err, &gateErr) || gateErr.Failure.Gate != "complete" || gateErr.Failure.Next != "scafld review task" {
+		t.Fatalf("gate error = %#v, ok=%v", gateErr, errors.As(err, &gateErr))
+	}
 	if specs.model.Status == spec.StatusCompleted {
 		t.Fatalf("complete should not mutate spec after failed review")
 	}
@@ -76,6 +81,59 @@ func TestCompleteRejectsLocalReviewProvider(t *testing.T) {
 
 	specs := &fakeSpecs{model: spec.Model{TaskID: "task", Status: spec.StatusReview, Review: spec.ReviewState{Status: "completed", Verdict: "pass"}}}
 	ledger := session.New("task", "now").WithEntry(session.Entry{Type: "review", Status: corereview.VerdictPass, Provider: "local"})
+	_, err := Run(context.Background(), specs, &fakeSessions{ledger: ledger}, fakeClock{}, "task")
+	if !errors.Is(err, ErrReviewGate) {
+		t.Fatalf("error = %v, want %v", err, ErrReviewGate)
+	}
+}
+
+func TestCompleteRejectsMissingOrUnknownReviewProvider(t *testing.T) {
+	t.Parallel()
+
+	for _, provider := range []string{"", "unknown"} {
+		specs := &fakeSpecs{model: spec.Model{TaskID: "task", Status: spec.StatusReview, Review: spec.ReviewState{Status: "completed", Verdict: "pass"}}}
+		ledger := session.New("task", "now").WithEntry(session.Entry{Type: "review", Status: corereview.VerdictPass, Provider: provider})
+		_, err := Run(context.Background(), specs, &fakeSessions{ledger: ledger}, fakeClock{}, "task")
+		if !errors.Is(err, ErrReviewGate) {
+			t.Fatalf("provider %q error = %v, want %v", provider, err, ErrReviewGate)
+		}
+	}
+}
+
+func TestCompleteAcceptsKnownExternalReviewProviders(t *testing.T) {
+	t.Parallel()
+
+	for _, provider := range []string{"codex", "claude", "command"} {
+		specs := &fakeSpecs{model: spec.Model{TaskID: "task", Status: spec.StatusReview, Review: spec.ReviewState{Status: "completed", Verdict: "pass"}}}
+		ledger := session.New("task", "now").WithEntry(session.Entry{Type: "review", Status: corereview.VerdictPass, Provider: provider})
+		_, err := Run(context.Background(), specs, &fakeSessions{ledger: ledger}, fakeClock{}, "task")
+		if err != nil {
+			t.Fatalf("provider %q error = %v", provider, err)
+		}
+	}
+}
+
+func TestCompleteRejectsStaleReviewAfterLaterBuildEvidence(t *testing.T) {
+	t.Parallel()
+
+	specs := &fakeSpecs{model: spec.Model{TaskID: "task", Status: spec.StatusReview, Review: spec.ReviewState{Status: "completed", Verdict: "pass"}}}
+	ledger := session.New("task", "now").
+		WithEntry(session.Entry{Type: "review", Status: corereview.VerdictPass, Provider: "codex"}).
+		WithEntry(session.Entry{Type: "criterion", CriterionID: "ac1", Status: "fail"}).
+		WithEntry(session.Entry{Type: "build", Status: string(spec.StatusBlocked), Reason: "acceptance criteria failed"})
+	_, err := Run(context.Background(), specs, &fakeSessions{ledger: ledger}, fakeClock{}, "task")
+	if !errors.Is(err, ErrReviewGate) {
+		t.Fatalf("error = %v, want %v", err, ErrReviewGate)
+	}
+}
+
+func TestCompleteRejectsStaleReviewAfterLaterReviewAttempt(t *testing.T) {
+	t.Parallel()
+
+	specs := &fakeSpecs{model: spec.Model{TaskID: "task", Status: spec.StatusReview, Review: spec.ReviewState{Status: "completed", Verdict: "pass"}}}
+	ledger := session.New("task", "now").
+		WithEntry(session.Entry{Type: "review", Status: corereview.VerdictPass, Provider: "codex"}).
+		WithEntry(session.Entry{Type: "review_attempt", Status: "failed", Reason: "review provider failed"})
 	_, err := Run(context.Background(), specs, &fakeSessions{ledger: ledger}, fakeClock{}, "task")
 	if !errors.Is(err, ErrReviewGate) {
 		t.Fatalf("error = %v, want %v", err, ErrReviewGate)

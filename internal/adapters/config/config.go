@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -15,6 +17,7 @@ type Config struct {
 	Version    string          `yaml:"version"`
 	Invariants InvariantConfig `yaml:"invariants"`
 	LLM        LLMConfig       `yaml:"llm"`
+	Execution  ExecutionConfig `yaml:"execution"`
 	Harden     HardenConfig    `yaml:"harden"`
 	Review     ReviewConfig    `yaml:"review"`
 }
@@ -27,6 +30,12 @@ type InvariantConfig struct {
 // LLMConfig contains shared model-profile settings.
 type LLMConfig struct {
 	ModelProfile string `yaml:"model_profile"`
+}
+
+// ExecutionConfig controls the deterministic environment for acceptance commands.
+type ExecutionConfig struct {
+	PathPrepend []string          `yaml:"path_prepend"`
+	Env         map[string]string `yaml:"env"`
 }
 
 // HardenConfig controls hardening prompt behavior.
@@ -114,8 +123,9 @@ func Default() Config {
 			"public_api_stable":           "Do not change public schemas, migrations, HTTP contracts, or event shapes without explicit approval.",
 			"config_from_env":             "Keep secrets and environment-specific configuration out of source code.",
 		}},
-		LLM:    LLMConfig{ModelProfile: "default"},
-		Harden: HardenConfig{MaxQuestionsPerRound: 8},
+		LLM:       LLMConfig{ModelProfile: "default"},
+		Execution: ExecutionConfig{},
+		Harden:    HardenConfig{MaxQuestionsPerRound: 8},
 		Review: ReviewConfig{
 			External: ExternalReviewConfig{
 				Provider:           "auto",
@@ -146,6 +156,7 @@ func overlay(base Config, local Config) Config {
 	if local.LLM.ModelProfile != "" {
 		base.LLM.ModelProfile = local.LLM.ModelProfile
 	}
+	base.Execution = overlayExecution(base.Execution, local.Execution)
 	if local.Harden.MaxQuestionsPerRound > 0 {
 		base.Harden.MaxQuestionsPerRound = local.Harden.MaxQuestionsPerRound
 	}
@@ -186,6 +197,14 @@ func overlayProvider(base ProviderConfig, local ProviderConfig) ProviderConfig {
 	if local.Binary != "" {
 		base.Binary = local.Binary
 	}
+	return base
+}
+
+func overlayExecution(base ExecutionConfig, local ExecutionConfig) ExecutionConfig {
+	if len(local.PathPrepend) > 0 {
+		base.PathPrepend = append(append([]string(nil), base.PathPrepend...), local.PathPrepend...)
+	}
+	base.Env = overlayStrings(base.Env, local.Env)
 	return base
 }
 
@@ -236,6 +255,7 @@ func withDefaults(cfg Config) Config {
 	if cfg.LLM.ModelProfile == "" {
 		cfg.LLM.ModelProfile = defaults.LLM.ModelProfile
 	}
+	cfg.Execution = overlayExecution(defaults.Execution, cfg.Execution)
 	if cfg.Harden.MaxQuestionsPerRound <= 0 {
 		cfg.Harden.MaxQuestionsPerRound = defaults.Harden.MaxQuestionsPerRound
 	}
@@ -293,4 +313,60 @@ func (cfg *InvariantConfig) UnmarshalYAML(value *yaml.Node) error {
 		}
 	}
 	return nil
+}
+
+// ProcessEnv returns stable process environment overrides for acceptance commands.
+func (cfg ExecutionConfig) ProcessEnv() []string {
+	values := map[string]string{}
+	for key, value := range cfg.Env {
+		if strings.TrimSpace(key) != "" {
+			values[key] = expandEnvValue(value)
+		}
+	}
+	if len(cfg.PathPrepend) > 0 {
+		current := os.Getenv("PATH")
+		if values["PATH"] != "" {
+			current = values["PATH"]
+		}
+		parts := make([]string, 0, len(cfg.PathPrepend)+1)
+		for _, path := range cfg.PathPrepend {
+			if expanded := expandPath(path); expanded != "" {
+				parts = append(parts, expanded)
+			}
+		}
+		if current != "" {
+			parts = append(parts, current)
+		}
+		values["PATH"] = strings.Join(parts, string(os.PathListSeparator))
+	}
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	env := make([]string, 0, len(keys))
+	for _, key := range keys {
+		env = append(env, key+"="+values[key])
+	}
+	return env
+}
+
+func expandEnvValue(value string) string {
+	return os.ExpandEnv(value)
+}
+
+func expandPath(value string) string {
+	text := strings.TrimSpace(os.ExpandEnv(value))
+	if text == "" {
+		return ""
+	}
+	if text == "~" || strings.HasPrefix(text, "~/") {
+		if home, err := os.UserHomeDir(); err == nil && home != "" {
+			if text == "~" {
+				return home
+			}
+			return filepath.Join(home, filepath.FromSlash(strings.TrimPrefix(text, "~/")))
+		}
+	}
+	return text
 }

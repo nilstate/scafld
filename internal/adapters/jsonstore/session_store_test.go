@@ -24,6 +24,25 @@ func TestAtomicReplaceCleanup(t *testing.T) {
 	}
 }
 
+func TestListSessionsSorted(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	store := SessionStore{Root: root}
+	for _, taskID := range []string{"z-task", "a-task"} {
+		if err := store.Save(context.Background(), session.New(taskID, "now")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ledgers, err := store.List(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ledgers) != 2 || ledgers[0].TaskID != "a-task" || ledgers[1].TaskID != "z-task" {
+		t.Fatalf("ledgers = %+v", ledgers)
+	}
+}
+
 func TestSessionWriteContentionRaceScenario(t *testing.T) {
 	t.Parallel()
 

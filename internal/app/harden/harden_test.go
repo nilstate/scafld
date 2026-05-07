@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nilstate/scafld/v2/internal/core/gate"
 	"github.com/nilstate/scafld/v2/internal/core/spec"
 )
 
@@ -111,6 +112,7 @@ func TestRunMarkPassedRejectsUngroundedQuestions(t *testing.T) {
 			{Question: "Who owns this?", GroundedIn: "code:code.go:1"},
 			{Question: "What proves this?", GroundedIn: "code:missing.go:1"},
 			{Question: "Why now?"},
+			{Question: "Where?", GroundedIn: "code:code.go"},
 		},
 	}}
 	store := newMemorySpecStore(model)
@@ -119,11 +121,19 @@ func TestRunMarkPassedRejectsUngroundedQuestions(t *testing.T) {
 	if !errors.Is(err, ErrInvalidHardenEvidence) {
 		t.Fatalf("error = %v, want %v", err, ErrInvalidHardenEvidence)
 	}
-	if len(out.Warnings) != 2 {
-		t.Fatalf("warnings = %+v, want 2", out.Warnings)
+	var gateErr gate.Error
+	if !errors.As(err, &gateErr) || gateErr.Failure.Gate != "harden" || gateErr.Failure.Expected == "" {
+		t.Fatalf("gate error = %#v", gateErr)
+	}
+	if len(out.Warnings) != 3 {
+		t.Fatalf("warnings = %+v, want 3", out.Warnings)
 	}
 	joined := strings.Join(out.Warnings, "\n")
-	if !strings.Contains(joined, "missing.go") || !strings.Contains(joined, "missing grounded_in") {
+	if !strings.Contains(joined, "missing.go") ||
+		!strings.Contains(joined, "missing grounded_in") ||
+		!strings.Contains(joined, `expected "Grounded in: spec_gap:<field>"`) ||
+		!strings.Contains(joined, "expected code:<path>:<line>") ||
+		!strings.Contains(joined, "code:src/file.go:42") {
 		t.Fatalf("warnings did not explain citation issues: %+v", out.Warnings)
 	}
 	if store.model.HardenStatus == spec.HardenPassed {

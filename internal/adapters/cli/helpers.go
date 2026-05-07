@@ -8,6 +8,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/nilstate/scafld/v2/internal/adapters/cli/output"
 	"github.com/nilstate/scafld/v2/internal/adapters/clock"
 	"github.com/nilstate/scafld/v2/internal/adapters/filesystem"
 	"github.com/nilstate/scafld/v2/internal/adapters/jsonstore"
@@ -38,6 +39,7 @@ var valueFlags = map[string]bool{
 	"provider-command": true,
 	"provider-binary":  true,
 	"model":            true,
+	"review-scope":     true,
 }
 
 var boolFlags = map[string]bool{
@@ -169,7 +171,11 @@ func okOut[T any](w io.Writer, command string, result T, text string, asJSON boo
 		exit = code[0]
 	}
 	if asJSON {
-		_ = json.NewEncoder(w).Encode(envelope.Envelope[T]{OK: exit == ExitSuccess, Command: command, Result: result})
+		env := envelope.Envelope[T]{OK: exit == ExitSuccess, Command: command, Result: result}
+		if exit != ExitSuccess {
+			env.Error = &envelope.Error{Code: output.CodeName(exit), Message: "gate blocked", Gate: output.GateFailureFromResult(result), ExitCode: exit}
+		}
+		_ = json.NewEncoder(w).Encode(env)
 		return exit
 	}
 	fmt.Fprint(w, text)
@@ -187,8 +193,9 @@ func failOut(w io.Writer, err error, exit int, asJSON bool) int {
 		_ = json.NewEncoder(w).Encode(envelope.Envelope[map[string]any]{
 			OK: false,
 			Error: &envelope.Error{
-				Code:     codeName(exit),
+				Code:     output.CodeName(exit),
 				Message:  err.Error(),
+				Gate:     output.GateFailure(err),
 				ExitCode: exit,
 			},
 		})
@@ -224,23 +231,6 @@ func statusCommand(ctx context.Context, args []string, stdout io.Writer, stderr 
 		return failOut(stderr, err, ExitGeneric, opts.JSON)
 	}
 	return okOut(stdout, command, result, fmt.Sprintf("%s: %s\n", command, opts.Positionals[0]), opts.JSON)
-}
-
-func codeName(exit int) string {
-	switch exit {
-	case ExitInvalid:
-		return "invalid_input"
-	case ExitValidation:
-		return "validation_failed"
-	case ExitReview:
-		return "review_failed"
-	case ExitCancelled:
-		return "cancelled"
-	case ExitWorkspace:
-		return "workspace_error"
-	default:
-		return "runtime_error"
-	}
 }
 
 func coalesce(err error, fallback error) error {

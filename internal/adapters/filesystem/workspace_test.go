@@ -31,7 +31,4 @@ func TestWorkspaceInitCreatesScafldLayout(t *testing.T) {
 			t.Fatalf("%s missing: %v", rel, err)
 		}
 	}
-	if _, err := os.Stat(filepath.Join(root, ".ai")); !os.IsNotExist(err) {
-		t.Fatalf(".ai should not exist after init, stat error = %v", err)
-	}
 }

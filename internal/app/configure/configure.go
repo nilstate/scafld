@@ -16,6 +16,7 @@ type Snapshot struct {
 	Files      []Evidence
 	Commands   []CommandSuggestion
 	Invariants []InvariantSuggestion
+	Execution  *ExecutionSuggestion
 	Warnings   []Warning
 	Questions  []Question
 }
@@ -38,6 +39,13 @@ type InvariantSuggestion struct {
 	ID          string   `json:"id" yaml:"id"`
 	Description string   `json:"description" yaml:"description"`
 	Sources     []string `json:"sources" yaml:"sources"`
+}
+
+// ExecutionSuggestion is an inferred acceptance-command environment.
+type ExecutionSuggestion struct {
+	PathPrepend []string          `json:"path_prepend,omitempty" yaml:"path_prepend,omitempty"`
+	Env         map[string]string `json:"env,omitempty" yaml:"env,omitempty"`
+	Sources     []string          `json:"sources" yaml:"sources"`
 }
 
 // Question records a missing policy decision that could not be inferred.
@@ -70,6 +78,13 @@ type Proposal struct {
 // after review.
 type ConfigPatch struct {
 	Invariants map[string]string `json:"invariants" yaml:"invariants"`
+	Execution  *ExecutionPatch   `json:"execution,omitempty" yaml:"execution,omitempty"`
+}
+
+// ExecutionPatch is the copyable runtime config fragment for acceptance commands.
+type ExecutionPatch struct {
+	PathPrepend []string          `json:"path_prepend,omitempty" yaml:"path_prepend,omitempty"`
+	Env         map[string]string `json:"env,omitempty" yaml:"env,omitempty"`
 }
 
 // SpecGuidance contains repo facts useful to future specs, but not read from
@@ -77,6 +92,7 @@ type ConfigPatch struct {
 type SpecGuidance struct {
 	Commands    []CommandSuggestion   `json:"commands,omitempty" yaml:"commands,omitempty"`
 	ReviewFocus []InvariantSuggestion `json:"review_focus,omitempty" yaml:"review_focus,omitempty"`
+	Execution   *ExecutionSuggestion  `json:"execution,omitempty" yaml:"execution,omitempty"`
 }
 
 // Output describes a configure run.
@@ -99,12 +115,34 @@ func Run(ctx context.Context, scanner Scanner) (Output, error) {
 		Evidence: snapshot.Files,
 		ConfigPatch: ConfigPatch{
 			Invariants: invariantMap(snapshot.Invariants),
+			Execution:  executionPatch(snapshot.Execution),
 		},
-		SpecGuidance:  SpecGuidance{Commands: snapshot.Commands, ReviewFocus: snapshot.Invariants},
+		SpecGuidance:  SpecGuidance{Commands: snapshot.Commands, ReviewFocus: snapshot.Invariants, Execution: snapshot.Execution},
 		Warnings:      snapshot.Warnings,
 		OpenQuestions: snapshot.Questions,
 	}
 	return Output{Proposal: proposal, Prompt: prompt(proposal)}, nil
+}
+
+func executionPatch(suggestion *ExecutionSuggestion) *ExecutionPatch {
+	if suggestion == nil {
+		return nil
+	}
+	return &ExecutionPatch{
+		PathPrepend: append([]string(nil), suggestion.PathPrepend...),
+		Env:         copyStringMap(suggestion.Env),
+	}
+}
+
+func copyStringMap(values map[string]string) map[string]string {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(values))
+	for key, value := range values {
+		out[key] = value
+	}
+	return out
 }
 
 func normalizeSnapshot(snapshot *Snapshot) {
@@ -145,7 +183,7 @@ Your job:
 
 1. Read .scafld/config.proposed.yaml.
 2. Open every cited source before trusting a suggestion.
-3. Copy only verified invariant IDs or local review defaults into .scafld/config.yaml.
+3. Copy only verified invariant IDs, execution environment, or review defaults into .scafld/config.yaml.
 4. Resolve open_questions by inspecting the repo or asking the operator.
 5. Do not invent commands, policies, package managers, providers, or architecture rules.
 

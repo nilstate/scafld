@@ -23,6 +23,31 @@ being repaired. It marks the task active while work is executed, runs executable
 acceptance criteria, appends criterion evidence to the session ledger, and
 projects criterion/phase state back into the spec.
 
+Acceptance commands run in a non-login shell with inherited environment plus
+the `execution` overrides from `.scafld/config.yaml` and
+`.scafld/config.local.yaml`. Declare repo-wide toolchain setup there:
+
+```yaml
+execution:
+  path_prepend:
+    - "$HOME/.rbenv/shims"
+    - "$HOME/.rbenv/bin"
+  env:
+    BUNDLE_GEMFILE: "api/Gemfile"
+```
+
+This makes validation deterministic. If a command needs rbenv, asdf, pnpm, or
+another shim, the dependency is visible in the workspace contract instead of
+hidden in a developer's interactive shell startup.
+
+Approval captures the workspace baseline before task execution starts. Review
+uses that baseline later to separate task changes from unrelated pre-existing
+dirty state.
+
+Build is phase-sequenced. scafld runs a phase's acceptance criteria, records
+that evidence, and stops immediately if the phase blocks. Later phases do not
+get passing evidence while an earlier phase is failed or pending.
+
 If all criteria pass, the task moves to `review` and the allowed follow-up is:
 
 ```bash
@@ -30,8 +55,8 @@ scafld review <task-id>
 ```
 
 If any criterion is missing evidence, fails, or cannot be evaluated, the task
-becomes `blocked`; use `status`, the spec projection, and any recorded
-diagnostics to decide whether to repair, rerun build, fail, or cancel.
+becomes `blocked`; use `scafld handoff <task-id>` to get the failed or pending
+criteria, commands, and reasons for the repair agent.
 
 ## exec
 
@@ -64,8 +89,8 @@ scafld handoff <task-id>
 ```
 
 The handoff is a compact model-facing summary of title, status, allowed next
-command, and latest review findings when present. Handoff is transport only; it
-is never read back to compute state.
+command, blocked acceptance evidence, and latest review findings when present.
+Handoff is transport only; it is never read back to compute state.
 
 ## Process Safety
 

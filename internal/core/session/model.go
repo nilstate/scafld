@@ -1,6 +1,14 @@
 package session
 
-import "sort"
+import (
+	"sort"
+	"strings"
+)
+
+const (
+	// EntryWorkspaceBaseline records dirty workspace state before task execution begins.
+	EntryWorkspaceBaseline = "workspace_baseline"
+)
 
 // Session is the durable task evidence ledger plus replayed state indexes.
 type Session struct {
@@ -98,4 +106,25 @@ func OrderedCriterionIDs(s Session) []string {
 	}
 	sort.Strings(ids)
 	return ids
+}
+
+// FirstWorkspaceBaseline returns the first captured task workspace baseline.
+func FirstWorkspaceBaseline(s Session) (Entry, bool) {
+	for _, entry := range s.Entries {
+		if entry.Type == EntryWorkspaceBaseline {
+			return entry, true
+		}
+	}
+	return Entry{}, false
+}
+
+// WorkspaceBaselineSnapshot decodes the raw changed-file snapshot from an entry.
+func WorkspaceBaselineSnapshot(entry Entry) []string {
+	var snapshot []string
+	for _, line := range strings.Split(entry.Output, "\n") {
+		if strings.TrimSpace(line) != "" {
+			snapshot = append(snapshot, strings.TrimRight(line, "\r"))
+		}
+	}
+	return snapshot
 }

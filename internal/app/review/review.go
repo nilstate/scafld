@@ -2,16 +2,22 @@ package review
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/nilstate/scafld/v2/internal/core/gate"
 	"github.com/nilstate/scafld/v2/internal/core/reconcile"
 	"github.com/nilstate/scafld/v2/internal/core/review"
 	"github.com/nilstate/scafld/v2/internal/core/session"
 	"github.com/nilstate/scafld/v2/internal/core/spec"
+	coreworkspace "github.com/nilstate/scafld/v2/internal/core/workspace"
 )
+
+// ErrSpecNotReviewable is returned when review is attempted before build reaches the review gate.
+var ErrSpecNotReviewable = errors.New("review requires task status review")
 
 // SpecStore is the spec persistence port used by review.
 type SpecStore interface {
@@ -44,12 +50,17 @@ type Output struct {
 	Verdict  string           `json:"verdict"`
 	Findings []review.Finding `json:"findings"`
 	Next     string           `json:"next"`
+	Repair   *gate.Failure    `json:"repair,omitempty"`
 }
+
+// GateFailure exposes review blockers to the CLI JSON envelope.
+func (o Output) GateFailure() *gate.Failure { return o.Repair }
 
 // Input describes the task and review agenda to run.
 type Input struct {
-	TaskID string
-	Passes []Pass
+	TaskID      string
+	Passes      []Pass
+	ReviewScope []string
 }
 
 // Pass describes one configured review pass included in the provider prompt.
@@ -72,20 +83,30 @@ func RunWithInput(ctx context.Context, specs SpecStore, sessions SessionStore, w
 	if err != nil {
 		return Output{}, err
 	}
-	before, err := workspaceSnapshot(ctx, workspace)
+	if model.Status != spec.StatusReview {
+		return Output{}, fmt.Errorf("%w: run scafld build %s first", ErrSpecNotReviewable, model.TaskID)
+	}
+	beforeFull, err := workspaceSnapshot(ctx, workspace)
 	if err != nil {
 		return Output{}, err
 	}
+	baselineFull := taskBaseline(ctx, sessions, model.TaskID, beforeFull)
+	baselineComparison := reviewComparisonSnapshot(baselineFull)
+	beforeComparison := reviewComparisonSnapshot(beforeFull)
+	scope := deriveReviewScope(model, input.ReviewScope, append(append([]string(nil), baselineComparison...), beforeComparison...))
+	baselineScoped := coreworkspace.Filter(baselineComparison, scope)
+	taskChanges, scopeDrift := coreworkspace.PartitionMutations(coreworkspace.Diff(baselineComparison, beforeComparison), scope)
 	now := clock.Now().UTC().Format(time.RFC3339)
 	if _, err := sessions.Append(ctx, model.TaskID, session.Entry{
 		Type:   "review_attempt",
 		Status: "running",
-		Reason: "review provider running",
+		Reason: fmt.Sprintf("review provider running; baseline %d changed path(s), %d task change(s), %d scope drift change(s)", len(coreworkspace.Paths(baselineScoped)), len(taskChanges), len(scopeDrift)),
+		Output: reviewAttemptOutput(baselineScoped, taskChanges, scopeDrift),
 	}, now); err != nil {
 		return Output{}, err
 	}
-	packet, err := provider.Invoke(ctx, review.Request{TaskID: model.TaskID, Prompt: promptForModel(model, input.Passes)})
-	after, mutationErr := workspaceSnapshot(ctx, workspace)
+	packet, err := provider.Invoke(ctx, review.Request{TaskID: model.TaskID, Prompt: promptForModel(model, input.Passes, scope, baselineScoped, taskChanges, scopeDrift)})
+	afterFull, mutationErr := workspaceSnapshot(ctx, workspace)
 	if mutationErr != nil {
 		_, _ = sessions.Append(context.WithoutCancel(ctx), model.TaskID, session.Entry{
 			Type:   "review_attempt",
@@ -94,12 +115,21 @@ func RunWithInput(ctx context.Context, specs SpecStore, sessions SessionStore, w
 		}, now)
 		return Output{}, mutationErr
 	}
-	if mutated := workspaceMutations(before, after); len(mutated) > 0 {
+	if mutated := coreworkspace.MutationStrings(coreworkspace.Diff(beforeFull, afterFull)); len(mutated) > 0 {
 		packet.Verdict = review.VerdictFail
 		packet.Findings = append(packet.Findings, review.Finding{
 			ID:       "workspace_mutation",
 			Severity: review.SeverityBlocking,
 			Summary:  "workspace changed during review: " + strings.Join(mutated, ", "),
+		})
+		err = nil
+	}
+	if len(scopeDrift) > 0 {
+		packet.Verdict = review.VerdictFail
+		packet.Findings = append(packet.Findings, review.Finding{
+			ID:       "scope_drift",
+			Severity: review.SeverityBlocking,
+			Summary:  "workspace changed outside declared task scope since approval: " + strings.Join(coreworkspace.MutationStrings(scopeDrift), ", "),
 		})
 		err = nil
 	}
@@ -151,7 +181,7 @@ func RunWithInput(ctx context.Context, specs SpecStore, sessions SessionStore, w
 	if err := specs.Save(ctx, path, model); err != nil {
 		return Output{}, err
 	}
-	return Output{TaskID: model.TaskID, Verdict: packet.Verdict, Findings: packet.Findings, Next: command}, nil
+	return Output{TaskID: model.TaskID, Verdict: packet.Verdict, Findings: packet.Findings, Next: command, Repair: reviewRepair(model, packet, command, latestReviewEvidence(ledger))}, nil
 }
 
 func reviewReason(packet review.Packet) string {
@@ -173,68 +203,143 @@ func workspaceSnapshot(ctx context.Context, workspace WorkspaceStatus) ([]string
 	return append([]string(nil), files...), nil
 }
 
-func workspaceMutations(before []string, after []string) []string {
-	beforeByPath := workspaceEntriesByPath(before)
-	afterByPath := workspaceEntriesByPath(after)
-	paths := map[string]bool{}
-	for path := range beforeByPath {
-		paths[path] = true
+func taskBaseline(ctx context.Context, sessions SessionStore, taskID string, fallback []string) []string {
+	if sessions == nil {
+		return append([]string(nil), fallback...)
 	}
-	for path := range afterByPath {
-		paths[path] = true
+	ledger, err := sessions.Load(ctx, taskID)
+	if err != nil {
+		return append([]string(nil), fallback...)
 	}
+	entry, ok := session.FirstWorkspaceBaseline(ledger)
+	if !ok {
+		return append([]string(nil), fallback...)
+	}
+	return session.WorkspaceBaselineSnapshot(entry)
+}
 
-	var changed []string
-	for path := range paths {
-		beforeEntry, hadBefore := beforeByPath[path]
-		afterEntry, hasAfter := afterByPath[path]
-		switch {
-		case !hadBefore && hasAfter:
-			changed = append(changed, fmt.Sprintf("added %s (%s)", path, afterEntry.State))
-		case hadBefore && !hasAfter:
-			changed = append(changed, fmt.Sprintf("removed %s (was %s)", path, beforeEntry.State))
-		case hadBefore && hasAfter && beforeEntry.Raw != afterEntry.Raw:
-			changed = append(changed, fmt.Sprintf("changed %s (%s -> %s)", path, beforeEntry.State, afterEntry.State))
+func reviewComparisonSnapshot(snapshot []string) []string {
+	var kept []string
+	for _, raw := range snapshot {
+		if reviewComparisonPath(coreworkspace.ParseChange(raw).Path) {
+			kept = append(kept, raw)
 		}
 	}
-	sort.Strings(changed)
-	return changed
+	return kept
 }
 
-type workspaceEntry struct {
-	Raw   string
-	State string
-	Path  string
+func reviewComparisonPath(path string) bool {
+	normalized := strings.Trim(strings.ReplaceAll(path, "\\", "/"), "/")
+	for _, prefix := range []string{
+		".scafld/runs/",
+		".scafld/specs/",
+	} {
+		if strings.HasPrefix(normalized+"/", prefix) {
+			return false
+		}
+	}
+	return true
 }
 
-func workspaceEntriesByPath(snapshot []string) map[string]workspaceEntry {
-	entries := map[string]workspaceEntry{}
+func reviewAttemptOutput(baseline []string, taskChanges []coreworkspace.Mutation, scopeDrift []coreworkspace.Mutation) string {
+	var b strings.Builder
+	b.WriteString("baseline:\n")
+	for _, path := range coreworkspace.Paths(baseline) {
+		fmt.Fprintf(&b, "- %s\n", path)
+	}
+	b.WriteString("task_changes_since_baseline:\n")
+	for _, line := range coreworkspace.MutationStrings(taskChanges) {
+		fmt.Fprintf(&b, "- %s\n", line)
+	}
+	b.WriteString("scope_drift_since_baseline:\n")
+	for _, line := range coreworkspace.MutationStrings(scopeDrift) {
+		fmt.Fprintf(&b, "- %s\n", line)
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+func deriveReviewScope(model spec.Model, explicit []string, snapshot []string) []string {
+	if normalized := coreworkspace.NormalizeScope(explicit); len(normalized) > 0 {
+		return normalized
+	}
+	var scope []string
+	for _, pkg := range model.Context.Packages {
+		if looksLikePath(pkg) || packageMatchesWorkspace(pkg, snapshot) {
+			scope = append(scope, pkg)
+		}
+	}
+	scope = append(scope, pathishItems(model.Context.FilesImpacted)...)
+	scope = append(scope, pathishItems(model.Context.RelatedDocs)...)
+	scope = append(scope, pathishItems(model.Scope)...)
+	scope = append(scope, pathishItems(model.Touchpoints)...)
+	for _, phase := range model.Phases {
+		scope = append(scope, pathishItems(phase.Changes)...)
+	}
+	return coreworkspace.NormalizeScope(scope)
+}
+
+func packageMatchesWorkspace(pkg string, snapshot []string) bool {
+	prefixes := coreworkspace.NormalizeScope([]string{pkg})
+	if len(prefixes) == 0 {
+		return false
+	}
 	for _, raw := range snapshot {
-		entry := parseWorkspaceEntry(raw)
-		entries[entry.Path] = entry
+		if coreworkspace.PathInScope(coreworkspace.ParseChange(raw).Path, prefixes) {
+			return true
+		}
 	}
-	return entries
+	return false
 }
 
-func parseWorkspaceEntry(raw string) workspaceEntry {
-	text := strings.TrimSpace(raw)
-	if len(text) < 3 {
-		return workspaceEntry{Raw: raw, State: "changed", Path: text}
+func pathishItems(values []string) []string {
+	var paths []string
+	for _, value := range values {
+		for _, token := range pathishTokens(value) {
+			paths = append(paths, token)
+		}
 	}
-	status := strings.TrimSpace(text[:2])
-	if status == "" {
-		status = "changed"
+	return paths
+}
+
+func pathishTokens(value string) []string {
+	var tokens []string
+	text := strings.TrimSpace(value)
+	for {
+		start := strings.Index(text, "`")
+		if start < 0 {
+			break
+		}
+		rest := text[start+1:]
+		end := strings.Index(rest, "`")
+		if end < 0 {
+			break
+		}
+		token := strings.TrimSpace(rest[:end])
+		if looksLikePath(token) {
+			tokens = append(tokens, token)
+		}
+		text = rest[end+1:]
 	}
-	rest := strings.TrimSpace(text[2:])
-	fingerprint, path, ok := strings.Cut(rest, " ")
-	if !ok || strings.TrimSpace(path) == "" {
-		return workspaceEntry{Raw: raw, State: status, Path: text}
+	if len(tokens) > 0 {
+		return tokens
 	}
-	return workspaceEntry{
-		Raw:   raw,
-		State: status + " " + fingerprint,
-		Path:  strings.TrimSpace(path),
+	first := strings.Fields(strings.TrimLeft(value, "-* "))
+	if len(first) == 0 {
+		return nil
 	}
+	token := strings.Trim(first[0], "`:,;")
+	if looksLikePath(token) {
+		return []string{token}
+	}
+	return nil
+}
+
+func looksLikePath(value string) bool {
+	text := strings.TrimSpace(value)
+	if text == "" || strings.Contains(text, "://") {
+		return false
+	}
+	return strings.Contains(text, "/") || strings.HasPrefix(text, ".") || strings.Contains(text, ".")
 }
 
 func nextForVerdict(taskID string, verdict string) (string, string) {
@@ -244,7 +349,48 @@ func nextForVerdict(taskID string, verdict string) (string, string) {
 	return "repair", "scafld handoff " + taskID
 }
 
-func promptForModel(model spec.Model, passes []Pass) string {
+func reviewRepair(model spec.Model, packet review.Packet, command string, evidence string) *gate.Failure {
+	if packet.Verdict != review.VerdictFail {
+		return nil
+	}
+	blockers := make([]string, 0, len(packet.Findings))
+	for _, finding := range packet.Findings {
+		if finding.Severity != review.SeverityBlocking {
+			continue
+		}
+		label := finding.ID
+		if finding.Summary != "" {
+			label += ": " + finding.Summary
+		}
+		blockers = append(blockers, label)
+	}
+	return &gate.Failure{
+		Gate:     "review",
+		Status:   string(model.Status),
+		Reason:   "review verdict fail",
+		Evidence: []string{evidence},
+		Expected: "review verdict pass",
+		Actual:   "review verdict fail",
+		Blockers: blockers,
+		Next:     command,
+	}
+}
+
+func latestReviewEvidence(ledger session.Session) string {
+	for i := len(ledger.Entries) - 1; i >= 0; i-- {
+		entry := ledger.Entries[i]
+		if entry.Type != "review" {
+			continue
+		}
+		if entry.ID != "" {
+			return entry.ID
+		}
+		return "review event"
+	}
+	return "review event"
+}
+
+func promptForModel(model spec.Model, passes []Pass, reviewScope []string, baseline []string, taskChanges []coreworkspace.Mutation, scopeDrift []coreworkspace.Mutation) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Review %s\n\n", model.TaskID)
 	fmt.Fprintf(&b, "Title: %s\nStatus: %s\n\n", model.Title, model.Status)
@@ -267,6 +413,10 @@ func promptForModel(model spec.Model, passes []Pass) string {
 		}
 		b.WriteString("\n")
 	}
+	writeTaskScope(&b, model, reviewScope)
+	writeWorkspaceBaseline(&b, baseline)
+	writeWorkspaceChanges(&b, "Task Changes Since Approval Baseline", taskChanges)
+	writeWorkspaceChanges(&b, "Scope Drift Since Approval Baseline", scopeDrift)
 	b.WriteString("## Acceptance Criteria\n\n")
 	for _, criterion := range model.AllCriteria() {
 		fmt.Fprintf(&b, "- %s (%s): %s\n", criterion.ID, criterion.ExpectedKind, criterion.Command)
@@ -278,8 +428,104 @@ func promptForModel(model spec.Model, passes []Pass) string {
 		}
 	}
 	writeReviewPasses(&b, passes)
-	b.WriteString("\nReview mode is read-only. Do not run build, test, or mutation commands; treat recorded acceptance evidence above as already executed. Return a ReviewPacket JSON object with `verdict` and `findings`. If your transport only supports line frames, emit `finding` frames with severity `blocking` or `non_blocking`, then a `verdict` frame with verdict `pass` or `fail`.\n")
+	b.WriteString("\nReview mode is read-only. Do not run build, test, or mutation commands; treat recorded acceptance evidence above as already executed. Treat review as task-scoped: unchanged dirty paths from the approval baseline are context, not findings by themselves. Scope drift since the approval baseline is blocking unless the spec explicitly declares it. Do not emit placeholder ReviewPackets while investigating; the final output must be one complete ReviewPacket JSON object with `verdict` and `findings`. If your transport only supports line frames, emit `finding` frames with severity `blocking` or `non_blocking`, then a `verdict` frame with verdict `pass` or `fail`.\n")
 	return b.String()
+}
+
+func writeTaskScope(b *strings.Builder, model spec.Model, reviewScope []string) {
+	if len(reviewScope) == 0 &&
+		len(model.Context.Packages) == 0 &&
+		len(model.Context.FilesImpacted) == 0 &&
+		len(model.Scope) == 0 &&
+		len(model.Touchpoints) == 0 &&
+		!phasesDeclareChanges(model.Phases) {
+		return
+	}
+	b.WriteString("## Task Scope\n\n")
+	if len(reviewScope) > 0 {
+		b.WriteString("Explicit review scope:\n")
+		for _, item := range reviewScope {
+			fmt.Fprintf(b, "- `%s`\n", item)
+		}
+		b.WriteString("\n")
+	}
+	writeStringList(b, "Packages", model.Context.Packages, true)
+	writeStringList(b, "Files impacted", model.Context.FilesImpacted, true)
+	writeStringList(b, "Scope", model.Scope, false)
+	writeStringList(b, "Touchpoints", model.Touchpoints, false)
+	for _, phase := range model.Phases {
+		if len(phase.Changes) == 0 {
+			continue
+		}
+		title := strings.TrimSpace(phase.Name)
+		if title == "" {
+			title = phase.ID
+		}
+		fmt.Fprintf(b, "%s changes:\n", title)
+		for _, change := range phase.Changes {
+			if strings.TrimSpace(change) != "" {
+				fmt.Fprintf(b, "- %s\n", change)
+			}
+		}
+		b.WriteString("\n")
+	}
+}
+
+func writeWorkspaceBaseline(b *strings.Builder, baseline []string) {
+	b.WriteString("## Workspace Baseline Before Review\n\n")
+	paths := coreworkspace.Paths(baseline)
+	if len(paths) == 0 {
+		b.WriteString("- clean\n\n")
+		return
+	}
+	for i, path := range paths {
+		if i >= 80 {
+			fmt.Fprintf(b, "- ... %d more path(s)\n", len(paths)-i)
+			break
+		}
+		fmt.Fprintf(b, "- `%s`\n", path)
+	}
+	b.WriteString("\n")
+}
+
+func writeWorkspaceChanges(b *strings.Builder, title string, mutations []coreworkspace.Mutation) {
+	b.WriteString("## " + title + "\n\n")
+	if len(mutations) == 0 {
+		b.WriteString("- none\n\n")
+		return
+	}
+	for _, line := range coreworkspace.MutationStrings(mutations) {
+		fmt.Fprintf(b, "- %s\n", line)
+	}
+	b.WriteString("\n")
+}
+
+func writeStringList(b *strings.Builder, title string, values []string, code bool) {
+	if len(values) == 0 {
+		return
+	}
+	fmt.Fprintf(b, "%s:\n", title)
+	for _, value := range values {
+		text := strings.TrimSpace(value)
+		if text == "" {
+			continue
+		}
+		if code {
+			fmt.Fprintf(b, "- `%s`\n", text)
+		} else {
+			fmt.Fprintf(b, "- %s\n", text)
+		}
+	}
+	b.WriteString("\n")
+}
+
+func phasesDeclareChanges(phases []spec.Phase) bool {
+	for _, phase := range phases {
+		if len(phase.Changes) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func writeReviewPasses(b *strings.Builder, passes []Pass) {

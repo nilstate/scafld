@@ -36,6 +36,51 @@ func TestChangedFilesFingerprintsContentChanges(t *testing.T) {
 	}
 }
 
+func TestChangedFilesFailsClosedWhenGitStatusFails(t *testing.T) {
+	t.Parallel()
+
+	_, err := (Adapter{Root: t.TempDir()}).ChangedFiles(context.Background())
+	if err == nil {
+		t.Fatal("ChangedFiles returned nil error outside a git worktree")
+	}
+}
+
+func TestChangedFilesIgnoresScafldRuntimeState(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	if out, err := exec.Command("git", "init", root).CombinedOutput(); err != nil {
+		t.Skipf("git init unavailable: %v\n%s", err, out)
+	}
+	for rel, data := range map[string][]byte{
+		".scafld/runs/task/session.json": []byte("{}\n"),
+		".scafld/specs/drafts/task.md":   []byte("# task\n"),
+		".scafld/config.yaml":            []byte("review: {}\n"),
+		"api/handler.go":                 []byte("package api\n"),
+	} {
+		path := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	changed, err := (Adapter{Root: root}).ChangedFiles(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(changed, "\n")
+	if strings.Contains(joined, ".scafld/runs") {
+		t.Fatalf("runtime path leaked into changed files:\n%s", joined)
+	}
+	for _, kept := range []string{".scafld/config.yaml", ".scafld/specs/drafts/task.md", "api/handler.go"} {
+		if !strings.Contains(joined, kept) {
+			t.Fatalf("expected %q in changed files:\n%s", kept, joined)
+		}
+	}
+}
+
 func TestChangedFilesFingerprintsDirectoriesWithoutDeletedFalsePositive(t *testing.T) {
 	t.Parallel()
 

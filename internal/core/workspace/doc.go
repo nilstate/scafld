@@ -1,2 +1,2 @@
-// Package workspace defines workspace bootstrap result models.
+// Package workspace defines workspace bootstrap and dirty-state snapshot models.
 package workspace

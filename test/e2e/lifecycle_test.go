@@ -16,6 +16,7 @@ func TestLifecycleJSONContractsAgentSurfaceFailCancelReviewProviderMutationGuard
 	bin := testBinary(t)
 	root := t.TempDir()
 	assertSnakeEnvelope(t, run(t, bin, "init", "--root", root, "--json"), "root")
+	initGitWorkspace(t, root)
 	assertSnakeEnvelope(t, run(t, bin, "plan", "--root", root, "lifecycle-task", "--title", "Lifecycle task", "--command", "test -f .scafld/config.yaml", "--json"), "task_id")
 	assertSnakeEnvelope(t, run(t, bin, "validate", "--root", root, "lifecycle-task", "--json"), "valid")
 	assertSnakeEnvelope(t, run(t, bin, "approve", "--root", root, "lifecycle-task", "--json"), "status")
@@ -48,6 +49,7 @@ func TestReviewCommandProviderBlockingFindingExitsReviewFailure(t *testing.T) {
 	bin := testBinary(t)
 	root := t.TempDir()
 	run(t, bin, "init", "--root", root)
+	initGitWorkspace(t, root)
 	run(t, bin, "plan", "--root", root, "provider-task", "--command", "true")
 	run(t, bin, "approve", "--root", root, "provider-task")
 	run(t, bin, "build", "--root", root, "provider-task")
@@ -97,9 +99,7 @@ func TestReviewProviderMutationGuardFailsReview(t *testing.T) {
 	bin := testBinary(t)
 	root := t.TempDir()
 	run(t, bin, "init", "--root", root)
-	if out, err := exec.Command("git", "init", root).CombinedOutput(); err != nil {
-		t.Skipf("git init unavailable: %v\n%s", err, out)
-	}
+	initGitWorkspace(t, root)
 	run(t, bin, "plan", "--root", root, "mutation-task", "--command", "true")
 	run(t, bin, "approve", "--root", root, "mutation-task")
 	run(t, bin, "build", "--root", root, "mutation-task")
@@ -242,6 +242,13 @@ func testBinary(t *testing.T) string {
 		t.Fatalf("build e2e binary: %v\n%s", err, out)
 	}
 	return bin
+}
+
+func initGitWorkspace(t *testing.T, root string) {
+	t.Helper()
+	if out, err := exec.Command("git", "init", root).CombinedOutput(); err != nil {
+		t.Skipf("git init unavailable: %v\n%s", err, out)
+	}
 }
 
 func run(t *testing.T, bin string, args ...string) []byte {

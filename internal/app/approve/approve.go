@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/nilstate/scafld/v2/internal/core/session"
@@ -25,6 +26,11 @@ type SessionStore interface {
 	Append(context.Context, string, session.Entry, string) (session.Session, error)
 }
 
+// WorkspaceStatus captures dirty workspace state before task execution begins.
+type WorkspaceStatus interface {
+	ChangedFiles(context.Context) ([]string, error)
+}
+
 // Clock supplies approval timestamps.
 type Clock interface{ Now() time.Time }
 
@@ -36,7 +42,7 @@ type Output struct {
 }
 
 // Run approves a draft spec and records approval evidence.
-func Run(ctx context.Context, specs SpecStore, sessions SessionStore, clock Clock, taskID string) (Output, error) {
+func Run(ctx context.Context, specs SpecStore, sessions SessionStore, workspace WorkspaceStatus, clock Clock, taskID string) (Output, error) {
 	model, path, err := specs.Load(ctx, taskID)
 	if err != nil {
 		return Output{}, err
@@ -46,6 +52,21 @@ func Run(ctx context.Context, specs SpecStore, sessions SessionStore, clock Cloc
 	}
 	now := clock.Now().UTC().Format(time.RFC3339)
 	if sessions != nil {
+		if workspace != nil {
+			snapshot, err := workspace.ChangedFiles(ctx)
+			if err != nil {
+				return Output{}, fmt.Errorf("capture workspace baseline: %w", err)
+			}
+			_, err = sessions.Append(ctx, model.TaskID, session.Entry{
+				Type:   session.EntryWorkspaceBaseline,
+				Status: "captured",
+				Reason: fmt.Sprintf("workspace baseline captured before approval: %d changed path(s)", len(snapshot)),
+				Output: strings.Join(snapshot, "\n"),
+			}, now)
+			if err != nil {
+				return Output{}, fmt.Errorf("append workspace baseline: %w", err)
+			}
+		}
 		_, err = sessions.Append(ctx, model.TaskID, session.Entry{Type: "approval", Status: "approved", Reason: "spec approved"}, now)
 		if err != nil {
 			return Output{}, fmt.Errorf("append approval: %w", err)

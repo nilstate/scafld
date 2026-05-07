@@ -74,6 +74,31 @@ func TestUpdateSkipsFilesThatAlreadyMatchBundle(t *testing.T) {
 	}
 }
 
+func TestInitCreatesSparseProjectConfigAndFullCoreExample(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	if _, err := Init(t.Context(), root); err != nil {
+		t.Fatal(err)
+	}
+	project, err := os.ReadFile(filepath.Join(root, ".scafld", "config.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(project), "Keep this file sparse") || strings.Contains(string(project), "adversarial_passes:") {
+		t.Fatalf("project config should be sparse:\n%s", project)
+	}
+	core, err := os.ReadFile(filepath.Join(root, ".scafld", "core", "config.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"review:", "adversarial_passes:", "harden:"} {
+		if !strings.Contains(string(core), want) {
+			t.Fatalf("core config example missing %q:\n%s", want, core)
+		}
+	}
+}
+
 func TestUpdateSkipsCustomizedProjectPrompt(t *testing.T) {
 	t.Parallel()
 
@@ -116,8 +141,8 @@ func TestUpdateMigratesLegacyReviewPromptWithoutManifest(t *testing.T) {
 ## Attack Plan
 
 1. Read the generated challenge contract and automated pass results.
-2. Read the latest review scaffold in ` + "`.scafld/reviews/{task-id}.md`" + `.
-3. Write the latest review round.
+2. Read the task contract and latest session state.
+3. Return the latest review verdict.
 
 ## Output Contract
 
@@ -146,7 +171,7 @@ func TestUpdateMigratesLegacyReviewPromptWithoutManifest(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(got)
-	for _, bad := range []string{".scafld/reviews", ".ai/reviews", "fill only the latest review round", "pass_with_issues"} {
+	for _, bad := range []string{"fill only the latest review round", "pass_with_issues"} {
 		if strings.Contains(text, bad) {
 			t.Fatalf("legacy review prompt still contains %q:\n%s", bad, text)
 		}
@@ -155,6 +180,49 @@ func TestUpdateMigratesLegacyReviewPromptWithoutManifest(t *testing.T) {
 		if !strings.Contains(text, want) {
 			t.Fatalf("migrated review prompt missing %q:\n%s", want, text)
 		}
+	}
+}
+
+func TestUpdateMigratesReviewPromptThatOnlyReferencesLegacyReviewStorage(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	promptDir := filepath.Join(root, ".scafld", "prompts")
+	if err := os.MkdirAll(promptDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	legacy := []byte(strings.Join([]string{
+		"# Review",
+		"",
+		"## Attack Plan",
+		"",
+		"Read `" + "." + "scafld/reviews/{task-id}.md` and update it.",
+		"",
+		"## Output Contract",
+		"",
+		"Write review notes.",
+		"",
+		"## Verdict Rules",
+		"",
+		"Pass if it looks fine.",
+		"",
+	}, "\n"))
+	if err := os.WriteFile(filepath.Join(promptDir, "review.md"), legacy, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	result, err := Update(t.Context(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsPath(result.Updated, ".scafld/prompts/review.md") {
+		t.Fatalf("updated = %v, want legacy storage prompt migrated", result.Updated)
+	}
+	got, err := os.ReadFile(filepath.Join(promptDir, "review.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), "Return a ReviewPacket JSON object") {
+		t.Fatalf("review prompt was not migrated:\n%s", got)
 	}
 }
 

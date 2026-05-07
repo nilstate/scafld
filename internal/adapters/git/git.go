@@ -24,7 +24,7 @@ type Adapter struct {
 
 // Status returns the current changed-file fingerprints.
 func (a Adapter) Status(ctx context.Context) (State, error) {
-	cmd := exec.CommandContext(ctx, "git", "status", "--porcelain=v1")
+	cmd := exec.CommandContext(ctx, "git", "status", "--porcelain=v1", "--untracked-files=all")
 	cmd.Dir = a.Root
 	out, err := cmd.Output()
 	if err != nil {
@@ -37,6 +37,9 @@ func (a Adapter) Status(ctx context.Context) (State, error) {
 		}
 		if len(line) > 3 {
 			path := strings.TrimSpace(line[3:])
+			if ignoredRuntimePath(path) {
+				continue
+			}
 			changed = append(changed, a.fingerprint(ctx, line[:2], path))
 		}
 	}
@@ -44,11 +47,23 @@ func (a Adapter) Status(ctx context.Context) (State, error) {
 	return State{Changed: changed}, nil
 }
 
+func ignoredRuntimePath(path string) bool {
+	normalized := strings.Trim(strings.ReplaceAll(path, "\\", "/"), "/")
+	for _, prefix := range []string{
+		".scafld/runs/",
+	} {
+		if strings.HasPrefix(normalized+"/", prefix) {
+			return true
+		}
+	}
+	return false
+}
+
 // ChangedFiles returns changed-file fingerprints for mutation guards.
 func (a Adapter) ChangedFiles(ctx context.Context) ([]string, error) {
 	state, err := a.Status(ctx)
 	if err != nil {
-		return nil, nil
+		return nil, err
 	}
 	return state.Changed, nil
 }

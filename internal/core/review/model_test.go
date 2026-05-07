@@ -31,6 +31,56 @@ func TestValidatePacketClassifiesDirectProviderOutput(t *testing.T) {
 	}
 }
 
+func TestValidatePacketRejectsVerdictThatContradictsFindings(t *testing.T) {
+	t.Parallel()
+
+	err := ValidatePacket(Packet{
+		Verdict: VerdictPass,
+		Findings: []Finding{{
+			ID:       "bug",
+			Severity: SeverityBlocking,
+			Summary:  "blocking defect",
+		}},
+	})
+	if !errors.Is(err, ErrInvalidPacket) {
+		t.Fatalf("pass with blocking finding err = %v", err)
+	}
+
+	err = ValidatePacket(Packet{
+		Verdict:  VerdictFail,
+		Findings: []Finding{{ID: "note", Severity: SeverityNonBlocking, Summary: "note"}},
+	})
+	if !errors.Is(err, ErrInvalidPacket) {
+		t.Fatalf("fail without blocking finding err = %v", err)
+	}
+}
+
+func TestValidCompletionProviderAllowlist(t *testing.T) {
+	t.Parallel()
+
+	for _, provider := range []string{"codex", "claude", "command", " codex "} {
+		if !ValidCompletionProvider(provider) {
+			t.Fatalf("provider %q should satisfy completion", provider)
+		}
+	}
+	for _, provider := range []string{"", "local", "unknown"} {
+		if ValidCompletionProvider(provider) {
+			t.Fatalf("provider %q should not satisfy completion", provider)
+		}
+	}
+}
+
+func TestParseNDJSONRejectsContradictoryFinalVerdict(t *testing.T) {
+	t.Parallel()
+
+	input := `{"type":"finding","id":"bug","severity":"blocking","summary":"bug"}` + "\n" +
+		`{"type":"verdict","verdict":"pass"}` + "\n"
+	_, err := ParseNDJSON(input)
+	if !errors.Is(err, ErrInvalidPacket) {
+		t.Fatalf("contradictory ndjson err = %v", err)
+	}
+}
+
 func TestParseTextAcceptsPacketJSONAndRejectsEmptyOutput(t *testing.T) {
 	t.Parallel()
 

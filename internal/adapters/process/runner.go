@@ -16,6 +16,7 @@ import (
 )
 
 const defaultMaxCaptureBytes = 8 * 1024 * 1024
+const defaultProgressInterval = 15 * time.Second
 
 var (
 	// ErrTimeout wraps absolute process timeout failures.
@@ -62,14 +63,14 @@ func (r Runner) Run(ctx context.Context, req execution.Request) (execution.Resul
 	state.touch()
 	var pumps sync.WaitGroup
 	pumps.Add(2)
-	go pump(&pumps, stdout, state, "stdout", progress, req.StdoutEventInspector)
-	go pump(&pumps, stderr, state, "stderr", progress, nil)
+	go pump(&pumps, stdout, state, "stdout", progress, req.StdoutEventInspector, req.SuppressProgressStderr)
+	go pump(&pumps, stderr, state, "stderr", progress, nil, req.SuppressProgressStderr)
 	waitCh := make(chan error, 1)
 	go func() {
 		pumps.Wait()
 		waitCh <- cmd.Wait()
 	}()
-	result, waitErr := waitProcess(ctx, cmd, waitCh, state, req)
+	result, waitErr := waitProcess(ctx, cmd, waitCh, state, req, progress)
 	result.Stdout, result.Stderr, result.Output, result.DroppedBytes, result.StdoutEvents = state.snapshot()
 	progress.result(result, waitErr)
 	if r.DiagnosticsDir != "" {
@@ -171,11 +172,11 @@ func (c *capture) lastActivity() time.Time {
 	return c.last
 }
 
-func pump(wg *sync.WaitGroup, reader io.Reader, state *capture, stream string, progress *progressReporter, inspector func(string) string) {
+func pump(wg *sync.WaitGroup, reader io.Reader, state *capture, stream string, progress *progressReporter, inspector func(string) string, suppressProgressStderr bool) {
 	defer wg.Done()
 	buf := make([]byte, 32*1024)
 	var lineBuffer strings.Builder
-	lineMode := inspector != nil || progress != nil
+	lineMode := inspector != nil || (progress != nil && !(stream == "stderr" && suppressProgressStderr))
 	for {
 		n, err := reader.Read(buf)
 		if n > 0 {
@@ -219,8 +220,9 @@ func handleLine(line string, stream string, inspector func(string) string, state
 	}
 }
 
-func waitProcess(ctx context.Context, cmd *exec.Cmd, waitCh <-chan error, state *capture, req execution.Request) (execution.Result, error) {
+func waitProcess(ctx context.Context, cmd *exec.Cmd, waitCh <-chan error, state *capture, req execution.Request, progress *progressReporter) (execution.Result, error) {
 	started := time.Now()
+	lastProgress := started
 	ticker := time.NewTicker(25 * time.Millisecond)
 	defer ticker.Stop()
 	absolute := time.NewTimer(durationOrNever(req.Timeout))
@@ -239,6 +241,7 @@ func waitProcess(ctx context.Context, cmd *exec.Cmd, waitCh <-chan error, state 
 			result = enrichResult(result, started, state, req)
 			return result, ErrTimeout
 		case <-ticker.C:
+			progress.running(started, state.lastActivity(), &lastProgress, progressInterval(req.ProgressInterval))
 			if req.IdleTimeout > 0 && time.Since(state.lastActivity()) > req.IdleTimeout {
 				result := terminate(cmd, waitCh, "idle_timeout", req.TerminateGrace)
 				result.TimedOut = true
@@ -312,6 +315,16 @@ func maxCaptureBytes(value int) int {
 	return value
 }
 
+func progressInterval(value time.Duration) time.Duration {
+	if value < 0 {
+		return 0
+	}
+	if value == 0 {
+		return defaultProgressInterval
+	}
+	return value
+}
+
 type progressReporter struct {
 	mu    sync.Mutex
 	out   io.Writer
@@ -331,7 +344,7 @@ func (p *progressReporter) line(format string, args ...interface{}) {
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	fmt.Fprintf(p.out, "scafld %s: %s\n", p.label, fmt.Sprintf(format, args...))
+	fmt.Fprintf(p.out, "scafld %s %s\n", p.label, fmt.Sprintf(format, args...))
 }
 
 func (p *progressReporter) stream(stream string, line string) {
@@ -347,6 +360,20 @@ func (p *progressReporter) event(event string) {
 		return
 	}
 	p.line("event %s", event)
+}
+
+func (p *progressReporter) running(started time.Time, lastActivity time.Time, lastProgress *time.Time, interval time.Duration) {
+	if p == nil || p.out == nil || interval <= 0 || lastProgress == nil {
+		return
+	}
+	now := time.Now()
+	if now.Sub(*lastProgress) < interval {
+		return
+	}
+	*lastProgress = now
+	elapsed := now.Sub(started).Round(time.Second)
+	since := now.Sub(lastActivity).Round(time.Second)
+	p.line("running elapsed=%s last_output=%s", elapsed, since)
 }
 
 func (p *progressReporter) result(result execution.Result, err error) {

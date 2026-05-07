@@ -43,6 +43,16 @@ scafld gives the work a hard shape:
 The spec is the living task contract. The session is the durable evidence
 ledger. Adversarial review is the completion gate.
 
+## Agent-Facing Deterministic Gates
+
+Every gate has a repair contract: trusted state, failure reason, evidence path,
+expected shape, and allowed next command. That contract is visible in human
+output, projected into the spec, and available to automation through
+`status --json` and `handoff`.
+
+scafld is strict in what it trusts and generous in what it explains. A gate can
+block hard without making the next agent guess where to look.
+
 ## Install
 
 Installer script:
@@ -87,6 +97,13 @@ WinGet is submitted upstream as `0state.scafld`; it becomes installable with
 
 npm and PyPI packages are thin launchers. Homebrew, Scoop, and WinGet point at
 the same native Go release assets and checksums.
+
+From a source checkout, use the dev wrapper so local dogfood runs execute the
+current Go tree instead of a stale copied binary:
+
+```bash
+./bin/scafld --version
+```
 
 ## Quick Start
 
@@ -178,6 +195,19 @@ Status exposes the same state without scraping Markdown:
 ```
 
 Review failure is structured, not a vibe:
+
+```json
+{
+  "verdict": "fail",
+  "findings": [
+    {
+      "id": "cache-tenant-leak",
+      "severity": "blocking",
+      "summary": "internal/cache/store.go:88 invalidation keys omit tenant id."
+    }
+  ]
+}
+```
 
 ```text
 review verdict: fail
@@ -320,10 +350,16 @@ External providers receive a review brief, inspect the work, and return a
 structured verdict. Provider adapters run read-only by default, and the review
 app checks for workspace mutation before accepting a verdict.
 
+Approval captures the workspace baseline before task execution starts. Review
+uses the spec's packages, impacted files, and phase changes to derive task
+scope, so pre-existing unrelated dirt is context, not a blocker. Use
+`--review-scope` only when a dirty monorepo needs an explicit path boundary.
+
 ```bash
 scafld review add-cache --provider claude
 scafld review add-cache --provider codex
 scafld review add-cache --provider command --provider-command "./reviewer"
+scafld review add-cache --review-scope api,cli/packages/mcp
 ```
 
 Model defaults are configurable per provider:
@@ -356,9 +392,31 @@ The canonical metrics are session-derived:
 - `recovery_convergence_rate`
 - `challenge_override_rate`
 
-`scafld report` surfaces aggregate task state today. The metrics above are the
-standard scafld is designed to protect as session-derived reporting deepens. The
-honest boundary is that scafld can produce a better contract, handoff, and
+`scafld report --json` derives those metrics from session ledgers:
+
+```json
+{
+  "total": 12,
+  "by_status": {
+    "draft": 2,
+    "review": 1,
+    "completed": 9
+  },
+  "metrics": {
+    "first_attempt_pass_rate": 0.67,
+    "first_attempt_passes": 8,
+    "first_attempt_total": 12,
+    "recovery_convergence_rate": 0.75,
+    "recovered_tasks": 3,
+    "recovery_total": 4,
+    "challenge_override_rate": 0,
+    "challenge_overrides": 0,
+    "review_challenge_total": 2
+  }
+}
+```
+
+The honest boundary is that scafld can produce a better contract, handoff, and
 adversarial review gate; an external harness can still ignore the brief. That is
 why the claims are framed as recorded outcomes, not prompt mysticism.
 

@@ -106,10 +106,42 @@ func TestCommandStreamsProgressToReporter(t *testing.T) {
 	}
 	body := progress.String()
 	for _, want := range []string{
-		"scafld review provider: started",
-		"scafld review provider: event result.success",
-		"scafld review provider: stderr thinking",
-		"scafld review provider: completed exit=0",
+		"scafld review provider started",
+		"scafld review provider event result.success",
+		"scafld review provider stderr thinking",
+		"scafld review provider completed exit=0",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("progress missing %q:\n%s", want, body)
+		}
+	}
+}
+
+func TestCommandSuppressesRawStderrProgressAndReportsHeartbeat(t *testing.T) {
+	t.Parallel()
+
+	var progress bytes.Buffer
+	result, err := (Runner{Progress: &progress, ProgressLabel: "review provider"}).Run(context.Background(), execution.Request{
+		Command:                `printf "$SCAFLD_NOISY_TOKEN\n" >&2; sleep 0.08`,
+		Env:                    []string{"SCAFLD_NOISY_TOKEN=investigating"},
+		Timeout:                time.Second,
+		SuppressProgressStderr: true,
+		ProgressInterval:       20 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result.Stderr, "investigating") {
+		t.Fatalf("raw stderr should remain captured in diagnostics/result: %+v", result)
+	}
+	body := progress.String()
+	if strings.Contains(body, "investigating") {
+		t.Fatalf("raw provider stderr leaked into progress:\n%s", body)
+	}
+	for _, want := range []string{
+		"scafld review provider started",
+		"scafld review provider running elapsed=",
+		"scafld review provider completed exit=0",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("progress missing %q:\n%s", want, body)

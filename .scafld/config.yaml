@@ -1,61 +1,17 @@
-# scafld runtime configuration
+# scafld project configuration
 #
-# This file contains only settings the Go runtime reads. Project policy should
-# enter the protocol through invariant IDs, specs, acceptance criteria, and the
-# review agenda. Use `scafld configure` to generate an evidence-backed proposal
-# before tightening project-specific values.
+# Keep this file sparse. Runtime defaults live in the scafld binary; the full
+# example shape lives in .scafld/core/config.yaml.
+#
+# Put only project-specific invariant IDs, execution environment, review
+# defaults, or review-pass overrides here. Use scafld configure for
+# evidence-backed suggestions before tightening this file.
 
 version: "1.0"
 
 invariants:
-  canonical:
-    domain_boundaries: "Respect layer separation and ownership boundaries."
-    no_legacy_code: "Do not add dual-reads, dual-writes, runtime fallbacks, or compatibility shims."
-    no_test_logic_in_production: "Keep fixtures, mocks, and test-only branches out of production paths."
-    public_api_stable: "Do not change public schemas, migrations, HTTP contracts, or event shapes without explicit approval."
-    config_from_env: "Keep secrets and environment-specific configuration out of source code."
+  canonical: {}
 
-llm:
-  model_profile: "default"
-
-harden:
-  max_questions_per_round: 8
-
-review:
-  external:
-    provider: "auto"
-    # command: "./reviewer"        # only when provider: command
-    # provider_binary: "/path/bin" # optional selected-provider binary override
-    idle_timeout_seconds: 180
-    absolute_max_seconds: 1800
-    fallback_policy: "warn"
-    codex:
-      model: "gpt-5.5"
-      # binary: "codex"
-    claude:
-      model: "claude-opus-4-7"
-      # binary: "claude"
-
-  automated_passes:
-    spec_compliance:
-      order: 10
-      title: "Spec Compliance"
-      description: "Verify recorded acceptance evidence against the spec."
-    scope_drift:
-      order: 20
-      title: "Scope Drift"
-      description: "Compare spec scope against current workspace changes and flag undeclared changes."
-
-  adversarial_passes:
-    regression_hunt:
-      order: 30
-      title: "Regression Hunt"
-      description: "Trace callers, importers, and downstream consumers for regressions."
-    convention_check:
-      order: 40
-      title: "Convention Check"
-      description: "Check changed code against declared invariants, spec constraints, and root agent guidance."
-    dark_patterns:
-      order: 50
-      title: "Dark Patterns"
-      description: "Hunt for subtle bugs, hardcodes, races, and safety gaps."
+execution:
+  path_prepend: []
+  env: {}

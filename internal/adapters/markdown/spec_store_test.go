@@ -315,6 +315,37 @@ func TestSpecStoreCreateLoadListAndValidate(t *testing.T) {
 	}
 }
 
+func TestSpecStoreListAllIncludesArchivedSpecs(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	store := Store{Root: root}
+	model := fixtureModel()
+	path, err := store.CreateDraft(context.Background(), model)
+	if err != nil {
+		t.Fatal(err)
+	}
+	model.Status = spec.StatusCompleted
+	model.Updated = "2026-05-05T01:00:00Z"
+	if err := store.Save(context.Background(), path, model); err != nil {
+		t.Fatal(err)
+	}
+	current, err := store.List(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(current) != 0 {
+		t.Fatalf("List records = %+v, want no current records", current)
+	}
+	all, err := store.ListAll(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 1 || all[0].TaskID != "fixture-task" || all[0].Status != spec.StatusCompleted {
+		t.Fatalf("ListAll records = %+v", all)
+	}
+}
+
 func TestCreateDraftDoesNotOverwriteExistingSpec(t *testing.T) {
 	t.Parallel()
 

@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	osexec "os/exec"
+	"strings"
 	"time"
 
 	configadapter "github.com/nilstate/scafld/v2/internal/adapters/config"
@@ -51,7 +53,7 @@ func Select(ctx context.Context, opts Options) (Selection, error) {
 		CodexBinary:    external.Codex.Binary,
 		ClaudeBinary:   external.Claude.Binary,
 		CWD:            opts.Root,
-		Runner:         process.Runner{DiagnosticsDir: diagnosticsPath, Progress: opts.Progress, ProgressLabel: "review provider"},
+		Runner:         process.Runner{DiagnosticsDir: diagnosticsPath, Progress: opts.Progress, ProgressLabel: progressLabel(opts, external)},
 		Timeout:        time.Duration(external.AbsoluteMaxSeconds) * time.Second,
 		Idle:           time.Duration(external.IdleTimeoutSeconds) * time.Second,
 		FallbackPolicy: external.FallbackPolicy,
@@ -60,6 +62,44 @@ func Select(ctx context.Context, opts Options) (Selection, error) {
 		return Selection{}, err
 	}
 	return Selection{Provider: provider, Passes: reviewPassesFromConfig(cfg.Review)}, nil
+}
+
+func progressLabel(opts Options, external configadapter.ExternalReviewConfig) string {
+	provider := first(opts.Provider, external.Provider, "auto")
+	model := opts.Model
+	switch provider {
+	case "command":
+		return "review[command]"
+	case "local":
+		return "review[local]"
+	case "claude":
+		model = first(model, external.Claude.Model)
+	case "codex":
+		model = first(model, external.Codex.Model)
+	default:
+		switch {
+		case opts.ProviderBinary != "":
+			provider = "codex"
+			model = first(model, external.Codex.Model)
+		case commandExists("codex"):
+			provider = "codex"
+			model = first(model, external.Codex.Model)
+		case commandExists("claude"):
+			provider = "claude"
+			model = first(model, external.Claude.Model)
+		default:
+			provider = "auto"
+		}
+	}
+	if strings.TrimSpace(model) == "" {
+		return "review[" + provider + "]"
+	}
+	return "review[" + provider + ":" + strings.TrimSpace(model) + "]"
+}
+
+func commandExists(name string) bool {
+	_, err := osexec.LookPath(name)
+	return err == nil
 }
 
 func reviewPassesFromConfig(cfg configadapter.ReviewConfig) []appreview.Pass {

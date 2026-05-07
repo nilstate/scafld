@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/nilstate/scafld/v2/internal/core/gate"
 	"github.com/nilstate/scafld/v2/internal/core/reconcile"
 	corereview "github.com/nilstate/scafld/v2/internal/core/review"
 	"github.com/nilstate/scafld/v2/internal/core/session"
@@ -38,16 +39,23 @@ func Run(ctx context.Context, specs SpecStore, sessions SessionStore, clock Cloc
 	}
 	ledger, err := sessions.Load(ctx, model.TaskID)
 	if err != nil {
-		return spec.Model{}, fmt.Errorf("%w: run scafld review %s first", ErrReviewGate, model.TaskID)
+		return spec.Model{}, reviewGateError(model, "session ledger could not be loaded", "missing review evidence")
 	}
-	reviewEntry, ok := latestReviewEntry(ledger)
+	reviewEntry, ok := latestCompletionReviewEntry(ledger)
 	if !ok || reviewEntry.Status != corereview.VerdictPass {
-		return spec.Model{}, fmt.Errorf("%w: run scafld review %s first", ErrReviewGate, model.TaskID)
+		actual := "no current accepted review"
+		if ok {
+			actual = "latest review verdict " + reviewEntry.Status
+		}
+		return spec.Model{}, reviewGateError(model, "latest review gate has not passed", actual)
 	}
-	if reviewEntry.Provider == "local" {
-		return spec.Model{}, fmt.Errorf("%w: local review provider cannot complete real work", ErrReviewGate)
+	if !corereview.ValidCompletionProvider(reviewEntry.Provider) {
+		return spec.Model{}, reviewGateError(model, "passing review came from an unsupported provider", fmt.Sprintf("provider %q", reviewEntry.Provider))
 	}
 	model = reconcile.FromSession(model, ledger)
+	if model.Status != spec.StatusReview || model.Review.Verdict != corereview.VerdictPass {
+		return spec.Model{}, reviewGateError(model, "projected spec is not at a passing review gate", fmt.Sprintf("status %s verdict %s", model.Status, model.Review.Verdict))
+	}
 	now := clock.Now().UTC().Format(time.RFC3339)
 	ledger, err = sessions.Append(ctx, model.TaskID, session.Entry{Type: "complete", Status: "completed", Reason: "task completed"}, now)
 	if err != nil {
@@ -67,10 +75,27 @@ func Run(ctx context.Context, specs SpecStore, sessions SessionStore, clock Cloc
 	return model, nil
 }
 
-func latestReviewEntry(ledger session.Session) (session.Entry, bool) {
+func reviewGateError(model spec.Model, reason string, actual string) error {
+	return gate.New(ErrReviewGate, gate.Failure{
+		Gate:     "complete",
+		Status:   string(model.Status),
+		Reason:   reason,
+		Evidence: []string{"session review entries", "projected spec review state"},
+		Expected: "latest accepted review verdict pass from codex, claude, or command provider",
+		Actual:   actual,
+		Blockers: []string{reason},
+		Next:     "scafld review " + model.TaskID,
+	})
+}
+
+func latestCompletionReviewEntry(ledger session.Session) (session.Entry, bool) {
 	for i := len(ledger.Entries) - 1; i >= 0; i-- {
-		if ledger.Entries[i].Type == "review" {
-			return ledger.Entries[i], true
+		entry := ledger.Entries[i]
+		switch entry.Type {
+		case "review":
+			return entry, true
+		case "review_attempt", "build", "criterion", "phase", "approval", session.EntryWorkspaceBaseline, "fail", "cancel":
+			return session.Entry{}, false
 		}
 	}
 	return session.Entry{}, false

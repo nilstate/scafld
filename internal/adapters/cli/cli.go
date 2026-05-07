@@ -15,6 +15,7 @@ import (
 	"github.com/nilstate/scafld/v2/internal/adapters/cli/output"
 	reviewcli "github.com/nilstate/scafld/v2/internal/adapters/cli/review"
 	"github.com/nilstate/scafld/v2/internal/adapters/clock"
+	configadapter "github.com/nilstate/scafld/v2/internal/adapters/config"
 	"github.com/nilstate/scafld/v2/internal/adapters/corebundle"
 	"github.com/nilstate/scafld/v2/internal/adapters/git"
 	"github.com/nilstate/scafld/v2/internal/adapters/markdown"
@@ -262,7 +263,8 @@ func runApprove(ctx context.Context, args []string, stdout io.Writer, stderr io.
 	if err != nil {
 		return failOut(stderr, err, code, opts.JSON)
 	}
-	out, err := approve.Run(ctx, store, sessions, clock.System{}, opts.Positionals[0])
+	root, _ := commandRoot(ctx, opts, false)
+	out, err := approve.Run(ctx, store, sessions, git.Adapter{Root: root}, clock.System{}, opts.Positionals[0])
 	if err != nil {
 		return failOut(stderr, err, ExitGeneric, opts.JSON)
 	}
@@ -279,8 +281,12 @@ func runBuild(ctx context.Context, args []string, stdout io.Writer, stderr io.Wr
 		return failOut(stderr, err, code, opts.JSON)
 	}
 	root, _ := commandRoot(ctx, opts, false)
+	cfg, err := configadapter.Load(ctx, root)
+	if err != nil {
+		return failOut(stderr, fmt.Errorf("load config: %w", err), ExitGeneric, opts.JSON)
+	}
 	runner := process.Runner{DiagnosticsDir: root + "/.scafld/runs/" + opts.Positionals[0] + "/diagnostics"}
-	out, err := build.Run(ctx, store, sessions, runner, clock.System{}, build.Input{TaskID: opts.Positionals[0], CWD: root})
+	out, err := build.Run(ctx, store, sessions, git.Adapter{Root: root}, runner, clock.System{}, build.Input{TaskID: opts.Positionals[0], CWD: root, Env: cfg.Execution.ProcessEnv()})
 	return buildOut(stdout, stderr, out, err, opts.JSON)
 }
 
@@ -292,7 +298,7 @@ func buildOut(stdout io.Writer, stderr io.Writer, out build.Output, err error, a
 	if out.Failed > 0 {
 		code = ExitValidation
 	}
-	return okOut(stdout, "build", out, fmt.Sprintf("build %s: %d passed, %d failed\n", out.Status, out.Passed, out.Failed), asJSON, code)
+	return okOut(stdout, "build", out, output.Build(out), asJSON, code)
 }
 
 func runReview(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer) int {
@@ -318,8 +324,9 @@ func runReview(ctx context.Context, args []string, stdout io.Writer, stderr io.W
 		return failOut(stderr, err, ExitInvalid, opts.JSON)
 	}
 	out, err := review.RunWithInput(ctx, store, sessions, git.Adapter{Root: root}, selected.Provider, clock.System{}, review.Input{
-		TaskID: opts.Positionals[0],
-		Passes: selected.Passes,
+		TaskID:      opts.Positionals[0],
+		Passes:      selected.Passes,
+		ReviewScope: reviewcli.SplitScope(opts.Values["review-scope"]),
 	})
 	if err != nil {
 		return failOut(stderr, err, ExitReview, opts.JSON)
@@ -386,15 +393,15 @@ func runReport(ctx context.Context, args []string, stdout io.Writer, stderr io.W
 	if err != nil {
 		return failOut(stderr, err, ExitInvalid, opts.JSON)
 	}
-	store, _, code, err := stores(ctx, opts)
+	store, sessions, code, err := stores(ctx, opts)
 	if err != nil {
 		return failOut(stderr, err, code, opts.JSON)
 	}
-	out, err := report.Run(ctx, store)
+	out, err := report.Run(ctx, store, sessions)
 	if err != nil {
 		return failOut(stderr, err, ExitGeneric, opts.JSON)
 	}
-	return okOut(stdout, "report", out, fmt.Sprintf("total specs: %d\n", out.Total), opts.JSON)
+	return okOut(stdout, "report", out, output.Report(out), opts.JSON)
 }
 
 func runHandoff(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer) int {
