@@ -1,0 +1,22 @@
+#!/usr/bin/env sh
+set -eu
+
+repo_root="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+caller_root="$(pwd)"
+
+has_root=0
+for arg in "$@"; do
+  case "$arg" in
+    --root|--root=*)
+      has_root=1
+      ;;
+  esac
+done
+
+cd "$repo_root"
+
+if [ "$has_root" = "1" ]; then
+  exec go run ./cmd/scafld "$@"
+fi
+
+exec go run ./cmd/scafld "$@" --root "$caller_root"
