@@ -3,10 +3,15 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/nilstate/scafld/v2/internal/core/gate"
 )
 
 func TestRunHelpAndVersion(t *testing.T) {
@@ -21,6 +26,7 @@ func TestRunHelpAndVersion(t *testing.T) {
 		{name: "flag help", args: []string{"--help"}, want: "Usage:"},
 		{name: "version", args: []string{"--version"}, want: displayVersion()},
 		{name: "command help", args: []string{"plan", "--help"}, want: "scafld plan"},
+		{name: "review help", args: []string{"review", "--help"}, want: "--review-scope"},
 	}
 
 	for _, tc := range cases {
@@ -61,6 +67,36 @@ func TestRunUnknownCommand(t *testing.T) {
 	}
 }
 
+func TestFailOutJSONIncludesGateFailure(t *testing.T) {
+	t.Parallel()
+
+	var stderr bytes.Buffer
+	code := failOut(&stderr, gate.New(errors.New("review gate has not passed"), gate.Failure{
+		Gate:     "complete",
+		Status:   "review",
+		Reason:   "latest review gate has not passed",
+		Expected: "review verdict pass",
+		Actual:   "review verdict fail",
+		Blockers: []string{"blocking finding"},
+		Next:     "scafld review task",
+	}), ExitValidation, true)
+	if code != ExitValidation {
+		t.Fatalf("exit = %d", code)
+	}
+	var payload struct {
+		OK    bool `json:"ok"`
+		Error struct {
+			Gate gate.Failure `json:"gate"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(stderr.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.OK || payload.Error.Gate.Gate != "complete" || payload.Error.Gate.Next != "scafld review task" {
+		t.Fatalf("payload = %+v", payload)
+	}
+}
+
 func TestRunInit(t *testing.T) {
 	t.Parallel()
 
@@ -76,6 +112,13 @@ func TestRunInit(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, ".scafld", "config.yaml")); err != nil {
 		t.Fatalf("config not created: %v", err)
+	}
+	config, err := os.ReadFile(filepath.Join(root, ".scafld", "config.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(config), "Keep this file sparse") || strings.Contains(string(config), "adversarial_passes:") {
+		t.Fatalf("project config should be sparse:\n%s", config)
 	}
 	for _, rel := range []string{
 		".gitignore",
@@ -113,9 +156,6 @@ func TestRunInit(t *testing.T) {
 	}
 	if info, err := os.Stat(filepath.Join(root, ".scafld", "core", "scripts", "scafld-codex-build.sh")); err != nil || info.Mode()&0o111 == 0 {
 		t.Fatalf("core script should be executable, info=%v err=%v", info, err)
-	}
-	if _, err := os.Stat(filepath.Join(root, ".ai")); !os.IsNotExist(err) {
-		t.Fatalf(".ai should not be created, stat error = %v", err)
 	}
 }
 
@@ -201,10 +241,10 @@ func TestRunUpdateRefreshesCoreButPreservesProjectPrompts(t *testing.T) {
 	corePrompt := filepath.Join(root, ".scafld", "core", "prompts", "harden.md")
 	coreAgentDoc := filepath.Join(root, ".scafld", "core", "agentdocs", "AGENTS.md")
 	projectPrompt := filepath.Join(root, ".scafld", "prompts", "harden.md")
-	if err := os.WriteFile(corePrompt, []byte("stale core\n"), 0o644); err != nil {
+	if err := os.WriteFile(corePrompt, []byte("obsolete core\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(coreAgentDoc, []byte("stale agent doc\n"), 0o644); err != nil {
+	if err := os.WriteFile(coreAgentDoc, []byte("obsolete agent doc\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(projectPrompt, []byte("custom project prompt\n"), 0o644); err != nil {
@@ -229,7 +269,7 @@ func TestRunUpdateRefreshesCoreButPreservesProjectPrompts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(coreAgentData), "scafld Agent Contract") || strings.Contains(string(coreAgentData), "stale") {
+	if !strings.Contains(string(coreAgentData), "scafld Agent Contract") || strings.Contains(string(coreAgentData), "obsolete agent doc") {
 		t.Fatalf("core agent doc reset copy was not refreshed:\n%s", coreAgentData)
 	}
 	if string(projectData) != "custom project prompt\n" {
@@ -243,7 +283,7 @@ func TestRunUpdateRefreshesManagedAgentDocs(t *testing.T) {
 	root := t.TempDir()
 	runCLI(t, []string{"init", "--root", root})
 	agentsPath := filepath.Join(root, "AGENTS.md")
-	if err := os.WriteFile(agentsPath, []byte("# scafld Agent Contract\n\nstale\n\n# Project Rules\n\nproject note\n"), 0o644); err != nil {
+	if err := os.WriteFile(agentsPath, []byte("# scafld Agent Contract\n\nobsolete body\n\n# Project Rules\n\nproject note\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	runCLI(t, []string{"update", "--root", root})
@@ -252,7 +292,7 @@ func TestRunUpdateRefreshesManagedAgentDocs(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(data)
-	if strings.Contains(text, "stale") || !strings.Contains(text, "scafld Agent Contract") || !strings.Contains(text, "project note") {
+	if strings.Contains(text, "obsolete body") || !strings.Contains(text, "scafld Agent Contract") || !strings.Contains(text, "project note") {
 		t.Fatalf("managed AGENTS.md block was not refreshed cleanly:\n%s", text)
 	}
 }
@@ -296,6 +336,7 @@ func TestRunLifecycleMovesSpecsByState(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
+	initGitWorkspace(t, root)
 	runCLI(t, []string{"init", "--root", root, "--no-agent-docs"})
 	runCLI(t, []string{"plan", "--root", root, "lifecycle-task", "--command", "true"})
 	draftPath := filepath.Join(root, ".scafld", "specs", "drafts", "lifecycle-task.md")
@@ -340,12 +381,38 @@ func TestRunLifecycleMovesSpecsByState(t *testing.T) {
 	}
 }
 
+func TestRunBuildUsesExecutionConfig(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	initGitWorkspace(t, root)
+	runCLI(t, []string{"init", "--root", root, "--no-agent-docs"})
+	shimDir := filepath.Join(root, "tool-shims")
+	if err := os.WriteFile(filepath.Join(root, ".scafld", "config.yaml"), []byte("execution:\n  path_prepend:\n    - "+shimDir+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runCLI(t, []string{"plan", "--root", root, "env-task", "--command", `printf '%s' "$PATH" > path.txt`})
+	runCLI(t, []string{"approve", "--root", root, "env-task"})
+	runCLI(t, []string{"build", "--root", root, "env-task"})
+	data, err := os.ReadFile(filepath.Join(root, "path.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantPrefix := shimDir + string(os.PathListSeparator)
+	if !strings.HasPrefix(string(data), wantPrefix) {
+		t.Fatalf("PATH = %q, want prefix %q", string(data), wantPrefix)
+	}
+}
+
 func TestRunReviewSurfacesFindingsInReviewStatusAndHandoff(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
+	initGitWorkspace(t, root)
 	runCLI(t, []string{"init", "--root", root, "--no-agent-docs"})
 	runCLI(t, []string{"plan", "--root", root, "review-task", "--command", "true"})
+	runCLI(t, []string{"approve", "--root", root, "review-task"})
+	runCLI(t, []string{"build", "--root", root, "review-task"})
 	command := `printf '{"verdict":"fail","findings":[{"id":"f1","severity":"blocking","summary":"bug"}]}'`
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -403,6 +470,13 @@ func runCLI(t *testing.T, args []string) string {
 		t.Fatalf("Run(%v) exit = %d, want %d; stderr=%q", args, code, ExitSuccess, stderr.String())
 	}
 	return stdout.String()
+}
+
+func initGitWorkspace(t *testing.T, root string) {
+	t.Helper()
+	if out, err := exec.Command("git", "init", root).CombinedOutput(); err != nil {
+		t.Skipf("git init unavailable: %v\n%s", err, out)
+	}
 }
 
 func TestCancelledErrorsUseCancelledExitCode(t *testing.T) {

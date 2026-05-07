@@ -10,13 +10,19 @@ The agent passes through. The protocol stays.
 
 Plans outlive agents. Sessions hold the receipts. Reviews take nothing on faith.
 
----
+scafld gives AI coding work a deterministic state machine. Every non-trivial
+task starts as a Markdown living spec. Every important runtime event appends to
+the session ledger. Current state, next command, acceptance evidence, and review
+gate are derived from those two artifacts instead of inferred from chat.
 
-Every serious engineering discipline separates planning from execution. Civil engineers don't wing it at the construction site. Aerospace engineers don't improvise turbine blade geometry. The separation exists because complex systems fail when the person holding the tool is also deciding what to build.
+That is the core product shape: the agent can pass through, restart, or be
+replaced. The protocol stays. Auditability falls out of the model because the
+same evidence that explains what happened is also what drives what happens next.
 
-AI coding agents have no such separation. You type a prompt, the agent writes code, and you hope the result matches what you meant. For trivial tasks this works. For anything that touches multiple files, crosses module boundaries, or carries real risk; it doesn't. The agent hallucinates scope, drifts from objectives, and produces code that technically compiles but misses the point.
-
-scafld enforces the separation. Every non-trivial task becomes a Markdown living specification before a single line of code changes. The spec declares what will change, why it will change, what constitutes success, and what must not break. The agent executes against the spec, not against a loose prompt. When the work is done, scafld validates acceptance evidence and sends the result through adversarial review.
+The spec declares what will change, why it will change, what constitutes
+success, and what must not break. The agent executes against the spec, not
+against a loose prompt. When the work is done, scafld validates acceptance
+evidence and sends the result through adversarial review.
 
 ## The core idea
 
@@ -28,7 +34,24 @@ A spec is a contract between the human who understands the problem and the agent
 - **Invariants** - project-wide rules that must never break
 - **Acceptance criteria** - concrete, executable validation
 
-The spec lives in version control alongside the code. It moves through a lifecycle: draft, approved, active, review, completed. The filesystem is the state machine; directories represent states.
+The spec lives in version control alongside the code. It moves through a
+lifecycle: draft, approved, active, review, completed. The filesystem is the
+state machine; directories represent states, and the session ledger records the
+evidence behind each transition.
+
+## Agent-facing deterministic gates
+
+Each gate exposes the same repair contract:
+
+- trusted state
+- failure reason
+- evidence path
+- expected shape
+- allowed next command
+
+scafld is strict in what it trusts and generous in what it explains. If a gate
+blocks, the next agent should not have to infer the blocker from stale prose,
+raw diagnostics, or unrelated workspace dirt.
 
 ## Agent-agnostic
 

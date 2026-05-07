@@ -25,3 +25,6 @@ scafld handoff <task-id>
 
 For real review, use `--provider claude` or `--provider codex`.
 `--provider local` is smoke-test only and cannot satisfy `complete`.
+
+Inside the scafld repo, use `./bin/scafld` or `go run ./cmd/scafld`; do not use
+a copied compiled binary.

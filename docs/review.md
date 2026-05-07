@@ -56,13 +56,42 @@ Provider meanings:
 - `local`: deterministic local pass-through provider for development and smoke
   tests. It is not an adversarial review and cannot satisfy `complete`.
 
+## Review Scope
+
+Dirty monorepos and multi-repo workspaces often contain changes that predate the
+task: generated files, submodule pointers, archived specs, or other developers'
+work. Those paths should not become findings just because they exist.
+
+scafld derives task scope from the spec's packages, impacted files, and phase
+changes. Use `--review-scope` only when the repo layout needs an explicit
+boundary:
+
+```bash
+scafld review email-contracts --review-scope api
+scafld review email-contracts --review-scope api,cli/packages/mcp
+```
+
+At approval, scafld records the dirty workspace baseline. At review, it compares
+the current workspace to that baseline, sends task-scoped changes to the
+reviewer, and blocks new changes outside declared scope. Unchanged baseline dirt
+is context, not a finding by itself. If a file changes during review inside the
+review scope, review still fails closed with a workspace mutation finding.
+
+The approval-to-review scope comparison ignores scafld-owned runtime projection
+paths under `.scafld/runs/` and `.scafld/specs/`. The
+read-only mutation guard does not ignore the living spec: if a review provider
+edits `.scafld/specs/**` during review, the gate fails closed because the
+contract changed while it was being judged.
+
 ## What scafld Sends
 
-The reviewer receives a task contract, acceptance evidence, and a clear
-read-only instruction. It also receives the configured review agenda from
-`review.automated_passes` and `review.adversarial_passes`, ordered by each
-pass's `order` field. The prompt tells the challenger not to mutate the
-workspace and to return a ReviewPacket verdict.
+The reviewer receives a task contract, declared task scope, approval baseline,
+task changes since approval, acceptance evidence, and a clear read-only
+instruction. It also receives the configured review agenda from
+`review.automated_passes` and
+`review.adversarial_passes`, ordered by each pass's `order` field. The prompt
+tells the challenger not to mutate the workspace, not to emit placeholder
+ReviewPackets while investigating, and to return one final ReviewPacket verdict.
 
 The packet is the provider content contract:
 
@@ -123,7 +152,7 @@ scafld complete <task-id>
 
 - the latest session review event exists
 - the latest review verdict is `pass`
-- the latest review provider is not `local`
+- the latest review provider is `codex`, `claude`, or `command`
 
 If review fails, repair the work, rerun acceptance as needed, rerun review, then
 complete only after the challenger clears the gate.
@@ -150,5 +179,12 @@ protection. Provider failures and timeouts write diagnostics under:
 .scafld/runs/<task-id>/diagnostics/
 ```
 
-Use those diagnostics to inspect paid model output that could not be accepted
+`status --json` and `handoff` show the accepted blocker summary first. Use
+diagnostics as supporting evidence when paid model output could not be accepted
 as a valid review packet.
+
+During a running external review, the terminal shows summary progress only:
+start, periodic running heartbeat, structured provider events when available,
+and the final result. Raw provider stdout and stderr stay in diagnostics so the
+outer agent gets liveness without having to parse exploratory model logs or
+placeholder packets.

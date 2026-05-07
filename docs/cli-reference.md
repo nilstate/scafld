@@ -45,7 +45,8 @@ Automation-relevant commands emit one envelope:
     "task_id": "add-auth",
     "status": "review",
     "passed": 1,
-    "failed": 0
+    "failed": 0,
+    "next": "scafld review add-auth"
   }
 }
 ```
@@ -131,6 +132,11 @@ With `--mark-passed`, it verifies the latest round's `Grounded in` citations,
 closes the round, and sets `harden_status: passed`. Unresolved citations fail
 closed and leave the round in progress.
 
+Accepted citation shapes are `Grounded in: spec_gap:<field>`,
+`Grounded in: code:<path>:<line>`, and `Grounded in: archive:<task-id>`.
+Code citations must use an existing workspace-relative path and a real line
+number.
+
 ## validate
 
 ```bash
@@ -161,6 +167,16 @@ Activates approved, active, blocked, or review-state work and runs executable
 acceptance criteria. Evidence is written to the session first and projected back
 into the Markdown spec. Drafts and terminal specs are rejected.
 
+Acceptance commands inherit the process environment plus `execution` overrides
+from `.scafld/config.yaml` and `.scafld/config.local.yaml`. Use that config for
+repo-wide toolchain setup such as rbenv shims instead of relying on interactive
+shell startup.
+
+Phase acceptance runs in order. If a phase blocks, later phase commands are not
+run and the next command becomes `scafld handoff <task-id>` so the repair agent
+gets the failed criterion, command, and evidence instead of a vague blocked
+status.
+
 ## exec
 
 ```bash
@@ -173,7 +189,7 @@ model and evidence-writing discipline as `build`.
 ## review
 
 ```bash
-scafld review <task-id> [--provider auto|codex|claude|command|local] [--provider-command CMD] [--provider-binary PATH] [--model MODEL] [--json]
+scafld review <task-id> [--provider auto|codex|claude|command|local] [--provider-command CMD] [--provider-binary PATH] [--model MODEL] [--review-scope PATH[,PATH...]] [--json]
 ```
 
 `review` is the adversarial completion gate. Defaults come from
@@ -198,6 +214,20 @@ Provider-specific model defaults come from
 `--provider-command`, `--provider-binary`, and `--model` override config for one
 invocation.
 
+scafld derives review scope from spec packages, impacted files, and phase
+changes. Use `--review-scope` only when a dirty monorepo or workspace needs an
+explicit path boundary:
+
+```bash
+scafld review email-contracts --review-scope api
+scafld review email-contracts --review-scope api,cli/packages/mcp
+```
+
+The approval baseline is captured before task execution. Review compares the
+current workspace to that baseline, reports task-scoped changes to the provider,
+and blocks new changes outside declared scope. Unchanged baseline dirt is
+context, not a finding by itself. Files changed during review still fail closed.
+
 The provider returns a ReviewPacket. scafld validates it, rejects workspace
 mutation, writes the review event to session, and projects the verdict back into
 the spec. `complete` will not archive the task unless the review verdict is
@@ -214,7 +244,7 @@ scafld complete <task-id> [--json]
 ```
 
 Archives completed work only after the latest session review event has a
-non-local `pass` verdict.
+`pass` verdict from `codex`, `claude`, or `command`.
 
 ## fail
 
@@ -255,8 +285,32 @@ Lists all known specs by task id, status, and title.
 scafld report [--json]
 ```
 
-Aggregates workspace spec counts and runtime evidence. This is the reporting
-surface that will grow as session-derived metrics deepen.
+Aggregates workspace spec counts and session-derived product metrics:
+
+- `first_attempt_pass_rate`: tasks whose first completed build moved straight
+  to review.
+- `recovery_convergence_rate`: blocked first attempts that later recovered to
+  review.
+- `challenge_override_rate`: challenged tasks completed without a later
+  passing review from `codex`, `claude`, or `command`. This should normally stay
+  at `0`.
+- `review_pass_rate`: accepted review verdicts over all review verdicts.
+- `workspace_baseline_coverage`: sessions with an approval/build baseline.
+
+Human output keeps the same numbers compact:
+
+```text
+total specs: 12
+by status:
+- review: 1
+- completed: 9
+metrics:
+- first_attempt_pass_rate: 66.7% (8/12)
+- recovery_convergence_rate: 75.0% (3/4)
+- review_pass_rate: 80.0% (8/10)
+- challenge_override_rate: 0.0% (0/2)
+- workspace_baseline_coverage: 100.0% (12/12)
+```
 
 ## handoff
 
@@ -265,5 +319,5 @@ scafld handoff <task-id>
 ```
 
 Renders model-facing context from the current spec and session state. Handoffs
-include latest review findings when present. They are transport, not source of
-truth.
+include failed or pending acceptance criteria while a task is blocked, and
+latest review findings when present. They are transport, not source of truth.

@@ -18,6 +18,18 @@ invariants:
 llm:
   model_profile: "default"
 
+execution:
+  # Acceptance commands run in a non-login shell. Declare shared command
+  # environment here instead of relying on interactive shell startup.
+  path_prepend: []
+  env: {}
+  # Example for Ruby projects that use rbenv:
+  # path_prepend:
+  #   - "$HOME/.rbenv/shims"
+  #   - "$HOME/.rbenv/bin"
+  # env:
+  #   BUNDLE_GEMFILE: "api/Gemfile"
+
 harden:
   max_questions_per_round: 8
 

@@ -64,6 +64,19 @@ the same native Go release assets and checksums.
 scafld --version
 ```
 
+## Development Checkout
+
+When working inside the scafld source repository, use the checked-in dev wrapper
+instead of a copied compiled binary:
+
+```bash
+./bin/scafld status my-task
+```
+
+The wrapper runs the current Go source with `go run ./cmd/scafld` and preserves
+the caller's workspace root when `--root` is not supplied. That keeps dogfood
+runs from reading stale lifecycle code.
+
 ## Initialize a Project
 
 Navigate to your project root and run:
@@ -101,6 +114,10 @@ contract remains inspectable.
 Commit `.scafld/config.yaml`, `.scafld/core/`, `.scafld/prompts/`,
 `.scafld/specs/`, `AGENTS.md`, and `CLAUDE.md` when they describe shared
 project behavior. Keep `.scafld/config.local.yaml` and `.scafld/runs/` local.
+The committed `.scafld/config.yaml` is sparse by design. Runtime defaults live
+in the binary, and the full example shape lives in `.scafld/core/config.yaml`.
+Use `.scafld/config.local.yaml` only for personal machine overrides such as
+shim paths, provider binaries, or temporary model choices.
 Project convention docs are optional context. scafld does not require a
 specific conventions filename; convention enforcement comes from config
 invariants, spec scope, acceptance criteria, and review agenda.

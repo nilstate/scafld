@@ -48,6 +48,25 @@ func TestAgentDocResetCopiesMatchRootTemplates(t *testing.T) {
 	}
 }
 
+func TestRepositoryAgentDocsMatchBundledTemplates(t *testing.T) {
+	t.Parallel()
+
+	repoRoot := filepath.Clean(filepath.Join("..", "..", ".."))
+	for _, name := range agentDocFiles {
+		rootDoc, err := os.ReadFile(filepath.Join(repoRoot, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		template, err := assets.ReadFile("assets/agentdocs/" + name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(rootDoc) != string(template) {
+			t.Fatalf("%s drifted from bundled agentdoc template", name)
+		}
+	}
+}
+
 func TestInitAgentDocsPrependsExistingDocs(t *testing.T) {
 	t.Parallel()
 
@@ -78,7 +97,7 @@ func TestRefreshAgentDocsUpdatesOnlyScafldSection(t *testing.T) {
 	root := t.TempDir()
 	agents := filepath.Join(root, "AGENTS.md")
 	claude := filepath.Join(root, "CLAUDE.md")
-	if err := os.WriteFile(agents, []byte("# scafld Agent Contract\n\nstale\n\n# Project Rules\n\nproject note\n"), 0o644); err != nil {
+	if err := os.WriteFile(agents, []byte("# scafld Agent Contract\n\nobsolete body\n\n# Project Rules\n\nproject note\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(claude, []byte("# User Claude Notes\n"), 0o644); err != nil {
@@ -96,7 +115,7 @@ func TestRefreshAgentDocsUpdatesOnlyScafldSection(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(data)
-	if strings.Contains(text, "stale") || !strings.Contains(text, "project note") || !strings.Contains(text, "scafld Agent Contract") {
+	if strings.Contains(text, "obsolete body") || !strings.Contains(text, "project note") || !strings.Contains(text, "scafld Agent Contract") {
 		t.Fatalf("scafld section was not refreshed correctly:\n%s", text)
 	}
 	data, err = os.ReadFile(claude)

@@ -18,6 +18,8 @@ arch:
 	@go test ./internal/arch -run 'ImportBoundaries|CoreIsPure|CoreTransitiveDepsAreStdlib|AppDoesNotImportAdapters|PortsAreUseCaseOwned|PortsAreNarrow|ProviderBoundary|CLIIsThin'
 
 package-check:
+	@test -x bin/scafld
+	@sh -n bin/scafld
 	@node --check package/npm/bin/scafld.js
 	@node --check package/npm/lib/install.js
 	@node --check package/npm/lib/platform.js

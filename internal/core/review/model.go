@@ -70,6 +70,17 @@ func CountBlocking(findings []Finding) int {
 	return count
 }
 
+// ValidCompletionProvider reports whether a passing review provider can satisfy
+// the completion gate for real work.
+func ValidCompletionProvider(provider string) bool {
+	switch strings.TrimSpace(provider) {
+	case "codex", "claude", "command":
+		return true
+	default:
+		return false
+	}
+}
+
 // Packet is the normalized review-provider payload consumed by scafld.
 type Packet struct {
 	Verdict      string         `json:"verdict"`
@@ -167,6 +178,9 @@ func ParseNDJSON(text string) (Packet, error) {
 	if packet.Verdict == "" {
 		packet.Verdict = VerdictFromFindings(packet.Findings)
 	}
+	if err := ValidatePacket(packet); err != nil {
+		return Packet{}, err
+	}
 	return packet, nil
 }
 
@@ -195,6 +209,10 @@ func ValidatePacket(packet Packet) error {
 		if !ValidSeverity(finding.Severity) {
 			return fmt.Errorf("%w: invalid severity %q", ErrInvalidPacket, finding.Severity)
 		}
+	}
+	derived := VerdictFromFindings(packet.Findings)
+	if packet.Verdict != derived {
+		return fmt.Errorf("%w: verdict %q contradicts findings verdict %q", ErrInvalidPacket, packet.Verdict, derived)
 	}
 	return nil
 }

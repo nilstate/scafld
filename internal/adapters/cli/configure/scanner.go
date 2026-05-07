@@ -37,6 +37,7 @@ func (s Scanner) Scan(ctx context.Context) (appconfigure.Snapshot, error) {
 			snapshot.Files = append(snapshot.Files, candidate)
 		}
 	}
+	snapshot.Files = append(snapshot.Files, toolchainEvidence(abs)...)
 	workflowFiles, err := globRel(abs, ".github/workflows/*")
 	if err != nil {
 		return appconfigure.Snapshot{}, err
@@ -48,6 +49,7 @@ func (s Scanner) Scan(ctx context.Context) (appconfigure.Snapshot, error) {
 	}
 	snapshot.Commands = commandSuggestions(abs)
 	snapshot.Invariants = invariantSuggestions(abs, snapshot.Files)
+	snapshot.Execution = executionSuggestion(abs)
 	snapshot.Warnings = legacyConfigWarnings(abs)
 	snapshot.Questions = openQuestions(snapshot)
 	return snapshot, nil
@@ -72,6 +74,26 @@ func fileCandidates() []appconfigure.Evidence {
 	}
 }
 
+func toolchainEvidence(root string) []appconfigure.Evidence {
+	var evidence []appconfigure.Evidence
+	if exists(filepath.Join(root, ".ruby-version")) {
+		evidence = append(evidence, appconfigure.Evidence{Path: ".ruby-version", Role: "ruby_version"})
+	}
+	for _, rel := range oneLevelMatches(root, ".ruby-version") {
+		evidence = append(evidence, appconfigure.Evidence{Path: rel, Role: "ruby_version"})
+	}
+	if exists(filepath.Join(root, ".tool-versions")) {
+		evidence = append(evidence, appconfigure.Evidence{Path: ".tool-versions", Role: "tool_versions"})
+	}
+	for _, rel := range oneLevelMatches(root, ".tool-versions") {
+		evidence = append(evidence, appconfigure.Evidence{Path: rel, Role: "tool_versions"})
+	}
+	if exists(filepath.Join(root, "db", "migrate")) {
+		evidence = append(evidence, appconfigure.Evidence{Path: "db/migrate", Role: "migration_surface"})
+	}
+	return evidence
+}
+
 func commandSuggestions(root string) []appconfigure.CommandSuggestion {
 	var commands []appconfigure.CommandSuggestion
 	if makefile := readText(filepath.Join(root, "Makefile")); makefile != "" {
@@ -82,20 +104,59 @@ func commandSuggestions(root string) []appconfigure.CommandSuggestion {
 			commands = append(commands, appconfigure.CommandSuggestion{ID: "test", Command: "make test", Sources: []string{"Makefile"}})
 		}
 	}
+	if justfile := readText(filepath.Join(root, "justfile")); justfile != "" {
+		if hasMakeTarget(justfile, "check") {
+			commands = append(commands, appconfigure.CommandSuggestion{ID: "just_check", Command: "just check", Sources: []string{"justfile"}})
+		}
+		if hasMakeTarget(justfile, "test") {
+			commands = append(commands, appconfigure.CommandSuggestion{ID: "just_test", Command: "just test", Sources: []string{"justfile"}})
+		}
+	}
+	if exists(filepath.Join(root, "Taskfile.yml")) || exists(filepath.Join(root, "Taskfile.yaml")) {
+		taskfile := firstExisting(root, "Taskfile.yml", "Taskfile.yaml")
+		text := readText(filepath.Join(root, taskfile))
+		if hasYAMLTask(text, "check") {
+			commands = append(commands, appconfigure.CommandSuggestion{ID: "task_check", Command: "task check", Sources: []string{taskfile}})
+		}
+		if hasYAMLTask(text, "test") {
+			commands = append(commands, appconfigure.CommandSuggestion{ID: "task_test", Command: "task test", Sources: []string{taskfile}})
+		}
+	}
 	if packageJSON := readText(filepath.Join(root, "package.json")); packageJSON != "" {
 		var pkg struct {
-			Scripts map[string]string `json:"scripts"`
+			Scripts        map[string]string `json:"scripts"`
+			PackageManager string            `json:"packageManager"`
 		}
 		if json.Unmarshal([]byte(packageJSON), &pkg) == nil {
+			manager := nodePackageManager(root, pkg.PackageManager)
 			if _, ok := pkg.Scripts["test"]; ok {
-				commands = append(commands, appconfigure.CommandSuggestion{ID: "test", Command: "npm test", Sources: []string{"package.json:scripts.test"}})
+				commands = append(commands, appconfigure.CommandSuggestion{ID: "node_test", Command: manager + " test", Sources: []string{"package.json:scripts.test"}})
 			}
 			if _, ok := pkg.Scripts["lint"]; ok {
-				commands = append(commands, appconfigure.CommandSuggestion{ID: "lint", Command: "npm run lint", Sources: []string{"package.json:scripts.lint"}})
+				commands = append(commands, appconfigure.CommandSuggestion{ID: "node_lint", Command: nodeRun(manager, "lint"), Sources: []string{"package.json:scripts.lint"}})
 			}
 			if _, ok := pkg.Scripts["typecheck"]; ok {
-				commands = append(commands, appconfigure.CommandSuggestion{ID: "typecheck", Command: "npm run typecheck", Sources: []string{"package.json:scripts.typecheck"}})
+				commands = append(commands, appconfigure.CommandSuggestion{ID: "node_typecheck", Command: nodeRun(manager, "typecheck"), Sources: []string{"package.json:scripts.typecheck"}})
 			}
+		}
+	}
+	if readText(filepath.Join(root, "go.mod")) != "" {
+		commands = append(commands, appconfigure.CommandSuggestion{ID: "go_test", Command: "go test ./...", Sources: []string{"go.mod"}})
+	}
+	if readText(filepath.Join(root, "Cargo.toml")) != "" {
+		commands = append(commands, appconfigure.CommandSuggestion{ID: "cargo_test", Command: "cargo test", Sources: []string{"Cargo.toml"}})
+	}
+	if pyproject := readText(filepath.Join(root, "pyproject.toml")); pyproject != "" {
+		if strings.Contains(pyproject, "pytest") || exists(filepath.Join(root, "tests")) {
+			commands = append(commands, appconfigure.CommandSuggestion{ID: "python_test", Command: "python -m pytest", Sources: []string{"pyproject.toml"}})
+		}
+		if strings.Contains(pyproject, "ruff") {
+			commands = append(commands, appconfigure.CommandSuggestion{ID: "python_lint", Command: "python -m ruff check .", Sources: []string{"pyproject.toml"}})
+		}
+	}
+	if gemfile := readText(filepath.Join(root, "Gemfile")); gemfile != "" {
+		if strings.Contains(gemfile, "rspec") || exists(filepath.Join(root, "spec")) {
+			commands = append(commands, appconfigure.CommandSuggestion{ID: "ruby_test", Command: "bundle exec rspec", Sources: []string{"Gemfile"}})
 		}
 	}
 	return dedupeCommands(commands)
@@ -131,7 +192,72 @@ func invariantSuggestions(root string, files []appconfigure.Evidence) []appconfi
 			Sources:     []string{"package.json"},
 		})
 	}
+	if readText(filepath.Join(root, "pnpm-workspace.yaml")) != "" {
+		invariants = append(invariants, appconfigure.InvariantSuggestion{
+			ID:          "workspace_package_boundaries",
+			Description: "Preserve workspace package boundaries and avoid undeclared cross-package coupling.",
+			Sources:     []string{"pnpm-workspace.yaml"},
+		})
+	}
+	if readText(filepath.Join(root, "pyproject.toml")) != "" {
+		invariants = append(invariants, appconfigure.InvariantSuggestion{
+			ID:          "python_environment_integrity",
+			Description: "Keep Python project metadata, runtime dependencies, and validation commands aligned.",
+			Sources:     []string{"pyproject.toml"},
+		})
+	}
+	if readText(filepath.Join(root, "Gemfile")) != "" {
+		invariants = append(invariants, appconfigure.InvariantSuggestion{
+			ID:          "ruby_bundle_integrity",
+			Description: "Keep Ruby version, Bundler context, and gem dependencies aligned with validation commands.",
+			Sources:     []string{"Gemfile"},
+		})
+	}
+	if readText(filepath.Join(root, "Cargo.toml")) != "" {
+		invariants = append(invariants, appconfigure.InvariantSuggestion{
+			ID:          "rust_crate_integrity",
+			Description: "Keep Cargo manifests, lockfiles, and crate validation aligned.",
+			Sources:     []string{"Cargo.toml"},
+		})
+	}
+	if exists(filepath.Join(root, "db", "migrate")) {
+		invariants = append(invariants, appconfigure.InvariantSuggestion{
+			ID:          "migration_safety",
+			Description: "Schema migrations require explicit rollback thinking and public data-safety review.",
+			Sources:     []string{"db/migrate"},
+		})
+	}
 	return dedupeInvariants(invariants)
+}
+
+func executionSuggestion(root string) *appconfigure.ExecutionSuggestion {
+	var paths []string
+	var sources []string
+	if exists(filepath.Join(root, ".ruby-version")) {
+		paths = append(paths, "$HOME/.rbenv/shims")
+		sources = append(sources, ".ruby-version")
+	}
+	for _, rel := range oneLevelMatches(root, ".ruby-version") {
+		paths = append(paths, "$HOME/.rbenv/shims")
+		sources = append(sources, rel)
+	}
+	if toolVersions := readText(filepath.Join(root, ".tool-versions")); strings.Contains(toolVersions, "ruby ") || strings.Contains(toolVersions, "ruby\t") {
+		paths = append(paths, "$HOME/.asdf/shims")
+		sources = append(sources, ".tool-versions")
+	}
+	for _, rel := range oneLevelMatches(root, ".tool-versions") {
+		text := readText(filepath.Join(root, filepath.FromSlash(rel)))
+		if strings.Contains(text, "ruby ") || strings.Contains(text, "ruby\t") {
+			paths = append(paths, "$HOME/.asdf/shims")
+			sources = append(sources, rel)
+		}
+	}
+	paths = dedupeStrings(paths)
+	sources = dedupeStrings(sources)
+	if len(paths) == 0 {
+		return nil
+	}
+	return &appconfigure.ExecutionSuggestion{PathPrepend: paths, Sources: sources}
 }
 
 func openQuestions(snapshot appconfigure.Snapshot) []appconfigure.Question {
@@ -149,6 +275,23 @@ func openQuestions(snapshot appconfigure.Snapshot) []appconfigure.Question {
 		})
 	}
 	return questions
+}
+
+func oneLevelMatches(root string, name string) []string {
+	matches, err := filepath.Glob(filepath.Join(root, "*", name))
+	if err != nil {
+		return nil
+	}
+	out := make([]string, 0, len(matches))
+	for _, match := range matches {
+		rel, err := filepath.Rel(root, match)
+		if err != nil {
+			continue
+		}
+		out = append(out, filepath.ToSlash(rel))
+	}
+	sort.Strings(out)
+	return out
 }
 
 func legacyConfigWarnings(root string) []appconfigure.Warning {
@@ -196,6 +339,45 @@ func hasMakeTarget(text string, target string) bool {
 		}
 	}
 	return false
+}
+
+func hasYAMLTask(text string, target string) bool {
+	return regexp.MustCompile(`(?m)^\s+`+regexp.QuoteMeta(target)+`:`).MatchString(text) ||
+		regexp.MustCompile(`(?m)^`+regexp.QuoteMeta(target)+`:`).MatchString(text)
+}
+
+func firstExisting(root string, candidates ...string) string {
+	for _, candidate := range candidates {
+		if exists(filepath.Join(root, candidate)) {
+			return candidate
+		}
+	}
+	return ""
+}
+
+func nodePackageManager(root string, declared string) string {
+	name := strings.TrimSpace(strings.Split(declared, "@")[0])
+	switch name {
+	case "pnpm", "yarn", "bun", "npm":
+		return name
+	}
+	switch {
+	case exists(filepath.Join(root, "pnpm-lock.yaml")):
+		return "pnpm"
+	case exists(filepath.Join(root, "yarn.lock")):
+		return "yarn"
+	case exists(filepath.Join(root, "bun.lockb")) || exists(filepath.Join(root, "bun.lock")):
+		return "bun"
+	default:
+		return "npm"
+	}
+}
+
+func nodeRun(manager string, script string) string {
+	if manager == "npm" {
+		return "npm run " + script
+	}
+	return manager + " " + script
 }
 
 func globRel(root string, pattern string) ([]string, error) {
@@ -266,5 +448,19 @@ func dedupeInvariants(invariants []appconfigure.InvariantSuggestion) []appconfig
 		out = append(out, invariant)
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
+}
+
+func dedupeStrings(values []string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	sort.Strings(out)
 	return out
 }

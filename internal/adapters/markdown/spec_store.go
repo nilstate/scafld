@@ -116,6 +116,15 @@ func (s Store) Find(taskID string) (string, error) {
 
 // List returns summaries for current non-archived task specs.
 func (s Store) List(ctx context.Context) ([]spec.Record, error) {
+	return s.list(ctx, false)
+}
+
+// ListAll returns summaries for current and archived task specs.
+func (s Store) ListAll(ctx context.Context) ([]spec.Record, error) {
+	return s.list(ctx, true)
+}
+
+func (s Store) list(ctx context.Context, includeArchive bool) ([]spec.Record, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -140,6 +149,27 @@ func (s Store) List(ctx context.Context) ([]spec.Record, error) {
 				return nil, err
 			}
 			records = append(records, spec.Record{TaskID: model.TaskID, Status: model.Status, Path: path, Title: model.Title})
+		}
+	}
+	if includeArchive {
+		base := filepath.Join(root, ".scafld", "specs", "archive")
+		err := filepath.WalkDir(base, func(path string, d os.DirEntry, err error) error {
+			if err != nil || d.IsDir() || filepath.Ext(path) != ".md" {
+				return nil
+			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			model, err := Parse(data)
+			if err != nil {
+				return err
+			}
+			records = append(records, spec.Record{TaskID: model.TaskID, Status: model.Status, Path: path, Title: model.Title})
+			return nil
+		})
+		if err != nil && !os.IsNotExist(err) {
+			return nil, err
 		}
 	}
 	sort.Slice(records, func(i, j int) bool { return records[i].TaskID < records[j].TaskID })

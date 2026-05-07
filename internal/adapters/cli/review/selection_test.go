@@ -55,7 +55,7 @@ review:
 	if !ok {
 		t.Fatalf("runner = %T, want process.Runner", codex.Runner)
 	}
-	if runner.Progress != &progress || runner.ProgressLabel != "review provider" {
+	if runner.Progress != &progress || runner.ProgressLabel != "review[codex:gpt-config]" {
 		t.Fatalf("review runner did not carry progress stream: %+v", runner)
 	}
 	selected, err = Select(context.Background(), Options{Root: root, TaskID: "task", Model: "gpt-flag"})

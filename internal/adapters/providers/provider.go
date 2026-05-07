@@ -140,12 +140,13 @@ func (p CommandProvider) Invoke(ctx context.Context, req review.Request) (review
 	env := append([]string(nil), p.Env...)
 	env = append(env, "SCAFLD_TASK_ID="+req.TaskID)
 	result, err := p.Runner.Run(ctx, execution.Request{
-		Command:     p.Command,
-		Input:       req.Prompt,
-		CWD:         p.CWD,
-		Env:         env,
-		Timeout:     p.Timeout,
-		IdleTimeout: p.IdleTimeout,
+		Command:                p.Command,
+		Input:                  req.Prompt,
+		CWD:                    p.CWD,
+		Env:                    env,
+		Timeout:                p.Timeout,
+		IdleTimeout:            p.IdleTimeout,
+		SuppressProgressStderr: true,
 	})
 	if err != nil && strings.TrimSpace(result.Stdout) == "" {
 		return review.Packet{}, fmt.Errorf("%w: %v", ErrProviderFailed, err)
@@ -194,13 +195,14 @@ func (p ClaudeProvider) Invoke(ctx context.Context, req review.Request) (review.
 		schemaJSON = ReviewPacketSchemaJSON()
 	}
 	result, err := p.Runner.Run(ctx, execution.Request{
-		Args:                 ClaudeArgs(binaryOrDefault(p.Binary, "claude"), p.Model, sessionID, schemaJSON),
-		Input:                req.Prompt,
-		CWD:                  p.CWD,
-		Env:                  p.Env,
-		Timeout:              p.Timeout,
-		IdleTimeout:          p.IdleTimeout,
-		StdoutEventInspector: ClaudeEventName,
+		Args:                   ClaudeArgs(binaryOrDefault(p.Binary, "claude"), p.Model, sessionID, schemaJSON),
+		Input:                  req.Prompt,
+		CWD:                    p.CWD,
+		Env:                    p.Env,
+		Timeout:                p.Timeout,
+		IdleTimeout:            p.IdleTimeout,
+		SuppressProgressStderr: true,
+		StdoutEventInspector:   ClaudeEventName,
 	})
 	extracted := extractClaudeOutput(result.Stdout)
 	packet, packetErr := packetFromProviderResult(result, err, extracted.Body)
@@ -261,12 +263,13 @@ func (p CodexProvider) Invoke(ctx context.Context, req review.Request) (review.P
 	}
 	defer cleanupSchema()
 	result, err := p.Runner.Run(ctx, execution.Request{
-		Args:        CodexArgs(binaryOrDefault(p.Binary, "codex"), p.CWD, outputPath, p.Model, schemaPath),
-		Input:       req.Prompt,
-		CWD:         p.CWD,
-		Env:         p.Env,
-		Timeout:     p.Timeout,
-		IdleTimeout: p.IdleTimeout,
+		Args:                   CodexArgs(binaryOrDefault(p.Binary, "codex"), p.CWD, outputPath, p.Model, schemaPath),
+		Input:                  req.Prompt,
+		CWD:                    p.CWD,
+		Env:                    p.Env,
+		Timeout:                p.Timeout,
+		IdleTimeout:            p.IdleTimeout,
+		SuppressProgressStderr: true,
 	})
 	body := strings.TrimSpace(result.Stdout)
 	if data, readErr := os.ReadFile(filepath.Clean(outputPath)); readErr == nil && strings.TrimSpace(string(data)) != "" {

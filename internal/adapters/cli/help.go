@@ -3,12 +3,11 @@ package cli
 import (
 	"fmt"
 	"io"
-	"strings"
+
+	reviewhelp "github.com/nilstate/scafld/v2/internal/adapters/cli/review"
 )
 
-func knownCommand(name string) bool {
-	return commandHandlers[name] != nil
-}
+func knownCommand(name string) bool { return commandHandlers[name] != nil }
 
 func printHelp(w io.Writer) {
 	fmt.Fprint(w, "scafld - deterministic protocol for multi-phase agent work\n\nUsage:\n  scafld <command> [flags]\n\nCommands:\n")
@@ -19,13 +18,15 @@ func printHelp(w io.Writer) {
 }
 
 func printCommandHelp(w io.Writer, name string) {
+	if name == "review" {
+		reviewhelp.PrintHelp(w)
+		return
+	}
 	for _, cmd := range commands {
 		if cmd.name == name {
-			fmt.Fprintf(w, "scafld %s - %s\n", cmd.name, cmd.summary)
-			fmt.Fprintln(w)
-			fmt.Fprintf(w, "Usage:\n  scafld %s [task_id] [flags]\n", cmd.name)
+			fmt.Fprintf(w, "scafld %s - %s\n\nUsage:\n  scafld %s [task_id] [flags]\n", cmd.name, cmd.summary, cmd.name)
 			return
 		}
 	}
-	fmt.Fprintf(w, "scafld %s\n", strings.TrimSpace(name))
+	fmt.Fprintf(w, "scafld %s\n", name)
 }

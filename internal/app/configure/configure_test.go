@@ -29,6 +29,10 @@ func TestRunBuildsEvidenceBackedProposal(t *testing.T) {
 			Description: "Preserve architecture tests.",
 			Sources:     []string{"internal/arch/architecture_test.go"},
 		}},
+		Execution: &ExecutionSuggestion{
+			PathPrepend: []string{"$HOME/.rbenv/shims"},
+			Sources:     []string{".ruby-version"},
+		},
 		Warnings: []Warning{{
 			ID:      "legacy_ignored_config_keys",
 			Message: "legacy config keys detected",
@@ -46,6 +50,12 @@ func TestRunBuildsEvidenceBackedProposal(t *testing.T) {
 	}
 	if len(out.Proposal.SpecGuidance.Commands) != 1 || out.Proposal.SpecGuidance.Commands[0].Command != "make check" {
 		t.Fatalf("commands = %+v", out.Proposal.SpecGuidance.Commands)
+	}
+	if out.Proposal.ConfigPatch.Execution == nil || out.Proposal.ConfigPatch.Execution.PathPrepend[0] != "$HOME/.rbenv/shims" {
+		t.Fatalf("execution suggestion = %+v", out.Proposal.ConfigPatch.Execution)
+	}
+	if out.Proposal.SpecGuidance.Execution == nil || out.Proposal.SpecGuidance.Execution.Sources[0] != ".ruby-version" {
+		t.Fatalf("execution guidance = %+v", out.Proposal.SpecGuidance.Execution)
 	}
 	if out.Prompt == "" {
 		t.Fatal("prompt was empty")

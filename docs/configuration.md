@@ -43,6 +43,15 @@ Managed by scafld:
 copies that are still known defaults. Customized project prompts are skipped.
 Specs, sessions, reviews, and local config are never overwritten.
 
+`.scafld/config.yaml` is intentionally sparse. Runtime defaults live in the
+binary, and the full example shape lives in `.scafld/core/config.yaml`. Put only
+project-specific invariant IDs, execution environment, provider defaults, or
+review-pass overrides in the committed project config.
+
+`.scafld/config.local.yaml` is narrower again: personal machine settings only.
+Use it for local shim paths, provider binaries, and temporary model overrides.
+Do not copy the full config shape into local config just to keep an example.
+
 ## Prompt Overrides
 
 Prompt lookup uses project files first:
@@ -76,6 +85,34 @@ Supported `Expected kind` values:
 
 Criteria without a known expected kind are rejected before execution. Free-form
 prose can explain intent, but the matcher is what scafld executes.
+
+## Execution Environment
+
+Acceptance commands run in a deterministic non-login shell. scafld inherits the
+process environment, then applies `execution` overrides from config. It does
+not source `.zshrc`, `.bashrc`, rbenv init scripts, asdf init scripts, or other
+interactive shell startup files.
+
+Shared project command environment belongs in `.scafld/config.yaml`:
+
+```yaml
+execution:
+  path_prepend:
+    - "$HOME/.rbenv/shims"
+    - "$HOME/.rbenv/bin"
+  env:
+    BUNDLE_GEMFILE: "api/Gemfile"
+```
+
+`path_prepend` is added before the inherited `PATH`, after environment-variable
+and `~` expansion. `env` values are also expanded with the current process
+environment. Use `.scafld/config.local.yaml` for developer-local paths or model
+provider binaries that should not be committed.
+
+Task-specific requirements can still live directly in a criterion command, but
+repo-wide toolchain setup should be declared once in config. That keeps build
+evidence reproducible without forcing every spec to remember local shell
+initialization details.
 
 ## Convention Surface
 
@@ -125,12 +162,28 @@ safe answer. If an existing config contains old keys the Go runtime does not
 read, the proposal includes a `legacy_ignored_config_keys` warning so cleanup is
 explicit rather than silent.
 
+When recognizable toolchain files exist, the proposal may include
+`config_patch.execution`. For example, `.ruby-version` can justify adding
+`$HOME/.rbenv/shims` to `execution.path_prepend`, and `.tool-versions` can
+justify `$HOME/.asdf/shims`. Those suggestions are still evidence, not magic:
+copy them only when they match how the project actually runs acceptance
+commands.
+
+Configure also recognizes common validation surfaces:
+
+- `Makefile`, `justfile`, and `Taskfile.*` check/test targets
+- `package.json` scripts with npm, pnpm, yarn, or bun based on package manager
+  metadata and lockfiles
+- Go, Rust, Python, and Ruby manifests for language-specific test commands
+- monorepo/workspace files, architecture tests, CI workflows, migrations, and
+  package manifests as invariant evidence
+
 The proposal is not automatically applied. An operator or agent should inspect
-the cited sources, then copy only verified invariant IDs or local review
-defaults into `.scafld/config.yaml`. Commands and review focus are guidance for
-future specs or real `review.automated_passes` / `review.adversarial_passes`
-entries. If scafld does not read a field, do not add it to config as if it were
-enforced.
+the cited sources, then copy only verified invariant IDs, execution
+environment, or local review defaults into `.scafld/config.yaml`. Commands and
+review focus are guidance for future specs or real `review.automated_passes` /
+`review.adversarial_passes` entries. If scafld does not read a field, do not add
+it to config as if it were enforced.
 
 ## Review Provider Selection
 

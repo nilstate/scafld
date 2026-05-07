@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 
 	"github.com/nilstate/scafld/v2/internal/core/session"
@@ -41,6 +42,41 @@ func (s SessionStore) Load(ctx context.Context, taskID string) (session.Session,
 		return session.Session{}, fmt.Errorf("parse session: %w", err)
 	}
 	return session.Replay(ledger), nil
+}
+
+// List reads all session ledgers under .scafld/runs.
+func (s SessionStore) List(ctx context.Context) ([]session.Session, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	root := s.Root
+	if root == "" {
+		root = "."
+	}
+	base := filepath.Join(root, ".scafld", "runs")
+	entries, err := os.ReadDir(base)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read sessions: %w", err)
+	}
+	var ids []string
+	for _, entry := range entries {
+		if entry.IsDir() {
+			ids = append(ids, entry.Name())
+		}
+	}
+	sort.Strings(ids)
+	ledgers := make([]session.Session, 0, len(ids))
+	for _, taskID := range ids {
+		ledger, err := s.Load(ctx, taskID)
+		if err != nil {
+			return nil, err
+		}
+		ledgers = append(ledgers, ledger)
+	}
+	return ledgers, nil
 }
 
 // Save atomically replaces the session ledger.

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/nilstate/scafld/v2/internal/core/gate"
 	coreprompts "github.com/nilstate/scafld/v2/internal/core/prompts"
 	"github.com/nilstate/scafld/v2/internal/core/spec"
 )
@@ -25,6 +26,8 @@ var (
 	// ErrInvalidHardenEvidence is returned when a hardening round has unverified citations.
 	ErrInvalidHardenEvidence = errors.New("invalid harden evidence")
 )
+
+const groundedInShape = `expected "Grounded in: spec_gap:<field>", "Grounded in: code:<path>:<line>", or "Grounded in: archive:<task-id>"`
 
 // SpecStore is the spec persistence port used by hardening.
 type SpecStore interface {
@@ -112,7 +115,17 @@ func markPassed(ctx context.Context, store SpecStore, path string, model spec.Mo
 	latest := len(model.HardenRounds) - 1
 	warnings := verifyHardenRoundCitations(root, model.HardenRounds[latest])
 	if len(warnings) > 0 {
-		return Output{TaskID: model.TaskID, Path: path, HardenStatus: model.HardenStatus, RoundID: model.HardenRounds[latest].ID, Warnings: warnings}, fmt.Errorf("%w: %s", ErrInvalidHardenEvidence, strings.Join(warnings, "; "))
+		out := Output{TaskID: model.TaskID, Path: path, HardenStatus: model.HardenStatus, RoundID: model.HardenRounds[latest].ID, Warnings: warnings}
+		return out, gate.New(ErrInvalidHardenEvidence, gate.Failure{
+			Gate:     "harden",
+			Status:   string(model.Status),
+			Reason:   "hardening citations are not grounded",
+			Evidence: warnings,
+			Expected: groundedInShape,
+			Actual:   strings.Join(warnings, "; "),
+			Blockers: warnings,
+			Next:     "fix the harden questions, then run scafld harden " + model.TaskID + " --mark-passed",
+		})
 	}
 	model.HardenRounds[latest].Status = string(spec.HardenPassed)
 	model.HardenRounds[latest].EndedAt = now
@@ -159,14 +172,14 @@ func verifyHardenRoundCitations(root string, round spec.HardenRound) []string {
 		grounded := strings.TrimSpace(question.GroundedIn)
 		switch {
 		case grounded == "":
-			warnings = append(warnings, fmt.Sprintf("question %d: missing grounded_in", idx))
+			warnings = append(warnings, fmt.Sprintf("question %d: missing grounded_in (%s)", idx, groundedInShape))
 		case strings.HasPrefix(grounded, "spec_gap:"):
 		case strings.HasPrefix(grounded, "code:"):
 			warnings = append(warnings, verifyCodeCitation(root, idx, grounded)...)
 		case strings.HasPrefix(grounded, "archive:"):
 			warnings = append(warnings, verifyArchiveCitation(root, idx, grounded)...)
 		default:
-			warnings = append(warnings, fmt.Sprintf("question %d: invalid grounded_in prefix: %s", idx, grounded))
+			warnings = append(warnings, fmt.Sprintf("question %d: invalid grounded_in prefix %q (%s)", idx, grounded, groundedInShape))
 		}
 	}
 	return warnings
@@ -175,7 +188,7 @@ func verifyHardenRoundCitations(root string, round spec.HardenRound) []string {
 func verifyCodeCitation(root string, idx int, grounded string) []string {
 	rel, lineNumber, ok := parseCodeGroundedIn(grounded)
 	if !ok {
-		return []string{fmt.Sprintf("question %d: invalid code citation %s", idx, grounded)}
+		return []string{fmt.Sprintf("question %d: invalid code citation %q (expected code:<path>:<line>, for example code:src/file.go:42)", idx, grounded)}
 	}
 	rootAbs, err := filepath.Abs(root)
 	if err != nil {
@@ -198,7 +211,7 @@ func verifyCodeCitation(root string, idx int, grounded string) []string {
 func verifyArchiveCitation(root string, idx int, grounded string) []string {
 	taskID := strings.TrimSpace(strings.TrimPrefix(grounded, "archive:"))
 	if taskID == "" {
-		return []string{fmt.Sprintf("question %d: archive citation is empty", idx)}
+		return []string{fmt.Sprintf("question %d: archive citation is empty (expected archive:<task-id>)", idx)}
 	}
 	pattern := filepath.Join(root, ".scafld", "specs", "archive", "*", taskID+".md")
 	matches, err := filepath.Glob(pattern)

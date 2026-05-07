@@ -92,7 +92,8 @@ satisfy `complete`.
 scafld complete add-auth
 ```
 
-`complete` archives only work with a non-local passing review in the session. If
+`complete` archives only work with a passing `codex`, `claude`, or `command`
+review in the session. If
 review returns a blocking finding, repair the work, rerun `build` as needed,
 then rerun `review`.
 
