@@ -187,8 +187,8 @@ jobs:
           if [[ -n "${HOMEBREW_TAP_TOKEN:-}" || -n "${PACKAGES_REPO_TOKEN:-}" ]]; then
             echo "publish=true" >> "$GITHUB_OUTPUT"
           else
-            echo "Homebrew publish requires HOMEBREW_TAP_TOKEN or PACKAGES_REPO_TOKEN." >&2
-            exit 1
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Skipping Homebrew publish because HOMEBREW_TAP_TOKEN or PACKAGES_REPO_TOKEN is not configured."
           fi
 
       - name: Check out repository
@@ -244,8 +244,8 @@ jobs:
           if [[ -n "${SCOOP_BUCKET_TOKEN:-}" || -n "${PACKAGES_REPO_TOKEN:-}" ]]; then
             echo "publish=true" >> "$GITHUB_OUTPUT"
           else
-            echo "Scoop publish requires SCOOP_BUCKET_TOKEN or PACKAGES_REPO_TOKEN." >&2
-            exit 1
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Skipping Scoop publish because SCOOP_BUCKET_TOKEN or PACKAGES_REPO_TOKEN is not configured."
           fi
 
       - name: Check out repository
