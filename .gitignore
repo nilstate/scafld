@@ -9,7 +9,8 @@ __pycache__/
 .coverage.*
 /build/
 /dist/
-/bin/
+/bin/*
+!/bin/scafld
 .tools/
 *.egg-info/
 *.tgz
