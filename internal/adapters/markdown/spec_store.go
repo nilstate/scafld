@@ -61,7 +61,9 @@ func (s Store) Save(ctx context.Context, path string, model spec.Model) error {
 	return updateSpec(ctx, root, path, model)
 }
 
-// Load finds, parses, and returns a spec by task ID.
+// Load finds, parses, and returns a spec by task ID. If the file's directory
+// disagrees with its frontmatter status, Load relocates it to the status-implied
+// directory before returning. Relocation failures are non-fatal.
 func (s Store) Load(ctx context.Context, taskID string) (spec.Model, string, error) {
 	if err := ctx.Err(); err != nil {
 		return spec.Model{}, "", err
@@ -77,6 +79,15 @@ func (s Store) Load(ctx context.Context, taskID string) (spec.Model, string, err
 	model, err := Parse(data)
 	if err != nil {
 		return spec.Model{}, "", err
+	}
+	root := s.Root
+	if root == "" {
+		root = "."
+	}
+	if target := targetPath(root, model); !samePath(path, target) {
+		if err := writeMovedSpec(path, target, data); err == nil {
+			path = target
+		}
 	}
 	return model, path, nil
 }
