@@ -42,10 +42,7 @@ var valueFlags = map[string]bool{
 	"review-scope":     true,
 }
 
-var boolFlags = map[string]bool{
-	"mark-passed":   true,
-	"no-agent-docs": true,
-}
+var boolFlags = map[string]bool{"human-reviewed": true, "mark-passed": true, "no-agent-docs": true}
 
 func parseOptions(args []string) (options, error) {
 	opts := options{Values: map[string]string{}, Flags: map[string]bool{}}

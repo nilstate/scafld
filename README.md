@@ -360,7 +360,13 @@ scafld review add-cache --provider claude
 scafld review add-cache --provider codex
 scafld review add-cache --provider command --provider-command "./reviewer"
 scafld review add-cache --review-scope api,cli/packages/mcp
+scafld review add-cache --human-reviewed --reason "operator reviewed PR 123"
 ```
+
+`--human-reviewed` is the audited escape hatch. It belongs to `review`, not
+`complete`: it records a `review_override` event and a passing human review
+event in the session ledger. Use it only when a human has actually reviewed the
+diff, spec, acceptance evidence, and scope.
 
 Model defaults are configurable per provider:
 

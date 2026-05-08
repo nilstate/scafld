@@ -44,6 +44,7 @@ scafld review <task-id> --provider claude
 scafld review <task-id> --provider command --provider-command "./reviewer"
 scafld review <task-id> --provider local
 scafld review <task-id> --provider codex --model gpt-5
+scafld review <task-id> --human-reviewed --reason "operator reviewed PR 123"
 ```
 
 Provider meanings:
@@ -55,6 +56,10 @@ Provider meanings:
   must emit a ReviewPacket-compatible response.
 - `local`: deterministic local pass-through provider for development and smoke
   tests. It is not an adversarial review and cannot satisfy `complete`.
+- `--human-reviewed`: audited operator override. It does not invoke a model
+  provider. A reason is required, and scafld records both a `review_override`
+  event and a passing `review` event with provider `human` in the session
+  ledger.
 
 ## Review Scope
 
@@ -152,10 +157,15 @@ scafld complete <task-id>
 
 - the latest session review event exists
 - the latest review verdict is `pass`
-- the latest review provider is `codex`, `claude`, or `command`
+- the latest review provider is `codex`, `claude`, `command`, or an audited
+  `human` review override
 
 If review fails, repair the work, rerun acceptance as needed, rerun review, then
 complete only after the challenger clears the gate.
+
+Use `--human-reviewed` only when the provider gate is blocked for an external
+reason and a human has actually reviewed the diff, spec, acceptance evidence,
+and scope. It is an audited escape hatch, not a softer review mode.
 
 ## Challenger Stance
 

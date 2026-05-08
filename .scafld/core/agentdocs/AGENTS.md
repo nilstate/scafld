@@ -30,6 +30,7 @@ scafld update
 
 For real review: `scafld review <task-id> --provider {codex|claude|command}`.
 `--provider local` is smoke-test only and cannot satisfy `complete`.
+Only an operator may use `scafld review <task-id> --human-reviewed --reason ...`.
 
 ## Source Checkout
 

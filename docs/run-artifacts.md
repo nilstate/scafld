@@ -51,6 +51,7 @@ It records typed events such as:
 - `criterion`
 - `phase`
 - `review`
+- `review_override`
 - `complete`
 - `fail`
 - `cancel`
@@ -58,6 +59,8 @@ It records typed events such as:
 Criterion and phase state is replayed into `criterion_states` and
 `phase_blocks`. Review entries store the verdict in `status`, the accepted
 finding payload in `output`, and the provider in `provider`.
+Human-reviewed overrides record a `review_override` entry with the operator
+reason before the passing `review` entry with provider `human`.
 
 `workspace_baseline` is captured at approval before task execution starts. It
 records dirty workspace fingerprints that review later uses to ignore unchanged

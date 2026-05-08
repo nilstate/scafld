@@ -169,6 +169,49 @@ func TestReviewRejectsTaskBeforeBuildReviewState(t *testing.T) {
 	}
 }
 
+func TestHumanReviewedRecordsAuditedPassingReviewWithoutProvider(t *testing.T) {
+	t.Parallel()
+
+	specs := &fakeSpecs{model: spec.Model{TaskID: "task", Title: "Task", Status: spec.StatusReview}}
+	sessions := &fakeSessions{}
+	provider := providerFunc(func(context.Context, corereview.Request) (corereview.Packet, error) {
+		t.Fatal("provider should not run for human-reviewed review")
+		return corereview.Packet{}, nil
+	})
+	out, err := RunWithInput(context.Background(), specs, sessions, nil, provider, fakeClock{}, Input{
+		TaskID:        "task",
+		HumanReviewed: true,
+		Reason:        "operator reviewed PR 123",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Verdict != corereview.VerdictPass || out.Next != "scafld complete task" {
+		t.Fatalf("output = %+v", out)
+	}
+	if len(sessions.ledger.Entries) != 2 ||
+		sessions.ledger.Entries[0].Type != "review_override" ||
+		sessions.ledger.Entries[0].Provider != "human" ||
+		sessions.ledger.Entries[1].Type != "review" ||
+		sessions.ledger.Entries[1].Status != corereview.VerdictPass ||
+		sessions.ledger.Entries[1].Provider != "human" {
+		t.Fatalf("human review evidence = %+v", sessions.ledger.Entries)
+	}
+	if specs.model.Review.Verdict != corereview.VerdictPass || specs.model.CurrentState.AllowedFollowUp != "scafld complete task" {
+		t.Fatalf("projected model = %+v", specs.model)
+	}
+}
+
+func TestHumanReviewedRequiresReason(t *testing.T) {
+	t.Parallel()
+
+	specs := &fakeSpecs{model: spec.Model{TaskID: "task", Title: "Task", Status: spec.StatusReview}}
+	_, err := RunWithInput(context.Background(), specs, &fakeSessions{}, nil, fakeProvider{}, fakeClock{}, Input{TaskID: "task", HumanReviewed: true})
+	if err == nil || !strings.Contains(err.Error(), "--reason") {
+		t.Fatalf("error = %v, want reason requirement", err)
+	}
+}
+
 func TestReviewPromptCarriesTaskContractToProvider(t *testing.T) {
 	t.Parallel()
 

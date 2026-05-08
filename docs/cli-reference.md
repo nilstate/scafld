@@ -189,7 +189,7 @@ model and evidence-writing discipline as `build`.
 ## review
 
 ```bash
-scafld review <task-id> [--provider auto|codex|claude|command|local] [--provider-command CMD] [--provider-binary PATH] [--model MODEL] [--review-scope PATH[,PATH...]] [--json]
+scafld review <task-id> [--provider auto|codex|claude|command|local] [--provider-command CMD] [--provider-binary PATH] [--model MODEL] [--review-scope PATH[,PATH...]] [--human-reviewed --reason TEXT] [--json]
 ```
 
 `review` is the adversarial completion gate. Defaults come from
@@ -208,6 +208,8 @@ Provider modes:
 - `command`: run a custom reviewer command; requires `--provider-command`.
 - `local`: deterministic pass-through provider for development and tests only;
   its verdict cannot satisfy `complete`.
+- `--human-reviewed`: record an audited operator review instead of invoking a
+  provider. `--reason` is required and is stored in the session ledger.
 
 Provider-specific model defaults come from
 `review.external.codex.model` and `review.external.claude.model`. `--provider`,
@@ -230,8 +232,9 @@ context, not a finding by itself. Files changed during review still fail closed.
 
 The provider returns a ReviewPacket. scafld validates it, rejects workspace
 mutation, writes the review event to session, and projects the verdict back into
-the spec. `complete` will not archive the task unless the review verdict is
-`pass`.
+the spec. A human-reviewed override writes a `review_override` event before the
+passing review event. `complete` will not archive the task unless the review
+verdict is `pass`.
 
 On review failure, the text output prints the findings and next repair command.
 The same findings appear in `scafld status`, `scafld handoff`, the session

@@ -58,9 +58,11 @@ func (o Output) GateFailure() *gate.Failure { return o.Repair }
 
 // Input describes the task and review agenda to run.
 type Input struct {
-	TaskID      string
-	Passes      []Pass
-	ReviewScope []string
+	TaskID        string
+	Passes        []Pass
+	ReviewScope   []string
+	HumanReviewed bool
+	Reason        string
 }
 
 // Pass describes one configured review pass included in the provider prompt.
@@ -85,6 +87,9 @@ func RunWithInput(ctx context.Context, specs SpecStore, sessions SessionStore, w
 	}
 	if model.Status != spec.StatusReview {
 		return Output{}, fmt.Errorf("%w: run scafld build %s first", ErrSpecNotReviewable, model.TaskID)
+	}
+	if input.HumanReviewed {
+		return runHumanReviewed(ctx, specs, sessions, clock, model, path, input.Reason)
 	}
 	beforeFull, err := workspaceSnapshot(ctx, workspace)
 	if err != nil {
@@ -182,6 +187,48 @@ func RunWithInput(ctx context.Context, specs SpecStore, sessions SessionStore, w
 		return Output{}, err
 	}
 	return Output{TaskID: model.TaskID, Verdict: packet.Verdict, Findings: packet.Findings, Next: command, Repair: reviewRepair(model, packet, command, latestReviewEvidence(ledger))}, nil
+}
+
+func runHumanReviewed(ctx context.Context, specs SpecStore, sessions SessionStore, clock Clock, model spec.Model, path string, reason string) (Output, error) {
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		return Output{}, errors.New("human-reviewed review requires --reason")
+	}
+	now := clock.Now().UTC().Format(time.RFC3339)
+	ledger, err := sessions.Append(ctx, model.TaskID, session.Entry{
+		Type:     "review_override",
+		Status:   "accepted",
+		Reason:   reason,
+		Provider: "human",
+	}, now)
+	if err != nil {
+		return Output{}, err
+	}
+	ledger, err = sessions.Append(ctx, model.TaskID, session.Entry{
+		Type:     "review",
+		Status:   review.VerdictPass,
+		Reason:   "human-reviewed override: " + reason,
+		Provider: "human",
+	}, now)
+	if err != nil {
+		return Output{}, err
+	}
+	if loaded, loadErr := sessions.Load(ctx, model.TaskID); loadErr == nil {
+		ledger = loaded
+	}
+	model = reconcile.FromSession(model, ledger)
+	model.Status = spec.StatusReview
+	model.Review.Status = "completed"
+	model.Review.Verdict = review.VerdictPass
+	model.Review.Findings = nil
+	model.CurrentState.ReviewGate = review.VerdictPass
+	model.CurrentState.Next = "complete"
+	model.CurrentState.AllowedFollowUp = "scafld complete " + model.TaskID
+	model.CurrentState.Reason = "human-reviewed override: " + reason
+	if err := specs.Save(ctx, path, model); err != nil {
+		return Output{}, err
+	}
+	return Output{TaskID: model.TaskID, Verdict: review.VerdictPass, Next: model.CurrentState.AllowedFollowUp}, nil
 }
 
 func reviewReason(packet review.Packet) string {

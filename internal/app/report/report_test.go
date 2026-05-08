@@ -115,6 +115,23 @@ func TestRunTreatsUnknownReviewProviderAsChallengeOverride(t *testing.T) {
 	}
 }
 
+func TestRunCountsHumanReviewedReviewAsChallengeOverride(t *testing.T) {
+	t.Parallel()
+
+	ledger := session.New("override", "now")
+	ledger = ledger.WithEntry(session.Entry{Type: "review_override", Status: "accepted", Provider: "human", Reason: "operator reviewed PR"})
+	ledger = ledger.WithEntry(session.Entry{Type: "review", Status: "pass", Provider: "human"})
+	ledger = ledger.WithEntry(session.Entry{Type: "complete", Status: "completed"})
+
+	out, err := Run(context.Background(), fakeSpecStore{}, fakeSessionStore{ledgers: []session.Session{ledger}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Metrics.ReviewChallengeTotal != 1 || out.Metrics.ChallengeOverrides != 1 || out.Metrics.ReviewPasses != 1 {
+		t.Fatalf("challenge metrics = %+v", out.Metrics)
+	}
+}
+
 func TestRunPropagatesStoreError(t *testing.T) {
 	t.Parallel()
 
