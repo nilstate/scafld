@@ -397,6 +397,44 @@ func TestSaveMovesSpecToLifecycleDirectory(t *testing.T) {
 	}
 }
 
+func TestLoadHealsLocationDrift(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	store := Store{Root: root}
+	model := fixtureModel()
+	model.Status = spec.StatusApproved
+
+	// Simulate a spec written by an older scafld version that did not relocate
+	// files: status=approved in frontmatter, but the file lives under drafts/.
+	draftsDir := filepath.Join(root, ".scafld", "specs", "drafts")
+	if err := os.MkdirAll(draftsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	driftedPath := filepath.Join(draftsDir, model.TaskID+".md")
+	if err := os.WriteFile(driftedPath, Render(model), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, path, err := store.Load(context.Background(), model.TaskID)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if loaded.Status != spec.StatusApproved {
+		t.Fatalf("loaded status = %s, want approved", loaded.Status)
+	}
+	approvedPath := filepath.Join(root, ".scafld", "specs", "approved", model.TaskID+".md")
+	if path != approvedPath {
+		t.Fatalf("returned path = %s, want %s", path, approvedPath)
+	}
+	if _, err := os.Stat(driftedPath); !os.IsNotExist(err) {
+		t.Fatalf("drifted path still exists: %v", err)
+	}
+	if _, err := os.Stat(approvedPath); err != nil {
+		t.Fatalf("approved path missing after heal: %v", err)
+	}
+}
+
 func FuzzParse(f *testing.F) {
 	f.Add(string(Render(fixtureModel())))
 	f.Add("---\nspec_version: '2.0'\ntask_id: fuzz\nstatus: draft\n---\n\n# Fuzz\n\n## Summary\n\ntext\n")
