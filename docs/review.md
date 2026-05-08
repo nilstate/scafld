@@ -91,13 +91,22 @@ review, the contract changed while it was being judged.
 
 ## What scafld Sends
 
-The reviewer receives a task contract, declared task scope, approval baseline,
-task changes since approval, acceptance evidence, and a clear read-only
-instruction. It also receives the configured review agenda from
-`review.automated_passes` and
-`review.adversarial_passes`, ordered by each pass's `order` field. The prompt
-tells the challenger not to mutate the workspace, not to emit placeholder
-ReviewPackets while investigating, and to return one final ReviewPacket verdict.
+The reviewer receives a typed review-context packet rendered as Markdown:
+task contract, declared task scope, approval baseline, task changes since
+approval, acceptance evidence, configured review agenda, selected project docs,
+root agent guidance, and schema context. Each project-context section includes
+source path, hash, and byte count. `review.context.max_bytes` is an aggregate
+section-body budget for the rendered packet, not a per-file allowance.
+
+The prompt tells the challenger not to mutate the workspace, not to emit
+placeholder ReviewPackets while investigating, and to return one final
+ReviewPacket verdict.
+
+Print the exact packet without invoking a provider:
+
+```bash
+scafld review <task-id> --print-context
+```
 
 The packet is the provider content contract:
 

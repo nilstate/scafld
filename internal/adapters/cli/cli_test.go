@@ -159,7 +159,7 @@ func TestRunInit(t *testing.T) {
 	}
 }
 
-func TestRunConfigureWritesProposal(t *testing.T) {
+func TestRunConfigWritesProposal(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
@@ -175,9 +175,9 @@ func TestRunConfigureWritesProposal(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	out := runCLI(t, []string{"configure", "--root", root})
-	if !strings.Contains(out, "CONFIGURE MODE") || !strings.Contains(out, ".scafld/config.proposed.yaml") {
-		t.Fatalf("configure output = %q", out)
+	out := runCLI(t, []string{"config", "--root", root})
+	if !strings.Contains(out, "CONFIG MODE") || !strings.Contains(out, ".scafld/config.proposed.yaml") {
+		t.Fatalf("config output = %q", out)
 	}
 	proposal, err := os.ReadFile(filepath.Join(root, ".scafld", "config.proposed.yaml"))
 	if err != nil {
@@ -454,6 +454,37 @@ func TestRunReviewHumanReviewedOverrideCompletes(t *testing.T) {
 	}
 	if !strings.Contains(string(sessionData), `"type": "review_override"`) || !strings.Contains(string(sessionData), "operator reviewed PR 123") {
 		t.Fatalf("session missing audited override:\n%s", sessionData)
+	}
+}
+
+func TestRunReviewPrintContextDoesNotInvokeProvider(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	initGitWorkspace(t, root)
+	runCLI(t, []string{"init", "--root", root, "--no-agent-docs"})
+	runCLI(t, []string{"plan", "--root", root, "context-task", "--command", "true"})
+	runCLI(t, []string{"approve", "--root", root, "context-task"})
+	runCLI(t, []string{"build", "--root", root, "context-task"})
+	stdout := runCLI(t, []string{"review", "--root", root, "context-task", "--print-context", "--provider", "command", "--provider-command", `printf 'should-not-run'`})
+	if !strings.Contains(stdout, "Review Context Packet") || strings.Contains(stdout, "should-not-run") {
+		t.Fatalf("print context output = %q", stdout)
+	}
+}
+
+func TestReviewHelpIncludesContextFlags(t *testing.T) {
+	t.Parallel()
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run(context.Background(), []string{"review", "--help"}, &stdout, &stderr)
+	if code != ExitSuccess {
+		t.Fatalf("review help exit = %d stderr=%q", code, stderr.String())
+	}
+	for _, want := range []string{"--print-context", "--review-scope", "--provider", "--model", "--human-reviewed"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("review help missing %q:\n%s", want, stdout.String())
+		}
 	}
 }
 

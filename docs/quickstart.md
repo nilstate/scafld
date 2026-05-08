@@ -20,7 +20,7 @@ For a new repository, generate a grounded config proposal before the first
 serious spec:
 
 ```bash
-scafld configure
+scafld config
 ```
 
 Review `.scafld/config.proposed.yaml` and copy only verified invariant IDs or
@@ -79,6 +79,7 @@ Use an external challenger for real work:
 scafld review add-auth --provider codex
 scafld review add-auth --provider claude
 scafld review add-auth --provider command --provider-command "./reviewer"
+scafld review add-auth --print-context
 ```
 
 With no provider flag, scafld uses `--provider auto` and selects an installed
@@ -86,16 +87,18 @@ external challenger. If none is installed, review fails closed. Use
 `--provider local` only for development smoke tests; local verdicts cannot
 satisfy `complete`.
 
+`--print-context` shows the exact deterministic brief before you spend a review
+run.
+
 ## Complete
 
 ```bash
 scafld complete add-auth
 ```
 
-`complete` archives only work with a passing `codex`, `claude`, or `command`
-review in the session. If
-review returns a blocking finding, repair the work, rerun `build` as needed,
-then rerun `review`.
+`complete` archives only work with a passing `codex`, `claude`, `command`, or
+audited human review in the session. If review returns a blocking finding,
+repair the work, rerun `build` as needed, then rerun `review`.
 
 ## Inspect State
 

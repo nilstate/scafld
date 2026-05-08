@@ -75,22 +75,22 @@ scafld init [--root PATH] [--json]
 ```
 
 Bootstraps `.scafld/` in the workspace. It installs project-owned config and
-prompt files, creates spec/run/review directories, and installs managed core
-assets under `.scafld/core/`.
+prompt files, creates spec/run directories, and installs managed core assets
+under `.scafld/core/`.
 
 `init` is deterministic. It does not ask an agent to infer project policy.
 
-## configure
+## config
 
 ```bash
-scafld configure [--root PATH] [--json]
+scafld config [--root PATH] [--json]
 ```
 
 Scans the workspace in read-only mode and writes
 `.scafld/config.proposed.yaml`. The proposal contains cited evidence,
 suggested invariant IDs, discovered validation commands, and open questions.
 
-`configure` does not mutate `.scafld/config.yaml`. The operator or agent must
+`config` does not mutate `.scafld/config.yaml`. The operator or agent must
 open the cited sources and copy only verified changes into the real config.
 
 ## update
@@ -101,8 +101,9 @@ scafld update [--root PATH] [--json]
 
 Refreshes managed `.scafld/core/` files from the bundled runtime. It also
 refreshes `.scafld/prompts/*` copies that are still known defaults, while
-skipping customized project prompts. Specs, runs, reviews, and local config are
-preserved.
+skipping customized project prompts. It refreshes root agent docs and renders
+generated `.scafld/config.yaml` into the current strict runtime shape. Specs,
+runs, reviews, and local config are preserved.
 
 ## plan
 
@@ -189,7 +190,7 @@ model and evidence-writing discipline as `build`.
 ## review
 
 ```bash
-scafld review <task-id> [--provider auto|codex|claude|command|local] [--provider-command CMD] [--provider-binary PATH] [--model MODEL] [--review-scope PATH[,PATH...]] [--human-reviewed --reason TEXT] [--json]
+scafld review <task-id> [--provider auto|codex|claude|command|local] [--provider-command CMD] [--provider-binary PATH] [--model MODEL] [--review-scope PATH[,PATH...]] [--print-context] [--human-reviewed --reason TEXT] [--json]
 ```
 
 `review` is the adversarial completion gate. Defaults come from
@@ -215,6 +216,10 @@ Provider-specific model defaults come from
 `review.external.codex.model` and `review.external.claude.model`. `--provider`,
 `--provider-command`, `--provider-binary`, and `--model` override config for one
 invocation.
+
+`--print-context` prints the exact deterministic review-context packet without
+invoking a provider. Use it when an agent needs to see why a reviewer is
+under-informed or why a gate is likely to block before spending a model run.
 
 scafld derives review scope from spec packages, impacted files, and phase
 changes. Use `--review-scope` only when a dirty monorepo or workspace needs an
@@ -249,7 +254,7 @@ scafld complete <task-id> [--json]
 ```
 
 Archives completed work only after the latest session review event has a
-`pass` verdict from `codex`, `claude`, or `command`.
+`pass` verdict from `codex`, `claude`, `command`, or an audited human review.
 
 ## fail
 

@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	osexec "os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -12,6 +14,7 @@ import (
 	"github.com/nilstate/scafld/v2/internal/adapters/process"
 	"github.com/nilstate/scafld/v2/internal/adapters/providers"
 	appreview "github.com/nilstate/scafld/v2/internal/app/review"
+	"github.com/nilstate/scafld/v2/internal/core/reviewcontext"
 )
 
 // Options configures review-provider selection for the CLI.
@@ -24,12 +27,16 @@ type Options struct {
 	Model           string
 	DiagnosticsPath string
 	Progress        io.Writer
+	PrintContext    bool
 }
 
 // Selection is the provider and review agenda chosen for a review run.
 type Selection struct {
-	Provider appreview.Provider
-	Passes   []appreview.Pass
+	Provider        appreview.Provider
+	Passes          []appreview.Pass
+	Invariants      map[string]string
+	ContextSections []reviewcontext.Section
+	ContextMaxBytes int
 }
 
 // Select loads config, applies CLI overrides, and returns a review provider.
@@ -37,6 +44,16 @@ func Select(ctx context.Context, opts Options) (Selection, error) {
 	cfg, err := configadapter.Load(ctx, opts.Root)
 	if err != nil {
 		return Selection{}, fmt.Errorf("load config: %w", err)
+	}
+	contextSections := reviewContextSections(opts.Root, cfg.Review.Context)
+	selection := Selection{
+		Passes:          reviewPassesFromConfig(cfg.Review),
+		Invariants:      cloneStrings(cfg.Invariants.Canonical),
+		ContextSections: contextSections,
+		ContextMaxBytes: cfg.Review.Context.MaxBytes,
+	}
+	if opts.PrintContext {
+		return selection, nil
 	}
 	external := cfg.Review.External
 	diagnosticsPath := opts.DiagnosticsPath
@@ -61,7 +78,8 @@ func Select(ctx context.Context, opts Options) (Selection, error) {
 	if err != nil {
 		return Selection{}, err
 	}
-	return Selection{Provider: provider, Passes: reviewPassesFromConfig(cfg.Review)}, nil
+	selection.Provider = provider
+	return selection, nil
 }
 
 func progressLabel(opts Options, external configadapter.ExternalReviewConfig) string {
@@ -102,6 +120,17 @@ func commandExists(name string) bool {
 	return err == nil
 }
 
+func cloneStrings(values map[string]string) map[string]string {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(values))
+	for key, value := range values {
+		out[key] = value
+	}
+	return out
+}
+
 func reviewPassesFromConfig(cfg configadapter.ReviewConfig) []appreview.Pass {
 	passes := make([]appreview.Pass, 0, len(cfg.AutomatedPasses)+len(cfg.AdversarialPasses))
 	for id, pass := range cfg.AutomatedPasses {
@@ -111,6 +140,83 @@ func reviewPassesFromConfig(cfg configadapter.ReviewConfig) []appreview.Pass {
 		passes = append(passes, appreview.Pass{ID: id, Category: "adversarial", Order: pass.Order, Title: pass.Title, Description: pass.Description})
 	}
 	return passes
+}
+
+func reviewContextSections(root string, cfg configadapter.ReviewContextConfig) []reviewcontext.Section {
+	sections := make([]reviewcontext.Section, 0, len(cfg.Files))
+	for index, rel := range cfg.Files {
+		clean, ok := safeContextPath(rel)
+		if !ok {
+			continue
+		}
+		data, ok := readSafeContextFile(root, clean)
+		if !ok {
+			continue
+		}
+		sections = append(sections, reviewcontext.Section{
+			Key:     "file:" + clean,
+			Title:   "Project Context: " + clean,
+			Order:   1000 + index,
+			Body:    string(data),
+			Sources: []reviewcontext.Source{reviewcontext.SourceForContent("file", clean, data)},
+		})
+	}
+	return sections
+}
+
+func readSafeContextFile(root string, clean string) ([]byte, bool) {
+	path := filepath.Join(root, filepath.FromSlash(clean))
+	resolvedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return nil, false
+	}
+	resolvedPath, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return nil, false
+	}
+	rel, err := filepath.Rel(resolvedRoot, resolvedPath)
+	if err != nil {
+		return nil, false
+	}
+	rel = filepath.ToSlash(rel)
+	if _, ok := safeContextPath(rel); !ok || rel != clean {
+		return nil, false
+	}
+	data, err := os.ReadFile(resolvedPath)
+	if err != nil {
+		return nil, false
+	}
+	return data, true
+}
+
+func safeContextPath(path string) (string, bool) {
+	raw := strings.ReplaceAll(strings.TrimSpace(path), "\\", "/")
+	clean := strings.Trim(filepath.ToSlash(filepath.Clean(raw)), "/")
+	root := strings.Split(clean, "/")[0]
+	if clean == "." || clean == "" || strings.HasPrefix(raw, "/") || strings.Contains(root, ":") || strings.HasPrefix(clean, "../") || strings.Contains(clean, "/../") {
+		return "", false
+	}
+	switch {
+	case clean == ".scafld/config.local.yaml":
+		return "", false
+	case hasPrivateEnvSegment(clean):
+		return "", false
+	case strings.HasPrefix(clean+"/", ".git/"):
+		return "", false
+	case strings.HasPrefix(clean+"/", ".priv/"):
+		return "", false
+	default:
+		return clean, true
+	}
+}
+
+func hasPrivateEnvSegment(path string) bool {
+	for _, segment := range strings.Split(path, "/") {
+		if strings.HasPrefix(segment, ".env") {
+			return true
+		}
+	}
+	return false
 }
 
 func first(values ...string) string {

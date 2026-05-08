@@ -135,7 +135,7 @@ A weak spec should not become approved work.
 issue, scafld sends the task to repair instead of letting the implementation
 agent wave itself through.
 
-For a new repository, or after project policy changes, run `scafld configure`
+For a new repository, or after project policy changes, run `scafld config`
 once to write an evidence-backed config proposal. It is setup discipline, not a
 per-task lifecycle step.
 
@@ -239,7 +239,7 @@ scafld update
 Wrapper intent:
 
 - `plan`: create a draft Markdown spec
-- `configure`: propose evidence-backed project config without applying it
+- `config`: propose evidence-backed project config without applying it
 - `harden`: stress-test the draft before approval
 - `validate`: reject malformed or non-executable spec structure
 - `approve`: accept a spec only after it is clear enough to execute
@@ -339,7 +339,9 @@ Prompt ownership is deliberate:
 - `.scafld/core/prompts/*` is the managed reset copy refreshed by `scafld update`
 
 `scafld update` refreshes default project prompt copies when they are still
-known defaults. Customized project prompts are skipped.
+known defaults. Customized project prompts are skipped. It also refreshes root
+agent docs and renders generated `.scafld/config.yaml` into the current strict
+runtime shape.
 
 ## Adversarial Review
 
@@ -363,8 +365,13 @@ scafld review add-cache --provider claude
 scafld review add-cache --provider codex
 scafld review add-cache --provider command --provider-command "./reviewer"
 scafld review add-cache --review-scope api,cli/packages/mcp
+scafld review add-cache --print-context
 scafld review add-cache --human-reviewed --reason "operator reviewed PR 123"
 ```
+
+`--print-context` renders the exact deterministic review brief without invoking
+a provider, so agents can debug what the challenger will see before spending a
+review run.
 
 `--human-reviewed` is the audited escape hatch. It belongs to `review`, not
 `complete`: it records a `review_override` event and a passing human review
@@ -381,6 +388,15 @@ review:
       model: "gpt-5.5"
     claude:
       model: "claude-opus-4-7"
+  context:
+    # Aggregate rendered section-body budget for the provider brief.
+    max_bytes: 16384
+    files:
+      - AGENTS.md
+      - CLAUDE.md
+      - README.md
+      - docs/review.md
+      - .scafld/core/schemas/review_packet.json
 ```
 
 The review agenda is configurable too. `review.automated_passes` and

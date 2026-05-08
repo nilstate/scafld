@@ -71,6 +71,13 @@ func Build(out appbuild.Output) string {
 func Review(out appreview.Output) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "review verdict: %s\n", out.Verdict)
+	if out.Provider != "" {
+		if out.Model != "" {
+			fmt.Fprintf(&b, "review provider: %s:%s\n", out.Provider, out.Model)
+		} else {
+			fmt.Fprintf(&b, "review provider: %s\n", out.Provider)
+		}
+	}
 	if len(out.Findings) > 0 {
 		fmt.Fprintf(&b, "findings:\n")
 		for _, finding := range out.Findings {

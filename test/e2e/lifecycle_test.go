@@ -126,6 +126,27 @@ func TestReviewProviderMutationGuardFailsReview(t *testing.T) {
 	}
 }
 
+func TestReviewContextPreview(t *testing.T) {
+	t.Parallel()
+
+	bin := testBinary(t)
+	root := t.TempDir()
+	run(t, bin, "init", "--root", root)
+	initGitWorkspace(t, root)
+	run(t, bin, "plan", "--root", root, "context-preview", "--title", "Context Preview", "--command", "true")
+	run(t, bin, "approve", "--root", root, "context-preview")
+	run(t, bin, "build", "--root", root, "context-preview")
+	out := string(run(t, bin, "review", "--root", root, "context-preview", "--print-context", "--provider", "command", "--provider-command", `printf 'should-not-run'`))
+	for _, want := range []string{"Review Context Packet", "Task: context-preview", "Task Contract"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("context preview missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "should-not-run") {
+		t.Fatalf("print-context invoked provider:\n%s", out)
+	}
+}
+
 func TestHardenPreservesHumanOwnedSpecSections(t *testing.T) {
 	t.Parallel()
 

@@ -1,4 +1,4 @@
-package configure
+package config
 
 import (
 	"context"
@@ -95,7 +95,7 @@ type SpecGuidance struct {
 	Execution   *ExecutionSuggestion  `json:"execution,omitempty" yaml:"execution,omitempty"`
 }
 
-// Output describes a configure run.
+// Output describes a config run.
 type Output struct {
 	Path     string   `json:"path"`
 	Proposal Proposal `json:"proposal"`
@@ -175,7 +175,7 @@ func invariantMap(invariants []InvariantSuggestion) map[string]string {
 }
 
 func prompt(Proposal) string {
-	return `# CONFIGURE MODE
+	return `# CONFIG MODE
 
 scafld has written an evidence-backed proposal, not an applied config.
 

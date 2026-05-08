@@ -2,7 +2,7 @@
 #
 # This file contains only settings the Go runtime reads. Project policy should
 # enter the protocol through invariant IDs, specs, acceptance criteria, and the
-# review agenda. Use `scafld configure` to generate an evidence-backed proposal
+# review agenda. Use `scafld config` to generate an evidence-backed proposal
 # before tightening project-specific values.
 
 version: "1.0"
@@ -47,6 +47,20 @@ review:
     claude:
       model: "claude-opus-4-7"
       # binary: "claude"
+
+  context:
+    # Bounded, deterministic project files included in the provider prompt.
+    # max_bytes is the total rendered section-body budget, not a per-file cap.
+    # Private/local files are excluded even if listed here.
+    max_bytes: 16384
+    files:
+      - AGENTS.md
+      - CLAUDE.md
+      - README.md
+      - docs/review.md
+      - docs/configuration.md
+      - docs/execution.md
+      - .scafld/core/schemas/review_packet.json
 
   automated_passes:
     spec_compliance:

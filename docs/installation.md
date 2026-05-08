@@ -125,7 +125,7 @@ invariants, spec scope, acceptance criteria, and review agenda.
 To tighten config for a real project, run:
 
 ```bash
-scafld configure
+scafld config
 ```
 
 This writes `.scafld/config.proposed.yaml` with evidence-backed suggestions.

@@ -1,4 +1,4 @@
-package configure
+package config
 
 import (
 	"context"
@@ -10,7 +10,7 @@ import (
 	"sort"
 	"strings"
 
-	appconfigure "github.com/nilstate/scafld/v2/internal/app/configure"
+	appconfig "github.com/nilstate/scafld/v2/internal/app/config"
 )
 
 // Scanner inspects a workspace for config-relevant evidence.
@@ -19,44 +19,45 @@ type Scanner struct {
 }
 
 // Scan returns repo evidence without mutating the workspace.
-func (s Scanner) Scan(ctx context.Context) (appconfigure.Snapshot, error) {
+func (s Scanner) Scan(ctx context.Context) (appconfig.Snapshot, error) {
 	root := s.Root
 	if root == "" {
 		root = "."
 	}
 	abs, err := filepath.Abs(root)
 	if err != nil {
-		return appconfigure.Snapshot{}, fmt.Errorf("resolve root: %w", err)
+		return appconfig.Snapshot{}, fmt.Errorf("resolve root: %w", err)
 	}
-	snapshot := appconfigure.Snapshot{Root: abs}
+	snapshot := appconfig.Snapshot{Root: abs}
 	for _, candidate := range fileCandidates() {
 		if err := ctx.Err(); err != nil {
-			return appconfigure.Snapshot{}, err
+			return appconfig.Snapshot{}, err
 		}
 		if exists(filepath.Join(abs, filepath.FromSlash(candidate.Path))) {
 			snapshot.Files = append(snapshot.Files, candidate)
 		}
 	}
+	snapshot.Files = append(snapshot.Files, nestedPackageEvidence(abs)...)
 	snapshot.Files = append(snapshot.Files, toolchainEvidence(abs)...)
 	workflowFiles, err := globRel(abs, ".github/workflows/*")
 	if err != nil {
-		return appconfigure.Snapshot{}, err
+		return appconfig.Snapshot{}, err
 	}
 	for _, rel := range workflowFiles {
 		if strings.HasSuffix(rel, ".yml") || strings.HasSuffix(rel, ".yaml") {
-			snapshot.Files = append(snapshot.Files, appconfigure.Evidence{Path: rel, Role: "ci_workflow"})
+			snapshot.Files = append(snapshot.Files, appconfig.Evidence{Path: rel, Role: "ci_workflow"})
 		}
 	}
 	snapshot.Commands = commandSuggestions(abs)
 	snapshot.Invariants = invariantSuggestions(abs, snapshot.Files)
 	snapshot.Execution = executionSuggestion(abs)
-	snapshot.Warnings = legacyConfigWarnings(abs)
+	snapshot.Warnings = ignoredConfigWarnings(abs)
 	snapshot.Questions = openQuestions(snapshot)
 	return snapshot, nil
 }
 
-func fileCandidates() []appconfigure.Evidence {
-	return []appconfigure.Evidence{
+func fileCandidates() []appconfig.Evidence {
+	return []appconfig.Evidence{
 		{Path: "AGENTS.md", Role: "agent_contract"},
 		{Path: "CLAUDE.md", Role: "claude_agent_contract"},
 		{Path: "README.md", Role: "project_overview"},
@@ -70,56 +71,80 @@ func fileCandidates() []appconfigure.Evidence {
 		{Path: "pyproject.toml", Role: "python_package"},
 		{Path: "Cargo.toml", Role: "rust_package"},
 		{Path: "Gemfile", Role: "ruby_package"},
+		{Path: "docker-compose.yml", Role: "service_topology"},
+		{Path: "docker-compose.yaml", Role: "service_topology"},
+		{Path: "compose.yml", Role: "service_topology"},
+		{Path: "compose.yaml", Role: "service_topology"},
+		{Path: "Procfile", Role: "process_topology"},
 		{Path: "internal/arch/architecture_test.go", Role: "architecture_gate"},
 	}
 }
 
-func toolchainEvidence(root string) []appconfigure.Evidence {
-	var evidence []appconfigure.Evidence
-	if exists(filepath.Join(root, ".ruby-version")) {
-		evidence = append(evidence, appconfigure.Evidence{Path: ".ruby-version", Role: "ruby_version"})
-	}
-	for _, rel := range oneLevelMatches(root, ".ruby-version") {
-		evidence = append(evidence, appconfigure.Evidence{Path: rel, Role: "ruby_version"})
-	}
-	if exists(filepath.Join(root, ".tool-versions")) {
-		evidence = append(evidence, appconfigure.Evidence{Path: ".tool-versions", Role: "tool_versions"})
-	}
-	for _, rel := range oneLevelMatches(root, ".tool-versions") {
-		evidence = append(evidence, appconfigure.Evidence{Path: rel, Role: "tool_versions"})
-	}
-	if exists(filepath.Join(root, "db", "migrate")) {
-		evidence = append(evidence, appconfigure.Evidence{Path: "db/migrate", Role: "migration_surface"})
+func nestedPackageEvidence(root string) []appconfig.Evidence {
+	var evidence []appconfig.Evidence
+	for _, item := range []struct {
+		name string
+		role string
+	}{
+		{"go.mod", "nested_go_module"},
+		{"package.json", "nested_node_package"},
+		{"pyproject.toml", "nested_python_package"},
+		{"Cargo.toml", "nested_rust_package"},
+		{"Gemfile", "nested_ruby_package"},
+	} {
+		for _, rel := range oneLevelMatches(root, item.name) {
+			evidence = append(evidence, appconfig.Evidence{Path: rel, Role: item.role})
+		}
 	}
 	return evidence
 }
 
-func commandSuggestions(root string) []appconfigure.CommandSuggestion {
-	var commands []appconfigure.CommandSuggestion
+func toolchainEvidence(root string) []appconfig.Evidence {
+	var evidence []appconfig.Evidence
+	if exists(filepath.Join(root, ".ruby-version")) {
+		evidence = append(evidence, appconfig.Evidence{Path: ".ruby-version", Role: "ruby_version"})
+	}
+	for _, rel := range oneLevelMatches(root, ".ruby-version") {
+		evidence = append(evidence, appconfig.Evidence{Path: rel, Role: "ruby_version"})
+	}
+	if exists(filepath.Join(root, ".tool-versions")) {
+		evidence = append(evidence, appconfig.Evidence{Path: ".tool-versions", Role: "tool_versions"})
+	}
+	for _, rel := range oneLevelMatches(root, ".tool-versions") {
+		evidence = append(evidence, appconfig.Evidence{Path: rel, Role: "tool_versions"})
+	}
+	if exists(filepath.Join(root, "db", "migrate")) {
+		evidence = append(evidence, appconfig.Evidence{Path: "db/migrate", Role: "migration_surface"})
+	}
+	return evidence
+}
+
+func commandSuggestions(root string) []appconfig.CommandSuggestion {
+	var commands []appconfig.CommandSuggestion
 	if makefile := readText(filepath.Join(root, "Makefile")); makefile != "" {
 		if hasMakeTarget(makefile, "check") {
-			commands = append(commands, appconfigure.CommandSuggestion{ID: "full_check", Command: "make check", Sources: []string{"Makefile"}})
+			commands = append(commands, appconfig.CommandSuggestion{ID: "full_check", Command: "make check", Sources: []string{"Makefile"}})
 		}
 		if hasMakeTarget(makefile, "test") {
-			commands = append(commands, appconfigure.CommandSuggestion{ID: "test", Command: "make test", Sources: []string{"Makefile"}})
+			commands = append(commands, appconfig.CommandSuggestion{ID: "test", Command: "make test", Sources: []string{"Makefile"}})
 		}
 	}
 	if justfile := readText(filepath.Join(root, "justfile")); justfile != "" {
 		if hasMakeTarget(justfile, "check") {
-			commands = append(commands, appconfigure.CommandSuggestion{ID: "just_check", Command: "just check", Sources: []string{"justfile"}})
+			commands = append(commands, appconfig.CommandSuggestion{ID: "just_check", Command: "just check", Sources: []string{"justfile"}})
 		}
 		if hasMakeTarget(justfile, "test") {
-			commands = append(commands, appconfigure.CommandSuggestion{ID: "just_test", Command: "just test", Sources: []string{"justfile"}})
+			commands = append(commands, appconfig.CommandSuggestion{ID: "just_test", Command: "just test", Sources: []string{"justfile"}})
 		}
 	}
 	if exists(filepath.Join(root, "Taskfile.yml")) || exists(filepath.Join(root, "Taskfile.yaml")) {
 		taskfile := firstExisting(root, "Taskfile.yml", "Taskfile.yaml")
 		text := readText(filepath.Join(root, taskfile))
 		if hasYAMLTask(text, "check") {
-			commands = append(commands, appconfigure.CommandSuggestion{ID: "task_check", Command: "task check", Sources: []string{taskfile}})
+			commands = append(commands, appconfig.CommandSuggestion{ID: "task_check", Command: "task check", Sources: []string{taskfile}})
 		}
 		if hasYAMLTask(text, "test") {
-			commands = append(commands, appconfigure.CommandSuggestion{ID: "task_test", Command: "task test", Sources: []string{taskfile}})
+			commands = append(commands, appconfig.CommandSuggestion{ID: "task_test", Command: "task test", Sources: []string{taskfile}})
 		}
 	}
 	if packageJSON := readText(filepath.Join(root, "package.json")); packageJSON != "" {
@@ -130,109 +155,176 @@ func commandSuggestions(root string) []appconfigure.CommandSuggestion {
 		if json.Unmarshal([]byte(packageJSON), &pkg) == nil {
 			manager := nodePackageManager(root, pkg.PackageManager)
 			if _, ok := pkg.Scripts["test"]; ok {
-				commands = append(commands, appconfigure.CommandSuggestion{ID: "node_test", Command: manager + " test", Sources: []string{"package.json:scripts.test"}})
+				commands = append(commands, appconfig.CommandSuggestion{ID: "node_test", Command: manager + " test", Sources: []string{"package.json:scripts.test"}})
 			}
 			if _, ok := pkg.Scripts["lint"]; ok {
-				commands = append(commands, appconfigure.CommandSuggestion{ID: "node_lint", Command: nodeRun(manager, "lint"), Sources: []string{"package.json:scripts.lint"}})
+				commands = append(commands, appconfig.CommandSuggestion{ID: "node_lint", Command: nodeRun(manager, "lint"), Sources: []string{"package.json:scripts.lint"}})
 			}
 			if _, ok := pkg.Scripts["typecheck"]; ok {
-				commands = append(commands, appconfigure.CommandSuggestion{ID: "node_typecheck", Command: nodeRun(manager, "typecheck"), Sources: []string{"package.json:scripts.typecheck"}})
+				commands = append(commands, appconfig.CommandSuggestion{ID: "node_typecheck", Command: nodeRun(manager, "typecheck"), Sources: []string{"package.json:scripts.typecheck"}})
 			}
 		}
 	}
 	if readText(filepath.Join(root, "go.mod")) != "" {
-		commands = append(commands, appconfigure.CommandSuggestion{ID: "go_test", Command: "go test ./...", Sources: []string{"go.mod"}})
+		commands = append(commands, appconfig.CommandSuggestion{ID: "go_test", Command: "go test ./...", Sources: []string{"go.mod"}})
 	}
 	if readText(filepath.Join(root, "Cargo.toml")) != "" {
-		commands = append(commands, appconfigure.CommandSuggestion{ID: "cargo_test", Command: "cargo test", Sources: []string{"Cargo.toml"}})
+		commands = append(commands, appconfig.CommandSuggestion{ID: "cargo_test", Command: "cargo test", Sources: []string{"Cargo.toml"}})
 	}
 	if pyproject := readText(filepath.Join(root, "pyproject.toml")); pyproject != "" {
 		if strings.Contains(pyproject, "pytest") || exists(filepath.Join(root, "tests")) {
-			commands = append(commands, appconfigure.CommandSuggestion{ID: "python_test", Command: "python -m pytest", Sources: []string{"pyproject.toml"}})
+			commands = append(commands, appconfig.CommandSuggestion{ID: "python_test", Command: "python -m pytest", Sources: []string{"pyproject.toml"}})
 		}
 		if strings.Contains(pyproject, "ruff") {
-			commands = append(commands, appconfigure.CommandSuggestion{ID: "python_lint", Command: "python -m ruff check .", Sources: []string{"pyproject.toml"}})
+			commands = append(commands, appconfig.CommandSuggestion{ID: "python_lint", Command: "python -m ruff check .", Sources: []string{"pyproject.toml"}})
 		}
 	}
 	if gemfile := readText(filepath.Join(root, "Gemfile")); gemfile != "" {
 		if strings.Contains(gemfile, "rspec") || exists(filepath.Join(root, "spec")) {
-			commands = append(commands, appconfigure.CommandSuggestion{ID: "ruby_test", Command: "bundle exec rspec", Sources: []string{"Gemfile"}})
+			commands = append(commands, appconfig.CommandSuggestion{ID: "ruby_test", Command: "bundle exec rspec", Sources: []string{"Gemfile"}})
 		}
 	}
+	commands = append(commands, nestedCommandSuggestions(root)...)
 	return dedupeCommands(commands)
 }
 
-func invariantSuggestions(root string, files []appconfigure.Evidence) []appconfigure.InvariantSuggestion {
-	var invariants []appconfigure.InvariantSuggestion
+func nestedCommandSuggestions(root string) []appconfig.CommandSuggestion {
+	var commands []appconfig.CommandSuggestion
+	for _, rel := range oneLevelMatches(root, "go.mod") {
+		dir := filepath.ToSlash(filepath.Dir(rel))
+		commands = append(commands, appconfig.CommandSuggestion{ID: "go_test_" + idPart(dir), Command: "(cd " + dir + " && go test ./...)", Sources: []string{rel}})
+	}
+	for _, rel := range oneLevelMatches(root, "package.json") {
+		dir := filepath.ToSlash(filepath.Dir(rel))
+		text := readText(filepath.Join(root, filepath.FromSlash(rel)))
+		var pkg struct {
+			Scripts        map[string]string `json:"scripts"`
+			PackageManager string            `json:"packageManager"`
+		}
+		if json.Unmarshal([]byte(text), &pkg) != nil {
+			continue
+		}
+		manager := nodePackageManager(filepath.Join(root, filepath.FromSlash(dir)), pkg.PackageManager)
+		if _, ok := pkg.Scripts["test"]; ok {
+			commands = append(commands, appconfig.CommandSuggestion{ID: "node_test_" + idPart(dir), Command: "(cd " + dir + " && " + manager + " test)", Sources: []string{rel + ":scripts.test"}})
+		}
+		if _, ok := pkg.Scripts["lint"]; ok {
+			commands = append(commands, appconfig.CommandSuggestion{ID: "node_lint_" + idPart(dir), Command: "(cd " + dir + " && " + nodeRun(manager, "lint") + ")", Sources: []string{rel + ":scripts.lint"}})
+		}
+		if _, ok := pkg.Scripts["typecheck"]; ok {
+			commands = append(commands, appconfig.CommandSuggestion{ID: "node_typecheck_" + idPart(dir), Command: "(cd " + dir + " && " + nodeRun(manager, "typecheck") + ")", Sources: []string{rel + ":scripts.typecheck"}})
+		}
+	}
+	for _, rel := range oneLevelMatches(root, "pyproject.toml") {
+		dir := filepath.ToSlash(filepath.Dir(rel))
+		text := readText(filepath.Join(root, filepath.FromSlash(rel)))
+		if strings.Contains(text, "pytest") || exists(filepath.Join(root, filepath.FromSlash(dir), "tests")) {
+			commands = append(commands, appconfig.CommandSuggestion{ID: "python_test_" + idPart(dir), Command: "(cd " + dir + " && python -m pytest)", Sources: []string{rel}})
+		}
+		if strings.Contains(text, "ruff") {
+			commands = append(commands, appconfig.CommandSuggestion{ID: "python_lint_" + idPart(dir), Command: "(cd " + dir + " && python -m ruff check .)", Sources: []string{rel}})
+		}
+	}
+	for _, rel := range oneLevelMatches(root, "Cargo.toml") {
+		dir := filepath.ToSlash(filepath.Dir(rel))
+		commands = append(commands, appconfig.CommandSuggestion{ID: "cargo_test_" + idPart(dir), Command: "(cd " + dir + " && cargo test)", Sources: []string{rel}})
+	}
+	for _, rel := range oneLevelMatches(root, "Gemfile") {
+		dir := filepath.ToSlash(filepath.Dir(rel))
+		gemfile := readText(filepath.Join(root, filepath.FromSlash(rel)))
+		if strings.Contains(gemfile, "rspec") || exists(filepath.Join(root, filepath.FromSlash(dir), "spec")) {
+			commands = append(commands, appconfig.CommandSuggestion{ID: "ruby_test_" + idPart(dir), Command: "(cd " + dir + " && bundle exec rspec)", Sources: []string{rel}})
+		}
+	}
+	return commands
+}
+
+func invariantSuggestions(root string, files []appconfig.Evidence) []appconfig.InvariantSuggestion {
+	var invariants []appconfig.InvariantSuggestion
 	if evidenceRole(files, "architecture_gate") {
-		invariants = append(invariants, appconfigure.InvariantSuggestion{
+		invariants = append(invariants, appconfig.InvariantSuggestion{
 			ID:          "architecture_boundaries",
 			Description: "Preserve the architecture boundaries enforced by the repo's architecture tests.",
 			Sources:     []string{"internal/arch/architecture_test.go"},
 		})
 	}
 	if evidenceRole(files, "ci_workflow") {
-		invariants = append(invariants, appconfigure.InvariantSuggestion{
+		invariants = append(invariants, appconfig.InvariantSuggestion{
 			ID:          "ci_must_pass",
 			Description: "Changes should preserve the committed CI workflow expectations.",
 			Sources:     pathsByRole(files, "ci_workflow"),
 		})
 	}
 	if readText(filepath.Join(root, "go.mod")) != "" {
-		invariants = append(invariants, appconfigure.InvariantSuggestion{
+		invariants = append(invariants, appconfig.InvariantSuggestion{
 			ID:          "go_module_integrity",
 			Description: "Keep the Go module buildable and avoid unchecked dependency or module-path drift.",
 			Sources:     []string{"go.mod"},
 		})
 	}
 	if readText(filepath.Join(root, "package.json")) != "" {
-		invariants = append(invariants, appconfigure.InvariantSuggestion{
+		invariants = append(invariants, appconfig.InvariantSuggestion{
 			ID:          "package_script_integrity",
 			Description: "Keep package scripts and generated package metadata aligned with release behavior.",
 			Sources:     []string{"package.json"},
 		})
 	}
 	if readText(filepath.Join(root, "pnpm-workspace.yaml")) != "" {
-		invariants = append(invariants, appconfigure.InvariantSuggestion{
+		invariants = append(invariants, appconfig.InvariantSuggestion{
 			ID:          "workspace_package_boundaries",
 			Description: "Preserve workspace package boundaries and avoid undeclared cross-package coupling.",
 			Sources:     []string{"pnpm-workspace.yaml"},
 		})
 	}
 	if readText(filepath.Join(root, "pyproject.toml")) != "" {
-		invariants = append(invariants, appconfigure.InvariantSuggestion{
+		invariants = append(invariants, appconfig.InvariantSuggestion{
 			ID:          "python_environment_integrity",
 			Description: "Keep Python project metadata, runtime dependencies, and validation commands aligned.",
 			Sources:     []string{"pyproject.toml"},
 		})
 	}
 	if readText(filepath.Join(root, "Gemfile")) != "" {
-		invariants = append(invariants, appconfigure.InvariantSuggestion{
+		invariants = append(invariants, appconfig.InvariantSuggestion{
 			ID:          "ruby_bundle_integrity",
 			Description: "Keep Ruby version, Bundler context, and gem dependencies aligned with validation commands.",
 			Sources:     []string{"Gemfile"},
 		})
 	}
 	if readText(filepath.Join(root, "Cargo.toml")) != "" {
-		invariants = append(invariants, appconfigure.InvariantSuggestion{
+		invariants = append(invariants, appconfig.InvariantSuggestion{
 			ID:          "rust_crate_integrity",
 			Description: "Keep Cargo manifests, lockfiles, and crate validation aligned.",
 			Sources:     []string{"Cargo.toml"},
 		})
 	}
 	if exists(filepath.Join(root, "db", "migrate")) {
-		invariants = append(invariants, appconfigure.InvariantSuggestion{
+		invariants = append(invariants, appconfig.InvariantSuggestion{
 			ID:          "migration_safety",
 			Description: "Schema migrations require explicit rollback thinking and public data-safety review.",
 			Sources:     []string{"db/migrate"},
 		})
 	}
+	if paths := pathsByRole(files, "service_topology"); len(paths) > 0 {
+		invariants = append(invariants, appconfig.InvariantSuggestion{
+			ID:          "service_topology_integrity",
+			Description: "Keep service topology and local orchestration files aligned with code changes.",
+			Sources:     paths,
+		})
+	}
+	if paths := pathsByRole(files, "process_topology"); len(paths) > 0 {
+		invariants = append(invariants, appconfig.InvariantSuggestion{
+			ID:          "process_topology_integrity",
+			Description: "Keep declared process entrypoints aligned with runtime behavior.",
+			Sources:     paths,
+		})
+	}
 	return dedupeInvariants(invariants)
 }
 
-func executionSuggestion(root string) *appconfigure.ExecutionSuggestion {
+func executionSuggestion(root string) *appconfig.ExecutionSuggestion {
 	var paths []string
 	var sources []string
+	env := map[string]string{}
 	if exists(filepath.Join(root, ".ruby-version")) {
 		paths = append(paths, "$HOME/.rbenv/shims")
 		sources = append(sources, ".ruby-version")
@@ -254,22 +346,29 @@ func executionSuggestion(root string) *appconfigure.ExecutionSuggestion {
 	}
 	paths = dedupeStrings(paths)
 	sources = dedupeStrings(sources)
-	if len(paths) == 0 {
+	if !exists(filepath.Join(root, "Gemfile")) {
+		gemfiles := oneLevelMatches(root, "Gemfile")
+		if len(gemfiles) == 1 {
+			env["BUNDLE_GEMFILE"] = gemfiles[0]
+			sources = dedupeStrings(append(sources, gemfiles[0]))
+		}
+	}
+	if len(paths) == 0 && len(env) == 0 {
 		return nil
 	}
-	return &appconfigure.ExecutionSuggestion{PathPrepend: paths, Sources: sources}
+	return &appconfig.ExecutionSuggestion{PathPrepend: paths, Env: env, Sources: sources}
 }
 
-func openQuestions(snapshot appconfigure.Snapshot) []appconfigure.Question {
-	var questions []appconfigure.Question
+func openQuestions(snapshot appconfig.Snapshot) []appconfig.Question {
+	var questions []appconfig.Question
 	if !hasCommand(snapshot.Commands, "full_check") {
-		questions = append(questions, appconfigure.Question{
+		questions = append(questions, appconfig.Question{
 			Question: "What single command is authoritative before release or commit?",
 			Reason:   "No `make check` target was detected.",
 		})
 	}
 	if len(snapshot.Invariants) == 0 {
-		questions = append(questions, appconfigure.Question{
+		questions = append(questions, appconfig.Question{
 			Question: "Which project-specific invariants must every spec consider?",
 			Reason:   "No architecture gate, CI workflow, or recognized package manifest implied a concrete invariant.",
 		})
@@ -294,7 +393,7 @@ func oneLevelMatches(root string, name string) []string {
 	return out
 }
 
-func legacyConfigWarnings(root string) []appconfigure.Warning {
+func ignoredConfigWarnings(root string) []appconfig.Warning {
 	data, err := os.ReadFile(filepath.Join(root, ".scafld", "config.yaml"))
 	if err != nil {
 		return nil
@@ -310,8 +409,8 @@ func legacyConfigWarnings(root string) []appconfigure.Warning {
 		return nil
 	}
 	sort.Strings(found)
-	return []appconfigure.Warning{{
-		ID:      "legacy_ignored_config_keys",
+	return []appconfig.Warning{{
+		ID:      "ignored_config_keys",
 		Message: "The current .scafld/config.yaml contains keys the Go runtime does not read: " + strings.Join(found, ", ") + ". Move real policy into invariants, specs, acceptance criteria, or review passes before deleting stale keys.",
 		Sources: []string{".scafld/config.yaml"},
 	}}
@@ -380,6 +479,11 @@ func nodeRun(manager string, script string) string {
 	return manager + " " + script
 }
 
+func idPart(path string) string {
+	text := regexp.MustCompile(`[^A-Za-z0-9]+`).ReplaceAllString(path, "_")
+	return strings.Trim(text, "_")
+}
+
 func globRel(root string, pattern string) ([]string, error) {
 	matches, err := filepath.Glob(filepath.Join(root, filepath.FromSlash(pattern)))
 	if err != nil {
@@ -397,11 +501,11 @@ func globRel(root string, pattern string) ([]string, error) {
 	return out, nil
 }
 
-func evidenceRole(files []appconfigure.Evidence, role string) bool {
+func evidenceRole(files []appconfig.Evidence, role string) bool {
 	return len(pathsByRole(files, role)) > 0
 }
 
-func pathsByRole(files []appconfigure.Evidence, role string) []string {
+func pathsByRole(files []appconfig.Evidence, role string) []string {
 	var paths []string
 	for _, file := range files {
 		if file.Role == role {
@@ -412,7 +516,7 @@ func pathsByRole(files []appconfigure.Evidence, role string) []string {
 	return paths
 }
 
-func hasCommand(commands []appconfigure.CommandSuggestion, id string) bool {
+func hasCommand(commands []appconfig.CommandSuggestion, id string) bool {
 	for _, command := range commands {
 		if command.ID == id {
 			return true
@@ -421,14 +525,14 @@ func hasCommand(commands []appconfigure.CommandSuggestion, id string) bool {
 	return false
 }
 
-func dedupeCommands(commands []appconfigure.CommandSuggestion) []appconfigure.CommandSuggestion {
-	seen := map[string]appconfigure.CommandSuggestion{}
+func dedupeCommands(commands []appconfig.CommandSuggestion) []appconfig.CommandSuggestion {
+	seen := map[string]appconfig.CommandSuggestion{}
 	for _, command := range commands {
 		if _, ok := seen[command.ID]; !ok {
 			seen[command.ID] = command
 		}
 	}
-	out := make([]appconfigure.CommandSuggestion, 0, len(seen))
+	out := make([]appconfig.CommandSuggestion, 0, len(seen))
 	for _, command := range seen {
 		out = append(out, command)
 	}
@@ -436,14 +540,14 @@ func dedupeCommands(commands []appconfigure.CommandSuggestion) []appconfigure.Co
 	return out
 }
 
-func dedupeInvariants(invariants []appconfigure.InvariantSuggestion) []appconfigure.InvariantSuggestion {
-	seen := map[string]appconfigure.InvariantSuggestion{}
+func dedupeInvariants(invariants []appconfig.InvariantSuggestion) []appconfig.InvariantSuggestion {
+	seen := map[string]appconfig.InvariantSuggestion{}
 	for _, invariant := range invariants {
 		if _, ok := seen[invariant.ID]; !ok {
 			seen[invariant.ID] = invariant
 		}
 	}
-	out := make([]appconfigure.InvariantSuggestion, 0, len(seen))
+	out := make([]appconfig.InvariantSuggestion, 0, len(seen))
 	for _, invariant := range seen {
 		out = append(out, invariant)
 	}
