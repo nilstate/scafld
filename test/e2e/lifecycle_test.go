@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -256,7 +257,11 @@ func testBinary(t *testing.T) string {
 		}
 		return bin
 	}
-	bin := filepath.Join(t.TempDir(), "scafld")
+	binName := "scafld"
+	if runtime.GOOS == "windows" {
+		binName = "scafld.exe"
+	}
+	bin := filepath.Join(t.TempDir(), binName)
 	cmd := exec.Command("go", "build", "-o", bin, "./cmd/scafld")
 	cmd.Dir = filepath.Join("..", "..")
 	if out, err := cmd.CombinedOutput(); err != nil {
