@@ -347,13 +347,16 @@ known defaults. Customized project prompts are skipped.
 Fresh workspaces use `provider: auto`, selecting an installed external
 challenger. It also supports explicit command, Claude, Codex, and local paths.
 External providers receive a review brief, inspect the work, and return a
-structured verdict. Provider adapters run read-only by default, and the review
-app checks for workspace mutation before accepting a verdict.
+structured verdict. Provider adapters run read-only by default. scafld checks
+local scope drift before invoking the provider, then accepts the verdict only if
+the task-relevant review surface stayed stable while the provider ran.
 
 Approval captures the workspace baseline before task execution starts. Review
 uses the spec's packages, impacted files, and phase changes to derive task
 scope, so pre-existing unrelated dirt is context, not a blocker. Use
 `--review-scope` only when a dirty monorepo needs an explicit path boundary.
+Unrelated workspace churn from another task should not make you pay for another
+review run.
 
 ```bash
 scafld review add-cache --provider claude
