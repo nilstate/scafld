@@ -37,6 +37,10 @@ review:
       model: "gpt-config"
     claude:
       model: "claude-config"
+  context:
+    max_bytes: 4096
+    files:
+      - AGENTS.md
   automated_passes:
     spec_compliance:
       order: 10
@@ -72,31 +76,11 @@ review:
 	if cfg.Review.External.IdleTimeoutSeconds != 12 || cfg.Review.External.AbsoluteMaxSeconds != 34 {
 		t.Fatalf("timeouts = %+v", cfg.Review.External)
 	}
+	if cfg.Review.Context.MaxBytes != 4096 || !contains(cfg.Review.Context.Files, "AGENTS.md") {
+		t.Fatalf("review context = %+v", cfg.Review.Context)
+	}
 	if cfg.Review.AutomatedPasses["spec_compliance"].Title != "Spec Compliance" || cfg.Review.AdversarialPasses["regression_hunt"].Order != 30 {
 		t.Fatalf("review passes = %+v %+v", cfg.Review.AutomatedPasses, cfg.Review.AdversarialPasses)
-	}
-}
-
-func TestConfigAcceptsLegacyInvariantList(t *testing.T) {
-	t.Parallel()
-	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, ".scafld"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, ".scafld", "config.yaml"), []byte(`
-invariants:
-  canonical:
-    - domain_boundaries
-    - no_legacy_code
-`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	cfg, err := Load(context.Background(), root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := cfg.Invariants.Canonical["domain_boundaries"]; !ok {
-		t.Fatalf("legacy invariant list did not load: %+v", cfg.Invariants.Canonical)
 	}
 }
 
@@ -130,6 +114,9 @@ review:
     provider: "claude"
     claude:
       model: "claude-local"
+  context:
+    files:
+      - MEMORY.md
   adversarial_passes:
     regression_hunt:
       description: "Local override"
@@ -149,12 +136,24 @@ review:
 	if cfg.Harden.MaxQuestionsPerRound != 8 {
 		t.Fatalf("default harden config not applied: %+v", cfg.Harden)
 	}
+	if !contains(cfg.Review.Context.Files, "MEMORY.md") || !contains(cfg.Review.Context.Files, "AGENTS.md") {
+		t.Fatalf("review context overlay did not apply: %+v", cfg.Review.Context)
+	}
 	if len(cfg.Execution.PathPrepend) != 1 || cfg.Execution.PathPrepend[0] != "$HOME/.local/bin" || cfg.Execution.Env["RUBYOPT"] != "-W0" {
 		t.Fatalf("execution overlay did not apply: %+v", cfg.Execution)
 	}
 	if cfg.Review.AdversarialPasses["regression_hunt"].Description != "Local override" {
 		t.Fatalf("review pass overlay did not apply: %+v", cfg.Review.AdversarialPasses)
 	}
+}
+
+func contains(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func TestExecutionEnvExpandsPathPrependAndEnv(t *testing.T) {
@@ -189,5 +188,33 @@ func TestConfigDefaultWhenMissing(t *testing.T) {
 	}
 	if cfg.Harden.MaxQuestionsPerRound != 8 {
 		t.Fatalf("default harden config missing = %+v", cfg.Harden)
+	}
+}
+
+func TestConfigRejectsInvariantListWithUpdateHint(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".scafld"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".scafld", "config.yaml"), []byte(`
+version: "1.0"
+invariants:
+  canonical:
+    - domain_boundaries
+    - no_legacy_code
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Load(context.Background(), root)
+	if err == nil {
+		t.Fatal("Load succeeded, want strict config shape error")
+	}
+	text := err.Error()
+	for _, want := range []string{"invariants.canonical must be a mapping", "scafld update"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("error %q missing %q", text, want)
+		}
 	}
 }

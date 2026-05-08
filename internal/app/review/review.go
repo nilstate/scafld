@@ -11,6 +11,7 @@ import (
 	"github.com/nilstate/scafld/v2/internal/core/gate"
 	"github.com/nilstate/scafld/v2/internal/core/reconcile"
 	"github.com/nilstate/scafld/v2/internal/core/review"
+	"github.com/nilstate/scafld/v2/internal/core/reviewcontext"
 	"github.com/nilstate/scafld/v2/internal/core/session"
 	"github.com/nilstate/scafld/v2/internal/core/spec"
 	coreworkspace "github.com/nilstate/scafld/v2/internal/core/workspace"
@@ -48,8 +49,11 @@ type Clock interface{ Now() time.Time }
 type Output struct {
 	TaskID   string           `json:"task_id"`
 	Verdict  string           `json:"verdict"`
+	Provider string           `json:"provider,omitempty"`
+	Model    string           `json:"model,omitempty"`
 	Findings []review.Finding `json:"findings"`
 	Next     string           `json:"next"`
+	Context  string           `json:"context,omitempty"`
 	Repair   *gate.Failure    `json:"repair,omitempty"`
 }
 
@@ -58,11 +62,15 @@ func (o Output) GateFailure() *gate.Failure { return o.Repair }
 
 // Input describes the task and review agenda to run.
 type Input struct {
-	TaskID        string
-	Passes        []Pass
-	ReviewScope   []string
-	HumanReviewed bool
-	Reason        string
+	TaskID          string
+	Passes          []Pass
+	Invariants      map[string]string
+	ReviewScope     []string
+	ContextSections []reviewcontext.Section
+	ContextMaxBytes int
+	PrintContext    bool
+	HumanReviewed   bool
+	Reason          string
 }
 
 // Pass describes one configured review pass included in the provider prompt.
@@ -101,6 +109,11 @@ func RunWithInput(ctx context.Context, specs SpecStore, sessions SessionStore, w
 	scope := deriveReviewScope(model, input.ReviewScope, append(append([]string(nil), baselineComparison...), beforeComparison...))
 	baselineScoped := coreworkspace.Filter(baselineComparison, scope)
 	taskChanges, scopeDrift := coreworkspace.PartitionMutations(coreworkspace.Diff(baselineComparison, beforeComparison), scope)
+	contextPacket := reviewContextPacket(model, path, input.Passes, input.Invariants, scope, baselineScoped, taskChanges, scopeDrift, input.ContextSections)
+	prompt := reviewcontext.RenderMarkdown(contextPacket, reviewcontext.Options{MaxBytes: input.ContextMaxBytes})
+	if input.PrintContext {
+		return Output{TaskID: model.TaskID, Verdict: "not_run", Next: "scafld review " + model.TaskID, Context: prompt}, nil
+	}
 	now := clock.Now().UTC().Format(time.RFC3339)
 	if len(scopeDrift) > 0 {
 		if _, err := sessions.Append(ctx, model.TaskID, session.Entry{
@@ -126,7 +139,7 @@ func RunWithInput(ctx context.Context, specs SpecStore, sessions SessionStore, w
 	}, now); err != nil {
 		return Output{}, err
 	}
-	packet, err := provider.Invoke(ctx, review.Request{TaskID: model.TaskID, Prompt: promptForModel(model, input.Passes, scope, baselineScoped, taskChanges, scopeDrift)})
+	packet, err := provider.Invoke(ctx, review.Request{TaskID: model.TaskID, Prompt: prompt, Context: contextPacket})
 	afterFull, mutationErr := workspaceSnapshot(ctx, workspace)
 	if mutationErr != nil {
 		_, _ = sessions.Append(context.WithoutCancel(ctx), model.TaskID, session.Entry{
@@ -200,7 +213,7 @@ func recordReviewPacket(ctx context.Context, specs SpecStore, sessions SessionSt
 	if err := specs.Save(ctx, path, model); err != nil {
 		return Output{}, err
 	}
-	return Output{TaskID: model.TaskID, Verdict: packet.Verdict, Findings: packet.Findings, Next: command, Repair: reviewRepair(model, packet, command, latestReviewEvidence(ledger))}, nil
+	return Output{TaskID: model.TaskID, Verdict: packet.Verdict, Provider: packet.Provider, Model: packet.Model, Findings: packet.Findings, Next: command, Repair: reviewRepair(model, packet, command, latestReviewEvidence(ledger))}, nil
 }
 
 func scopeDriftFinding(scopeDrift []coreworkspace.Mutation) review.Finding {
@@ -250,7 +263,7 @@ func runHumanReviewed(ctx context.Context, specs SpecStore, sessions SessionStor
 	if err := specs.Save(ctx, path, model); err != nil {
 		return Output{}, err
 	}
-	return Output{TaskID: model.TaskID, Verdict: review.VerdictPass, Next: model.CurrentState.AllowedFollowUp}, nil
+	return Output{TaskID: model.TaskID, Verdict: review.VerdictPass, Provider: "human", Next: model.CurrentState.AllowedFollowUp}, nil
 }
 
 func reviewReason(packet review.Packet) string {
@@ -372,7 +385,40 @@ func deriveReviewScope(model spec.Model, explicit []string, snapshot []string) [
 	for _, phase := range model.Phases {
 		scope = append(scope, pathishItems(phase.Changes)...)
 	}
-	return coreworkspace.NormalizeScope(scope)
+	return filterReviewScope(coreworkspace.NormalizeScope(scope))
+}
+
+func filterReviewScope(scope []string) []string {
+	filtered := make([]string, 0, len(scope))
+	for _, item := range scope {
+		if reviewScopePathAllowed(item) {
+			filtered = append(filtered, item)
+		}
+	}
+	return filtered
+}
+
+func reviewScopePathAllowed(path string) bool {
+	normalized := strings.Trim(strings.ReplaceAll(path, "\\", "/"), "/")
+	if normalized == "" {
+		return false
+	}
+	for _, segment := range strings.Split(normalized, "/") {
+		if strings.HasPrefix(segment, ".env") {
+			return false
+		}
+	}
+	for _, denied := range []string{
+		".git",
+		".priv",
+		".scafld/config.local.yaml",
+		".scafld/reviews",
+	} {
+		if normalized == denied || strings.HasPrefix(normalized+"/", denied+"/") {
+			return false
+		}
+	}
+	return true
 }
 
 func packageMatchesWorkspace(pkg string, snapshot []string) bool {
@@ -487,34 +533,90 @@ func latestReviewEvidence(ledger session.Session) string {
 	return "review event"
 }
 
-func promptForModel(model spec.Model, passes []Pass, reviewScope []string, baseline []string, taskChanges []coreworkspace.Mutation, scopeDrift []coreworkspace.Mutation) string {
+func reviewContextPacket(model spec.Model, specPath string, passes []Pass, invariants map[string]string, reviewScope []string, baseline []string, taskChanges []coreworkspace.Mutation, scopeDrift []coreworkspace.Mutation, extra []reviewcontext.Section) reviewcontext.Packet {
+	sourcePath := currentSpecReviewPath(specPath)
+	if sourcePath == "" {
+		sourcePath = strings.TrimSpace(specPath)
+	}
+	if sourcePath == "" {
+		sourcePath = model.TaskID
+	}
+	sections := []reviewcontext.Section{
+		contextSection("task_contract", "Task Contract", 10, taskContractBody(model), "spec", sourcePath),
+		contextSection("configured_invariants", "Configured Invariants", 15, configuredInvariantsBody(invariants), "config", ".scafld/config.yaml"),
+		contextSection("review_focus", "Review Focus", 18, reviewFocusBody(passes), "config", ".scafld/config.yaml"),
+		contextSection("task_scope", "Task Scope", 20, taskScopeBody(model, reviewScope), "spec", sourcePath),
+		contextSection("workspace_baseline", "Workspace Baseline Before Review", 30, workspaceBaselineBody(baseline), "session", model.TaskID),
+		contextSection("task_changes", "Task Changes Since Approval Baseline", 40, workspaceChangesBody("Task Changes Since Approval Baseline", taskChanges), "session", model.TaskID),
+		contextSection("scope_drift", "Scope Drift Since Approval Baseline", 50, workspaceChangesBody("Scope Drift Since Approval Baseline", scopeDrift), "session", model.TaskID),
+		contextSection("acceptance_evidence", "Acceptance Criteria", 60, acceptanceBody(model), "session", model.TaskID),
+		contextSection("provider_instruction", "Provider Instruction", 90, providerInstructionBody(), "scafld", "review"),
+	}
+	sections = append(sections, extra...)
+	return reviewcontext.Packet{TaskID: model.TaskID, Title: model.Title, Status: string(model.Status), Sections: sections}
+}
+
+func contextSection(key string, title string, order int, body string, kind string, path string) reviewcontext.Section {
+	body = strings.TrimSpace(body)
+	sourcePath := strings.TrimSpace(path)
+	if sourcePath == "" {
+		sourcePath = key
+	}
+	if !strings.Contains(sourcePath, "#") {
+		sourcePath += "#" + key
+	}
+	return reviewcontext.Section{
+		Key:     key,
+		Title:   title,
+		Order:   order,
+		Body:    body,
+		Sources: []reviewcontext.Source{reviewcontext.SourceForContent("derived_"+kind, sourcePath, []byte(body))},
+	}
+}
+
+func taskContractBody(model spec.Model) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "# Review %s\n\n", model.TaskID)
-	fmt.Fprintf(&b, "Title: %s\nStatus: %s\n\n", model.Title, model.Status)
+	fmt.Fprintf(&b, "Title: %s\nStatus: %s\n", model.Title, model.Status)
 	if strings.TrimSpace(model.Summary) != "" {
-		fmt.Fprintf(&b, "## Summary\n\n%s\n\n", strings.TrimSpace(model.Summary))
+		fmt.Fprintf(&b, "\nSummary:\n%s\n", strings.TrimSpace(model.Summary))
 	}
 	if len(model.Objectives) > 0 {
-		b.WriteString("## Objectives\n\n")
+		b.WriteString("\nObjectives:\n")
 		for _, objective := range model.Objectives {
 			fmt.Fprintf(&b, "- %s\n", objective)
 		}
-		b.WriteString("\n")
 	}
 	if len(model.Context.Invariants) > 0 {
-		b.WriteString("## Declared Invariants\n\n")
+		b.WriteString("\nDeclared invariants:\n")
 		for _, invariant := range model.Context.Invariants {
 			if strings.TrimSpace(invariant) != "" {
 				fmt.Fprintf(&b, "- %s\n", invariant)
 			}
 		}
-		b.WriteString("\n")
 	}
+	return b.String()
+}
+
+func taskScopeBody(model spec.Model, reviewScope []string) string {
+	var b strings.Builder
 	writeTaskScope(&b, model, reviewScope)
+	return stripSectionHeading(b.String(), "Task Scope")
+}
+
+func workspaceBaselineBody(baseline []string) string {
+	var b strings.Builder
 	writeWorkspaceBaseline(&b, baseline)
-	writeWorkspaceChanges(&b, "Task Changes Since Approval Baseline", taskChanges)
-	writeWorkspaceChanges(&b, "Scope Drift Since Approval Baseline", scopeDrift)
-	b.WriteString("## Acceptance Criteria\n\n")
+	return stripSectionHeading(b.String(), "Workspace Baseline Before Review")
+}
+
+func workspaceChangesBody(title string, mutations []coreworkspace.Mutation) string {
+	var b strings.Builder
+	writeWorkspaceChanges(&b, title, mutations)
+	return stripSectionHeading(b.String(), title)
+}
+
+func acceptanceBody(model spec.Model) string {
+	var b strings.Builder
 	for _, criterion := range model.AllCriteria() {
 		fmt.Fprintf(&b, "- %s (%s): %s\n", criterion.ID, criterion.ExpectedKind, criterion.Command)
 		if strings.TrimSpace(criterion.Status) != "" {
@@ -524,9 +626,46 @@ func promptForModel(model spec.Model, passes []Pass, reviewScope []string, basel
 			fmt.Fprintf(&b, "  - Evidence: %s\n", criterion.Evidence)
 		}
 	}
-	writeReviewPasses(&b, passes)
-	b.WriteString("\nReview mode is read-only. Do not run build, test, or mutation commands; treat recorded acceptance evidence above as already executed. Treat review as task-scoped: unchanged dirty paths from the approval baseline are context, not findings by themselves. Scope drift since the approval baseline is blocking unless the spec explicitly declares it. Do not emit placeholder ReviewPackets while investigating; the final output must be one complete ReviewPacket JSON object with `verdict` and `findings`. If your transport only supports line frames, emit `finding` frames with severity `blocking` or `non_blocking`, then a `verdict` frame with verdict `pass` or `fail`.\n")
 	return b.String()
+}
+
+func reviewFocusBody(passes []Pass) string {
+	var b strings.Builder
+	writeReviewPasses(&b, passes)
+	return stripSectionHeading(b.String(), "Review Focus")
+}
+
+func configuredInvariantsBody(invariants map[string]string) string {
+	if len(invariants) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(invariants))
+	for key := range invariants {
+		if strings.TrimSpace(key) != "" {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	for _, key := range keys {
+		description := strings.TrimSpace(invariants[key])
+		if description == "" {
+			fmt.Fprintf(&b, "- `%s`\n", key)
+			continue
+		}
+		fmt.Fprintf(&b, "- `%s`: %s\n", key, description)
+	}
+	return b.String()
+}
+
+func providerInstructionBody() string {
+	return "Review mode is read-only. Do not run build, test, or mutation commands; treat recorded acceptance evidence above as already executed. Treat review as task-scoped: unchanged dirty paths from the approval baseline are context, not findings by themselves. Scope drift since the approval baseline is blocking unless the spec explicitly declares it. Do not emit placeholder ReviewPackets while investigating; the final output must be one complete ReviewPacket JSON object with `verdict` and `findings`. If your transport only supports line frames, emit `finding` frames with severity `blocking` or `non_blocking`, then a `verdict` frame with verdict `pass` or `fail`."
+}
+
+func stripSectionHeading(text string, title string) string {
+	prefix := "## " + title + "\n\n"
+	text = strings.TrimSpace(text)
+	return strings.TrimSpace(strings.TrimPrefix(text, prefix))
 }
 
 func writeTaskScope(b *strings.Builder, model spec.Model, reviewScope []string) {

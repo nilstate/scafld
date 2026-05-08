@@ -46,8 +46,15 @@ type HardenConfig struct {
 // ReviewConfig controls automated and adversarial review behavior.
 type ReviewConfig struct {
 	External          ExternalReviewConfig        `yaml:"external"`
+	Context           ReviewContextConfig         `yaml:"context"`
 	AutomatedPasses   map[string]ReviewPassConfig `yaml:"automated_passes"`
 	AdversarialPasses map[string]ReviewPassConfig `yaml:"adversarial_passes"`
+}
+
+// ReviewContextConfig controls bounded project context sent to reviewers.
+type ReviewContextConfig struct {
+	MaxBytes int      `yaml:"max_bytes"`
+	Files    []string `yaml:"files"`
 }
 
 // ExternalReviewConfig configures external model-provider review execution.
@@ -105,11 +112,55 @@ func readConfigFile(path string, optional bool) (Config, error) {
 	if len(data) == 0 {
 		return Config{}, nil
 	}
+	if err := validateConfigShape(path, data); err != nil {
+		return Config{}, err
+	}
 	var cfg Config
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return Config{}, fmt.Errorf("parse config %s: %w", path, err)
 	}
 	return cfg, nil
+}
+
+func validateConfigShape(path string, data []byte) error {
+	var doc yaml.Node
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return fmt.Errorf("parse config %s: %w", path, err)
+	}
+	root := documentRoot(&doc)
+	canonical := mappingLookup(mappingLookup(root, "invariants"), "canonical")
+	if canonical == nil {
+		return nil
+	}
+	if canonical.Kind == yaml.SequenceNode {
+		return fmt.Errorf("parse config %s: invariants.canonical must be a mapping of id to description, not a list; run scafld update to normalize generated config shape", path)
+	}
+	if canonical.Kind != yaml.MappingNode {
+		return fmt.Errorf("parse config %s: invariants.canonical must be a mapping of id to description", path)
+	}
+	return nil
+}
+
+func documentRoot(node *yaml.Node) *yaml.Node {
+	if node == nil {
+		return nil
+	}
+	if node.Kind == yaml.DocumentNode && len(node.Content) > 0 {
+		return node.Content[0]
+	}
+	return node
+}
+
+func mappingLookup(node *yaml.Node, key string) *yaml.Node {
+	if node == nil || node.Kind != yaml.MappingNode {
+		return nil
+	}
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		if node.Content[i].Value == key {
+			return node.Content[i+1]
+		}
+	}
+	return nil
 }
 
 // Default returns the built-in workspace configuration.
@@ -134,6 +185,18 @@ func Default() Config {
 				FallbackPolicy:     "warn",
 				Codex:              ProviderConfig{Model: "gpt-5.5"},
 				Claude:             ProviderConfig{Model: "claude-opus-4-7"},
+			},
+			Context: ReviewContextConfig{
+				MaxBytes: 16384,
+				Files: []string{
+					"AGENTS.md",
+					"CLAUDE.md",
+					"README.md",
+					"docs/review.md",
+					"docs/configuration.md",
+					"docs/execution.md",
+					".scafld/core/schemas/review_packet.json",
+				},
 			},
 			AutomatedPasses: map[string]ReviewPassConfig{
 				"spec_compliance": {Order: 10, Title: "Spec Compliance", Description: "Re-run acceptance criteria to verify code satisfies the spec"},
@@ -161,6 +224,7 @@ func overlay(base Config, local Config) Config {
 		base.Harden.MaxQuestionsPerRound = local.Harden.MaxQuestionsPerRound
 	}
 	base.Review.External = overlayExternal(base.Review.External, local.Review.External)
+	base.Review.Context = overlayReviewContext(base.Review.Context, local.Review.Context)
 	base.Review.AutomatedPasses = overlayPasses(base.Review.AutomatedPasses, local.Review.AutomatedPasses)
 	base.Review.AdversarialPasses = overlayPasses(base.Review.AdversarialPasses, local.Review.AdversarialPasses)
 	return withDefaults(base)
@@ -208,6 +272,16 @@ func overlayExecution(base ExecutionConfig, local ExecutionConfig) ExecutionConf
 	return base
 }
 
+func overlayReviewContext(base ReviewContextConfig, local ReviewContextConfig) ReviewContextConfig {
+	if local.MaxBytes > 0 {
+		base.MaxBytes = local.MaxBytes
+	}
+	if len(local.Files) > 0 {
+		base.Files = dedupeList(append(append([]string(nil), base.Files...), local.Files...))
+	}
+	return base
+}
+
 func overlayPasses(base map[string]ReviewPassConfig, local map[string]ReviewPassConfig) map[string]ReviewPassConfig {
 	if len(base) == 0 && len(local) == 0 {
 		return nil
@@ -246,6 +320,20 @@ func overlayStrings(base map[string]string, local map[string]string) map[string]
 	return next
 }
 
+func dedupeList(values []string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		text := strings.TrimSpace(value)
+		if text == "" || seen[text] {
+			continue
+		}
+		seen[text] = true
+		out = append(out, text)
+	}
+	return out
+}
+
 func withDefaults(cfg Config) Config {
 	defaults := Default()
 	if cfg.Version == "" {
@@ -279,40 +367,8 @@ func withDefaults(cfg Config) Config {
 	}
 	cfg.Review.AutomatedPasses = overlayPasses(defaults.Review.AutomatedPasses, cfg.Review.AutomatedPasses)
 	cfg.Review.AdversarialPasses = overlayPasses(defaults.Review.AdversarialPasses, cfg.Review.AdversarialPasses)
+	cfg.Review.Context = overlayReviewContext(defaults.Review.Context, cfg.Review.Context)
 	return cfg
-}
-
-// UnmarshalYAML accepts the current mapping form and the older list-only
-// canonical form so existing workspaces keep loading after the config cleanup.
-func (cfg *InvariantConfig) UnmarshalYAML(value *yaml.Node) error {
-	cfg.Canonical = map[string]string{}
-	if value == nil || value.Kind != yaml.MappingNode {
-		return nil
-	}
-	for i := 0; i+1 < len(value.Content); i += 2 {
-		key := value.Content[i]
-		val := value.Content[i+1]
-		if key.Value != "canonical" {
-			continue
-		}
-		switch val.Kind {
-		case yaml.SequenceNode:
-			for _, item := range val.Content {
-				if item.Value != "" {
-					cfg.Canonical[item.Value] = ""
-				}
-			}
-		case yaml.MappingNode:
-			for j := 0; j+1 < len(val.Content); j += 2 {
-				name := val.Content[j].Value
-				description := val.Content[j+1].Value
-				if name != "" {
-					cfg.Canonical[name] = description
-				}
-			}
-		}
-	}
-	return nil
 }
 
 // ProcessEnv returns stable process environment overrides for acceptance commands.

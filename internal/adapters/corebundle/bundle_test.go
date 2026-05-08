@@ -74,6 +74,83 @@ func TestUpdateSkipsFilesThatAlreadyMatchBundle(t *testing.T) {
 	}
 }
 
+func TestUpdateNormalizesProjectConfigInvariantList(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	configPath := filepath.Join(root, ".scafld", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, []byte(`
+version: "1.0"
+invariants:
+  canonical:
+    - domain_boundaries
+    - no_legacy_code
+review:
+  external:
+    provider: "auto"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := Update(t.Context(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsPath(result.Updated, ".scafld/config.yaml") {
+		t.Fatalf("updated = %v, want .scafld/config.yaml", result.Updated)
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, want := range []string{`canonical:`, `domain_boundaries: ""`, `no_legacy_code: ""`} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("normalized config missing %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "- domain_boundaries") {
+		t.Fatalf("normalized config still has list shape:\n%s", text)
+	}
+}
+
+func TestUpdateLeavesCurrentProjectConfigShapeAlone(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	configPath := filepath.Join(root, ".scafld", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	config := []byte(`
+version: "1.0"
+invariants:
+  canonical:
+    domain_boundaries: "Respect boundaries."
+`)
+	if err := os.WriteFile(configPath, config, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := Update(t.Context(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if containsPath(result.Updated, ".scafld/config.yaml") {
+		t.Fatalf("updated = %v, want current config left alone", result.Updated)
+	}
+	got, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, config) {
+		t.Fatalf("current config changed:\n%s", got)
+	}
+}
+
 func TestInitCreatesSparseProjectConfigAndFullCoreExample(t *testing.T) {
 	t.Parallel()
 

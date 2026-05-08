@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/nilstate/scafld/v2/internal/core/reviewcontext"
 )
 
 // Severity classifies whether a finding blocks completion.
@@ -94,8 +96,9 @@ type Packet struct {
 
 // Request is the provider-facing review prompt request.
 type Request struct {
-	TaskID string
-	Prompt string
+	TaskID  string
+	Prompt  string
+	Context reviewcontext.Packet
 }
 
 // ParseText parses direct JSON packets or NDJSON review streams.

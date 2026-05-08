@@ -1,4 +1,4 @@
-package configure
+package config
 
 import (
 	"context"
@@ -34,8 +34,8 @@ func TestRunBuildsEvidenceBackedProposal(t *testing.T) {
 			Sources:     []string{".ruby-version"},
 		},
 		Warnings: []Warning{{
-			ID:      "legacy_ignored_config_keys",
-			Message: "legacy config keys detected",
+			ID:      "ignored_config_keys",
+			Message: "ignored config keys detected",
 			Sources: []string{".scafld/config.yaml"},
 		}},
 	}})
@@ -60,7 +60,7 @@ func TestRunBuildsEvidenceBackedProposal(t *testing.T) {
 	if out.Prompt == "" {
 		t.Fatal("prompt was empty")
 	}
-	if len(out.Proposal.Warnings) != 1 || out.Proposal.Warnings[0].ID != "legacy_ignored_config_keys" {
+	if len(out.Proposal.Warnings) != 1 || out.Proposal.Warnings[0].ID != "ignored_config_keys" {
 		t.Fatalf("warnings = %+v", out.Proposal.Warnings)
 	}
 }

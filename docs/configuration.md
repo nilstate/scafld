@@ -41,7 +41,9 @@ Managed by scafld:
 
 `scafld update` refreshes `.scafld/core/` and safely refreshes project prompt
 copies that are still known defaults. Customized project prompts are skipped.
-Specs, sessions, reviews, and local config are never overwritten.
+It also refreshes root agent docs and renders generated `.scafld/config.yaml`
+into the current strict runtime shape. Specs, sessions, reviews, and local
+config are never overwritten.
 
 `.scafld/config.yaml` is intentionally sparse. Runtime defaults live in the
 binary, and the full example shape lives in `.scafld/core/config.yaml`. Put only
@@ -143,23 +145,23 @@ Specs select the relevant IDs for a task. Harden prints the configured catalog
 so the agent can choose the right constraint while tightening the draft. Review
 prompts include the invariants selected by the spec.
 
-## Configure Proposals
+## Config Proposals
 
 `scafld init` installs a truthful default config. It does not ask an agent to
 guess project policy.
 
-Use `scafld configure` when a repo needs project-specific tightening:
+Use `scafld config` when a repo needs project-specific tightening:
 
 ```bash
-scafld configure
+scafld config
 ```
 
 The command scans recognizable project surfaces, writes
-`.scafld/config.proposed.yaml`, and prints CONFIGURE MODE instructions. The
+`.scafld/config.proposed.yaml`, and prints CONFIG MODE instructions. The
 proposal is evidence-backed: every suggested command or invariant cites the
 file that implied it. Open questions are explicit when scafld cannot infer a
 safe answer. If an existing config contains old keys the Go runtime does not
-read, the proposal includes a `legacy_ignored_config_keys` warning so cleanup is
+read, the proposal includes an `ignored_config_keys` warning so cleanup is
 explicit rather than silent.
 
 When recognizable toolchain files exist, the proposal may include
@@ -169,7 +171,7 @@ justify `$HOME/.asdf/shims`. Those suggestions are still evidence, not magic:
 copy them only when they match how the project actually runs acceptance
 commands.
 
-Configure also recognizes common validation surfaces:
+Config also recognizes common validation surfaces:
 
 - `Makefile`, `justfile`, and `Taskfile.*` check/test targets
 - `package.json` scripts with npm, pnpm, yarn, or bun based on package manager
@@ -204,6 +206,17 @@ review:
     claude:
       model: "claude-opus-4-7"
       binary: "claude"
+  context:
+    # Aggregate rendered section-body budget for the provider brief.
+    max_bytes: 16384
+    files:
+      - AGENTS.md
+      - CLAUDE.md
+      - README.md
+      - docs/review.md
+      - docs/configuration.md
+      - docs/execution.md
+      - .scafld/core/schemas/review_packet.json
   automated_passes:
     spec_compliance:
       order: 10
@@ -243,6 +256,10 @@ review and cannot satisfy `scafld complete`.
 Named `automated_passes` and `adversarial_passes` are included in the review
 prompt in `order` sequence. They are the configurable review agenda; they do
 not create additional local execution steps or mutate the workspace.
+
+`review.context.files` is the bounded product-contract context included in the
+reviewer brief. scafld skips private/local paths such as
+`.scafld/config.local.yaml`, `.priv/**`, `.git/**`, and `.env*` even if listed.
 
 ## Hardening
 

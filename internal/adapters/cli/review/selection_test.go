@@ -28,6 +28,9 @@ review:
     codex:
       model: "gpt-config"
       binary: "codex-config"
+invariants:
+  canonical:
+    tenant_isolation: "Never leak tenant data."
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -44,6 +47,9 @@ review:
 	}
 	if len(selected.Passes) == 0 {
 		t.Fatalf("review passes should be supplied from config defaults")
+	}
+	if selected.Invariants["tenant_isolation"] != "Never leak tenant data." {
+		t.Fatalf("configured invariants missing from selection: %+v", selected.Invariants)
 	}
 	var progress bytes.Buffer
 	selected, err = Select(context.Background(), Options{Root: root, TaskID: "task", Progress: &progress})
@@ -78,5 +84,69 @@ func TestSelectAutoFailsClosedWhenNoExternalProviderExists(t *testing.T) {
 	selected, err := Select(context.Background(), Options{Root: t.TempDir(), TaskID: "task", Provider: "local"})
 	if err != nil || selected.Provider == nil {
 		t.Fatalf("local provider should remain explicit escape hatch: provider=%T err=%v", selected.Provider, err)
+	}
+}
+
+func TestSelectPrintContextLoadsConfiguredFilesAndSkipsPrivateInputs(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".scafld"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".scafld", "config.yaml"), []byte(`
+review:
+  context:
+    max_bytes: 4096
+    files:
+      - AGENTS.md
+      - AGENT-LINK.md
+      - .scafld/config.local.yaml
+      - .priv/secret.md
+      - .envrc
+      - nested/.env.production
+      - ../outside.md
+      - ..\\outside.md
+      - C:\\secret.md
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "AGENTS.md"), []byte("agent contract"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".scafld", "config.local.yaml"), []byte("secret: true"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".envrc"), []byte("export TOKEN=secret"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "nested"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "nested", ".env.production"), []byte("TOKEN=secret"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	privateDir := filepath.Join(root, ".priv")
+	if err := os.MkdirAll(privateDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(privateDir, "secret.md"), []byte("private"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(".priv", "secret.md"), filepath.Join(root, "AGENT-LINK.md")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	selected, err := Select(context.Background(), Options{Root: root, TaskID: "task", PrintContext: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selected.Provider != nil {
+		t.Fatalf("print context should not select a provider: %T", selected.Provider)
+	}
+	if selected.ContextMaxBytes != 4096 {
+		t.Fatalf("context max bytes = %d", selected.ContextMaxBytes)
+	}
+	if len(selected.ContextSections) != 1 || selected.ContextSections[0].Title != "Project Context: AGENTS.md" || !strings.Contains(selected.ContextSections[0].Body, "agent contract") {
+		t.Fatalf("context sections = %+v", selected.ContextSections)
 	}
 }

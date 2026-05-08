@@ -8,6 +8,7 @@ import (
 	"time"
 
 	corereview "github.com/nilstate/scafld/v2/internal/core/review"
+	"github.com/nilstate/scafld/v2/internal/core/reviewcontext"
 	"github.com/nilstate/scafld/v2/internal/core/session"
 	"github.com/nilstate/scafld/v2/internal/core/spec"
 	coreworkspace "github.com/nilstate/scafld/v2/internal/core/workspace"
@@ -243,6 +244,7 @@ func TestReviewPromptCarriesTaskContractToProvider(t *testing.T) {
 	_, err := RunWithInput(context.Background(), specs, &fakeSessions{}, workspace, provider, fakeClock{}, Input{
 		TaskID:      "task",
 		ReviewScope: []string{"api"},
+		Invariants:  map[string]string{"tenant_isolation": "Never leak data across tenants."},
 		Passes: []Pass{{
 			ID:          "regression_hunt",
 			Category:    "adversarial",
@@ -250,18 +252,34 @@ func TestReviewPromptCarriesTaskContractToProvider(t *testing.T) {
 			Title:       "Regression Hunt",
 			Description: "Trace downstream consumers",
 		}},
+		ContextSections: []reviewcontext.Section{{
+			Key:     "file:AGENTS.md",
+			Title:   "Project Context: AGENTS.md",
+			Order:   1000,
+			Body:    "Do not grade your own work.",
+			Sources: []reviewcontext.Source{reviewcontext.SourceForContent("file", "AGENTS.md", []byte("Do not grade your own work."))},
+		}},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if provider.req.TaskID != "task" || !strings.Contains(provider.req.Prompt, "Review this") || !strings.Contains(provider.req.Prompt, "ac1") {
+	if provider.req.TaskID != "task" || provider.req.Context.TaskID != "task" || !strings.Contains(provider.req.Prompt, "Review Context Packet") || !strings.Contains(provider.req.Prompt, "Review this") || !strings.Contains(provider.req.Prompt, "ac1") {
 		t.Fatalf("provider request = %+v", provider.req)
 	}
 	if !strings.Contains(provider.req.Prompt, "Evidence: exit code was 0") || !strings.Contains(provider.req.Prompt, "Do not run build, test, or mutation commands") {
 		t.Fatalf("provider request = %+v", provider.req)
 	}
-	if !strings.Contains(provider.req.Prompt, "## Declared Invariants") || !strings.Contains(provider.req.Prompt, "tenant_isolation") {
+	if !strings.Contains(provider.req.Prompt, "Declared invariants:") || !strings.Contains(provider.req.Prompt, "tenant_isolation") {
 		t.Fatalf("provider request missing declared invariants = %+v", provider.req)
+	}
+	if !strings.Contains(provider.req.Prompt, "## Configured Invariants") || !strings.Contains(provider.req.Prompt, "`tenant_isolation`: Never leak data across tenants.") {
+		t.Fatalf("provider request missing configured invariant catalog = %+v", provider.req)
+	}
+	if !strings.Contains(provider.req.Prompt, "derived_config `.scafld/config.yaml#configured_invariants`") || !strings.Contains(provider.req.Prompt, "derived_spec `") {
+		t.Fatalf("provider request missing honest derived provenance = %+v", provider.req)
+	}
+	if !strings.Contains(provider.req.Prompt, "## Project Context: AGENTS.md") || !strings.Contains(provider.req.Prompt, "Do not grade your own work.") {
+		t.Fatalf("provider request missing project context = %+v", provider.req)
 	}
 	if !strings.Contains(provider.req.Prompt, "## Review Focus") || !strings.Contains(provider.req.Prompt, "adversarial: Regression Hunt") {
 		t.Fatalf("provider request missing configured review focus = %+v", provider.req)
@@ -273,6 +291,53 @@ func TestReviewPromptCarriesTaskContractToProvider(t *testing.T) {
 	}
 	if strings.Contains(provider.req.Prompt, "README.md") {
 		t.Fatalf("review-scope leaked unrelated baseline dirt into prompt:\n%s", provider.req.Prompt)
+	}
+}
+
+func TestPrintContextDoesNotInvokeProvider(t *testing.T) {
+	t.Parallel()
+
+	specs := &fakeSpecs{model: spec.Model{TaskID: "task", Title: "Task", Status: spec.StatusReview, Summary: "Context only"}}
+	provider := providerFunc(func(context.Context, corereview.Request) (corereview.Packet, error) {
+		t.Fatal("provider should not run when printing context")
+		return corereview.Packet{}, nil
+	})
+	out, err := RunWithInput(context.Background(), specs, &fakeSessions{}, nil, provider, fakeClock{}, Input{TaskID: "task", PrintContext: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Verdict != "not_run" || !strings.Contains(out.Context, "Review Context Packet") || !strings.Contains(out.Context, "Context only") {
+		t.Fatalf("print context output = %+v", out)
+	}
+}
+
+func TestReviewContextBuildIsStable(t *testing.T) {
+	t.Parallel()
+
+	model := spec.Model{
+		TaskID:  "task",
+		Title:   "Task",
+		Status:  spec.StatusReview,
+		Summary: "Stable context",
+		Context: spec.Context{FilesImpacted: []string{"api/handler.go"}},
+	}
+	run := func() string {
+		t.Helper()
+		specs := &fakeSpecs{model: model}
+		out, err := RunWithInput(context.Background(), specs, &fakeSessions{}, &fakeWorkspace{snapshots: [][]string{{" M hash api/handler.go"}}}, fakeProvider{}, fakeClock{}, Input{
+			TaskID:       "task",
+			PrintContext: true,
+			Passes:       []Pass{{ID: "regression_hunt", Category: "adversarial", Order: 10, Title: "Regression Hunt", Description: "Trace callers"}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out.Context
+	}
+	first := run()
+	second := run()
+	if first != second {
+		t.Fatalf("context render drifted:\nfirst:\n%s\nsecond:\n%s", first, second)
 	}
 }
 
@@ -341,6 +406,35 @@ func TestReviewScopeLimitsMutationGuardToReviewRelevantPaths(t *testing.T) {
 	if out.Verdict != corereview.VerdictFail || len(out.Findings) != 1 || out.Findings[0].ID != "workspace_mutation" {
 		t.Fatalf("inside-scope mutation should fail scoped review: %+v", out)
 	}
+}
+
+func TestDerivedReviewScopeExcludesPrivateAndLocalPaths(t *testing.T) {
+	t.Parallel()
+
+	scope := deriveReviewScope(spec.Model{
+		TaskID: "task",
+		Scope: []string{
+			"Update `api/handler.go`.",
+			"Out of scope: `.git/**`, `.priv/**`, `.env*`, `nested/.env.production`, `.scafld/config.local.yaml`, `.scafld/reviews/`.",
+		},
+	}, nil, []string{" M hash api/handler.go"})
+	for _, denied := range []string{".git", ".priv", ".env", ".envrc", "nested/.env.production", ".scafld/config.local.yaml", ".scafld/reviews"} {
+		if containsString(scope, denied) {
+			t.Fatalf("derived review scope should not include %s: %+v", denied, scope)
+		}
+	}
+	if !containsString(scope, "api/handler.go") {
+		t.Fatalf("derived review scope lost real task path: %+v", scope)
+	}
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func TestWorkspaceMutationGuardSeesSpecMutation(t *testing.T) {

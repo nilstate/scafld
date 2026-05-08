@@ -1,4 +1,4 @@
-package configure
+package config
 
 import (
 	"context"
@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	appconfigure "github.com/nilstate/scafld/v2/internal/app/configure"
+	appconfig "github.com/nilstate/scafld/v2/internal/app/config"
 )
 
 func TestScannerFindsCommandsAndInvariants(t *testing.T) {
@@ -41,6 +41,7 @@ func TestScannerSuggestsExecutionEnvironmentFromRubyVersionManagers(t *testing.T
 
 	root := t.TempDir()
 	writeFile(t, root, "api/.ruby-version", "3.4.5\n")
+	writeFile(t, root, "api/Gemfile", "gem 'rspec'\n")
 	writeFile(t, root, ".tool-versions", "ruby 3.4.5\nnodejs 24.0.0\n")
 
 	snapshot, err := Scanner{Root: root}.Scan(context.Background())
@@ -64,6 +65,9 @@ func TestScannerSuggestsExecutionEnvironmentFromRubyVersionManagers(t *testing.T
 		if !hasEvidence(snapshot.Files, want) {
 			t.Fatalf("evidence missing %s in %+v", want, snapshot.Files)
 		}
+	}
+	if snapshot.Execution.Env["BUNDLE_GEMFILE"] != "api/Gemfile" {
+		t.Fatalf("execution env = %+v", snapshot.Execution.Env)
 	}
 }
 
@@ -105,6 +109,53 @@ func TestScannerDetectsRealWorldCommandSurfaces(t *testing.T) {
 	}
 }
 
+func TestScannerDetectsNestedPackageSurfaces(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	writeFile(t, root, "api/go.mod", "module example.com/api\n")
+	writeFile(t, root, "web/package.json", `{"packageManager":"pnpm@10.0.0","scripts":{"test":"vitest","lint":"eslint .","typecheck":"tsc --noEmit"}}`)
+	writeFile(t, root, "web/pnpm-lock.yaml", "lockfileVersion: '9.0'\n")
+	writeFile(t, root, "worker/pyproject.toml", "[project]\nname='worker'\n[tool.pytest.ini_options]\n")
+	writeFile(t, root, "crate/Cargo.toml", "[package]\nname='crate'\n")
+	writeFile(t, root, "api/Gemfile", "gem 'rspec'\n")
+	writeFile(t, root, "docker-compose.yml", "services: {}\n")
+	writeFile(t, root, "Procfile", "web: bin/server\n")
+
+	snapshot, err := Scanner{Root: root}.Scan(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for path := range map[string]bool{
+		"api/go.mod":            true,
+		"web/package.json":      true,
+		"worker/pyproject.toml": true,
+		"crate/Cargo.toml":      true,
+		"api/Gemfile":           true,
+	} {
+		if !hasEvidence(snapshot.Files, path) {
+			t.Fatalf("missing nested evidence %s in %+v", path, snapshot.Files)
+		}
+	}
+	for id, command := range map[string]string{
+		"go_test_api":        "(cd api && go test ./...)",
+		"node_test_web":      "(cd web && pnpm test)",
+		"node_typecheck_web": "(cd web && pnpm typecheck)",
+		"python_test_worker": "(cd worker && python -m pytest)",
+		"cargo_test_crate":   "(cd crate && cargo test)",
+		"ruby_test_api":      "(cd api && bundle exec rspec)",
+	} {
+		if !hasCommandSuggestion(snapshot.Commands, id, command) {
+			t.Fatalf("missing nested command %s=%q in %+v", id, command, snapshot.Commands)
+		}
+	}
+	for _, id := range []string{"service_topology_integrity", "process_topology_integrity"} {
+		if !hasInvariantID(snapshot.Invariants, id) {
+			t.Fatalf("missing invariant %s in %+v", id, snapshot.Invariants)
+		}
+	}
+}
+
 func TestScannerAsksWhenNoFullCheckExists(t *testing.T) {
 	t.Parallel()
 
@@ -117,7 +168,7 @@ func TestScannerAsksWhenNoFullCheckExists(t *testing.T) {
 	}
 }
 
-func TestScannerWarnsAboutLegacyIgnoredConfigKeys(t *testing.T) {
+func TestScannerWarnsAboutIgnoredConfigKeys(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
@@ -134,7 +185,7 @@ tech_stack:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(snapshot.Warnings) != 1 || snapshot.Warnings[0].ID != "legacy_ignored_config_keys" {
+	if len(snapshot.Warnings) != 1 || snapshot.Warnings[0].ID != "ignored_config_keys" {
 		t.Fatalf("warnings = %+v", snapshot.Warnings)
 	}
 	for _, want := range []string{"validation", "rubric", "tech_stack"} {
@@ -155,7 +206,7 @@ func writeFile(t *testing.T, root string, rel string, text string) {
 	}
 }
 
-func hasCommandID(commands []appconfigure.CommandSuggestion, id string) bool {
+func hasCommandID(commands []appconfig.CommandSuggestion, id string) bool {
 	for _, command := range commands {
 		if command.ID == id {
 			return true
@@ -164,7 +215,7 @@ func hasCommandID(commands []appconfigure.CommandSuggestion, id string) bool {
 	return false
 }
 
-func hasInvariantID(invariants []appconfigure.InvariantSuggestion, id string) bool {
+func hasInvariantID(invariants []appconfig.InvariantSuggestion, id string) bool {
 	for _, invariant := range invariants {
 		if invariant.ID == id {
 			return true
@@ -173,7 +224,7 @@ func hasInvariantID(invariants []appconfigure.InvariantSuggestion, id string) bo
 	return false
 }
 
-func hasCommandSuggestion(commands []appconfigure.CommandSuggestion, id string, command string) bool {
+func hasCommandSuggestion(commands []appconfig.CommandSuggestion, id string, command string) bool {
 	for _, candidate := range commands {
 		if candidate.ID == id && candidate.Command == command {
 			return true
@@ -182,7 +233,7 @@ func hasCommandSuggestion(commands []appconfigure.CommandSuggestion, id string, 
 	return false
 }
 
-func hasEvidence(files []appconfigure.Evidence, path string) bool {
+func hasEvidence(files []appconfig.Evidence, path string) bool {
 	for _, file := range files {
 		if file.Path == path {
 			return true

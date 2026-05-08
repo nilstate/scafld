@@ -9,8 +9,9 @@ import (
 	"runtime/debug"
 	"strings"
 
-	configurecli "github.com/nilstate/scafld/v2/internal/adapters/cli/configure"
+	configcli "github.com/nilstate/scafld/v2/internal/adapters/cli/config"
 	hardencli "github.com/nilstate/scafld/v2/internal/adapters/cli/harden"
+	clihelp "github.com/nilstate/scafld/v2/internal/adapters/cli/help"
 	initcmd "github.com/nilstate/scafld/v2/internal/adapters/cli/initcmd"
 	"github.com/nilstate/scafld/v2/internal/adapters/cli/output"
 	reviewcli "github.com/nilstate/scafld/v2/internal/adapters/cli/review"
@@ -46,7 +47,7 @@ const (
 
 var commands = []command{
 	{"init", "Bootstrap a scafld workspace"},
-	{"configure", "Propose evidence-backed workspace config"},
+	{"config", "Propose evidence-backed workspace configuration"},
 	{"plan", "Create a draft task spec"},
 	{"harden", "Stress-test a draft spec before approval"},
 	{"validate", "Validate a task spec"},
@@ -68,12 +69,12 @@ type command struct{ name, summary string }
 type commandHandler func(context.Context, []string, io.Writer, io.Writer) int
 
 var commandHandlers = map[string]commandHandler{
-	"init":      runInit,
-	"configure": runConfigure,
-	"plan":      runPlan,
-	"harden":    runHarden,
-	"validate":  runValidate,
-	"approve":   runApprove,
+	"init":     runInit,
+	"config":   runConfig,
+	"plan":     runPlan,
+	"harden":   runHarden,
+	"validate": runValidate,
+	"approve":  runApprove,
 	"build": func(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer) int {
 		return runBuild(ctx, args, stdout, stderr, false)
 	},
@@ -98,7 +99,7 @@ func Run(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer)
 	}
 	args = normalizeGlobalFlags(args)
 	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" {
-		printHelp(stdout)
+		clihelp.Print(stdout, helpCommands())
 		return ExitSuccess
 	}
 	if args[0] == "--version" || args[0] == "version" {
@@ -106,7 +107,7 @@ func Run(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer)
 		return ExitSuccess
 	}
 	if len(args) > 1 && (args[1] == "-h" || args[1] == "--help") && knownCommand(args[0]) {
-		printCommandHelp(stdout, args[0])
+		clihelp.PrintCommand(stdout, args[0], helpCommands())
 		return ExitSuccess
 	}
 	if handler := commandHandlers[args[0]]; handler != nil {
@@ -114,6 +115,16 @@ func Run(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer)
 	}
 	fmt.Fprintf(stderr, "error: unknown command %q\n", args[0])
 	return ExitInvalid
+}
+
+func knownCommand(name string) bool { return commandHandlers[name] != nil }
+
+func helpCommands() []clihelp.Command {
+	out := make([]clihelp.Command, 0, len(commands))
+	for _, cmd := range commands {
+		out = append(out, clihelp.Command{Name: cmd.name, Summary: cmd.summary})
+	}
+	return out
 }
 
 func displayVersion() string {
@@ -166,7 +177,7 @@ func runInit(ctx context.Context, args []string, stdout io.Writer, stderr io.Wri
 	return okOut(stdout, "init", result, initcmd.Message(result), opts.JSON)
 }
 
-func runConfigure(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer) int {
+func runConfig(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer) int {
 	opts, err := parseOptions(args)
 	if err != nil {
 		return failOut(stderr, err, ExitInvalid, opts.JSON)
@@ -175,12 +186,12 @@ func runConfigure(ctx context.Context, args []string, stdout io.Writer, stderr i
 	if err != nil {
 		return failOut(stderr, err, ExitWorkspace, opts.JSON)
 	}
-	out, err := configurecli.Run(ctx, root)
+	out, err := configcli.Run(ctx, root)
 	if err != nil {
 		return failOut(stderr, err, ExitGeneric, opts.JSON)
 	}
 	text := out.Prompt + fmt.Sprintf("\n---\nproposal: %s\nreview before copying changes into .scafld/config.yaml\n", out.Path)
-	return okOut(stdout, "configure", out, text, opts.JSON)
+	return okOut(stdout, "config", out, text, opts.JSON)
 }
 
 func runPlan(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer) int {
@@ -321,20 +332,32 @@ func runReview(ctx context.Context, args []string, stdout io.Writer, stderr io.W
 			ProviderBinary: opts.Values["provider-binary"],
 			Model:          opts.Values["model"],
 			Progress:       stderr,
+			PrintContext:   opts.Flags["print-context"],
 		})
 		if err != nil {
 			return failOut(stderr, err, ExitInvalid, opts.JSON)
 		}
 	}
 	out, err := review.RunWithInput(ctx, store, sessions, git.Adapter{Root: root}, selected.Provider, clock.System{}, review.Input{
-		TaskID:        opts.Positionals[0],
-		Passes:        selected.Passes,
-		ReviewScope:   reviewcli.SplitScope(opts.Values["review-scope"]),
-		HumanReviewed: opts.Flags["human-reviewed"],
-		Reason:        opts.Values["reason"],
+		TaskID:          opts.Positionals[0],
+		Passes:          selected.Passes,
+		Invariants:      selected.Invariants,
+		ReviewScope:     reviewcli.SplitScope(opts.Values["review-scope"]),
+		ContextSections: selected.ContextSections,
+		ContextMaxBytes: selected.ContextMaxBytes,
+		PrintContext:    opts.Flags["print-context"],
+		HumanReviewed:   opts.Flags["human-reviewed"],
+		Reason:          opts.Values["reason"],
 	})
 	if err != nil {
 		return failOut(stderr, err, ExitReview, opts.JSON)
+	}
+	if out.Context != "" {
+		if opts.JSON {
+			return okOut(stdout, "review_context", out, out.Context, true)
+		}
+		fmt.Fprint(stdout, out.Context)
+		return ExitSuccess
 	}
 	exit := ExitSuccess
 	if out.Verdict != "pass" {
