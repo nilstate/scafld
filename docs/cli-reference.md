@@ -227,14 +227,16 @@ scafld review email-contracts --review-scope api,cli/packages/mcp
 
 The approval baseline is captured before task execution. Review compares the
 current workspace to that baseline, reports task-scoped changes to the provider,
-and blocks new changes outside declared scope. Unchanged baseline dirt is
-context, not a finding by itself. Files changed during review still fail closed.
+and blocks new changes outside declared scope before invoking the provider.
+Unchanged baseline dirt is context, not a finding by itself. Task-relevant files
+changed during review still fail closed; unrelated workspace churn does not
+discard a valid review.
 
 The provider returns a ReviewPacket. scafld validates it, rejects workspace
-mutation, writes the review event to session, and projects the verdict back into
-the spec. A human-reviewed override writes a `review_override` event before the
-passing review event. `complete` will not archive the task unless the review
-verdict is `pass`.
+mutation in the review-relevant surface, writes the review event to session, and
+projects the verdict back into the spec. A human-reviewed override writes a
+`review_override` event before the passing review event. `complete` will not
+archive the task unless the review verdict is `pass`.
 
 On review failure, the text output prints the findings and next repair command.
 The same findings appear in `scafld status`, `scafld handoff`, the session

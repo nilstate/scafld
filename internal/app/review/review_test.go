@@ -14,10 +14,17 @@ import (
 	"github.com/nilstate/scafld/v2/internal/testkit/providerfake"
 )
 
-type fakeSpecs struct{ model spec.Model }
+type fakeSpecs struct {
+	model spec.Model
+	path  string
+}
 
 func (f *fakeSpecs) Load(context.Context, string) (spec.Model, string, error) {
-	return f.model, "task.md", nil
+	path := f.path
+	if path == "" {
+		path = "task.md"
+	}
+	return f.model, path, nil
 }
 func (f *fakeSpecs) Save(_ context.Context, _ string, model spec.Model) error {
 	f.model = model
@@ -307,7 +314,7 @@ func TestWorkspaceMutationGuardPreservesProviderFindings(t *testing.T) {
 	}
 }
 
-func TestReviewScopeDoesNotLimitMutationGuard(t *testing.T) {
+func TestReviewScopeLimitsMutationGuardToReviewRelevantPaths(t *testing.T) {
 	t.Parallel()
 
 	specs := &fakeSpecs{model: spec.Model{TaskID: "task", Title: "Task", Status: spec.StatusReview}}
@@ -319,8 +326,8 @@ func TestReviewScopeDoesNotLimitMutationGuard(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out.Verdict != corereview.VerdictFail || len(out.Findings) != 1 || out.Findings[0].ID != "workspace_mutation" {
-		t.Fatalf("outside-scope mutation during review should fail read-only guard: %+v", out)
+	if out.Verdict != corereview.VerdictPass || len(out.Findings) != 0 {
+		t.Fatalf("outside-scope mutation should not waste the review result: %+v", out)
 	}
 
 	workspace = &fakeWorkspace{snapshots: [][]string{
@@ -339,7 +346,7 @@ func TestReviewScopeDoesNotLimitMutationGuard(t *testing.T) {
 func TestWorkspaceMutationGuardSeesSpecMutation(t *testing.T) {
 	t.Parallel()
 
-	specs := &fakeSpecs{model: spec.Model{TaskID: "task", Title: "Task", Status: spec.StatusReview}}
+	specs := &fakeSpecs{model: spec.Model{TaskID: "task", Title: "Task", Status: spec.StatusReview}, path: "/repo/.scafld/specs/active/task.md"}
 	workspace := &fakeWorkspace{snapshots: [][]string{
 		{" M spec-old .scafld/specs/active/task.md"},
 		{" M spec-new .scafld/specs/active/task.md"},
@@ -350,6 +357,23 @@ func TestWorkspaceMutationGuardSeesSpecMutation(t *testing.T) {
 	}
 	if out.Verdict != corereview.VerdictFail || len(out.Findings) != 1 || out.Findings[0].ID != "workspace_mutation" {
 		t.Fatalf("spec mutation during review should fail read-only guard: %+v", out)
+	}
+}
+
+func TestWorkspaceMutationGuardIgnoresUnrelatedDraftSpecChurn(t *testing.T) {
+	t.Parallel()
+
+	specs := &fakeSpecs{model: spec.Model{TaskID: "task", Title: "Task", Status: spec.StatusReview}}
+	workspace := &fakeWorkspace{snapshots: [][]string{
+		{"?? old .scafld/specs/drafts/other-task.md", " M api-old api/handler.go"},
+		{"?? new .scafld/specs/drafts/other-task.md", " M api-old api/handler.go"},
+	}}
+	out, err := RunWithInput(context.Background(), specs, &fakeSessions{}, workspace, fakeProvider{packet: corereview.Packet{Verdict: corereview.VerdictPass}}, fakeClock{}, Input{TaskID: "task", ReviewScope: []string{"api"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Verdict != corereview.VerdictPass || len(out.Findings) != 0 {
+		t.Fatalf("unrelated draft spec churn should not block review: %+v", out)
 	}
 }
 
@@ -399,7 +423,11 @@ func TestReviewUsesApprovalBaselineForScopeDrift(t *testing.T) {
 		{" M root-old README.md", " M api-new api/handler.go", " M docs-new docs/index.md"},
 		{" M root-old README.md", " M api-new api/handler.go", " M docs-new docs/index.md"},
 	}}
-	out, err := RunWithInput(context.Background(), specs, sessions, workspace, fakeProvider{packet: corereview.Packet{Verdict: corereview.VerdictPass}}, fakeClock{}, Input{TaskID: "task"})
+	provider := providerFunc(func(context.Context, corereview.Request) (corereview.Packet, error) {
+		t.Fatal("provider should not run when local scope drift blocks review")
+		return corereview.Packet{}, nil
+	})
+	out, err := RunWithInput(context.Background(), specs, sessions, workspace, provider, fakeClock{}, Input{TaskID: "task"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -408,6 +436,14 @@ func TestReviewUsesApprovalBaselineForScopeDrift(t *testing.T) {
 	}
 	if !strings.Contains(out.Findings[0].Summary, "docs/index.md") || strings.Contains(out.Findings[0].Summary, "README.md") {
 		t.Fatalf("scope drift should cite new outside-scope drift only: %+v", out.Findings)
+	}
+	entries := sessions.ledger.Entries
+	if len(entries) < 3 ||
+		entries[len(entries)-2].Type != "review_attempt" ||
+		entries[len(entries)-2].Status != "blocked" ||
+		entries[len(entries)-1].Type != "review" ||
+		entries[len(entries)-1].Provider != "scafld" {
+		t.Fatalf("scope drift should be recorded without provider spend: %+v", sessions.ledger.Entries)
 	}
 }
 

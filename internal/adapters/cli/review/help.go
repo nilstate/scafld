@@ -32,9 +32,8 @@ Review scope:
     scafld review email-contracts --review-scope api
     scafld review email-contracts --review-scope api,cli/packages/mcp
 
-  The approval baseline is recorded before task execution. Unchanged baseline
-  dirt is context, not a finding by itself. Files changed during review still
-  fail closed.
+  The approval baseline is recorded before task execution. Scope drift fails
+  before provider spend. Task-relevant changes during review still fail closed.
 
 Human review:
   Use --human-reviewed only after operator review; --reason records the audit reason:

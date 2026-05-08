@@ -102,6 +102,22 @@ func RunWithInput(ctx context.Context, specs SpecStore, sessions SessionStore, w
 	baselineScoped := coreworkspace.Filter(baselineComparison, scope)
 	taskChanges, scopeDrift := coreworkspace.PartitionMutations(coreworkspace.Diff(baselineComparison, beforeComparison), scope)
 	now := clock.Now().UTC().Format(time.RFC3339)
+	if len(scopeDrift) > 0 {
+		if _, err := sessions.Append(ctx, model.TaskID, session.Entry{
+			Type:   "review_attempt",
+			Status: "blocked",
+			Reason: fmt.Sprintf("review local gates blocked before provider; %d scope drift change(s)", len(scopeDrift)),
+			Output: reviewAttemptOutput(baselineScoped, taskChanges, scopeDrift),
+		}, now); err != nil {
+			return Output{}, err
+		}
+		packet := review.Packet{
+			Verdict:  review.VerdictFail,
+			Provider: "scafld",
+			Findings: []review.Finding{scopeDriftFinding(scopeDrift)},
+		}
+		return recordReviewPacket(ctx, specs, sessions, model, path, packet, now)
+	}
 	if _, err := sessions.Append(ctx, model.TaskID, session.Entry{
 		Type:   "review_attempt",
 		Status: "running",
@@ -120,21 +136,12 @@ func RunWithInput(ctx context.Context, specs SpecStore, sessions SessionStore, w
 		}, now)
 		return Output{}, mutationErr
 	}
-	if mutated := coreworkspace.MutationStrings(coreworkspace.Diff(beforeFull, afterFull)); len(mutated) > 0 {
+	if mutated := coreworkspace.MutationStrings(reviewBlockingMutations(beforeFull, afterFull, scope, path)); len(mutated) > 0 {
 		packet.Verdict = review.VerdictFail
 		packet.Findings = append(packet.Findings, review.Finding{
 			ID:       "workspace_mutation",
 			Severity: review.SeverityBlocking,
 			Summary:  "workspace changed during review: " + strings.Join(mutated, ", "),
-		})
-		err = nil
-	}
-	if len(scopeDrift) > 0 {
-		packet.Verdict = review.VerdictFail
-		packet.Findings = append(packet.Findings, review.Finding{
-			ID:       "scope_drift",
-			Severity: review.SeverityBlocking,
-			Summary:  "workspace changed outside declared task scope since approval: " + strings.Join(coreworkspace.MutationStrings(scopeDrift), ", "),
 		})
 		err = nil
 	}
@@ -152,6 +159,13 @@ func RunWithInput(ctx context.Context, specs SpecStore, sessions SessionStore, w
 			Status: "failed",
 			Reason: "review packet invalid: " + err.Error(),
 		}, now)
+		return Output{}, err
+	}
+	return recordReviewPacket(ctx, specs, sessions, model, path, packet, now)
+}
+
+func recordReviewPacket(ctx context.Context, specs SpecStore, sessions SessionStore, model spec.Model, path string, packet review.Packet, now string) (Output, error) {
+	if err := review.ValidatePacket(packet); err != nil {
 		return Output{}, err
 	}
 	model.Status = spec.StatusReview
@@ -187,6 +201,14 @@ func RunWithInput(ctx context.Context, specs SpecStore, sessions SessionStore, w
 		return Output{}, err
 	}
 	return Output{TaskID: model.TaskID, Verdict: packet.Verdict, Findings: packet.Findings, Next: command, Repair: reviewRepair(model, packet, command, latestReviewEvidence(ledger))}, nil
+}
+
+func scopeDriftFinding(scopeDrift []coreworkspace.Mutation) review.Finding {
+	return review.Finding{
+		ID:       "scope_drift",
+		Severity: review.SeverityBlocking,
+		Summary:  "workspace changed outside declared task scope since approval: " + strings.Join(coreworkspace.MutationStrings(scopeDrift), ", "),
+	}
 }
 
 func runHumanReviewed(ctx context.Context, specs SpecStore, sessions SessionStore, clock Clock, model spec.Model, path string, reason string) (Output, error) {
@@ -286,6 +308,34 @@ func reviewComparisonPath(path string) bool {
 		}
 	}
 	return true
+}
+
+func reviewBlockingMutations(before []string, after []string, scope []string, specPath string) []coreworkspace.Mutation {
+	currentSpec := currentSpecReviewPath(specPath)
+	normalizedScope := coreworkspace.NormalizeScope(scope)
+	var blocking []coreworkspace.Mutation
+	for _, mutation := range coreworkspace.Diff(before, after) {
+		path := strings.Trim(strings.ReplaceAll(mutation.Path, "\\", "/"), "/")
+		if currentSpec != "" && path == currentSpec {
+			blocking = append(blocking, mutation)
+			continue
+		}
+		if !reviewComparisonPath(path) {
+			continue
+		}
+		if len(normalizedScope) == 0 || coreworkspace.PathInScope(path, normalizedScope) {
+			blocking = append(blocking, mutation)
+		}
+	}
+	return blocking
+}
+
+func currentSpecReviewPath(path string) string {
+	normalized := strings.Trim(strings.ReplaceAll(path, "\\", "/"), "/")
+	if idx := strings.Index(normalized, ".scafld/specs/"); idx >= 0 {
+		return normalized[idx:]
+	}
+	return ""
 }
 
 func reviewAttemptOutput(baseline []string, taskChanges []coreworkspace.Mutation, scopeDrift []coreworkspace.Mutation) string {

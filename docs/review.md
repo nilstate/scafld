@@ -78,15 +78,16 @@ scafld review email-contracts --review-scope api,cli/packages/mcp
 
 At approval, scafld records the dirty workspace baseline. At review, it compares
 the current workspace to that baseline, sends task-scoped changes to the
-reviewer, and blocks new changes outside declared scope. Unchanged baseline dirt
-is context, not a finding by itself. If a file changes during review inside the
-review scope, review still fails closed with a workspace mutation finding.
+reviewer, and blocks new changes outside declared scope before invoking the
+provider. Unchanged baseline dirt is context, not a finding by itself. This
+keeps dirty monorepos cheap: if local scope drift is already blocking, scafld
+fails fast instead of spending a provider run.
 
-The approval-to-review scope comparison ignores scafld-owned runtime projection
-paths under `.scafld/runs/` and `.scafld/specs/`. The
-read-only mutation guard does not ignore the living spec: if a review provider
-edits `.scafld/specs/**` during review, the gate fails closed because the
-contract changed while it was being judged.
+The read-only mutation guard is task-relevant rather than global. Changes inside
+review scope still fail closed because the provider judged moving code.
+Unrelated `.scafld/specs/drafts/**` churn from another task does not discard a
+valid review. The current task spec remains guarded: if it changes during
+review, the contract changed while it was being judged.
 
 ## What scafld Sends
 
@@ -127,10 +128,10 @@ The authority order stays the same:
 - spec shows the readable current projection
 - provider output is accepted only after validation
 
-Invalid packet output fails review. Workspace changes during review become a
-blocking finding, even if the provider returned `pass`. If the provider also
-returned findings, scafld keeps them and appends the workspace-change finding so
-the original review signal is not hidden.
+Invalid packet output fails review. Task-relevant workspace changes during
+review become a blocking finding, even if the provider returned `pass`. If the
+provider also returned findings, scafld keeps them and appends the
+workspace-change finding so the original review signal is not hidden.
 
 ## Failed Review Output
 
