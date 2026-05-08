@@ -14,7 +14,8 @@ func TestModulePathIsPrimaryRepository(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), "module github.com/nilstate/scafld/v2\n") {
+	content := strings.ReplaceAll(string(data), "\r\n", "\n")
+	if !strings.Contains(content, "module github.com/nilstate/scafld/v2\n") {
 		t.Fatalf("go.mod must use primary module path:\n%s", data)
 	}
 }
