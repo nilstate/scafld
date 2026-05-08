@@ -74,7 +74,7 @@ func CountBlocking(findings []Finding) int {
 // the completion gate for real work.
 func ValidCompletionProvider(provider string) bool {
 	switch strings.TrimSpace(provider) {
-	case "codex", "claude", "command":
+	case "codex", "claude", "command", "human":
 		return true
 	default:
 		return false

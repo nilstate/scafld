@@ -52,6 +52,9 @@ func Run(ctx context.Context, specs SpecStore, sessions SessionStore, clock Cloc
 	if !corereview.ValidCompletionProvider(reviewEntry.Provider) {
 		return spec.Model{}, reviewGateError(model, "passing review came from an unsupported provider", fmt.Sprintf("provider %q", reviewEntry.Provider))
 	}
+	if reviewEntry.Provider == "human" && !hasAuditedHumanOverride(ledger) {
+		return spec.Model{}, reviewGateError(model, "human-reviewed gate is missing audit evidence", "latest human review has no adjacent review_override entry")
+	}
 	model = reconcile.FromSession(model, ledger)
 	if model.Status != spec.StatusReview || model.Review.Verdict != corereview.VerdictPass {
 		return spec.Model{}, reviewGateError(model, "projected spec is not at a passing review gate", fmt.Sprintf("status %s verdict %s", model.Status, model.Review.Verdict))
@@ -81,11 +84,29 @@ func reviewGateError(model spec.Model, reason string, actual string) error {
 		Status:   string(model.Status),
 		Reason:   reason,
 		Evidence: []string{"session review entries", "projected spec review state"},
-		Expected: "latest accepted review verdict pass from codex, claude, or command provider",
+		Expected: "latest accepted review verdict pass from codex, claude, command, or audited human provider",
 		Actual:   actual,
 		Blockers: []string{reason},
 		Next:     "scafld review " + model.TaskID,
 	})
+}
+
+func hasAuditedHumanOverride(ledger session.Session) bool {
+	for i := len(ledger.Entries) - 1; i >= 0; i-- {
+		entry := ledger.Entries[i]
+		if entry.Type != "review" {
+			continue
+		}
+		if entry.Provider != "human" {
+			return true
+		}
+		if i == 0 {
+			return false
+		}
+		previous := ledger.Entries[i-1]
+		return previous.Type == "review_override" && previous.Provider == "human" && previous.Status == "accepted"
+	}
+	return false
 }
 
 func latestCompletionReviewEntry(ledger session.Session) (session.Entry, bool) {

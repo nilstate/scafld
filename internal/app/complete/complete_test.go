@@ -113,6 +113,30 @@ func TestCompleteAcceptsKnownExternalReviewProviders(t *testing.T) {
 	}
 }
 
+func TestCompleteAcceptsAuditedHumanReviewProvider(t *testing.T) {
+	t.Parallel()
+
+	specs := &fakeSpecs{model: spec.Model{TaskID: "task", Status: spec.StatusReview, Review: spec.ReviewState{Status: "completed", Verdict: "pass"}}}
+	ledger := session.New("task", "now").
+		WithEntry(session.Entry{Type: "review_override", Status: "accepted", Provider: "human", Reason: "operator reviewed PR 123"}).
+		WithEntry(session.Entry{Type: "review", Status: corereview.VerdictPass, Provider: "human"})
+	_, err := Run(context.Background(), specs, &fakeSessions{ledger: ledger}, fakeClock{}, "task")
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCompleteRejectsUnauditedHumanReviewProvider(t *testing.T) {
+	t.Parallel()
+
+	specs := &fakeSpecs{model: spec.Model{TaskID: "task", Status: spec.StatusReview, Review: spec.ReviewState{Status: "completed", Verdict: "pass"}}}
+	ledger := session.New("task", "now").WithEntry(session.Entry{Type: "review", Status: corereview.VerdictPass, Provider: "human"})
+	_, err := Run(context.Background(), specs, &fakeSessions{ledger: ledger}, fakeClock{}, "task")
+	if !errors.Is(err, ErrReviewGate) {
+		t.Fatalf("error = %v, want %v", err, ErrReviewGate)
+	}
+}
+
 func TestCompleteRejectsStaleReviewAfterLaterBuildEvidence(t *testing.T) {
 	t.Parallel()
 

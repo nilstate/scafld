@@ -58,7 +58,7 @@ func TestValidatePacketRejectsVerdictThatContradictsFindings(t *testing.T) {
 func TestValidCompletionProviderAllowlist(t *testing.T) {
 	t.Parallel()
 
-	for _, provider := range []string{"codex", "claude", "command", " codex "} {
+	for _, provider := range []string{"codex", "claude", "command", "human", " codex "} {
 		if !ValidCompletionProvider(provider) {
 			t.Fatalf("provider %q should satisfy completion", provider)
 		}

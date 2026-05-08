@@ -172,6 +172,13 @@ func summarizeLedger(ledger session.Session) ledgerSummary {
 			if entry.Status == "fail" {
 				summary.hadReviewChallenge = true
 			}
+			if entry.Provider == "human" {
+				summary.hadReviewChallenge = true
+				summary.override = true
+			}
+		case "review_override":
+			summary.hadReviewChallenge = true
+			summary.override = true
 		case "complete":
 			if summary.hadReviewChallenge && (latestReviewStatus != "pass" || !corereview.ValidCompletionProvider(latestReviewProvider)) {
 				summary.override = true

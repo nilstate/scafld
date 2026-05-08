@@ -18,6 +18,8 @@ Flags:
   --provider-binary PATH   Provider binary override
   --provider-command CMD   Command provider shell command
   --review-scope PATHS     Comma-separated paths that override derived task scope
+  --human-reviewed         Record an audited human review instead of invoking a provider
+  --reason TEXT            Required reason for --human-reviewed
   --root PATH              Workspace root
   --json                   Print JSON envelope
   -h, --help               Show help
@@ -33,5 +35,9 @@ Review scope:
   The approval baseline is recorded before task execution. Unchanged baseline
   dirt is context, not a finding by itself. Files changed during review still
   fail closed.
+
+Human review:
+  Use --human-reviewed only after operator review; --reason records the audit reason:
+    scafld review email-contracts --human-reviewed --reason "reviewed PR 123"
 `)
 }

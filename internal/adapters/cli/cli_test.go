@@ -433,6 +433,30 @@ func TestRunReviewSurfacesFindingsInReviewStatusAndHandoff(t *testing.T) {
 	}
 }
 
+func TestRunReviewHumanReviewedOverrideCompletes(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	initGitWorkspace(t, root)
+	runCLI(t, []string{"init", "--root", root, "--no-agent-docs"})
+	runCLI(t, []string{"plan", "--root", root, "human-review-task", "--command", "true"})
+	runCLI(t, []string{"approve", "--root", root, "human-review-task"})
+	runCLI(t, []string{"build", "--root", root, "human-review-task"})
+	stdout := runCLI(t, []string{"review", "--root", root, "human-review-task", "--human-reviewed", "--reason", "operator reviewed PR 123"})
+	if !strings.Contains(stdout, "review verdict: pass") || !strings.Contains(stdout, "next: scafld complete human-review-task") {
+		t.Fatalf("human review output = %q", stdout)
+	}
+	runCLI(t, []string{"complete", "--root", root, "human-review-task"})
+	sessionPath := filepath.Join(root, ".scafld", "runs", "human-review-task", "session.json")
+	sessionData, err := os.ReadFile(sessionPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(sessionData), `"type": "review_override"`) || !strings.Contains(string(sessionData), "operator reviewed PR 123") {
+		t.Fatalf("session missing audited override:\n%s", sessionData)
+	}
+}
+
 func TestExitCodeTable(t *testing.T) {
 	t.Parallel()
 

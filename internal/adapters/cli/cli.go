@@ -311,22 +311,27 @@ func runReview(ctx context.Context, args []string, stdout io.Writer, stderr io.W
 		return failOut(stderr, err, code, opts.JSON)
 	}
 	root, _ := commandRoot(ctx, opts, false)
-	selected, err := reviewcli.Select(ctx, reviewcli.Options{
-		Root:           root,
-		TaskID:         opts.Positionals[0],
-		Provider:       opts.Values["provider"],
-		Command:        opts.Values["provider-command"],
-		ProviderBinary: opts.Values["provider-binary"],
-		Model:          opts.Values["model"],
-		Progress:       stderr,
-	})
-	if err != nil {
-		return failOut(stderr, err, ExitInvalid, opts.JSON)
+	var selected reviewcli.Selection
+	if !opts.Flags["human-reviewed"] {
+		selected, err = reviewcli.Select(ctx, reviewcli.Options{
+			Root:           root,
+			TaskID:         opts.Positionals[0],
+			Provider:       opts.Values["provider"],
+			Command:        opts.Values["provider-command"],
+			ProviderBinary: opts.Values["provider-binary"],
+			Model:          opts.Values["model"],
+			Progress:       stderr,
+		})
+		if err != nil {
+			return failOut(stderr, err, ExitInvalid, opts.JSON)
+		}
 	}
 	out, err := review.RunWithInput(ctx, store, sessions, git.Adapter{Root: root}, selected.Provider, clock.System{}, review.Input{
-		TaskID:      opts.Positionals[0],
-		Passes:      selected.Passes,
-		ReviewScope: reviewcli.SplitScope(opts.Values["review-scope"]),
+		TaskID:        opts.Positionals[0],
+		Passes:        selected.Passes,
+		ReviewScope:   reviewcli.SplitScope(opts.Values["review-scope"]),
+		HumanReviewed: opts.Flags["human-reviewed"],
+		Reason:        opts.Values["reason"],
 	})
 	if err != nil {
 		return failOut(stderr, err, ExitReview, opts.JSON)
