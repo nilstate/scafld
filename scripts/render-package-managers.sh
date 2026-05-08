@@ -77,9 +77,9 @@ mkdir -p "$out_dir"
 
 render "$root/package/homebrew/scafld.rb.tmpl" "$out_dir/homebrew/scafld.rb"
 render "$root/package/scoop/scafld.json.tmpl" "$out_dir/scoop/scafld.json"
-render "$root/package/winget/scafld.yaml.tmpl" "$out_dir/winget/0state.scafld.yaml"
+render "$root/package/winget/scafld.yaml.tmpl" "$out_dir/winget/0state.scafld.locale.en-US.yaml"
 render "$root/package/winget/scafld.installer.yaml.tmpl" "$out_dir/winget/0state.scafld.installer.yaml"
-render "$root/package/winget/scafld.version.yaml.tmpl" "$out_dir/winget/0state.scafld.version.yaml"
+render "$root/package/winget/scafld.version.yaml.tmpl" "$out_dir/winget/0state.scafld.yaml"
 
 ruby -c "$out_dir/homebrew/scafld.rb" >/dev/null
 jq empty "$out_dir/scoop/scafld.json"
