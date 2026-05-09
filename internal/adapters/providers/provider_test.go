@@ -2,9 +2,12 @@ package providers
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
+	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -210,6 +213,49 @@ func TestCodexProviderWritesDefaultSchema(t *testing.T) {
 	}
 }
 
+func TestReviewDossierSchemaIsStrictStructuredOutputCompatible(t *testing.T) {
+	t.Parallel()
+
+	var root map[string]any
+	if err := json.Unmarshal([]byte(ReviewDossierSchemaJSON()), &root); err != nil {
+		t.Fatal(err)
+	}
+	assertStrictStructuredOutputSchema(t, "$", root)
+}
+
+func TestReviewDossierSchemaMatchesManagedCoreAsset(t *testing.T) {
+	t.Parallel()
+
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("locate provider test file")
+	}
+	root := filepath.Clean(filepath.Join(filepath.Dir(file), "..", "..", ".."))
+	asset, err := os.ReadFile(filepath.Join(root, ".scafld", "core", "schemas", "review_dossier.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if normalizeJSON(t, string(asset)) != normalizeJSON(t, ReviewDossierSchemaJSON()) {
+		t.Fatal("managed review_dossier.json drifted from provider schema generator")
+	}
+}
+
+func TestProviderFailureSurfacesCapturedStderrWhenOutputIsEmpty(t *testing.T) {
+	t.Parallel()
+
+	runner := &fakeRunner{result: execution.Result{
+		ExitCode: 1,
+		Stderr:   `ERROR: {"code":"invalid_json_schema","message":"Missing 'line'."}`,
+	}}
+	_, err := (CodexProvider{OutputPath: t.TempDir() + "/empty.json", SchemaPath: "/tmp/schema.json", Runner: runner}).Invoke(context.Background(), review.Request{TaskID: "task"})
+	if !errors.Is(err, ErrProviderFailed) {
+		t.Fatalf("err = %v, want provider failure", err)
+	}
+	if !strings.Contains(err.Error(), "invalid_json_schema") || strings.Contains(err.Error(), "empty provider output") {
+		t.Fatalf("provider error should surface stderr, got: %v", err)
+	}
+}
+
 func containsArg(args []string, want string) bool {
 	for _, arg := range args {
 		if arg == want {
@@ -217,6 +263,78 @@ func containsArg(args []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func assertStrictStructuredOutputSchema(t *testing.T, path string, node map[string]any) {
+	t.Helper()
+	if properties, ok := node["properties"].(map[string]any); ok {
+		if !schemaAllowsObject(node["type"]) {
+			t.Fatalf("%s has properties but does not allow object: %#v", path, node["type"])
+		}
+		if node["additionalProperties"] != false {
+			t.Fatalf("%s must set additionalProperties false", path)
+		}
+		required := stringSet(node["required"])
+		for key := range properties {
+			if !required[key] {
+				t.Fatalf("%s required does not include property %q", path, key)
+			}
+		}
+		for key, raw := range properties {
+			child, ok := raw.(map[string]any)
+			if !ok {
+				continue
+			}
+			assertStrictStructuredOutputSchema(t, path+"."+key, child)
+		}
+	}
+	if rawItems, ok := node["items"].(map[string]any); ok {
+		assertStrictStructuredOutputSchema(t, path+"[]", rawItems)
+	}
+	if additional, ok := node["additionalProperties"].(map[string]any); ok {
+		t.Fatalf("%s uses dynamic additionalProperties schema, which provider structured output does not accept: %#v", path, additional)
+	}
+}
+
+func schemaAllowsObject(raw any) bool {
+	switch value := raw.(type) {
+	case string:
+		return value == "object"
+	case []any:
+		for _, item := range value {
+			if item == "object" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func stringSet(raw any) map[string]bool {
+	set := map[string]bool{}
+	items, ok := raw.([]any)
+	if !ok {
+		return set
+	}
+	for _, item := range items {
+		if key, ok := item.(string); ok {
+			set[key] = true
+		}
+	}
+	return set
+}
+
+func normalizeJSON(t *testing.T, text string) string {
+	t.Helper()
+	var value any
+	if err := json.Unmarshal([]byte(text), &value); err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
 }
 
 func TestClaudeEventName(t *testing.T) {
