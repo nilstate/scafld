@@ -1,79 +1,256 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/nilstate/scafld/review-dossier-v1.json",
-  "title": "scafld ReviewDossier",
-  "type": "object",
   "additionalProperties": false,
-  "required": ["verdict", "mode", "summary", "findings", "attack_log", "budget"],
   "properties": {
-    "verdict": { "type": "string", "enum": ["pass", "fail"] },
-    "mode": { "type": "string", "enum": ["discover", "verify"] },
-    "summary": { "type": "string", "minLength": 1 },
-    "findings": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["id", "severity", "blocks_completion"],
-        "properties": {
-          "id": { "type": "string" },
-          "severity": { "type": "string", "enum": ["critical", "high", "medium", "low"] },
-          "blocks_completion": { "type": "boolean" },
-          "category": { "type": "string" },
-          "confidence": { "type": "string", "enum": ["high", "medium", "low"] },
-          "location": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["path"],
-            "properties": {
-              "path": { "type": "string" },
-              "line": { "type": "integer", "minimum": 1 }
-            }
-          },
-          "evidence": { "type": "string" },
-          "impact": { "type": "string" },
-          "reproducer": { "type": "string" },
-          "suggested_fix": { "type": "string" },
-          "validation": { "type": "string" },
-          "related_spec": { "type": "string" },
-          "review_pass": { "type": "string" },
-          "status": { "type": "string", "enum": ["open", "fixed", "accepted_risk", "superseded"] },
-          "summary": { "type": "string" }
-        }
-      }
-    },
     "attack_log": {
-      "type": "array",
-      "minItems": 1,
       "items": {
-        "type": "object",
         "additionalProperties": false,
-        "required": ["target", "attack", "result"],
         "properties": {
-          "target": { "type": "string" },
-          "attack": { "type": "string" },
-          "result": { "type": "string", "enum": ["finding", "clean", "skipped"] },
-          "notes": { "type": "string" }
-        }
-      }
+          "attack": {
+            "type": "string"
+          },
+          "notes": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "result": {
+            "enum": [
+              "finding",
+              "clean",
+              "skipped"
+            ],
+            "type": "string"
+          },
+          "target": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "attack",
+          "notes",
+          "result",
+          "target"
+        ],
+        "type": "object"
+      },
+      "minItems": 1,
+      "type": "array"
     },
     "budget": {
-      "type": "object",
       "additionalProperties": false,
       "properties": {
-        "max_findings": { "type": "integer", "minimum": 0 },
-        "min_attack_angles": { "type": "integer", "minimum": 0 },
-        "actual_findings": { "type": "integer", "minimum": 0 },
-        "actual_attack_angles": { "type": "integer", "minimum": 0 },
-        "depth": { "type": "string" }
-      }
+        "actual_attack_angles": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "actual_findings": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "depth": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "max_findings": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "min_attack_angles": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "actual_attack_angles",
+        "actual_findings",
+        "depth",
+        "max_findings",
+        "min_attack_angles"
+      ],
+      "type": "object"
     },
-    "provider": { "type": "string" },
-    "model": { "type": "string" },
-    "session_id": { "type": "string" },
-    "event_summary": {
-      "type": "object",
-      "additionalProperties": { "type": "integer", "minimum": 0 }
+    "findings": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "blocks_completion": {
+            "type": "boolean"
+          },
+          "category": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "confidence": {
+            "enum": [
+              "high",
+              "medium",
+              "low",
+              null
+            ],
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "evidence": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "impact": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "location": {
+            "additionalProperties": false,
+            "properties": {
+              "line": {
+                "minimum": 1,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "path": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "line",
+              "path"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "related_spec": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reproducer": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "review_pass": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "severity": {
+            "enum": [
+              "critical",
+              "high",
+              "medium",
+              "low"
+            ],
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "open",
+              "fixed",
+              "accepted_risk",
+              "superseded",
+              null
+            ],
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "suggested_fix": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "validation": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "blocks_completion",
+          "category",
+          "confidence",
+          "evidence",
+          "id",
+          "impact",
+          "location",
+          "related_spec",
+          "reproducer",
+          "review_pass",
+          "severity",
+          "status",
+          "suggested_fix",
+          "summary",
+          "validation"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "mode": {
+      "enum": [
+        "discover",
+        "verify"
+      ],
+      "type": "string"
+    },
+    "summary": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "verdict": {
+      "enum": [
+        "pass",
+        "fail"
+      ],
+      "type": "string"
     }
-  }
+  },
+  "required": [
+    "attack_log",
+    "budget",
+    "findings",
+    "mode",
+    "summary",
+    "verdict"
+  ],
+  "title": "scafld ReviewDossier provider response",
+  "type": "object"
 }

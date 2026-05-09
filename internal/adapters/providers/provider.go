@@ -339,29 +339,52 @@ func CodexArgs(binary string, root string, outputPath string, model string, sche
 	return args
 }
 
-// ReviewDossierSchemaJSON returns the provider-facing review dossier schema.
-func ReviewDossierSchemaJSON() string {
-	return `{"type":"object","additionalProperties":false,"required":["verdict","mode","summary","findings","attack_log","budget"],"properties":{"verdict":{"type":"string","enum":["pass","fail"]},"mode":{"type":"string","enum":["discover","verify"]},"summary":{"type":"string","minLength":1},"findings":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["id","severity","blocks_completion"],"properties":{"id":{"type":"string"},"severity":{"type":"string","enum":["critical","high","medium","low"]},"blocks_completion":{"type":"boolean"},"category":{"type":"string"},"confidence":{"type":"string","enum":["high","medium","low"]},"location":{"type":"object","additionalProperties":false,"required":["path"],"properties":{"path":{"type":"string"},"line":{"type":"integer","minimum":1}}},"evidence":{"type":"string"},"impact":{"type":"string"},"reproducer":{"type":"string"},"suggested_fix":{"type":"string"},"validation":{"type":"string"},"related_spec":{"type":"string"},"review_pass":{"type":"string"},"status":{"type":"string","enum":["open","fixed","accepted_risk","superseded"]},"summary":{"type":"string"}}}},"attack_log":{"type":"array","minItems":1,"items":{"type":"object","additionalProperties":false,"required":["target","attack","result"],"properties":{"target":{"type":"string"},"attack":{"type":"string"},"result":{"type":"string","enum":["finding","clean","skipped"]},"notes":{"type":"string"}}}},"budget":{"type":"object","additionalProperties":false,"properties":{"max_findings":{"type":"integer","minimum":0},"min_attack_angles":{"type":"integer","minimum":0},"actual_findings":{"type":"integer","minimum":0},"actual_attack_angles":{"type":"integer","minimum":0},"depth":{"type":"string"}}},"provider":{"type":"string"},"model":{"type":"string"},"session_id":{"type":"string"},"event_summary":{"type":"object","additionalProperties":{"type":"integer","minimum":0}}}}`
-}
-
 func dossierFromProviderResult(result execution.Result, runErr error, text string) (review.Dossier, error) {
 	if runErr != nil && strings.TrimSpace(text) == "" {
-		return review.Dossier{}, fmt.Errorf("%w: %v", ErrProviderFailed, runErr)
+		return review.Dossier{}, providerFailedError(result, runErr)
 	}
 	dossier, parseErr := review.ParseText(text)
 	if parseErr != nil {
 		if runErr != nil {
-			return review.Dossier{}, fmt.Errorf("%w: %v", ErrProviderFailed, runErr)
+			return review.Dossier{}, providerFailedError(result, runErr)
+		}
+		if result.ExitCode != 0 {
+			return review.Dossier{}, providerFailedError(result, fmt.Errorf("exit code %d", result.ExitCode))
 		}
 		return review.Dossier{}, parseErr
 	}
 	if runErr != nil {
-		return review.Dossier{}, fmt.Errorf("%w: %v", ErrProviderFailed, runErr)
+		return review.Dossier{}, providerFailedError(result, runErr)
 	}
 	if result.ExitCode != 0 && dossier.Verdict != review.VerdictFail {
-		return review.Dossier{}, fmt.Errorf("%w: exit code %d", ErrProviderFailed, result.ExitCode)
+		return review.Dossier{}, providerFailedError(result, fmt.Errorf("exit code %d", result.ExitCode))
 	}
 	return dossier, nil
+}
+
+func providerFailedError(result execution.Result, cause error) error {
+	message := strings.TrimSpace(cause.Error())
+	if stderr := errorSnippet(result.Stderr); stderr != "" {
+		message += ": " + stderr
+	} else if stdout := errorSnippet(result.Stdout); stdout != "" {
+		message += ": " + stdout
+	}
+	if result.DiagnosticPath != "" {
+		message += " (diagnostic: " + result.DiagnosticPath + ")"
+	}
+	return fmt.Errorf("%w: %s", ErrProviderFailed, message)
+}
+
+func errorSnippet(text string) string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ""
+	}
+	const max = 1200
+	if len(text) <= max {
+		return text
+	}
+	return "... " + text[len(text)-max:]
 }
 
 type claudeOutput struct {
