@@ -32,6 +32,11 @@ review:
       model: "gpt-5.5"
     claude:
       model: "claude-opus-4-7"
+  dossier:
+    max_findings: 12
+    min_attack_angles: 6
+    review_depth: "standard"
+    rerun_policy: "verify_open_blockers"
 ```
 
 Use `.scafld/config.local.yaml` for local-only provider or model overrides.
@@ -53,7 +58,7 @@ Provider meanings:
 - `claude`: Claude review with restricted read-only tools and stream-json
   output.
 - `command`: custom reviewer command. It receives the review prompt on stdin and
-  must emit a ReviewPacket-compatible response.
+  must emit a ReviewDossier-compatible response.
 - `local`: deterministic local pass-through provider for development and smoke
   tests. It is not an adversarial review and cannot satisfy `complete`.
 - `--human-reviewed`: audited operator override. It does not invoke a model
@@ -99,8 +104,7 @@ source path, hash, and byte count. `review.context.max_bytes` is an aggregate
 section-body budget for the rendered packet, not a per-file allowance.
 
 The prompt tells the challenger not to mutate the workspace, not to emit
-placeholder ReviewPackets while investigating, and to return one final
-ReviewPacket verdict.
+placeholder output while investigating, and to return one final ReviewDossier.
 
 Print the exact packet without invoking a provider:
 
@@ -108,26 +112,38 @@ Print the exact packet without invoking a provider:
 scafld review <task-id> --print-context
 ```
 
-The packet is the provider content contract:
+The dossier is the provider content contract:
 
 ```json
 {
   "verdict": "pass",
-  "findings": []
+  "mode": "discover",
+  "summary": "No open completion blockers found.",
+  "findings": [],
+  "attack_log": [
+    {"target": "task diff", "attack": "regression scan", "result": "clean"}
+  ],
+  "budget": {"actual_attack_angles": 1}
 }
 ```
 
 Findings require:
 
 - `id`
-- `severity`: `blocking` or `non_blocking`
-- `summary`
+- `severity`: `critical`, `high`, `medium`, or `low`
+- `blocks_completion`: boolean
+- `location`, `evidence`, `impact`, and `validation` when `blocks_completion`
+  is true
+- `summary` for readable repair output
 
-Any blocking finding forces verdict `fail`.
+Any open finding with `blocks_completion: true` forces verdict `fail`. Severity
+and the completion gate are deliberately separate: a high-severity accepted risk
+can be non-blocking, while a medium defect can still block if it violates the
+approved contract.
 
 ## What scafld Trusts
 
-scafld validates the packet, checks whether Git-visible workspace state changed
+scafld validates the dossier, checks whether Git-visible workspace state changed
 during review, records the review event in session, then projects the verdict
 back into the spec.
 
@@ -137,7 +153,7 @@ The authority order stays the same:
 - spec shows the readable current projection
 - provider output is accepted only after validation
 
-Invalid packet output fails review. Task-relevant workspace changes during
+Invalid dossier output fails review. Task-relevant workspace changes during
 review become a blocking finding, even if the provider returned `pass`. If the
 provider also returned findings, scafld keeps them and appends the
 workspace-change finding so the original review signal is not hidden.
@@ -151,10 +167,10 @@ When review fails:
 - `scafld review` prints the findings and the next repair command.
 - `scafld status` repeats the latest review verdict and findings.
 - `scafld handoff` includes the latest review findings for the next model voice.
-- the session review entry stores the finding payload.
+- the session review entry stores the accepted dossier.
 - the spec projects the latest verdict and findings under `## Review`.
 
-Diagnostics remain for provider transport failures, invalid packets, timeouts,
+Diagnostics remain for provider transport failures, invalid dossiers, timeouts,
 and other cases where scafld could not accept normal review output.
 
 ## Complete Gate
@@ -184,7 +200,7 @@ A useful adversarial review:
 - attacks the diff, not just the prose
 - attacks the spec contract and acceptance evidence
 - cites concrete files, commands, or spec sections
-- separates blocking findings from advisory findings
+- separates severity from completion-blocking findings
 - says `pass` only when the evidence holds
 
 Generic clean notes are not useful. A clean review should still explain what was
@@ -201,10 +217,10 @@ protection. Provider failures and timeouts write diagnostics under:
 
 `status --json` and `handoff` show the accepted blocker summary first. Use
 diagnostics as supporting evidence when paid model output could not be accepted
-as a valid review packet.
+as a valid review dossier.
 
 During a running external review, the terminal shows summary progress only:
 start, periodic running heartbeat, structured provider events when available,
 and the final result. Raw provider stdout and stderr stay in diagnostics so the
 outer agent gets liveness without having to parse exploratory model logs or
-placeholder packets.
+placeholder output.

@@ -26,17 +26,36 @@ func (f fakeSessionStore) Load(context.Context, string) (session.Session, error)
 	return f.ledger, nil
 }
 
+func reviewDossier() corereview.Dossier {
+	return corereview.Dossier{
+		Verdict: corereview.VerdictFail,
+		Mode:    corereview.ModeDiscover,
+		Summary: "Review found an open blocker.",
+		Findings: []corereview.Finding{{
+			ID:               "f1",
+			Severity:         corereview.SeverityHigh,
+			BlocksCompletion: true,
+			Location:         &corereview.Location{Path: "file.go"},
+			Evidence:         "bug",
+			Impact:           "test impact",
+			Validation:       "rerun test",
+			Summary:          "bug",
+		}},
+		AttackLog: []corereview.AttackLogEntry{{Target: "diff", Attack: "scan", Result: "finding"}},
+		Budget:    corereview.Budget{ActualFindings: 1, ActualAttackAngles: 1},
+	}
+}
+
 func TestHandoffIncludesLatestReviewFindings(t *testing.T) {
 	t.Parallel()
 
 	ledger := session.New("task", "2026-05-05T00:00:00Z")
-	findings := []corereview.Finding{{ID: "f1", Severity: corereview.SeverityBlocking, Summary: "bug"}}
-	ledger = ledger.WithEntry(session.Entry{Type: "review", Status: corereview.VerdictFail, Output: corereview.EncodeFindings(findings)})
+	ledger = ledger.WithEntry(session.Entry{Type: "review", Status: corereview.VerdictFail, Output: corereview.EncodeDossier(reviewDossier())})
 	out, err := Run(context.Background(), fakeSpecStore{model: spec.Model{TaskID: "task", Title: "Task", Status: spec.StatusReview}}, fakeSessionStore{ledger: ledger}, "task")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "## Review Findings") || !strings.Contains(out, "bug") {
+	if !strings.Contains(out, "## Review Dossier") || !strings.Contains(out, "bug") {
 		t.Fatalf("handoff missing review findings:\n%s", out)
 	}
 }

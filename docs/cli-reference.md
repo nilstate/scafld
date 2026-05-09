@@ -237,7 +237,7 @@ Unchanged baseline dirt is context, not a finding by itself. Task-relevant files
 changed during review still fail closed; unrelated workspace churn does not
 discard a valid review.
 
-The provider returns a ReviewPacket. scafld validates it, rejects workspace
+The provider returns a ReviewDossier. scafld validates it, rejects workspace
 mutation in the review-relevant surface, writes the review event to session, and
 projects the verdict back into the spec. A human-reviewed override writes a
 `review_override` event before the passing review event. `complete` will not
@@ -305,6 +305,11 @@ Aggregates workspace spec counts and session-derived product metrics:
   passing review from `codex`, `claude`, or `command`. This should normally stay
   at `0`.
 - `review_pass_rate`: accepted review verdicts over all review verdicts.
+- `review_dossier_coverage`: review events that stored a valid ReviewDossier.
+- `review_findings_total`: findings accepted across all valid dossiers.
+- `review_open_blockers_total`: findings that still blocked completion when
+  recorded.
+- `review_attack_angles_total`: attack-log entries accepted across dossiers.
 - `workspace_baseline_coverage`: sessions with an approval/build baseline.
 
 Human output keeps the same numbers compact:
@@ -318,6 +323,13 @@ metrics:
 - first_attempt_pass_rate: 66.7% (8/12)
 - recovery_convergence_rate: 75.0% (3/4)
 - review_pass_rate: 80.0% (8/10)
+- review_dossier_coverage: 100.0% (10/10)
+- review_findings_total: 14
+- review_open_blockers_total: 3
+- review_attack_angles_total: 42
+- review_mode_distribution:
+  - discover: 7
+  - verify: 3
 - challenge_override_rate: 0.0% (0/2)
 - workspace_baseline_coverage: 100.0% (12/12)
 ```

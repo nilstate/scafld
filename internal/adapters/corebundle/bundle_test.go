@@ -253,7 +253,7 @@ func TestUpdateMigratesLegacyReviewPromptWithoutManifest(t *testing.T) {
 			t.Fatalf("legacy review prompt still contains %q:\n%s", bad, text)
 		}
 	}
-	for _, want := range []string{"Return a ReviewPacket JSON object", "emit only the ReviewPacket JSON object expected by scafld", "non-blocking findings only means `pass`"} {
+	for _, want := range []string{"Return a ReviewDossier JSON object", "emit only the ReviewDossier JSON object expected by scafld", "findings with `blocks_completion: false` do not block completion"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("migrated review prompt missing %q:\n%s", want, text)
 		}
@@ -298,7 +298,7 @@ func TestUpdateMigratesReviewPromptThatOnlyReferencesLegacyReviewStorage(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(got), "Return a ReviewPacket JSON object") {
+	if !strings.Contains(string(got), "Return a ReviewDossier JSON object") {
 		t.Fatalf("review prompt was not migrated:\n%s", got)
 	}
 }

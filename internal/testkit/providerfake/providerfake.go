@@ -20,7 +20,7 @@ const (
 	ModeIdle Mode = "idle"
 	// ModeEndless streams tick events until context cancellation.
 	ModeEndless Mode = "endless"
-	// ModeMutation emits a workspace mutation event.
+	// ModeMutation emits a mutation dossier.
 	ModeMutation Mode = "mutation"
 	// ModeInvalidPacket emits malformed provider output.
 	ModeInvalidPacket Mode = "invalid_packet"
@@ -60,7 +60,7 @@ func (p Provider) Run(ctx context.Context, w io.Writer) error {
 			}
 		}
 	case ModeMutation:
-		_, err := io.WriteString(w, `{"type":"workspace_mutation"}`+"\n")
+		_, err := io.WriteString(w, `{"type":"dossier","dossier":{"verdict":"fail","mode":"discover","summary":"Fake provider reported a workspace mutation.","findings":[{"id":"workspace_mutation","severity":"critical","blocks_completion":true,"category":"review_integrity","confidence":"high","location":{"path":"."},"evidence":"fake provider mutation mode","impact":"review integrity is compromised","validation":"rerun with a read-only provider","summary":"Workspace changed during review."}],"attack_log":[{"target":"workspace","attack":"fake mutation mode","result":"finding"}],"budget":{"actual_findings":1,"actual_attack_angles":1,"depth":"fake"}}}`+"\n")
 		return err
 	case ModeInvalidPacket:
 		_, err := io.WriteString(w, "{invalid\n")
@@ -73,19 +73,19 @@ func (p Provider) Run(ctx context.Context, w io.Writer) error {
 	}
 }
 
-// Invoke runs the fake provider and parses its packet output.
-func (p Provider) Invoke(ctx context.Context, req review.Request) (review.Packet, error) {
+// Invoke runs the fake provider and parses its dossier output.
+func (p Provider) Invoke(ctx context.Context, req review.Request) (review.Dossier, error) {
 	var out bytes.Buffer
 	err := p.Run(ctx, &out)
 	if out.Len() == 0 {
-		return review.Packet{}, err
+		return review.Dossier{}, err
 	}
-	packet, parseErr := review.ParseNDJSON(out.String())
+	dossier, parseErr := review.ParseNDJSON(out.String())
 	if parseErr != nil {
-		return review.Packet{}, parseErr
+		return review.Dossier{}, parseErr
 	}
 	if err != nil {
-		return review.Packet{}, err
+		return review.Dossier{}, err
 	}
-	return packet, nil
+	return dossier, nil
 }

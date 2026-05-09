@@ -340,11 +340,17 @@ func runReview(ctx context.Context, args []string, stdout io.Writer, stderr io.W
 	}
 	out, err := review.RunWithInput(ctx, store, sessions, git.Adapter{Root: root}, selected.Provider, clock.System{}, review.Input{
 		TaskID:          opts.Positionals[0],
+		Mode:            reviewcli.ModeFromFlags(opts.Values["mode"], opts.Flags["verify"], opts.Flags["full"]),
+		ForceMode:       opts.Flags["verify"] || opts.Flags["full"] || strings.TrimSpace(opts.Values["mode"]) != "",
 		Passes:          selected.Passes,
 		Invariants:      selected.Invariants,
 		ReviewScope:     reviewcli.SplitScope(opts.Values["review-scope"]),
 		ContextSections: selected.ContextSections,
 		ContextMaxBytes: selected.ContextMaxBytes,
+		MaxFindings:     reviewcli.PositiveOrDefault(reviewcli.PositiveInt(opts.Values["max-findings"]), selected.Dossier.MaxFindings),
+		MinAttackAngles: reviewcli.PositiveOrDefault(reviewcli.PositiveInt(opts.Values["min-attack-angles"]), selected.Dossier.MinAttackAngles),
+		ReviewDepth:     reviewcli.FirstNonEmpty(opts.Values["review-depth"], selected.Dossier.ReviewDepth),
+		RerunPolicy:     selected.Dossier.RerunPolicy,
 		PrintContext:    opts.Flags["print-context"],
 		HumanReviewed:   opts.Flags["human-reviewed"],
 		Reason:          opts.Values["reason"],

@@ -23,7 +23,7 @@ func TestLifecycleJSONContractsAgentSurfaceFailCancelReviewProviderMutationGuard
 	assertSnakeEnvelope(t, run(t, bin, "approve", "--root", root, "lifecycle-task", "--json"), "status")
 	assertSnakeEnvelope(t, run(t, bin, "build", "--root", root, "lifecycle-task", "--json"), "passed")
 	assertSnakeEnvelope(t, run(t, bin, "list", "--root", root, "--json"), "task_id")
-	assertSnakeEnvelope(t, run(t, bin, "review", "--root", root, "--provider", "command", "--provider-command", `printf '{"verdict":"pass","findings":[]}'`, "lifecycle-task", "--json"), "verdict")
+	assertSnakeEnvelope(t, run(t, bin, "review", "--root", root, "--provider", "command", "--provider-command", `printf '{"verdict":"pass","mode":"discover","summary":"clean","findings":[],"attack_log":[{"target":"diff","attack":"scan","result":"clean"}],"budget":{"actual_attack_angles":1}}'`, "lifecycle-task", "--json"), "verdict")
 	assertSnakeEnvelope(t, run(t, bin, "complete", "--root", root, "lifecycle-task", "--json"), "current_state")
 	assertSnakeEnvelope(t, run(t, bin, "status", "--root", root, "lifecycle-task", "--json"), "session_ok")
 	assertSnakeEnvelope(t, run(t, bin, "report", "--root", root, "--json"), "by_status")
@@ -60,7 +60,7 @@ func TestReviewCommandProviderBlockingFindingExitsReviewFailure(t *testing.T) {
 		"--root",
 		root,
 		"--provider-command",
-		`grep 'provider-task' >/dev/null && printf '{"type":"finding","severity":"blocking","summary":"bug"}\n'`,
+		`grep 'provider-task' >/dev/null && printf '{"type":"dossier","dossier":{"verdict":"fail","mode":"discover","summary":"bug found","findings":[{"id":"bug","severity":"high","blocks_completion":true,"location":{"path":"file.go"},"evidence":"bug","impact":"breaks behavior","validation":"rerun tests","summary":"bug"}],"attack_log":[{"target":"diff","attack":"scan","result":"finding"}],"budget":{"actual_findings":1,"actual_attack_angles":1}}}\n'`,
 		"provider-task",
 	)
 	var out bytes.Buffer
@@ -77,7 +77,7 @@ func TestReviewCommandProviderBlockingFindingExitsReviewFailure(t *testing.T) {
 	}
 	for _, want := range []string{
 		"findings:",
-		"[blocking] finding-1: bug",
+		"[high/blocks completion] bug: bug",
 		"next: scafld handoff provider-task",
 	} {
 		if !strings.Contains(out.String(), want) {
@@ -85,11 +85,11 @@ func TestReviewCommandProviderBlockingFindingExitsReviewFailure(t *testing.T) {
 		}
 	}
 	status := string(run(t, bin, "status", "--root", root, "provider-task"))
-	if !strings.Contains(status, "review: fail") || !strings.Contains(status, "[blocking] finding-1: bug") {
+	if !strings.Contains(status, "review: fail") || !strings.Contains(status, "[high/blocks completion] bug: bug") {
 		t.Fatalf("status did not surface review findings:\n%s", status)
 	}
 	handoff := string(run(t, bin, "handoff", "--root", root, "provider-task"))
-	if !strings.Contains(handoff, "bug") || !strings.Contains(handoff, "blocking") {
+	if !strings.Contains(handoff, "bug") || !strings.Contains(handoff, "blocks completion") {
 		t.Fatalf("handoff did not surface review findings:\n%s", handoff)
 	}
 }
@@ -110,7 +110,7 @@ func TestReviewProviderMutationGuardFailsReview(t *testing.T) {
 		"--root",
 		root,
 		"--provider-command",
-		`touch MUTATED && printf '{"type":"verdict","verdict":"pass"}\n'`,
+		`touch MUTATED && printf '{"type":"dossier","dossier":{"verdict":"pass","mode":"discover","summary":"clean","findings":[],"attack_log":[{"target":"diff","attack":"scan","result":"clean"}],"budget":{"actual_attack_angles":1}}}\n'`,
 		"mutation-task",
 	)
 	var out bytes.Buffer

@@ -65,7 +65,13 @@ func FromSession(model spec.Model, ledger session.Session) spec.Model {
 		}
 		next.Review.Status = "completed"
 		next.Review.Verdict = entry.Status
-		next.Review.Findings = corereview.DecodeFindings(entry.Output)
+		if dossier, ok := corereview.DecodeDossier(entry.Output); ok {
+			next.Review.Mode = dossier.Mode
+			next.Review.Summary = dossier.Summary
+			next.Review.Findings = dossier.Findings
+			next.Review.AttackLog = dossier.AttackLog
+			next.Review.Budget = dossier.Budget
+		}
 		break
 	}
 	return next

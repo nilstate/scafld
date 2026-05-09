@@ -92,7 +92,7 @@ Minimal session excerpt:
       "type": "review",
       "status": "fail",
       "provider": "codex",
-      "output": "[{\"id\":\"cache-tenant-leak\",\"severity\":\"blocking\",\"summary\":\"internal/cache/store.go:88 invalidation keys omit tenant id.\"}]"
+      "output": "{\"verdict\":\"fail\",\"mode\":\"discover\",\"summary\":\"Review found one open completion blocker.\",\"findings\":[{\"id\":\"cache-tenant-leak\",\"severity\":\"high\",\"blocks_completion\":true,\"location\":{\"path\":\"internal/cache/store.go\",\"line\":88},\"evidence\":\"invalidation keys omit tenant id\",\"impact\":\"cross-tenant cache state can leak\",\"validation\":\"go test ./internal/cache\",\"summary\":\"tenant id omitted from cache key\"}],\"attack_log\":[{\"target\":\"cache invalidation\",\"attack\":\"trace tenant key construction\",\"result\":\"finding\"}],\"budget\":{\"actual_findings\":1,\"actual_attack_angles\":1}}"
     }
   ]
 }
@@ -106,23 +106,34 @@ Accepted review findings are promoted into the normal workflow:
 - `scafld status` repeats the latest verdict and findings
 - `scafld handoff` includes findings for the next repair agent
 - the spec projects findings under `## Review`
-- the session stores the accepted finding payload
+- the session stores the accepted review dossier
 
 Diagnostics remain useful for raw provider output and timeout analysis, but a
 repair agent should not have to discover normal findings there.
 
-Review providers return one final ReviewPacket:
+Review providers return one final ReviewDossier:
 
 ```json
 {
   "verdict": "fail",
+  "mode": "discover",
+  "summary": "Review found one open completion blocker.",
   "findings": [
     {
       "id": "cache-tenant-leak",
-      "severity": "blocking",
-      "summary": "internal/cache/store.go:88 invalidation keys omit tenant id."
+      "severity": "high",
+      "blocks_completion": true,
+      "location": {"path": "internal/cache/store.go", "line": 88},
+      "evidence": "invalidation keys omit tenant id",
+      "impact": "cross-tenant cache state can leak",
+      "validation": "go test ./internal/cache",
+      "summary": "tenant id omitted from cache key"
     }
-  ]
+  ],
+  "attack_log": [
+    {"target": "cache invalidation", "attack": "trace tenant key construction", "result": "finding"}
+  ],
+  "budget": {"actual_findings": 1, "actual_attack_angles": 1}
 }
 ```
 
@@ -138,11 +149,15 @@ agent to scrape diagnostics:
   "session_ok": true,
   "review": {
     "verdict": "fail",
+    "mode": "discover",
+    "summary": "Review found one open completion blocker.",
+    "open_blockers": 1,
     "findings": [
       {
         "id": "cache-tenant-leak",
-        "severity": "blocking",
-        "summary": "internal/cache/store.go:88 invalidation keys omit tenant id."
+        "severity": "high",
+        "blocks_completion": true,
+        "summary": "tenant id omitted from cache key"
       }
     ]
   }
@@ -189,6 +204,15 @@ Run ledgers and diagnostics remain under `.scafld/runs/{task-id}/` for audit.
     "challenge_override_rate": 0,
     "challenge_overrides": 0,
     "review_challenge_total": 2,
+    "review_dossier_coverage": 1,
+    "review_dossier_total": 10,
+    "review_findings_total": 14,
+    "review_open_blockers_total": 3,
+    "review_attack_angles_total": 42,
+    "review_mode_distribution": {
+      "discover": 7,
+      "verify": 3
+    },
     "workspace_baseline_coverage": 1
   }
 }

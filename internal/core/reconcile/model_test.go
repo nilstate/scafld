@@ -23,9 +23,25 @@ func TestGoldenProjectionSourceOfTruthCriterionEvidence(t *testing.T) {
 func TestFromSessionProjectsLatestReviewFindings(t *testing.T) {
 	t.Parallel()
 
-	findings := []corereview.Finding{{ID: "f1", Severity: corereview.SeverityBlocking, Summary: "bug"}}
+	dossier := corereview.Dossier{
+		Verdict: corereview.VerdictFail,
+		Mode:    corereview.ModeDiscover,
+		Summary: "Review found an open blocker.",
+		Findings: []corereview.Finding{{
+			ID:               "f1",
+			Severity:         corereview.SeverityHigh,
+			BlocksCompletion: true,
+			Location:         &corereview.Location{Path: "file.go"},
+			Evidence:         "bug",
+			Impact:           "test impact",
+			Validation:       "rerun test",
+			Summary:          "bug",
+		}},
+		AttackLog: []corereview.AttackLogEntry{{Target: "diff", Attack: "scan", Result: "finding"}},
+		Budget:    corereview.Budget{ActualFindings: 1, ActualAttackAngles: 1},
+	}
 	model := spec.Model{TaskID: "task"}
-	ledger := session.New("task", "now").WithEntry(session.Entry{Type: "review", Status: corereview.VerdictFail, Output: corereview.EncodeFindings(findings)})
+	ledger := session.New("task", "now").WithEntry(session.Entry{Type: "review", Status: corereview.VerdictFail, Output: corereview.EncodeDossier(dossier)})
 	projected := FromSession(model, ledger)
 	if projected.Review.Verdict != corereview.VerdictFail || len(projected.Review.Findings) != 1 || projected.Review.Findings[0].Summary != "bug" {
 		t.Fatalf("review should project from session: %+v", projected.Review)

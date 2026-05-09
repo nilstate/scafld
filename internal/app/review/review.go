@@ -34,7 +34,7 @@ type SessionStore interface {
 
 // Provider is the review provider port.
 type Provider interface {
-	Invoke(context.Context, review.Request) (review.Packet, error)
+	Invoke(context.Context, review.Request) (review.Dossier, error)
 }
 
 // WorkspaceStatus is the mutation-guard workspace state port.
@@ -47,14 +47,18 @@ type Clock interface{ Now() time.Time }
 
 // Output describes a completed review run.
 type Output struct {
-	TaskID   string           `json:"task_id"`
-	Verdict  string           `json:"verdict"`
-	Provider string           `json:"provider,omitempty"`
-	Model    string           `json:"model,omitempty"`
-	Findings []review.Finding `json:"findings"`
-	Next     string           `json:"next"`
-	Context  string           `json:"context,omitempty"`
-	Repair   *gate.Failure    `json:"repair,omitempty"`
+	TaskID    string                  `json:"task_id"`
+	Verdict   string                  `json:"verdict"`
+	Mode      review.Mode             `json:"mode,omitempty"`
+	Summary   string                  `json:"summary,omitempty"`
+	Provider  string                  `json:"provider,omitempty"`
+	Model     string                  `json:"model,omitempty"`
+	Findings  []review.Finding        `json:"findings"`
+	AttackLog []review.AttackLogEntry `json:"attack_log,omitempty"`
+	Budget    review.Budget           `json:"budget,omitempty"`
+	Next      string                  `json:"next"`
+	Context   string                  `json:"context,omitempty"`
+	Repair    *gate.Failure           `json:"repair,omitempty"`
 }
 
 // GateFailure exposes review blockers to the CLI JSON envelope.
@@ -63,11 +67,17 @@ func (o Output) GateFailure() *gate.Failure { return o.Repair }
 // Input describes the task and review agenda to run.
 type Input struct {
 	TaskID          string
+	Mode            review.Mode
+	ForceMode       bool
 	Passes          []Pass
 	Invariants      map[string]string
 	ReviewScope     []string
 	ContextSections []reviewcontext.Section
 	ContextMaxBytes int
+	MaxFindings     int
+	MinAttackAngles int
+	ReviewDepth     string
+	RerunPolicy     string
 	PrintContext    bool
 	HumanReviewed   bool
 	Reason          string
@@ -109,7 +119,8 @@ func RunWithInput(ctx context.Context, specs SpecStore, sessions SessionStore, w
 	scope := deriveReviewScope(model, input.ReviewScope, append(append([]string(nil), baselineComparison...), beforeComparison...))
 	baselineScoped := coreworkspace.Filter(baselineComparison, scope)
 	taskChanges, scopeDrift := coreworkspace.PartitionMutations(coreworkspace.Diff(baselineComparison, beforeComparison), scope)
-	contextPacket := reviewContextPacket(model, path, input.Passes, input.Invariants, scope, baselineScoped, taskChanges, scopeDrift, input.ContextSections)
+	mode := reviewMode(ctx, sessions, model.TaskID, input)
+	contextPacket := reviewContextPacket(model, path, input.Passes, input.Invariants, scope, baselineScoped, taskChanges, scopeDrift, input.ContextSections, mode, input.MaxFindings, input.MinAttackAngles, input.ReviewDepth, input.RerunPolicy)
 	prompt := reviewcontext.RenderMarkdown(contextPacket, reviewcontext.Options{MaxBytes: input.ContextMaxBytes})
 	if input.PrintContext {
 		return Output{TaskID: model.TaskID, Verdict: "not_run", Next: "scafld review " + model.TaskID, Context: prompt}, nil
@@ -124,12 +135,16 @@ func RunWithInput(ctx context.Context, specs SpecStore, sessions SessionStore, w
 		}, now); err != nil {
 			return Output{}, err
 		}
-		packet := review.Packet{
-			Verdict:  review.VerdictFail,
-			Provider: "scafld",
-			Findings: []review.Finding{scopeDriftFinding(scopeDrift)},
+		dossier := review.Dossier{
+			Verdict:   review.VerdictFail,
+			Mode:      mode,
+			Summary:   "Review blocked before provider because workspace drift is outside the declared task scope.",
+			Provider:  "scafld",
+			Findings:  []review.Finding{scopeDriftFinding(scopeDrift)},
+			AttackLog: []review.AttackLogEntry{{Target: "workspace scope", Attack: "compare approval baseline to current state", Result: "finding", Notes: fmt.Sprintf("%d scope drift change(s)", len(scopeDrift))}},
+			Budget:    reviewBudget(input, 1, 1),
 		}
-		return recordReviewPacket(ctx, specs, sessions, model, path, packet, now)
+		return recordReviewDossier(ctx, specs, sessions, model, path, dossier, now)
 	}
 	if _, err := sessions.Append(ctx, model.TaskID, session.Entry{
 		Type:   "review_attempt",
@@ -139,7 +154,7 @@ func RunWithInput(ctx context.Context, specs SpecStore, sessions SessionStore, w
 	}, now); err != nil {
 		return Output{}, err
 	}
-	packet, err := provider.Invoke(ctx, review.Request{TaskID: model.TaskID, Prompt: prompt, Context: contextPacket})
+	dossier, err := provider.Invoke(ctx, review.Request{TaskID: model.TaskID, Prompt: prompt, Context: contextPacket})
 	afterFull, mutationErr := workspaceSnapshot(ctx, workspace)
 	if mutationErr != nil {
 		_, _ = sessions.Append(context.WithoutCancel(ctx), model.TaskID, session.Entry{
@@ -150,14 +165,19 @@ func RunWithInput(ctx context.Context, specs SpecStore, sessions SessionStore, w
 		return Output{}, mutationErr
 	}
 	if mutated := coreworkspace.MutationStrings(reviewBlockingMutations(beforeFull, afterFull, scope, path)); len(mutated) > 0 {
-		packet.Verdict = review.VerdictFail
-		packet.Findings = append(packet.Findings, review.Finding{
-			ID:       "workspace_mutation",
-			Severity: review.SeverityBlocking,
-			Summary:  "workspace changed during review: " + strings.Join(mutated, ", "),
-		})
+		dossier.Findings = append(dossier.Findings, workspaceMutationFinding(mutated))
+		dossier.AttackLog = append(dossier.AttackLog, review.AttackLogEntry{Target: "workspace mutation guard", Attack: "compare pre-review and post-review workspace snapshots", Result: review.AttackResultFinding, Notes: strings.Join(mutated, ", ")})
+		dossier.Summary = appendSummary(dossier.Summary, "Workspace changed during review; review failed closed.")
+		dossier.Verdict = review.VerdictFromFindings(dossier.Findings)
+		if dossier.Mode == "" {
+			dossier.Mode = mode
+		}
+		if dossier.Provider == "" {
+			dossier.Provider = "scafld"
+		}
 		err = nil
 	}
+	dossier = applyRequestedBudget(dossier, reviewBudget(input, 0, 0))
 	if err != nil {
 		_, _ = sessions.Append(context.WithoutCancel(ctx), model.TaskID, session.Entry{
 			Type:   "review_attempt",
@@ -166,35 +186,47 @@ func RunWithInput(ctx context.Context, specs SpecStore, sessions SessionStore, w
 		}, now)
 		return Output{}, err
 	}
-	if err := review.ValidatePacket(packet); err != nil {
+	if dossier.Mode != mode {
 		_, _ = sessions.Append(context.WithoutCancel(ctx), model.TaskID, session.Entry{
 			Type:   "review_attempt",
 			Status: "failed",
-			Reason: "review packet invalid: " + err.Error(),
+			Reason: fmt.Sprintf("review dossier invalid: mode %q does not match requested mode %q", dossier.Mode, mode),
+		}, now)
+		return Output{}, fmt.Errorf("%w: mode %q does not match requested mode %q", review.ErrInvalidDossier, dossier.Mode, mode)
+	}
+	if err := review.ValidateDossier(dossier); err != nil {
+		_, _ = sessions.Append(context.WithoutCancel(ctx), model.TaskID, session.Entry{
+			Type:   "review_attempt",
+			Status: "failed",
+			Reason: "review dossier invalid: " + err.Error(),
 		}, now)
 		return Output{}, err
 	}
-	return recordReviewPacket(ctx, specs, sessions, model, path, packet, now)
+	return recordReviewDossier(ctx, specs, sessions, model, path, dossier, now)
 }
 
-func recordReviewPacket(ctx context.Context, specs SpecStore, sessions SessionStore, model spec.Model, path string, packet review.Packet, now string) (Output, error) {
-	if err := review.ValidatePacket(packet); err != nil {
+func recordReviewDossier(ctx context.Context, specs SpecStore, sessions SessionStore, model spec.Model, path string, dossier review.Dossier, now string) (Output, error) {
+	if err := review.ValidateDossier(dossier); err != nil {
 		return Output{}, err
 	}
 	model.Status = spec.StatusReview
 	model.Review.Status = "completed"
-	model.Review.Verdict = packet.Verdict
-	model.Review.Findings = packet.Findings
-	model.CurrentState.ReviewGate = packet.Verdict
-	next, command := nextForVerdict(model.TaskID, packet.Verdict)
+	model.Review.Verdict = dossier.Verdict
+	model.Review.Mode = dossier.Mode
+	model.Review.Summary = dossier.Summary
+	model.Review.Findings = dossier.Findings
+	model.Review.AttackLog = dossier.AttackLog
+	model.Review.Budget = dossier.Budget
+	model.CurrentState.ReviewGate = dossier.Verdict
+	next, command := nextForVerdict(model.TaskID, dossier.Verdict)
 	model.CurrentState.Next = next
 	model.CurrentState.AllowedFollowUp = command
 	ledger, err := sessions.Append(ctx, model.TaskID, session.Entry{
 		Type:     "review",
-		Status:   packet.Verdict,
-		Reason:   reviewReason(packet),
-		Provider: packet.Provider,
-		Output:   review.EncodeFindings(packet.Findings),
+		Status:   dossier.Verdict,
+		Reason:   reviewReason(dossier),
+		Provider: dossier.Provider,
+		Output:   review.EncodeDossier(dossier),
 	}, now)
 	if err != nil {
 		return Output{}, err
@@ -205,22 +237,37 @@ func recordReviewPacket(ctx context.Context, specs SpecStore, sessions SessionSt
 	model = reconcile.FromSession(model, ledger)
 	model.Status = spec.StatusReview
 	model.Review.Status = "completed"
-	model.Review.Verdict = packet.Verdict
-	model.Review.Findings = packet.Findings
-	model.CurrentState.ReviewGate = packet.Verdict
+	model.Review.Verdict = dossier.Verdict
+	model.Review.Mode = dossier.Mode
+	model.Review.Summary = dossier.Summary
+	model.Review.Findings = dossier.Findings
+	model.Review.AttackLog = dossier.AttackLog
+	model.Review.Budget = dossier.Budget
+	model.CurrentState.ReviewGate = dossier.Verdict
 	model.CurrentState.Next = next
 	model.CurrentState.AllowedFollowUp = command
 	if err := specs.Save(ctx, path, model); err != nil {
 		return Output{}, err
 	}
-	return Output{TaskID: model.TaskID, Verdict: packet.Verdict, Provider: packet.Provider, Model: packet.Model, Findings: packet.Findings, Next: command, Repair: reviewRepair(model, packet, command, latestReviewEvidence(ledger))}, nil
+	return Output{TaskID: model.TaskID, Verdict: dossier.Verdict, Mode: dossier.Mode, Summary: dossier.Summary, Provider: dossier.Provider, Model: dossier.Model, Findings: dossier.Findings, AttackLog: dossier.AttackLog, Budget: dossier.Budget, Next: command, Repair: reviewRepair(model, dossier, command, latestReviewEvidence(ledger))}, nil
 }
 
 func scopeDriftFinding(scopeDrift []coreworkspace.Mutation) review.Finding {
+	path := "."
+	if len(scopeDrift) > 0 {
+		path = scopeDrift[0].Path
+	}
 	return review.Finding{
-		ID:       "scope_drift",
-		Severity: review.SeverityBlocking,
-		Summary:  "workspace changed outside declared task scope since approval: " + strings.Join(coreworkspace.MutationStrings(scopeDrift), ", "),
+		ID:               "scope_drift",
+		Severity:         review.SeverityHigh,
+		BlocksCompletion: true,
+		Category:         "scope",
+		Confidence:       review.ConfidenceHigh,
+		Location:         &review.Location{Path: path},
+		Evidence:         "workspace changed outside declared task scope since approval: " + strings.Join(coreworkspace.MutationStrings(scopeDrift), ", "),
+		Impact:           "The review would be grading unrelated work as if it belonged to this task.",
+		Validation:       "Commit, revert, or declare the unrelated drift, then rerun scafld review.",
+		Summary:          "Workspace changed outside declared task scope.",
 	}
 }
 
@@ -255,7 +302,11 @@ func runHumanReviewed(ctx context.Context, specs SpecStore, sessions SessionStor
 	model.Status = spec.StatusReview
 	model.Review.Status = "completed"
 	model.Review.Verdict = review.VerdictPass
+	model.Review.Mode = review.ModeVerify
+	model.Review.Summary = "Human-reviewed override accepted: " + reason
 	model.Review.Findings = nil
+	model.Review.AttackLog = []review.AttackLogEntry{{Target: "review gate", Attack: "manual human audit", Result: review.AttackResultClean, Notes: reason}}
+	model.Review.Budget = review.Budget{ActualAttackAngles: 1, Depth: "human"}
 	model.CurrentState.ReviewGate = review.VerdictPass
 	model.CurrentState.Next = "complete"
 	model.CurrentState.AllowedFollowUp = "scafld complete " + model.TaskID
@@ -263,15 +314,116 @@ func runHumanReviewed(ctx context.Context, specs SpecStore, sessions SessionStor
 	if err := specs.Save(ctx, path, model); err != nil {
 		return Output{}, err
 	}
-	return Output{TaskID: model.TaskID, Verdict: review.VerdictPass, Provider: "human", Next: model.CurrentState.AllowedFollowUp}, nil
+	return Output{TaskID: model.TaskID, Verdict: review.VerdictPass, Mode: review.ModeVerify, Summary: model.Review.Summary, Provider: "human", AttackLog: model.Review.AttackLog, Budget: model.Review.Budget, Next: model.CurrentState.AllowedFollowUp}, nil
 }
 
-func reviewReason(packet review.Packet) string {
-	blocking := review.CountBlocking(packet.Findings)
-	if len(packet.Findings) == 0 {
-		return "review gate " + packet.Verdict
+func reviewReason(dossier review.Dossier) string {
+	blocking := review.OpenBlockerCount(dossier.Findings)
+	if len(dossier.Findings) == 0 {
+		return "review gate " + dossier.Verdict
 	}
-	return fmt.Sprintf("review gate %s: %d finding(s), %d blocking", packet.Verdict, len(packet.Findings), blocking)
+	return fmt.Sprintf("review gate %s: %d finding(s), %d completion blocker(s)", dossier.Verdict, len(dossier.Findings), blocking)
+}
+
+func reviewMode(ctx context.Context, sessions SessionStore, taskID string, input Input) review.Mode {
+	if input.ForceMode {
+		if input.Mode == review.ModeVerify {
+			return review.ModeVerify
+		}
+		return review.ModeDiscover
+	}
+	switch strings.TrimSpace(input.RerunPolicy) {
+	case "", "verify_open_blockers":
+		if latestReviewHasOpenBlockers(ctx, sessions, taskID) {
+			return review.ModeVerify
+		}
+	case "discover":
+		return review.ModeDiscover
+	case "verify":
+		return review.ModeVerify
+	}
+	if input.Mode == review.ModeVerify {
+		return review.ModeVerify
+	}
+	return review.ModeDiscover
+}
+
+func latestReviewHasOpenBlockers(ctx context.Context, sessions SessionStore, taskID string) bool {
+	if sessions == nil {
+		return false
+	}
+	ledger, err := sessions.Load(ctx, taskID)
+	if err != nil {
+		return false
+	}
+	for i := len(ledger.Entries) - 1; i >= 0; i-- {
+		entry := ledger.Entries[i]
+		if entry.Type != "review" {
+			continue
+		}
+		dossier, ok := review.DecodeDossier(entry.Output)
+		return ok && review.OpenBlockerCount(dossier.Findings) > 0
+	}
+	return false
+}
+
+func reviewBudget(input Input, findings int, attacks int) review.Budget {
+	return review.Budget{
+		MaxFindings:        input.MaxFindings,
+		MinAttackAngles:    input.MinAttackAngles,
+		ActualFindings:     findings,
+		ActualAttackAngles: attacks,
+		Depth:              strings.TrimSpace(input.ReviewDepth),
+	}
+}
+
+func applyRequestedBudget(dossier review.Dossier, requested review.Budget) review.Dossier {
+	if dossier.Budget.MaxFindings == 0 {
+		dossier.Budget.MaxFindings = requested.MaxFindings
+	}
+	if dossier.Budget.MinAttackAngles == 0 {
+		dossier.Budget.MinAttackAngles = requested.MinAttackAngles
+	}
+	if strings.TrimSpace(dossier.Budget.Depth) == "" {
+		dossier.Budget.Depth = requested.Depth
+	}
+	dossier.Budget.ActualFindings = len(dossier.Findings)
+	dossier.Budget.ActualAttackAngles = len(dossier.AttackLog)
+	return dossier
+}
+
+func workspaceMutationFinding(mutated []string) review.Finding {
+	path := "."
+	if len(mutated) > 0 {
+		path = coreworkspace.ParseChange(mutated[0]).Path
+		if path == "" {
+			path = strings.TrimSpace(mutated[0])
+		}
+	}
+	return review.Finding{
+		ID:               "workspace_mutation",
+		Severity:         review.SeverityCritical,
+		BlocksCompletion: true,
+		Category:         "review_integrity",
+		Confidence:       review.ConfidenceHigh,
+		Location:         &review.Location{Path: path},
+		Evidence:         "workspace changed during review: " + strings.Join(mutated, ", "),
+		Impact:           "The review provider changed the workspace while acting as a read-only reviewer, so its verdict is not trustworthy.",
+		Validation:       "Restore the workspace to the expected state, ensure the provider is read-only, then rerun scafld review.",
+		Summary:          "Workspace changed during review.",
+	}
+}
+
+func appendSummary(current string, extra string) string {
+	current = strings.TrimSpace(current)
+	extra = strings.TrimSpace(extra)
+	if current == "" {
+		return extra
+	}
+	if extra == "" {
+		return current
+	}
+	return current + " " + extra
 }
 
 func workspaceSnapshot(ctx context.Context, workspace WorkspaceStatus) ([]string, error) {
@@ -492,18 +644,21 @@ func nextForVerdict(taskID string, verdict string) (string, string) {
 	return "repair", "scafld handoff " + taskID
 }
 
-func reviewRepair(model spec.Model, packet review.Packet, command string, evidence string) *gate.Failure {
-	if packet.Verdict != review.VerdictFail {
+func reviewRepair(model spec.Model, dossier review.Dossier, command string, evidence string) *gate.Failure {
+	if dossier.Verdict != review.VerdictFail {
 		return nil
 	}
-	blockers := make([]string, 0, len(packet.Findings))
-	for _, finding := range packet.Findings {
-		if finding.Severity != review.SeverityBlocking {
+	blockers := make([]string, 0, len(dossier.Findings))
+	for _, finding := range dossier.Findings {
+		if !review.BlocksCompletion(finding) {
 			continue
 		}
 		label := finding.ID
 		if finding.Summary != "" {
 			label += ": " + finding.Summary
+		}
+		if finding.Validation != "" {
+			label += " | validate: " + finding.Validation
 		}
 		blockers = append(blockers, label)
 	}
@@ -533,7 +688,7 @@ func latestReviewEvidence(ledger session.Session) string {
 	return "review event"
 }
 
-func reviewContextPacket(model spec.Model, specPath string, passes []Pass, invariants map[string]string, reviewScope []string, baseline []string, taskChanges []coreworkspace.Mutation, scopeDrift []coreworkspace.Mutation, extra []reviewcontext.Section) reviewcontext.Packet {
+func reviewContextPacket(model spec.Model, specPath string, passes []Pass, invariants map[string]string, reviewScope []string, baseline []string, taskChanges []coreworkspace.Mutation, scopeDrift []coreworkspace.Mutation, extra []reviewcontext.Section, mode review.Mode, maxFindings int, minAttackAngles int, depth string, rerunPolicy string) reviewcontext.Packet {
 	sourcePath := currentSpecReviewPath(specPath)
 	if sourcePath == "" {
 		sourcePath = strings.TrimSpace(specPath)
@@ -543,6 +698,7 @@ func reviewContextPacket(model spec.Model, specPath string, passes []Pass, invar
 	}
 	sections := []reviewcontext.Section{
 		contextSection("task_contract", "Task Contract", 10, taskContractBody(model), "spec", sourcePath),
+		contextSection("review_request", "Review Request", 12, reviewRequestBody(mode, maxFindings, minAttackAngles, depth, rerunPolicy), "scafld", "review"),
 		contextSection("configured_invariants", "Configured Invariants", 15, configuredInvariantsBody(invariants), "config", ".scafld/config.yaml"),
 		contextSection("review_focus", "Review Focus", 18, reviewFocusBody(passes), "config", ".scafld/config.yaml"),
 		contextSection("task_scope", "Task Scope", 20, taskScopeBody(model, reviewScope), "spec", sourcePath),
@@ -658,8 +814,26 @@ func configuredInvariantsBody(invariants map[string]string) string {
 	return b.String()
 }
 
+func reviewRequestBody(mode review.Mode, maxFindings int, minAttackAngles int, depth string, rerunPolicy string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Mode: %s\n", mode)
+	if maxFindings > 0 {
+		fmt.Fprintf(&b, "Max findings: %d\n", maxFindings)
+	}
+	if minAttackAngles > 0 {
+		fmt.Fprintf(&b, "Minimum attack angles: %d\n", minAttackAngles)
+	}
+	if strings.TrimSpace(depth) != "" {
+		fmt.Fprintf(&b, "Review depth: %s\n", strings.TrimSpace(depth))
+	}
+	if strings.TrimSpace(rerunPolicy) != "" {
+		fmt.Fprintf(&b, "Rerun policy: %s\n", strings.TrimSpace(rerunPolicy))
+	}
+	return b.String()
+}
+
 func providerInstructionBody() string {
-	return "Review mode is read-only. Do not run build, test, or mutation commands; treat recorded acceptance evidence above as already executed. Treat review as task-scoped: unchanged dirty paths from the approval baseline are context, not findings by themselves. Scope drift since the approval baseline is blocking unless the spec explicitly declares it. Do not emit placeholder ReviewPackets while investigating; the final output must be one complete ReviewPacket JSON object with `verdict` and `findings`. If your transport only supports line frames, emit `finding` frames with severity `blocking` or `non_blocking`, then a `verdict` frame with verdict `pass` or `fail`."
+	return "Review mode is read-only. Do not run build, test, or mutation commands; treat recorded acceptance evidence above as already executed. Treat review as task-scoped: unchanged dirty paths from the approval baseline are context, not findings by themselves. Scope drift since the approval baseline is blocking unless the spec explicitly declares it. Do not emit placeholder output while investigating; the final output must be one complete ReviewDossier JSON object. Separate severity from the gate: use severity `critical`, `high`, `medium`, or `low`, then set `blocks_completion` true only when completion must stop. Completion-blocking findings must include location, evidence, impact, and validation. Record attack_log entries for the bounded checks you actually performed, using result `finding`, `clean`, or `skipped`."
 }
 
 func stripSectionHeading(text string, title string) string {

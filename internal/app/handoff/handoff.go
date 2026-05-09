@@ -232,13 +232,34 @@ func writeLatestReviewFindings(b *strings.Builder, ledger session.Session) {
 		if entry.Type != "review" {
 			continue
 		}
-		findings := corereview.DecodeFindings(entry.Output)
-		if len(findings) == 0 {
+		dossier, ok := corereview.DecodeDossier(entry.Output)
+		if !ok || len(dossier.Findings) == 0 {
 			return
 		}
-		fmt.Fprintf(b, "\n## Review Findings\n\nVerdict: %s\n\n", entry.Status)
-		for _, finding := range findings {
-			fmt.Fprintf(b, "- [%s] %s: %s\n", finding.Severity, finding.ID, finding.Summary)
+		fmt.Fprintf(b, "\n## Review Dossier\n\nVerdict: %s\nMode: %s\n", entry.Status, dossier.Mode)
+		if dossier.Summary != "" {
+			fmt.Fprintf(b, "Summary: %s\n", dossier.Summary)
+		}
+		fmt.Fprintf(b, "\nFindings:\n")
+		for _, finding := range dossier.Findings {
+			blocking := "non-blocking"
+			if corereview.BlocksCompletion(finding) {
+				blocking = "blocks completion"
+			}
+			fmt.Fprintf(b, "- [%s/%s] %s: %s\n", finding.Severity, blocking, finding.ID, finding.Summary)
+			if finding.Location != nil && finding.Location.Path != "" {
+				if finding.Location.Line > 0 {
+					fmt.Fprintf(b, "  - Location: `%s:%d`\n", finding.Location.Path, finding.Location.Line)
+				} else {
+					fmt.Fprintf(b, "  - Location: `%s`\n", finding.Location.Path)
+				}
+			}
+			if finding.Evidence != "" {
+				fmt.Fprintf(b, "  - Evidence: %s\n", finding.Evidence)
+			}
+			if finding.Validation != "" {
+				fmt.Fprintf(b, "  - Validate: %s\n", finding.Validation)
+			}
 		}
 		return
 	}

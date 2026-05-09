@@ -64,7 +64,7 @@ func TestRoundTripPreservesLiterateSpecFields(t *testing.T) {
 			AnsweredWith:      "Adapter-owned.",
 		}},
 	}}
-	model.Review = spec.ReviewState{Status: "completed", Verdict: corereview.VerdictFail, Findings: []corereview.Finding{{ID: "f1", Severity: corereview.SeverityBlocking, Summary: "bug"}}}
+	model.Review = spec.ReviewState{Status: "completed", Verdict: corereview.VerdictFail, Mode: corereview.ModeDiscover, Summary: "Review found an open blocker.", Findings: []corereview.Finding{{ID: "f1", Severity: corereview.SeverityHigh, BlocksCompletion: true, Location: &corereview.Location{Path: "file.go"}, Evidence: "bug", Impact: "test impact", Validation: "rerun test", Summary: "bug"}}}
 	model.Phases[0].Dependencies = []string{"phase0"}
 	model.Phases[0].Acceptance[0].Status = "pass"
 	model.Phases[0].Acceptance[0].Evidence = "exit code was 0"

@@ -47,8 +47,17 @@ type HardenConfig struct {
 type ReviewConfig struct {
 	External          ExternalReviewConfig        `yaml:"external"`
 	Context           ReviewContextConfig         `yaml:"context"`
+	Dossier           ReviewDossierConfig         `yaml:"dossier"`
 	AutomatedPasses   map[string]ReviewPassConfig `yaml:"automated_passes"`
 	AdversarialPasses map[string]ReviewPassConfig `yaml:"adversarial_passes"`
+}
+
+// ReviewDossierConfig controls default review dossier budget and rerun behavior.
+type ReviewDossierConfig struct {
+	MaxFindings     int    `yaml:"max_findings"`
+	MinAttackAngles int    `yaml:"min_attack_angles"`
+	ReviewDepth     string `yaml:"review_depth"`
+	RerunPolicy     string `yaml:"rerun_policy"`
 }
 
 // ReviewContextConfig controls bounded project context sent to reviewers.
@@ -195,11 +204,17 @@ func Default() Config {
 					"docs/review.md",
 					"docs/configuration.md",
 					"docs/execution.md",
-					".scafld/core/schemas/review_packet.json",
+					".scafld/core/schemas/review_dossier.json",
 				},
 			},
+			Dossier: ReviewDossierConfig{
+				MaxFindings:     12,
+				MinAttackAngles: 6,
+				ReviewDepth:     "standard",
+				RerunPolicy:     "verify_open_blockers",
+			},
 			AutomatedPasses: map[string]ReviewPassConfig{
-				"spec_compliance": {Order: 10, Title: "Spec Compliance", Description: "Re-run acceptance criteria to verify code satisfies the spec"},
+				"spec_compliance": {Order: 10, Title: "Spec Compliance", Description: "Verify recorded acceptance evidence against the spec"},
 				"scope_drift":     {Order: 20, Title: "Scope Drift", Description: "Compare spec scope vs current workspace changes and flag undeclared changes"},
 			},
 			AdversarialPasses: map[string]ReviewPassConfig{
@@ -225,6 +240,7 @@ func overlay(base Config, local Config) Config {
 	}
 	base.Review.External = overlayExternal(base.Review.External, local.Review.External)
 	base.Review.Context = overlayReviewContext(base.Review.Context, local.Review.Context)
+	base.Review.Dossier = overlayReviewDossier(base.Review.Dossier, local.Review.Dossier)
 	base.Review.AutomatedPasses = overlayPasses(base.Review.AutomatedPasses, local.Review.AutomatedPasses)
 	base.Review.AdversarialPasses = overlayPasses(base.Review.AdversarialPasses, local.Review.AdversarialPasses)
 	return withDefaults(base)
@@ -278,6 +294,22 @@ func overlayReviewContext(base ReviewContextConfig, local ReviewContextConfig) R
 	}
 	if len(local.Files) > 0 {
 		base.Files = dedupeList(append(append([]string(nil), base.Files...), local.Files...))
+	}
+	return base
+}
+
+func overlayReviewDossier(base ReviewDossierConfig, local ReviewDossierConfig) ReviewDossierConfig {
+	if local.MaxFindings > 0 {
+		base.MaxFindings = local.MaxFindings
+	}
+	if local.MinAttackAngles > 0 {
+		base.MinAttackAngles = local.MinAttackAngles
+	}
+	if local.ReviewDepth != "" {
+		base.ReviewDepth = local.ReviewDepth
+	}
+	if local.RerunPolicy != "" {
+		base.RerunPolicy = local.RerunPolicy
 	}
 	return base
 }
@@ -368,6 +400,7 @@ func withDefaults(cfg Config) Config {
 	cfg.Review.AutomatedPasses = overlayPasses(defaults.Review.AutomatedPasses, cfg.Review.AutomatedPasses)
 	cfg.Review.AdversarialPasses = overlayPasses(defaults.Review.AdversarialPasses, cfg.Review.AdversarialPasses)
 	cfg.Review.Context = overlayReviewContext(defaults.Review.Context, cfg.Review.Context)
+	cfg.Review.Dossier = overlayReviewDossier(defaults.Review.Dossier, cfg.Review.Dossier)
 	return cfg
 }
 

@@ -43,7 +43,7 @@ type Selection struct {
 
 // Select returns the configured review provider implementation.
 func Select(opts Selection) (interface {
-	Invoke(context.Context, review.Request) (review.Packet, error)
+	Invoke(context.Context, review.Request) (review.Dossier, error)
 }, error) {
 	if opts.Timeout == 0 {
 		opts.Timeout = 30 * time.Minute
@@ -71,7 +71,7 @@ func Select(opts Selection) (interface {
 }
 
 func selectAuto(opts Selection) (interface {
-	Invoke(context.Context, review.Request) (review.Packet, error)
+	Invoke(context.Context, review.Request) (review.Dossier, error)
 }, error) {
 	if opts.Binary != "" {
 		return CodexProvider{Binary: opts.Binary, Model: opts.Model, CWD: opts.CWD, Runner: opts.Runner, Timeout: opts.Timeout, IdleTimeout: opts.Idle}, nil
@@ -97,26 +97,26 @@ func first(values ...string) string {
 	return ""
 }
 
-// LocalProvider emits deterministic local review packets for development smoke tests.
+// LocalProvider emits deterministic local review dossiers for development smoke tests.
 type LocalProvider struct {
 	Messages []string
 }
 
-// Invoke returns a packet from configured local messages.
-func (p LocalProvider) Invoke(ctx context.Context, req review.Request) (review.Packet, error) {
+// Invoke returns a dossier from configured local messages.
+func (p LocalProvider) Invoke(ctx context.Context, req review.Request) (review.Dossier, error) {
 	var lines []string
 	for _, msg := range p.Messages {
 		if err := ctx.Err(); err != nil {
-			return review.Packet{}, err
+			return review.Dossier{}, err
 		}
 		lines = append(lines, msg)
 	}
 	if len(lines) == 0 {
-		lines = []string{`{"type":"verdict","verdict":"pass"}`}
+		lines = []string{`{"type":"dossier","dossier":{"verdict":"pass","mode":"discover","summary":"Local provider smoke review passed.","findings":[],"attack_log":[{"target":"local provider","attack":"deterministic smoke review","result":"clean"}],"budget":{"actual_attack_angles":1,"depth":"local"}}}`}
 	}
-	packet, err := review.ParseNDJSON(strings.Join(lines, "\n") + "\n")
-	packet.Provider = "local"
-	return packet, err
+	dossier, err := review.ParseNDJSON(strings.Join(lines, "\n") + "\n")
+	dossier.Provider = "local"
+	return dossier, err
 }
 
 // CommandProvider invokes an operator-supplied review command.
@@ -129,13 +129,13 @@ type CommandProvider struct {
 	IdleTimeout time.Duration
 }
 
-// Invoke sends the review prompt to the command and parses stdout as a packet.
-func (p CommandProvider) Invoke(ctx context.Context, req review.Request) (review.Packet, error) {
+// Invoke sends the review prompt to the command and parses stdout as a dossier.
+func (p CommandProvider) Invoke(ctx context.Context, req review.Request) (review.Dossier, error) {
 	if p.Runner == nil {
-		return review.Packet{}, fmt.Errorf("%w: runner is required", ErrProviderFailed)
+		return review.Dossier{}, fmt.Errorf("%w: runner is required", ErrProviderFailed)
 	}
 	if strings.TrimSpace(p.Command) == "" {
-		return review.Packet{}, fmt.Errorf("%w: command is required", ErrProviderFailed)
+		return review.Dossier{}, fmt.Errorf("%w: command is required", ErrProviderFailed)
 	}
 	env := append([]string(nil), p.Env...)
 	env = append(env, "SCAFLD_TASK_ID="+req.TaskID)
@@ -149,23 +149,23 @@ func (p CommandProvider) Invoke(ctx context.Context, req review.Request) (review
 		SuppressProgressStderr: true,
 	})
 	if err != nil && strings.TrimSpace(result.Stdout) == "" {
-		return review.Packet{}, fmt.Errorf("%w: %v", ErrProviderFailed, err)
+		return review.Dossier{}, fmt.Errorf("%w: %v", ErrProviderFailed, err)
 	}
-	packet, parseErr := review.ParseText(result.Stdout)
+	dossier, parseErr := review.ParseText(result.Stdout)
 	if parseErr != nil {
 		if err != nil {
-			return review.Packet{}, fmt.Errorf("%w: %v", ErrProviderFailed, err)
+			return review.Dossier{}, fmt.Errorf("%w: %v", ErrProviderFailed, err)
 		}
-		return review.Packet{}, parseErr
+		return review.Dossier{}, parseErr
 	}
 	if err != nil {
-		return review.Packet{}, fmt.Errorf("%w: %v", ErrProviderFailed, err)
+		return review.Dossier{}, fmt.Errorf("%w: %v", ErrProviderFailed, err)
 	}
-	if result.ExitCode != 0 && packet.Verdict != review.VerdictFail {
-		return review.Packet{}, fmt.Errorf("%w: exit code %d", ErrProviderFailed, result.ExitCode)
+	if result.ExitCode != 0 && dossier.Verdict != review.VerdictFail {
+		return review.Dossier{}, fmt.Errorf("%w: exit code %d", ErrProviderFailed, result.ExitCode)
 	}
-	packet.Provider = "command"
-	return packet, nil
+	dossier.Provider = "command"
+	return dossier, nil
 }
 
 // ClaudeProvider invokes Claude in restricted stream-json review mode.
@@ -181,10 +181,10 @@ type ClaudeProvider struct {
 	IdleTimeout time.Duration
 }
 
-// Invoke sends the review prompt to Claude and parses the resulting packet.
-func (p ClaudeProvider) Invoke(ctx context.Context, req review.Request) (review.Packet, error) {
+// Invoke sends the review prompt to Claude and parses the resulting dossier.
+func (p ClaudeProvider) Invoke(ctx context.Context, req review.Request) (review.Dossier, error) {
 	if p.Runner == nil {
-		return review.Packet{}, fmt.Errorf("%w: runner is required", ErrProviderFailed)
+		return review.Dossier{}, fmt.Errorf("%w: runner is required", ErrProviderFailed)
 	}
 	sessionID := p.SessionID
 	if sessionID == "" {
@@ -192,7 +192,7 @@ func (p ClaudeProvider) Invoke(ctx context.Context, req review.Request) (review.
 	}
 	schemaJSON := p.SchemaJSON
 	if schemaJSON == "" {
-		schemaJSON = ReviewPacketSchemaJSON()
+		schemaJSON = ReviewDossierSchemaJSON()
 	}
 	result, err := p.Runner.Run(ctx, execution.Request{
 		Args:                   ClaudeArgs(binaryOrDefault(p.Binary, "claude"), p.Model, sessionID, schemaJSON),
@@ -205,15 +205,15 @@ func (p ClaudeProvider) Invoke(ctx context.Context, req review.Request) (review.
 		StdoutEventInspector:   ClaudeEventName,
 	})
 	extracted := extractClaudeOutput(result.Stdout)
-	packet, packetErr := packetFromProviderResult(result, err, extracted.Body)
-	if packetErr != nil {
-		return review.Packet{}, packetErr
+	dossier, dossierErr := dossierFromProviderResult(result, err, extracted.Body)
+	if dossierErr != nil {
+		return review.Dossier{}, dossierErr
 	}
-	packet.Provider = "claude"
-	packet.Model = extracted.Model
-	packet.SessionID = extracted.SessionID
-	packet.EventSummary = eventSummary(result.StdoutEvents, extracted.Events)
-	return packet, nil
+	dossier.Provider = "claude"
+	dossier.Model = extracted.Model
+	dossier.SessionID = extracted.SessionID
+	dossier.EventSummary = eventSummary(result.StdoutEvents, extracted.Events)
+	return dossier, nil
 }
 
 // CodexProvider invokes Codex in read-only ephemeral review mode.
@@ -229,17 +229,17 @@ type CodexProvider struct {
 	IdleTimeout time.Duration
 }
 
-// Invoke sends the review prompt to Codex and parses the resulting packet.
-func (p CodexProvider) Invoke(ctx context.Context, req review.Request) (review.Packet, error) {
+// Invoke sends the review prompt to Codex and parses the resulting dossier.
+func (p CodexProvider) Invoke(ctx context.Context, req review.Request) (review.Dossier, error) {
 	if p.Runner == nil {
-		return review.Packet{}, fmt.Errorf("%w: runner is required", ErrProviderFailed)
+		return review.Dossier{}, fmt.Errorf("%w: runner is required", ErrProviderFailed)
 	}
 	outputPath := p.OutputPath
 	cleanup := func() {}
 	if outputPath == "" {
 		file, err := os.CreateTemp("", "scafld-codex-review-*.json")
 		if err != nil {
-			return review.Packet{}, fmt.Errorf("%w: create output file: %v", ErrProviderFailed, err)
+			return review.Dossier{}, fmt.Errorf("%w: create output file: %v", ErrProviderFailed, err)
 		}
 		outputPath = file.Name()
 		_ = file.Close()
@@ -251,12 +251,12 @@ func (p CodexProvider) Invoke(ctx context.Context, req review.Request) (review.P
 	if schemaPath == "" {
 		file, err := os.CreateTemp("", "scafld-review-schema-*.json")
 		if err != nil {
-			return review.Packet{}, fmt.Errorf("%w: create schema file: %v", ErrProviderFailed, err)
+			return review.Dossier{}, fmt.Errorf("%w: create schema file: %v", ErrProviderFailed, err)
 		}
 		schemaPath = file.Name()
-		if _, err := file.WriteString(ReviewPacketSchemaJSON()); err != nil {
+		if _, err := file.WriteString(ReviewDossierSchemaJSON()); err != nil {
 			_ = file.Close()
-			return review.Packet{}, fmt.Errorf("%w: write schema file: %v", ErrProviderFailed, err)
+			return review.Dossier{}, fmt.Errorf("%w: write schema file: %v", ErrProviderFailed, err)
 		}
 		_ = file.Close()
 		cleanupSchema = func() { _ = os.Remove(schemaPath) }
@@ -275,12 +275,12 @@ func (p CodexProvider) Invoke(ctx context.Context, req review.Request) (review.P
 	if data, readErr := os.ReadFile(filepath.Clean(outputPath)); readErr == nil && strings.TrimSpace(string(data)) != "" {
 		body = string(data)
 	}
-	packet, packetErr := packetFromProviderResult(result, err, body)
-	if packetErr != nil {
-		return review.Packet{}, packetErr
+	dossier, dossierErr := dossierFromProviderResult(result, err, body)
+	if dossierErr != nil {
+		return review.Dossier{}, dossierErr
 	}
-	packet.Provider = "codex"
-	return packet, nil
+	dossier.Provider = "codex"
+	return dossier, nil
 }
 
 // ClaudeArgs builds the argv for restricted Claude review execution.
@@ -339,29 +339,29 @@ func CodexArgs(binary string, root string, outputPath string, model string, sche
 	return args
 }
 
-// ReviewPacketSchemaJSON returns the provider-facing review packet schema.
-func ReviewPacketSchemaJSON() string {
-	return `{"type":"object","additionalProperties":false,"required":["verdict","findings"],"properties":{"verdict":{"type":"string","enum":["pass","fail"]},"findings":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["id","severity","summary"],"properties":{"id":{"type":"string"},"severity":{"type":"string","enum":["blocking","non_blocking"]},"summary":{"type":"string"}}}}}}`
+// ReviewDossierSchemaJSON returns the provider-facing review dossier schema.
+func ReviewDossierSchemaJSON() string {
+	return `{"type":"object","additionalProperties":false,"required":["verdict","mode","summary","findings","attack_log","budget"],"properties":{"verdict":{"type":"string","enum":["pass","fail"]},"mode":{"type":"string","enum":["discover","verify"]},"summary":{"type":"string","minLength":1},"findings":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["id","severity","blocks_completion"],"properties":{"id":{"type":"string"},"severity":{"type":"string","enum":["critical","high","medium","low"]},"blocks_completion":{"type":"boolean"},"category":{"type":"string"},"confidence":{"type":"string","enum":["high","medium","low"]},"location":{"type":"object","additionalProperties":false,"required":["path"],"properties":{"path":{"type":"string"},"line":{"type":"integer","minimum":1}}},"evidence":{"type":"string"},"impact":{"type":"string"},"reproducer":{"type":"string"},"suggested_fix":{"type":"string"},"validation":{"type":"string"},"related_spec":{"type":"string"},"review_pass":{"type":"string"},"status":{"type":"string","enum":["open","fixed","accepted_risk","superseded"]},"summary":{"type":"string"}}}},"attack_log":{"type":"array","minItems":1,"items":{"type":"object","additionalProperties":false,"required":["target","attack","result"],"properties":{"target":{"type":"string"},"attack":{"type":"string"},"result":{"type":"string","enum":["finding","clean","skipped"]},"notes":{"type":"string"}}}},"budget":{"type":"object","additionalProperties":false,"properties":{"max_findings":{"type":"integer","minimum":0},"min_attack_angles":{"type":"integer","minimum":0},"actual_findings":{"type":"integer","minimum":0},"actual_attack_angles":{"type":"integer","minimum":0},"depth":{"type":"string"}}},"provider":{"type":"string"},"model":{"type":"string"},"session_id":{"type":"string"},"event_summary":{"type":"object","additionalProperties":{"type":"integer","minimum":0}}}}`
 }
 
-func packetFromProviderResult(result execution.Result, runErr error, text string) (review.Packet, error) {
+func dossierFromProviderResult(result execution.Result, runErr error, text string) (review.Dossier, error) {
 	if runErr != nil && strings.TrimSpace(text) == "" {
-		return review.Packet{}, fmt.Errorf("%w: %v", ErrProviderFailed, runErr)
+		return review.Dossier{}, fmt.Errorf("%w: %v", ErrProviderFailed, runErr)
 	}
-	packet, parseErr := review.ParseText(text)
+	dossier, parseErr := review.ParseText(text)
 	if parseErr != nil {
 		if runErr != nil {
-			return review.Packet{}, fmt.Errorf("%w: %v", ErrProviderFailed, runErr)
+			return review.Dossier{}, fmt.Errorf("%w: %v", ErrProviderFailed, runErr)
 		}
-		return review.Packet{}, parseErr
+		return review.Dossier{}, parseErr
 	}
 	if runErr != nil {
-		return review.Packet{}, fmt.Errorf("%w: %v", ErrProviderFailed, runErr)
+		return review.Dossier{}, fmt.Errorf("%w: %v", ErrProviderFailed, runErr)
 	}
-	if result.ExitCode != 0 && packet.Verdict != review.VerdictFail {
-		return review.Packet{}, fmt.Errorf("%w: exit code %d", ErrProviderFailed, result.ExitCode)
+	if result.ExitCode != 0 && dossier.Verdict != review.VerdictFail {
+		return review.Dossier{}, fmt.Errorf("%w: exit code %d", ErrProviderFailed, result.ExitCode)
 	}
-	return packet, nil
+	return dossier, nil
 }
 
 type claudeOutput struct {

@@ -29,7 +29,7 @@ var (
 	ErrMalformedMarkdown = errors.New("malformed markdown spec")
 	phaseHeadingPattern  = regexp.MustCompile(`^## Phase ([0-9]+):\s*(.+?)\s*$`)
 	criterionLinePattern = regexp.MustCompile(`^- \[[ xX]\] ` + "`" + `([^` + "`" + `]+)` + "`" + `\s+([^-]+?)\s+-\s*(.*)$`)
-	findingLinePattern   = regexp.MustCompile(`^- \[([a-z_]+)\]\s+` + "`" + `([^` + "`" + `]+)` + "`" + `\s+(.*)$`)
+	findingLinePattern   = regexp.MustCompile(`^- \[([a-z]+)/(blocks completion|non-blocking)\]\s+` + "`" + `([^` + "`" + `]+)` + "`" + `\s+(.*)$`)
 )
 
 // Store reads and writes Markdown task specs under a workspace root.
@@ -229,6 +229,7 @@ type parser struct {
 	section        string
 	phase          *spec.Phase
 	criterion      *spec.Criterion
+	reviewFinding  *corereview.Finding
 	hardenRound    *spec.HardenRound
 	hardenQuestion *spec.HardenQuestion
 	phaseField     string
@@ -304,6 +305,7 @@ func (p *parser) startPhase(match []string) error {
 	p.phase = &p.model.Phases[len(p.model.Phases)-1]
 	p.section = "phase"
 	p.criterion = nil
+	p.reviewFinding = nil
 	p.hardenRound = nil
 	p.hardenQuestion = nil
 	p.phaseField = ""
@@ -316,6 +318,7 @@ func (p *parser) startSection(section string) {
 	p.section = section
 	p.phase = nil
 	p.criterion = nil
+	p.reviewFinding = nil
 	p.hardenRound = nil
 	p.hardenQuestion = nil
 	p.phaseField = ""
@@ -389,13 +392,36 @@ func (p *parser) handleReview(line string) bool {
 		case "verdict":
 			p.model.Review.Verdict = value
 			return true
+		case "mode":
+			p.model.Review.Mode = corereview.Mode(value)
+			return true
+		case "summary":
+			p.model.Review.Summary = value
+			return true
 		case "findings":
 			return true
 		}
 	}
 	if match := findingLinePattern.FindStringSubmatch(line); match != nil {
-		p.model.Review.Findings = append(p.model.Review.Findings, reviewFinding(match[2], match[1], match[3]))
+		p.model.Review.Findings = append(p.model.Review.Findings, reviewFinding(match[3], match[1], match[2], match[4]))
+		p.reviewFinding = &p.model.Review.Findings[len(p.model.Review.Findings)-1]
 		return true
+	}
+	if p.reviewFinding != nil {
+		if key, value, ok := parseIndentedSpecKeyValue(line); ok {
+			switch normalizeSpecKey(key) {
+			case "location":
+				path, lineNo := parseLocation(value)
+				p.reviewFinding.Location = &corereview.Location{Path: path, Line: lineNo}
+			case "evidence":
+				p.reviewFinding.Evidence = value
+			case "impact":
+				p.reviewFinding.Impact = value
+			case "validation":
+				p.reviewFinding.Validation = value
+			}
+			return true
+		}
 	}
 	return false
 }
@@ -1149,13 +1175,50 @@ func renderRisks(b *strings.Builder, risks []spec.Risk) {
 }
 
 func renderReview(b *strings.Builder, review spec.ReviewState) {
-	fmt.Fprintf(b, "## Review\n\nStatus: %s\nVerdict: %s\n\nFindings:\n", fallback(review.Status, "not_started"), fallback(review.Verdict, "none"))
+	fmt.Fprintf(b, "## Review\n\nStatus: %s\nVerdict: %s\n", fallback(review.Status, "not_started"), fallback(review.Verdict, "none"))
+	if review.Mode != "" {
+		fmt.Fprintf(b, "Mode: %s\n", review.Mode)
+	}
+	if review.Summary != "" {
+		fmt.Fprintf(b, "Summary: %s\n", review.Summary)
+	}
+	if len(review.AttackLog) > 0 {
+		fmt.Fprintf(b, "\nAttack log:\n")
+		for _, attack := range review.AttackLog {
+			fmt.Fprintf(b, "- `%s`: %s -> %s", fallback(attack.Target, "target"), fallback(attack.Attack, "attack"), fallback(string(attack.Result), "result"))
+			if attack.Notes != "" {
+				fmt.Fprintf(b, " (%s)", attack.Notes)
+			}
+			fmt.Fprintf(b, "\n")
+		}
+	}
+	fmt.Fprintf(b, "\nFindings:\n")
 	if len(review.Findings) == 0 {
 		fmt.Fprintf(b, "- none\n\n")
 		return
 	}
 	for _, finding := range review.Findings {
-		fmt.Fprintf(b, "- [%s] `%s` %s\n", fallback(string(finding.Severity), string(corereview.SeverityNonBlocking)), fallback(finding.ID, "finding"), fallback(finding.Summary, "No summary recorded."))
+		blocking := "non-blocking"
+		if corereview.BlocksCompletion(finding) {
+			blocking = "blocks completion"
+		}
+		fmt.Fprintf(b, "- [%s/%s] `%s` %s\n", fallback(string(finding.Severity), string(corereview.SeverityLow)), blocking, fallback(finding.ID, "finding"), fallback(finding.Summary, "No summary recorded."))
+		if finding.Location != nil && finding.Location.Path != "" {
+			if finding.Location.Line > 0 {
+				fmt.Fprintf(b, "  - Location: `%s:%d`\n", finding.Location.Path, finding.Location.Line)
+			} else {
+				fmt.Fprintf(b, "  - Location: `%s`\n", finding.Location.Path)
+			}
+		}
+		if finding.Evidence != "" {
+			fmt.Fprintf(b, "  - Evidence: %s\n", finding.Evidence)
+		}
+		if finding.Impact != "" {
+			fmt.Fprintf(b, "  - Impact: %s\n", finding.Impact)
+		}
+		if finding.Validation != "" {
+			fmt.Fprintf(b, "  - Validation: %s\n", finding.Validation)
+		}
 	}
 	fmt.Fprintf(b, "\n")
 }
@@ -1187,8 +1250,8 @@ func renderCriteria(b *strings.Builder, criteria []spec.Criterion) {
 	}
 }
 
-func reviewFinding(id string, severity string, summary string) corereview.Finding {
-	return corereview.Finding{ID: strings.TrimSpace(id), Severity: corereview.Severity(strings.TrimSpace(severity)), Summary: strings.TrimSpace(summary)}
+func reviewFinding(id string, severity string, blocking string, summary string) corereview.Finding {
+	return corereview.Finding{ID: strings.TrimSpace(id), Severity: corereview.Severity(strings.TrimSpace(severity)), BlocksCompletion: strings.TrimSpace(blocking) == "blocks completion", Status: corereview.FindingOpen, Summary: strings.TrimSpace(summary)}
 }
 
 func checked(status string) string {
@@ -1276,12 +1339,36 @@ func parseSpecListKeyValue(value string) (string, string, bool) {
 	return parseSpecKeyValue(trimmed)
 }
 
+func parseIndentedSpecKeyValue(value string) (string, string, bool) {
+	trimmed := strings.TrimSpace(value)
+	if strings.HasPrefix(trimmed, "- ") {
+		trimmed = strings.TrimSpace(strings.TrimPrefix(trimmed, "- "))
+	}
+	return parseSpecKeyValue(trimmed)
+}
+
 func parseSpecKeyValue(value string) (string, string, bool) {
 	key, body, ok := strings.Cut(value, ":")
 	if !ok || strings.TrimSpace(key) == "" {
 		return "", "", false
 	}
 	return strings.TrimSpace(key), cleanSpecValue(body), true
+}
+
+func parseLocation(value string) (string, int) {
+	value = strings.Trim(strings.TrimSpace(value), "`")
+	if value == "" {
+		return "", 0
+	}
+	path, lineText, ok := strings.Cut(value, ":")
+	if !ok {
+		return value, 0
+	}
+	line, err := strconv.Atoi(strings.TrimSpace(lineText))
+	if err != nil || line < 1 {
+		return value, 0
+	}
+	return strings.TrimSpace(path), line
 }
 
 func cleanSpecValue(value string) string {

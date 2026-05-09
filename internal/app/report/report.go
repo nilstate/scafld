@@ -44,6 +44,12 @@ type Metrics struct {
 	ReviewPassRate            float64        `json:"review_pass_rate"`
 	ReviewPasses              int            `json:"review_passes"`
 	ReviewTotal               int            `json:"review_total"`
+	ReviewDossierCoverage     float64        `json:"review_dossier_coverage"`
+	ReviewDossierTotal        int            `json:"review_dossier_total"`
+	ReviewFindingsTotal       int            `json:"review_findings_total"`
+	ReviewOpenBlockersTotal   int            `json:"review_open_blockers_total"`
+	ReviewAttackAnglesTotal   int            `json:"review_attack_angles_total"`
+	ReviewModeDistribution    map[string]int `json:"review_mode_distribution,omitempty"`
 	WorkspaceBaselineCoverage float64        `json:"workspace_baseline_coverage"`
 	WorkspaceBaselineTasks    int            `json:"workspace_baseline_tasks"`
 	SessionTotal              int            `json:"session_total"`
@@ -81,6 +87,7 @@ func summarizeSessions(ledgers []session.Session) Metrics {
 	var metrics Metrics
 	metrics.SessionTotal = len(ledgers)
 	metrics.BlockedGateDistribution = map[string]int{}
+	metrics.ReviewModeDistribution = map[string]int{}
 	for _, ledger := range ledgers {
 		if _, ok := session.FirstWorkspaceBaseline(ledger); ok {
 			metrics.WorkspaceBaselineTasks++
@@ -103,6 +110,13 @@ func summarizeSessions(ledgers []session.Session) Metrics {
 			metrics.ReviewTotal += summary.reviewTotal
 			metrics.ReviewPasses += summary.reviewPasses
 		}
+		metrics.ReviewDossierTotal += summary.reviewDossierTotal
+		metrics.ReviewFindingsTotal += summary.reviewFindingsTotal
+		metrics.ReviewOpenBlockersTotal += summary.reviewOpenBlockersTotal
+		metrics.ReviewAttackAnglesTotal += summary.reviewAttackAnglesTotal
+		for mode, count := range summary.reviewModeDistribution {
+			metrics.ReviewModeDistribution[mode] += count
+		}
 		if summary.hadReviewChallenge {
 			metrics.ReviewChallengeTotal++
 			if summary.override {
@@ -113,6 +127,7 @@ func summarizeSessions(ledgers []session.Session) Metrics {
 	metrics.FirstAttemptPassRate = ratio(metrics.FirstAttemptPasses, metrics.FirstAttemptTotal)
 	metrics.RecoveryConvergenceRate = ratio(metrics.RecoveredTasks, metrics.RecoveryTotal)
 	metrics.ReviewPassRate = ratio(metrics.ReviewPasses, metrics.ReviewTotal)
+	metrics.ReviewDossierCoverage = ratio(metrics.ReviewDossierTotal, metrics.ReviewTotal)
 	metrics.ChallengeOverrideRate = ratio(metrics.ChallengeOverrides, metrics.ReviewChallengeTotal)
 	metrics.WorkspaceBaselineCoverage = ratio(metrics.WorkspaceBaselineTasks, metrics.SessionTotal)
 	return metrics
@@ -138,16 +153,21 @@ func recordBlockedGates(metrics *Metrics, ledger session.Session) {
 }
 
 type ledgerSummary struct {
-	firstBuildResult   string
-	recovered          bool
-	reviewPasses       int
-	reviewTotal        int
-	hadReviewChallenge bool
-	override           bool
+	firstBuildResult        string
+	recovered               bool
+	reviewPasses            int
+	reviewTotal             int
+	reviewDossierTotal      int
+	reviewFindingsTotal     int
+	reviewOpenBlockersTotal int
+	reviewAttackAnglesTotal int
+	reviewModeDistribution  map[string]int
+	hadReviewChallenge      bool
+	override                bool
 }
 
 func summarizeLedger(ledger session.Session) ledgerSummary {
-	var summary ledgerSummary
+	summary := ledgerSummary{reviewModeDistribution: map[string]int{}}
 	latestReviewStatus := ""
 	latestReviewProvider := ""
 	for _, entry := range ledger.Entries {
@@ -166,6 +186,15 @@ func summarizeLedger(ledger session.Session) ledgerSummary {
 			summary.reviewTotal++
 			latestReviewStatus = entry.Status
 			latestReviewProvider = entry.Provider
+			if dossier, ok := corereview.DecodeDossier(entry.Output); ok {
+				summary.reviewDossierTotal++
+				summary.reviewFindingsTotal += len(dossier.Findings)
+				summary.reviewOpenBlockersTotal += corereview.OpenBlockerCount(dossier.Findings)
+				summary.reviewAttackAnglesTotal += len(dossier.AttackLog)
+				if dossier.Mode != "" {
+					summary.reviewModeDistribution[string(dossier.Mode)]++
+				}
+			}
 			if entry.Status == "pass" {
 				summary.reviewPasses++
 			}

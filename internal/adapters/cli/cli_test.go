@@ -369,7 +369,7 @@ func TestRunLifecycleMovesSpecsByState(t *testing.T) {
 		t.Fatalf("active path missing: %v", err)
 	}
 
-	command := `printf '{"verdict":"pass","findings":[]}'`
+	command := `printf '{"verdict":"pass","mode":"discover","summary":"clean","findings":[],"attack_log":[{"target":"diff","attack":"scan","result":"clean"}],"budget":{"actual_attack_angles":1}}'`
 	runCLI(t, []string{"review", "--root", root, "lifecycle-task", "--provider", "command", "--provider-command", command})
 	runCLI(t, []string{"complete", "--root", root, "lifecycle-task"})
 	if _, err := os.Stat(activePath); !os.IsNotExist(err) {
@@ -413,7 +413,7 @@ func TestRunReviewSurfacesFindingsInReviewStatusAndHandoff(t *testing.T) {
 	runCLI(t, []string{"plan", "--root", root, "review-task", "--command", "true"})
 	runCLI(t, []string{"approve", "--root", root, "review-task"})
 	runCLI(t, []string{"build", "--root", root, "review-task"})
-	command := `printf '{"verdict":"fail","findings":[{"id":"f1","severity":"blocking","summary":"bug"}]}'`
+	command := `printf '{"verdict":"fail","mode":"discover","summary":"bug found","findings":[{"id":"f1","severity":"high","blocks_completion":true,"location":{"path":"file.go"},"evidence":"bug","impact":"breaks behavior","validation":"rerun tests","summary":"bug"}],"attack_log":[{"target":"diff","attack":"scan","result":"finding"}],"budget":{"actual_findings":1,"actual_attack_angles":1}}'`
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	code := Run(context.Background(), []string{"review", "--root", root, "review-task", "--provider", "command", "--provider-command", command}, &stdout, &stderr)
@@ -428,7 +428,7 @@ func TestRunReviewSurfacesFindingsInReviewStatusAndHandoff(t *testing.T) {
 		t.Fatalf("status output hides review findings:\n%s", status)
 	}
 	handoff := runCLI(t, []string{"handoff", "--root", root, "review-task"})
-	if !strings.Contains(handoff, "## Review Findings") || !strings.Contains(handoff, "bug") {
+	if !strings.Contains(handoff, "## Review Dossier") || !strings.Contains(handoff, "bug") {
 		t.Fatalf("handoff hides review findings:\n%s", handoff)
 	}
 }
@@ -469,6 +469,11 @@ func TestRunReviewPrintContextDoesNotInvokeProvider(t *testing.T) {
 	stdout := runCLI(t, []string{"review", "--root", root, "context-task", "--print-context", "--provider", "command", "--provider-command", `printf 'should-not-run'`})
 	if !strings.Contains(stdout, "Review Context Packet") || strings.Contains(stdout, "should-not-run") {
 		t.Fatalf("print context output = %q", stdout)
+	}
+	for _, want := range []string{"Max findings: 12", "Minimum attack angles: 6", "Review depth: standard", "Rerun policy: verify_open_blockers"} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("print context missing configured budget %q:\n%s", want, stdout)
+		}
 	}
 }
 

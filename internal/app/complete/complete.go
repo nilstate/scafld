@@ -52,6 +52,15 @@ func Run(ctx context.Context, specs SpecStore, sessions SessionStore, clock Cloc
 	if !corereview.ValidCompletionProvider(reviewEntry.Provider) {
 		return spec.Model{}, reviewGateError(model, "passing review came from an unsupported provider", fmt.Sprintf("provider %q", reviewEntry.Provider))
 	}
+	if reviewEntry.Output != "" {
+		dossier, ok := corereview.DecodeDossier(reviewEntry.Output)
+		if !ok {
+			return spec.Model{}, reviewGateError(model, "latest review dossier is invalid", "review entry output could not be decoded as ReviewDossier")
+		}
+		if blockers := corereview.OpenBlockerCount(dossier.Findings); blockers > 0 {
+			return spec.Model{}, reviewGateError(model, "latest review dossier still has open completion blockers", fmt.Sprintf("%d open blocker(s)", blockers))
+		}
+	}
 	if reviewEntry.Provider == "human" && !hasAuditedHumanOverride(ledger) {
 		return spec.Model{}, reviewGateError(model, "human-reviewed gate is missing audit evidence", "latest human review has no adjacent review_override entry")
 	}

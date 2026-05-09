@@ -21,12 +21,31 @@ func (f fakeSessionStore) Load(context.Context, string) (session.Session, error)
 	return f.ledger, nil
 }
 
+func reviewDossier(id string, summary string) corereview.Dossier {
+	return corereview.Dossier{
+		Verdict: corereview.VerdictFail,
+		Mode:    corereview.ModeDiscover,
+		Summary: "Review found an open blocker.",
+		Findings: []corereview.Finding{{
+			ID:               id,
+			Severity:         corereview.SeverityHigh,
+			BlocksCompletion: true,
+			Location:         &corereview.Location{Path: "file.go"},
+			Evidence:         summary,
+			Impact:           "test impact",
+			Validation:       "rerun test",
+			Summary:          summary,
+		}},
+		AttackLog: []corereview.AttackLogEntry{{Target: "diff", Attack: "scan", Result: "finding"}},
+		Budget:    corereview.Budget{ActualFindings: 1, ActualAttackAngles: 1},
+	}
+}
+
 func TestStatusIncludesLatestReviewFindings(t *testing.T) {
 	t.Parallel()
 
 	ledger := session.New("task", "2026-05-05T00:00:00Z")
-	findings := []corereview.Finding{{ID: "f1", Severity: corereview.SeverityBlocking, Summary: "bug"}}
-	ledger = ledger.WithEntry(session.Entry{Type: "review", Status: corereview.VerdictFail, Output: corereview.EncodeFindings(findings)})
+	ledger = ledger.WithEntry(session.Entry{Type: "review", Status: corereview.VerdictFail, Output: corereview.EncodeDossier(reviewDossier("f1", "bug"))})
 	out, err := Run(context.Background(), fakeSpecStore{model: spec.Model{TaskID: "task", Status: spec.StatusReview}}, fakeSessionStore{ledger: ledger}, "task")
 	if err != nil {
 		t.Fatal(err)
@@ -40,8 +59,7 @@ func TestStatusShowsRunningReviewAttemptAndLatestAcceptedReview(t *testing.T) {
 	t.Parallel()
 
 	ledger := session.New("task", "2026-05-05T00:00:00Z")
-	findings := []corereview.Finding{{ID: "old", Severity: corereview.SeverityBlocking, Summary: "old blocker"}}
-	ledger = ledger.WithEntry(session.Entry{Type: "review", Status: corereview.VerdictFail, Output: corereview.EncodeFindings(findings)})
+	ledger = ledger.WithEntry(session.Entry{Type: "review", Status: corereview.VerdictFail, Output: corereview.EncodeDossier(reviewDossier("old", "old blocker"))})
 	ledger = ledger.WithEntry(session.Entry{Type: "review_attempt", Status: "running", Reason: "review provider running"})
 	out, err := Run(context.Background(), fakeSpecStore{model: spec.Model{TaskID: "task", Status: spec.StatusReview}}, fakeSessionStore{ledger: ledger}, "task")
 	if err != nil {

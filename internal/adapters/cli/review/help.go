@@ -18,6 +18,12 @@ Flags:
   --provider-binary PATH   Provider binary override
   --provider-command CMD   Command provider shell command
   --review-scope PATHS     Comma-separated paths that override derived task scope
+  --mode MODE              Review mode: discover or verify
+  --full                   Alias for --mode discover
+  --verify                 Alias for --mode verify
+  --max-findings N         Bound provider output volume
+  --min-attack-angles N    Request at least N attack-log entries
+  --review-depth TEXT      Depth label recorded in the review request
   --print-context          Print the exact provider context and exit
   --human-reviewed         Record an audited human review instead of invoking a provider
   --reason TEXT            Required reason for --human-reviewed
