@@ -1,2 +1,2 @@
-// Package providers adapts external model providers to scafld review packets.
+// Package providers adapts external model providers to scafld review dossiers.
 package providers

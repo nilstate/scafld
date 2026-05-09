@@ -199,20 +199,35 @@ Review failure is structured, not a vibe:
 ```json
 {
   "verdict": "fail",
+  "mode": "discover",
+  "summary": "Review found one open completion blocker.",
   "findings": [
     {
       "id": "cache-tenant-leak",
-      "severity": "blocking",
+      "severity": "high",
+      "blocks_completion": true,
+      "location": {"path": "internal/cache/store.go", "line": 88},
+      "evidence": "invalidation keys omit tenant id",
+      "impact": "cross-tenant cache state can leak",
+      "validation": "go test ./internal/cache",
       "summary": "internal/cache/store.go:88 invalidation keys omit tenant id."
     }
-  ]
+  ],
+  "attack_log": [
+    {"target": "cache invalidation", "attack": "trace tenant key construction", "result": "finding"}
+  ],
+  "budget": {"actual_findings": 1, "actual_attack_angles": 1}
 }
 ```
 
 ```text
 review verdict: fail
+review mode: discover
+summary: Review found one open completion blocker.
 findings:
-- [blocking] cache-tenant-leak: internal/cache/store.go:88 invalidation keys omit tenant id.
+- [high/blocks completion] cache-tenant-leak: internal/cache/store.go:88 invalidation keys omit tenant id.
+  location: internal/cache/store.go:88
+  validation: go test ./internal/cache
 next: scafld handoff add-cache
 ```
 
@@ -396,7 +411,12 @@ review:
       - CLAUDE.md
       - README.md
       - docs/review.md
-      - .scafld/core/schemas/review_packet.json
+      - .scafld/core/schemas/review_dossier.json
+  dossier:
+    max_findings: 12
+    min_attack_angles: 6
+    review_depth: "standard"
+    rerun_policy: "verify_open_blockers"
 ```
 
 The review agenda is configurable too. `review.automated_passes` and
@@ -415,6 +435,11 @@ The canonical metrics are session-derived:
 
 - `first_attempt_pass_rate`
 - `recovery_convergence_rate`
+- `review_pass_rate`
+- `review_dossier_coverage`
+- `review_findings_total`
+- `review_open_blockers_total`
+- `review_attack_angles_total`
 - `challenge_override_rate`
 
 `scafld report --json` derives those metrics from session ledgers:
@@ -436,7 +461,16 @@ The canonical metrics are session-derived:
     "recovery_total": 4,
     "challenge_override_rate": 0,
     "challenge_overrides": 0,
-    "review_challenge_total": 2
+    "review_challenge_total": 2,
+    "review_dossier_coverage": 1,
+    "review_dossier_total": 10,
+    "review_findings_total": 14,
+    "review_open_blockers_total": 3,
+    "review_attack_angles_total": 42,
+    "review_mode_distribution": {
+      "discover": 7,
+      "verify": 3
+    }
   }
 }
 ```

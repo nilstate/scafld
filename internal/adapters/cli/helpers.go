@@ -28,21 +28,25 @@ type options struct {
 }
 
 var valueFlags = map[string]bool{
-	"root":             true,
-	"title":            true,
-	"summary":          true,
-	"command":          true,
-	"size":             true,
-	"risk":             true,
-	"reason":           true,
-	"provider":         true,
-	"provider-command": true,
-	"provider-binary":  true,
-	"model":            true,
-	"review-scope":     true,
+	"root":              true,
+	"title":             true,
+	"summary":           true,
+	"command":           true,
+	"size":              true,
+	"risk":              true,
+	"reason":            true,
+	"provider":          true,
+	"provider-command":  true,
+	"provider-binary":   true,
+	"model":             true,
+	"review-scope":      true,
+	"mode":              true,
+	"max-findings":      true,
+	"min-attack-angles": true,
+	"review-depth":      true,
 }
 
-var boolFlags = map[string]bool{"human-reviewed": true, "mark-passed": true, "no-agent-docs": true, "print-context": true}
+var boolFlags = map[string]bool{"human-reviewed": true, "mark-passed": true, "no-agent-docs": true, "print-context": true, "full": true, "verify": true}
 
 func parseOptions(args []string) (options, error) {
 	opts := options{Values: map[string]string{}, Flags: map[string]bool{}}

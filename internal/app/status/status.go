@@ -36,12 +36,17 @@ type Output struct {
 
 // ReviewInfo is the latest review evidence visible from status.
 type ReviewInfo struct {
-	Verdict       string               `json:"verdict,omitempty"`
-	Findings      []corereview.Finding `json:"findings,omitempty"`
-	Attempt       *ReviewAttemptInfo   `json:"attempt,omitempty"`
-	Running       bool                 `json:"running,omitempty"`
-	AttemptStatus string               `json:"attempt_status,omitempty"`
-	Reason        string               `json:"reason,omitempty"`
+	Verdict       string                      `json:"verdict,omitempty"`
+	Mode          corereview.Mode             `json:"mode,omitempty"`
+	Summary       string                      `json:"summary,omitempty"`
+	Findings      []corereview.Finding        `json:"findings,omitempty"`
+	OpenBlockers  int                         `json:"open_blockers,omitempty"`
+	AttackLog     []corereview.AttackLogEntry `json:"attack_log,omitempty"`
+	Budget        corereview.Budget           `json:"budget,omitempty"`
+	Attempt       *ReviewAttemptInfo          `json:"attempt,omitempty"`
+	Running       bool                        `json:"running,omitempty"`
+	AttemptStatus string                      `json:"attempt_status,omitempty"`
+	Reason        string                      `json:"reason,omitempty"`
 }
 
 // ReviewAttemptInfo describes the latest provider attempt separately from the
@@ -85,7 +90,14 @@ func latestReviewInfo(ledger session.Session) ReviewInfo {
 		switch entry.Type {
 		case "review":
 			info.Verdict = entry.Status
-			info.Findings = corereview.DecodeFindings(entry.Output)
+			if dossier, ok := corereview.DecodeDossier(entry.Output); ok {
+				info.Mode = dossier.Mode
+				info.Summary = dossier.Summary
+				info.Findings = dossier.Findings
+				info.OpenBlockers = corereview.OpenBlockerCount(dossier.Findings)
+				info.AttackLog = dossier.AttackLog
+				info.Budget = dossier.Budget
+			}
 			return info
 		case "review_attempt":
 			if haveAttempt {
@@ -210,12 +222,15 @@ func evidenceReference(ledger session.Session, sourceID string) string {
 func reviewFindingSummaries(findings []corereview.Finding) []string {
 	blockers := make([]string, 0, len(findings))
 	for _, finding := range findings {
-		if finding.Severity != corereview.SeverityBlocking {
+		if !corereview.BlocksCompletion(finding) {
 			continue
 		}
 		label := finding.ID
 		if finding.Summary != "" {
 			label += ": " + finding.Summary
+		}
+		if finding.Validation != "" {
+			label += " | validate: " + finding.Validation
 		}
 		blockers = append(blockers, label)
 	}

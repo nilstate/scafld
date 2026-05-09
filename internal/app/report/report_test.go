@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	corereview "github.com/nilstate/scafld/v2/internal/core/review"
 	"github.com/nilstate/scafld/v2/internal/core/session"
 	"github.com/nilstate/scafld/v2/internal/core/spec"
 )
@@ -112,6 +113,77 @@ func TestRunTreatsUnknownReviewProviderAsChallengeOverride(t *testing.T) {
 	}
 	if out.Metrics.ReviewChallengeTotal != 1 || out.Metrics.ChallengeOverrides != 1 {
 		t.Fatalf("challenge metrics = %+v", out.Metrics)
+	}
+}
+
+func TestRunReportsReviewDossierQualityMetrics(t *testing.T) {
+	t.Parallel()
+
+	discover := corereview.Dossier{
+		Verdict: corereview.VerdictFail,
+		Mode:    corereview.ModeDiscover,
+		Summary: "Found one completion blocker and one non-blocking issue.",
+		Findings: []corereview.Finding{
+			{
+				ID:               "missing-status-json",
+				Severity:         corereview.SeverityHigh,
+				BlocksCompletion: true,
+				Confidence:       corereview.ConfidenceHigh,
+				Location:         &corereview.Location{Path: "internal/app/status/status.go", Line: 42},
+				Evidence:         "status output omits the active review blocker",
+				Impact:           "agents cannot repair the current review failure without opening diagnostics manually",
+				Validation:       "go test ./internal/app/status",
+				Summary:          "status omits the latest blocker",
+			},
+			{
+				ID:               "thin-doc-example",
+				Severity:         corereview.SeverityLow,
+				BlocksCompletion: false,
+				Confidence:       corereview.ConfidenceMedium,
+				Summary:          "docs would benefit from a richer report example",
+			},
+		},
+		AttackLog: []corereview.AttackLogEntry{
+			{Target: "status", Attack: "check repair payload", Result: corereview.AttackResultFinding},
+			{Target: "docs", Attack: "check examples", Result: corereview.AttackResultClean},
+		},
+	}
+	verify := corereview.Dossier{
+		Verdict: corereview.VerdictPass,
+		Mode:    corereview.ModeVerify,
+		Summary: "Prior blocker fixed.",
+		Findings: []corereview.Finding{
+			{
+				ID:               "missing-status-json",
+				Severity:         corereview.SeverityHigh,
+				BlocksCompletion: true,
+				Status:           corereview.FindingFixed,
+				Confidence:       corereview.ConfidenceHigh,
+				Summary:          "status now includes the latest blocker",
+			},
+		},
+		AttackLog: []corereview.AttackLogEntry{
+			{Target: "status", Attack: "re-run repair payload check", Result: corereview.AttackResultClean},
+		},
+	}
+	ledger := session.New("dossier-quality", "now")
+	ledger = ledger.WithEntry(session.Entry{Type: "review", Status: "fail", Provider: "codex", Output: corereview.EncodeDossier(discover)})
+	ledger = ledger.WithEntry(session.Entry{Type: "review", Status: "pass", Provider: "claude", Output: corereview.EncodeDossier(verify)})
+	legacy := session.New("legacy-review", "now")
+	legacy = legacy.WithEntry(session.Entry{Type: "review", Status: "fail", Provider: "codex", Output: `{"verdict":"fail"}`})
+
+	out, err := Run(context.Background(), fakeSpecStore{}, fakeSessionStore{ledgers: []session.Session{ledger, legacy}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Metrics.ReviewTotal != 3 || out.Metrics.ReviewDossierTotal != 2 || out.Metrics.ReviewDossierCoverage != 2.0/3.0 {
+		t.Fatalf("dossier coverage metrics = %+v", out.Metrics)
+	}
+	if out.Metrics.ReviewFindingsTotal != 3 || out.Metrics.ReviewOpenBlockersTotal != 1 || out.Metrics.ReviewAttackAnglesTotal != 3 {
+		t.Fatalf("dossier quality metrics = %+v", out.Metrics)
+	}
+	if out.Metrics.ReviewModeDistribution["discover"] != 1 || out.Metrics.ReviewModeDistribution["verify"] != 1 {
+		t.Fatalf("mode distribution = %+v", out.Metrics.ReviewModeDistribution)
 	}
 }
 

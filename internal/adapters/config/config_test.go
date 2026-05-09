@@ -41,6 +41,11 @@ review:
     max_bytes: 4096
     files:
       - AGENTS.md
+  dossier:
+    max_findings: 9
+    min_attack_angles: 4
+    review_depth: "deep"
+    rerun_policy: "verify_open_blockers"
   automated_passes:
     spec_compliance:
       order: 10
@@ -78,6 +83,9 @@ review:
 	}
 	if cfg.Review.Context.MaxBytes != 4096 || !contains(cfg.Review.Context.Files, "AGENTS.md") {
 		t.Fatalf("review context = %+v", cfg.Review.Context)
+	}
+	if cfg.Review.Dossier.MaxFindings != 9 || cfg.Review.Dossier.MinAttackAngles != 4 || cfg.Review.Dossier.ReviewDepth != "deep" || cfg.Review.Dossier.RerunPolicy != "verify_open_blockers" {
+		t.Fatalf("review dossier config = %+v", cfg.Review.Dossier)
 	}
 	if cfg.Review.AutomatedPasses["spec_compliance"].Title != "Spec Compliance" || cfg.Review.AdversarialPasses["regression_hunt"].Order != 30 {
 		t.Fatalf("review passes = %+v %+v", cfg.Review.AutomatedPasses, cfg.Review.AdversarialPasses)
@@ -188,6 +196,9 @@ func TestConfigDefaultWhenMissing(t *testing.T) {
 	}
 	if cfg.Harden.MaxQuestionsPerRound != 8 {
 		t.Fatalf("default harden config missing = %+v", cfg.Harden)
+	}
+	if cfg.Review.Dossier.MaxFindings <= 0 || cfg.Review.Dossier.MinAttackAngles <= 0 || cfg.Review.Dossier.ReviewDepth == "" || cfg.Review.Dossier.RerunPolicy == "" {
+		t.Fatalf("default review dossier config missing = %+v", cfg.Review.Dossier)
 	}
 }
 

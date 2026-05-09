@@ -60,7 +60,13 @@ review:
       - docs/review.md
       - docs/configuration.md
       - docs/execution.md
-      - .scafld/core/schemas/review_packet.json
+      - .scafld/core/schemas/review_dossier.json
+
+  dossier:
+    max_findings: 12
+    min_attack_angles: 6
+    review_depth: "standard"
+    rerun_policy: "verify_open_blockers"
 
   automated_passes:
     spec_compliance:

@@ -71,6 +71,9 @@ func Build(out appbuild.Output) string {
 func Review(out appreview.Output) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "review verdict: %s\n", out.Verdict)
+	if out.Mode != "" {
+		fmt.Fprintf(&b, "review mode: %s\n", out.Mode)
+	}
 	if out.Provider != "" {
 		if out.Model != "" {
 			fmt.Fprintf(&b, "review provider: %s:%s\n", out.Provider, out.Model)
@@ -78,10 +81,36 @@ func Review(out appreview.Output) string {
 			fmt.Fprintf(&b, "review provider: %s\n", out.Provider)
 		}
 	}
+	if out.Summary != "" {
+		fmt.Fprintf(&b, "summary: %s\n", out.Summary)
+	}
 	if len(out.Findings) > 0 {
 		fmt.Fprintf(&b, "findings:\n")
 		for _, finding := range out.Findings {
-			fmt.Fprintf(&b, "- [%s] %s: %s\n", finding.Severity, finding.ID, finding.Summary)
+			blocking := "non-blocking"
+			if finding.BlocksCompletion {
+				blocking = "blocks completion"
+			}
+			fmt.Fprintf(&b, "- [%s/%s] %s: %s\n", finding.Severity, blocking, finding.ID, finding.Summary)
+			if finding.Location != nil && finding.Location.Path != "" {
+				if finding.Location.Line > 0 {
+					fmt.Fprintf(&b, "  location: %s:%d\n", finding.Location.Path, finding.Location.Line)
+				} else {
+					fmt.Fprintf(&b, "  location: %s\n", finding.Location.Path)
+				}
+			}
+			if finding.Evidence != "" {
+				fmt.Fprintf(&b, "  evidence: %s\n", finding.Evidence)
+			}
+			if finding.Validation != "" {
+				fmt.Fprintf(&b, "  validation: %s\n", finding.Validation)
+			}
+		}
+	}
+	if len(out.AttackLog) > 0 {
+		fmt.Fprintf(&b, "attack log:\n")
+		for _, attack := range out.AttackLog {
+			fmt.Fprintf(&b, "- %s: %s -> %s\n", attack.Target, attack.Attack, attack.Result)
 		}
 	}
 	if out.Next != "" {
@@ -101,8 +130,21 @@ func Status(out appstatus.Output) string {
 		}
 	} else if out.Review.Verdict != "" {
 		fmt.Fprintf(&b, "review: %s\n", out.Review.Verdict)
+		if out.Review.Mode != "" {
+			fmt.Fprintf(&b, "review mode: %s\n", out.Review.Mode)
+		}
+		if out.Review.Summary != "" {
+			fmt.Fprintf(&b, "summary: %s\n", out.Review.Summary)
+		}
 		for _, finding := range out.Review.Findings {
-			fmt.Fprintf(&b, "- [%s] %s: %s\n", finding.Severity, finding.ID, finding.Summary)
+			blocking := "non-blocking"
+			if finding.BlocksCompletion {
+				blocking = "blocks completion"
+			}
+			fmt.Fprintf(&b, "- [%s/%s] %s: %s\n", finding.Severity, blocking, finding.ID, finding.Summary)
+			if finding.Validation != "" {
+				fmt.Fprintf(&b, "  validation: %s\n", finding.Validation)
+			}
 		}
 	} else if out.Review.AttemptStatus != "" {
 		fmt.Fprintf(&b, "review: %s\n", out.Review.AttemptStatus)
@@ -132,6 +174,20 @@ func Report(out appreport.Output) string {
 		fmt.Fprintf(&b, "- first_attempt_pass_rate: %s\n", formatRate(m.FirstAttemptPassRate, m.FirstAttemptPasses, m.FirstAttemptTotal))
 		fmt.Fprintf(&b, "- recovery_convergence_rate: %s\n", formatRate(m.RecoveryConvergenceRate, m.RecoveredTasks, m.RecoveryTotal))
 		fmt.Fprintf(&b, "- review_pass_rate: %s\n", formatRate(m.ReviewPassRate, m.ReviewPasses, m.ReviewTotal))
+		fmt.Fprintf(&b, "- review_dossier_coverage: %s\n", formatRate(m.ReviewDossierCoverage, m.ReviewDossierTotal, m.ReviewTotal))
+		if m.ReviewDossierTotal > 0 {
+			fmt.Fprintf(&b, "- review_findings_total: %d\n", m.ReviewFindingsTotal)
+			fmt.Fprintf(&b, "- review_open_blockers_total: %d\n", m.ReviewOpenBlockersTotal)
+			fmt.Fprintf(&b, "- review_attack_angles_total: %d\n", m.ReviewAttackAnglesTotal)
+			if len(m.ReviewModeDistribution) > 0 {
+				fmt.Fprintf(&b, "- review_mode_distribution:\n")
+				for _, mode := range []string{"discover", "verify"} {
+					if m.ReviewModeDistribution[mode] > 0 {
+						fmt.Fprintf(&b, "  - %s: %d\n", mode, m.ReviewModeDistribution[mode])
+					}
+				}
+			}
+		}
 		fmt.Fprintf(&b, "- challenge_override_rate: %s\n", formatRate(m.ChallengeOverrideRate, m.ChallengeOverrides, m.ReviewChallengeTotal))
 		fmt.Fprintf(&b, "- workspace_baseline_coverage: %s\n", formatRate(m.WorkspaceBaselineCoverage, m.WorkspaceBaselineTasks, m.SessionTotal))
 		if len(m.BlockedGateDistribution) > 0 {

@@ -37,6 +37,7 @@ type Selection struct {
 	Invariants      map[string]string
 	ContextSections []reviewcontext.Section
 	ContextMaxBytes int
+	Dossier         configadapter.ReviewDossierConfig
 }
 
 // Select loads config, applies CLI overrides, and returns a review provider.
@@ -51,6 +52,7 @@ func Select(ctx context.Context, opts Options) (Selection, error) {
 		Invariants:      cloneStrings(cfg.Invariants.Canonical),
 		ContextSections: contextSections,
 		ContextMaxBytes: cfg.Review.Context.MaxBytes,
+		Dossier:         cfg.Review.Dossier,
 	}
 	if opts.PrintContext {
 		return selection, nil

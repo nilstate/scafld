@@ -1,2 +1,2 @@
-// Package review defines review packets, verdicts, and provider-output parsing.
+// Package review defines review dossiers, verdicts, and provider-output parsing.
 package review

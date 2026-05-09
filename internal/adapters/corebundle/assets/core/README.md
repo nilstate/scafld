@@ -79,7 +79,7 @@ Challenge fires at `review`.
 
 That means:
 
-- one accepted review packet per review run, recorded in session
+- one accepted review dossier per review run, recorded in session
 - one completion gate that matters
 - findings are visible in `review`, `status`, `handoff`, and the spec
 - diagnostics are transport evidence, not the primary finding surface
@@ -90,6 +90,11 @@ That means:
 
 - `first_attempt_pass_rate`
 - `recovery_convergence_rate`
+- `review_pass_rate`
+- `review_dossier_coverage`
+- `review_findings_total`
+- `review_open_blockers_total`
+- `review_attack_angles_total`
 - `challenge_override_rate`
 
 Use `scafld report` to inspect workspace-wide task state.

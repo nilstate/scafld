@@ -18,7 +18,7 @@ scafld installs a small project-owned control plane:
 The current Go runtime treats the spec and session as the hard behavioral
 contract. Config controls the invariant catalog, harden prompt limits, review
 provider, model, timeouts, and review focus. Runtime-critical gates are still
-enforced by the Markdown spec, acceptance criteria, review packet validation,
+enforced by the Markdown spec, acceptance criteria, review dossier validation,
 and lifecycle commands.
 
 ## Managed vs Project-Owned
@@ -216,7 +216,12 @@ review:
       - docs/review.md
       - docs/configuration.md
       - docs/execution.md
-      - .scafld/core/schemas/review_packet.json
+      - .scafld/core/schemas/review_dossier.json
+  dossier:
+    max_findings: 12
+    min_attack_angles: 6
+    review_depth: "standard"
+    rerun_policy: "verify_open_blockers"
   automated_passes:
     spec_compliance:
       order: 10
