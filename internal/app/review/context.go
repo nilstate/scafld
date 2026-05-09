@@ -1,0 +1,291 @@
+package review
+
+import (
+	"fmt"
+	"sort"
+	"strings"
+
+	"github.com/nilstate/scafld/v2/internal/core/review"
+	"github.com/nilstate/scafld/v2/internal/core/reviewcontext"
+	"github.com/nilstate/scafld/v2/internal/core/spec"
+	coreworkspace "github.com/nilstate/scafld/v2/internal/core/workspace"
+)
+
+func reviewContextPacket(model spec.Model, specPath string, passes []Pass, invariants map[string]string, reviewScope []string, baseline []string, taskChanges []coreworkspace.Mutation, scopeDrift []coreworkspace.Mutation, extra []reviewcontext.Section, mode review.Mode, maxFindings int, minAttackAngles int, depth string, rerunPolicy string) reviewcontext.Packet {
+	sourcePath := currentSpecReviewPath(specPath)
+	if sourcePath == "" {
+		sourcePath = strings.TrimSpace(specPath)
+	}
+	if sourcePath == "" {
+		sourcePath = model.TaskID
+	}
+	sections := []reviewcontext.Section{
+		contextSection("task_contract", "Task Contract", 10, taskContractBody(model), "spec", sourcePath),
+		contextSection("review_request", "Review Request", 12, reviewRequestBody(mode, maxFindings, minAttackAngles, depth, rerunPolicy), "scafld", "review"),
+		contextSection("configured_invariants", "Configured Invariants", 15, configuredInvariantsBody(invariants), "config", ".scafld/config.yaml"),
+		contextSection("review_focus", "Review Focus", 18, reviewFocusBody(passes), "config", ".scafld/config.yaml"),
+		contextSection("task_scope", "Task Scope", 20, taskScopeBody(model, reviewScope), "spec", sourcePath),
+		contextSection("workspace_baseline", "Workspace Baseline Before Review", 30, workspaceBaselineBody(baseline), "session", model.TaskID),
+		contextSection("task_changes", "Task Changes Since Approval Baseline", 40, workspaceChangesBody("Task Changes Since Approval Baseline", taskChanges), "session", model.TaskID),
+		contextSection("scope_drift", "Scope Drift Since Approval Baseline", 50, workspaceChangesBody("Scope Drift Since Approval Baseline", scopeDrift), "session", model.TaskID),
+		contextSection("acceptance_evidence", "Acceptance Criteria", 60, acceptanceBody(model), "session", model.TaskID),
+		contextSection("provider_instruction", "Provider Instruction", 90, providerInstructionBody(), "scafld", "review"),
+	}
+	sections = append(sections, extra...)
+	return reviewcontext.Packet{TaskID: model.TaskID, Title: model.Title, Status: string(model.Status), Sections: sections}
+}
+
+func contextSection(key string, title string, order int, body string, kind string, path string) reviewcontext.Section {
+	body = strings.TrimSpace(body)
+	sourcePath := strings.TrimSpace(path)
+	if sourcePath == "" {
+		sourcePath = key
+	}
+	if !strings.Contains(sourcePath, "#") {
+		sourcePath += "#" + key
+	}
+	return reviewcontext.Section{
+		Key:     key,
+		Title:   title,
+		Order:   order,
+		Body:    body,
+		Sources: []reviewcontext.Source{reviewcontext.SourceForContent("derived_"+kind, sourcePath, []byte(body))},
+	}
+}
+
+func taskContractBody(model spec.Model) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Title: %s\nStatus: %s\n", model.Title, model.Status)
+	if strings.TrimSpace(model.Summary) != "" {
+		fmt.Fprintf(&b, "\nSummary:\n%s\n", strings.TrimSpace(model.Summary))
+	}
+	if len(model.Objectives) > 0 {
+		b.WriteString("\nObjectives:\n")
+		for _, objective := range model.Objectives {
+			fmt.Fprintf(&b, "- %s\n", objective)
+		}
+	}
+	if len(model.Context.Invariants) > 0 {
+		b.WriteString("\nDeclared invariants:\n")
+		for _, invariant := range model.Context.Invariants {
+			if strings.TrimSpace(invariant) != "" {
+				fmt.Fprintf(&b, "- %s\n", invariant)
+			}
+		}
+	}
+	return b.String()
+}
+
+func taskScopeBody(model spec.Model, reviewScope []string) string {
+	var b strings.Builder
+	writeTaskScope(&b, model, reviewScope)
+	return stripSectionHeading(b.String(), "Task Scope")
+}
+
+func workspaceBaselineBody(baseline []string) string {
+	var b strings.Builder
+	writeWorkspaceBaseline(&b, baseline)
+	return stripSectionHeading(b.String(), "Workspace Baseline Before Review")
+}
+
+func workspaceChangesBody(title string, mutations []coreworkspace.Mutation) string {
+	var b strings.Builder
+	writeWorkspaceChanges(&b, title, mutations)
+	return stripSectionHeading(b.String(), title)
+}
+
+func acceptanceBody(model spec.Model) string {
+	var b strings.Builder
+	for _, criterion := range model.AllCriteria() {
+		fmt.Fprintf(&b, "- %s (%s): %s\n", criterion.ID, criterion.ExpectedKind, criterion.Command)
+		if strings.TrimSpace(criterion.Status) != "" {
+			fmt.Fprintf(&b, "  - Status: %s\n", criterion.Status)
+		}
+		if strings.TrimSpace(criterion.Evidence) != "" {
+			fmt.Fprintf(&b, "  - Evidence: %s\n", criterion.Evidence)
+		}
+	}
+	return b.String()
+}
+
+func reviewFocusBody(passes []Pass) string {
+	var b strings.Builder
+	writeReviewPasses(&b, passes)
+	return stripSectionHeading(b.String(), "Review Focus")
+}
+
+func configuredInvariantsBody(invariants map[string]string) string {
+	if len(invariants) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(invariants))
+	for key := range invariants {
+		if strings.TrimSpace(key) != "" {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	for _, key := range keys {
+		description := strings.TrimSpace(invariants[key])
+		if description == "" {
+			fmt.Fprintf(&b, "- `%s`\n", key)
+			continue
+		}
+		fmt.Fprintf(&b, "- `%s`: %s\n", key, description)
+	}
+	return b.String()
+}
+
+func reviewRequestBody(mode review.Mode, maxFindings int, minAttackAngles int, depth string, rerunPolicy string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Mode: %s\n", mode)
+	if maxFindings > 0 {
+		fmt.Fprintf(&b, "Max findings: %d\n", maxFindings)
+	}
+	if minAttackAngles > 0 {
+		fmt.Fprintf(&b, "Minimum attack angles: %d\n", minAttackAngles)
+	}
+	if strings.TrimSpace(depth) != "" {
+		fmt.Fprintf(&b, "Review depth: %s\n", strings.TrimSpace(depth))
+	}
+	if strings.TrimSpace(rerunPolicy) != "" {
+		fmt.Fprintf(&b, "Rerun policy: %s\n", strings.TrimSpace(rerunPolicy))
+	}
+	return b.String()
+}
+
+func providerInstructionBody() string {
+	return "Review mode is read-only. Do not run build, test, or mutation commands; treat recorded acceptance evidence above as already executed. Treat review as task-scoped: unchanged dirty paths from the approval baseline are context, not findings by themselves. Scope drift since the approval baseline is blocking unless the spec explicitly declares it. Do not emit placeholder output while investigating; the final output must be one complete ReviewDossier JSON object. Separate severity from the gate: use severity `critical`, `high`, `medium`, or `low`, then set `blocks_completion` true only when completion must stop. Completion-blocking findings must include location, evidence, impact, and validation. Record attack_log entries for the bounded checks you actually performed, using result `finding`, `clean`, or `skipped`."
+}
+
+func stripSectionHeading(text string, title string) string {
+	prefix := "## " + title + "\n\n"
+	text = strings.TrimSpace(text)
+	return strings.TrimSpace(strings.TrimPrefix(text, prefix))
+}
+
+func writeTaskScope(b *strings.Builder, model spec.Model, reviewScope []string) {
+	if len(reviewScope) == 0 &&
+		len(model.Context.Packages) == 0 &&
+		len(model.Context.FilesImpacted) == 0 &&
+		len(model.Scope) == 0 &&
+		len(model.Touchpoints) == 0 &&
+		!phasesDeclareChanges(model.Phases) {
+		return
+	}
+	b.WriteString("## Task Scope\n\n")
+	if len(reviewScope) > 0 {
+		b.WriteString("Explicit review scope:\n")
+		for _, item := range reviewScope {
+			fmt.Fprintf(b, "- `%s`\n", item)
+		}
+		b.WriteString("\n")
+	}
+	writeStringList(b, "Packages", model.Context.Packages, true)
+	writeStringList(b, "Files impacted", model.Context.FilesImpacted, true)
+	writeStringList(b, "Scope", model.Scope, false)
+	writeStringList(b, "Touchpoints", model.Touchpoints, false)
+	for _, phase := range model.Phases {
+		if len(phase.Changes) == 0 {
+			continue
+		}
+		title := strings.TrimSpace(phase.Name)
+		if title == "" {
+			title = phase.ID
+		}
+		fmt.Fprintf(b, "%s changes:\n", title)
+		for _, change := range phase.Changes {
+			if strings.TrimSpace(change) != "" {
+				fmt.Fprintf(b, "- %s\n", change)
+			}
+		}
+		b.WriteString("\n")
+	}
+}
+
+func writeWorkspaceBaseline(b *strings.Builder, baseline []string) {
+	b.WriteString("## Workspace Baseline Before Review\n\n")
+	paths := coreworkspace.Paths(baseline)
+	if len(paths) == 0 {
+		b.WriteString("- clean\n\n")
+		return
+	}
+	for i, path := range paths {
+		if i >= 80 {
+			fmt.Fprintf(b, "- ... %d more path(s)\n", len(paths)-i)
+			break
+		}
+		fmt.Fprintf(b, "- `%s`\n", path)
+	}
+	b.WriteString("\n")
+}
+
+func writeWorkspaceChanges(b *strings.Builder, title string, mutations []coreworkspace.Mutation) {
+	b.WriteString("## " + title + "\n\n")
+	if len(mutations) == 0 {
+		b.WriteString("- none\n\n")
+		return
+	}
+	for _, line := range coreworkspace.MutationStrings(mutations) {
+		fmt.Fprintf(b, "- %s\n", line)
+	}
+	b.WriteString("\n")
+}
+
+func writeStringList(b *strings.Builder, title string, values []string, code bool) {
+	if len(values) == 0 {
+		return
+	}
+	fmt.Fprintf(b, "%s:\n", title)
+	for _, value := range values {
+		text := strings.TrimSpace(value)
+		if text == "" {
+			continue
+		}
+		if code {
+			fmt.Fprintf(b, "- `%s`\n", text)
+		} else {
+			fmt.Fprintf(b, "- %s\n", text)
+		}
+	}
+	b.WriteString("\n")
+}
+
+func phasesDeclareChanges(phases []spec.Phase) bool {
+	for _, phase := range phases {
+		if len(phase.Changes) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func writeReviewPasses(b *strings.Builder, passes []Pass) {
+	if len(passes) == 0 {
+		return
+	}
+	sorted := append([]Pass(nil), passes...)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		if sorted[i].Order == sorted[j].Order {
+			return sorted[i].ID < sorted[j].ID
+		}
+		return sorted[i].Order < sorted[j].Order
+	})
+	b.WriteString("\n## Review Focus\n\n")
+	for _, pass := range sorted {
+		title := strings.TrimSpace(pass.Title)
+		if title == "" {
+			title = pass.ID
+		}
+		category := strings.TrimSpace(pass.Category)
+		if category == "" {
+			category = "review"
+		}
+		fmt.Fprintf(b, "- %s: %s", category, title)
+		if description := strings.TrimSpace(pass.Description); description != "" {
+			fmt.Fprintf(b, " - %s", description)
+		}
+		b.WriteString("\n")
+	}
+}

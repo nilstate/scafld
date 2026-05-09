@@ -75,12 +75,8 @@ var commandHandlers = map[string]commandHandler{
 	"harden":   runHarden,
 	"validate": runValidate,
 	"approve":  runApprove,
-	"build": func(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer) int {
-		return runBuild(ctx, args, stdout, stderr, false)
-	},
-	"exec": func(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer) int {
-		return runBuild(ctx, args, stdout, stderr, true)
-	},
+	"build":    runBuild,
+	"exec":     runBuild,
 	"review":   runReview,
 	"complete": runComplete,
 	"fail":     runFail,
@@ -282,7 +278,7 @@ func runApprove(ctx context.Context, args []string, stdout io.Writer, stderr io.
 	return okOut(stdout, "approve", out, fmt.Sprintf("approved spec: %s\n", out.TaskID), opts.JSON)
 }
 
-func runBuild(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer, _ bool) int {
+func runBuild(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer) int {
 	opts, err := oneTask(args, "build")
 	if err != nil {
 		return failOut(stderr, err, ExitInvalid, opts.JSON)
