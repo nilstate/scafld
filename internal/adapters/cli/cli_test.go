@@ -404,6 +404,32 @@ func TestRunBuildUsesExecutionConfig(t *testing.T) {
 	}
 }
 
+func TestRunBuildUsesDetectedRubyToolchainShims(t *testing.T) {
+	t.Setenv("HOME", filepath.Join(t.TempDir(), "home"))
+	t.Setenv("PATH", "/bin"+string(os.PathListSeparator)+"/usr/bin")
+
+	root := t.TempDir()
+	initGitWorkspace(t, root)
+	runCLI(t, []string{"init", "--root", root, "--no-agent-docs"})
+	if err := os.MkdirAll(filepath.Join(root, "api"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "api", ".ruby-version"), []byte("3.4.5\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runCLI(t, []string{"plan", "--root", root, "ruby-env-task", "--command", `printf '%s' "$PATH" > path.txt`})
+	runCLI(t, []string{"approve", "--root", root, "ruby-env-task"})
+	runCLI(t, []string{"build", "--root", root, "ruby-env-task"})
+	data, err := os.ReadFile(filepath.Join(root, "path.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantPrefix := filepath.Join(os.Getenv("HOME"), ".rbenv", "shims") + string(os.PathListSeparator)
+	if !strings.HasPrefix(string(data), wantPrefix) {
+		t.Fatalf("PATH = %q, want detected rbenv prefix %q", string(data), wantPrefix)
+	}
+}
+
 func TestRunReviewSurfacesFindingsInReviewStatusAndHandoff(t *testing.T) {
 	t.Parallel()
 

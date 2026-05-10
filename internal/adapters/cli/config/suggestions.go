@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	runtimeconfig "github.com/nilstate/scafld/v2/internal/adapters/config"
 	appconfig "github.com/nilstate/scafld/v2/internal/app/config"
 )
 
@@ -214,30 +215,10 @@ func invariantSuggestions(root string, files []appconfig.Evidence) []appconfig.I
 }
 
 func executionSuggestion(root string) *appconfig.ExecutionSuggestion {
-	var paths []string
-	var sources []string
+	detected := runtimeconfig.DetectExecution(root)
+	paths := append([]string(nil), detected.Execution.PathPrepend...)
+	sources := append([]string(nil), detected.Sources...)
 	env := map[string]string{}
-	if exists(filepath.Join(root, ".ruby-version")) {
-		paths = append(paths, "$HOME/.rbenv/shims")
-		sources = append(sources, ".ruby-version")
-	}
-	for _, rel := range oneLevelMatches(root, ".ruby-version") {
-		paths = append(paths, "$HOME/.rbenv/shims")
-		sources = append(sources, rel)
-	}
-	if toolVersions := readText(filepath.Join(root, ".tool-versions")); strings.Contains(toolVersions, "ruby ") || strings.Contains(toolVersions, "ruby\t") {
-		paths = append(paths, "$HOME/.asdf/shims")
-		sources = append(sources, ".tool-versions")
-	}
-	for _, rel := range oneLevelMatches(root, ".tool-versions") {
-		text := readText(filepath.Join(root, filepath.FromSlash(rel)))
-		if strings.Contains(text, "ruby ") || strings.Contains(text, "ruby\t") {
-			paths = append(paths, "$HOME/.asdf/shims")
-			sources = append(sources, rel)
-		}
-	}
-	paths = dedupeStrings(paths)
-	sources = dedupeStrings(sources)
 	if !exists(filepath.Join(root, "Gemfile")) {
 		gemfiles := oneLevelMatches(root, "Gemfile")
 		if len(gemfiles) == 1 {

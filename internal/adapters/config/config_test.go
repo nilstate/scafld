@@ -182,6 +182,52 @@ func TestExecutionEnvExpandsPathPrependAndEnv(t *testing.T) {
 	}
 }
 
+func TestDetectExecutionFindsVersionManagerShims(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	writeFile(t, root, "api/.ruby-version", "3.4.5\n")
+	writeFile(t, root, "web/.node-version", "24.0.0\n")
+	writeFile(t, root, "worker/.python-version", "3.13.0\n")
+	writeFile(t, root, ".tool-versions", "nodejs 24.0.0\npython 3.13.0\n")
+	writeFile(t, root, "service/mise.toml", "[tools]\ngo = '1.25.0'\n")
+
+	detected := DetectExecution(root)
+	for _, want := range []string{"$HOME/.rbenv/shims", "$HOME/.nodenv/shims", "$HOME/.pyenv/shims", "$HOME/.asdf/shims", "$HOME/.local/share/mise/shims", "$HOME/.mise/shims"} {
+		if !contains(detected.Execution.PathPrepend, want) {
+			t.Fatalf("path_prepend = %+v, missing %s", detected.Execution.PathPrepend, want)
+		}
+	}
+	for _, want := range []string{"api/.ruby-version", "web/.node-version", "worker/.python-version", ".tool-versions", "service/mise.toml"} {
+		if !contains(detected.Sources, want) {
+			t.Fatalf("sources = %+v, missing %s", detected.Sources, want)
+		}
+	}
+}
+
+func TestEffectiveExecutionPutsExplicitConfigBeforeDetectedShims(t *testing.T) {
+	t.Setenv("HOME", "/tmp/scafld-home")
+	t.Setenv("PATH", "/usr/bin")
+
+	root := t.TempDir()
+	writeFile(t, root, "api/.ruby-version", "3.4.5\n")
+
+	env := EffectiveExecution(root, ExecutionConfig{
+		PathPrepend: []string{"$HOME/custom-shims"},
+		Env:         map[string]string{"BUNDLE_GEMFILE": "api/Gemfile"},
+	}).ProcessEnv()
+	joined := strings.Join(env, "\n")
+	wantPath := "PATH=/tmp/scafld-home/custom-shims" +
+		string(os.PathListSeparator) + "/tmp/scafld-home/.rbenv/shims" +
+		string(os.PathListSeparator) + "/usr/bin"
+	if !strings.Contains(joined, wantPath) {
+		t.Fatalf("PATH override missing %q in %+v", wantPath, env)
+	}
+	if !strings.Contains(joined, "BUNDLE_GEMFILE=api/Gemfile") {
+		t.Fatalf("explicit env missing in %+v", env)
+	}
+}
+
 func TestConfigDefaultWhenMissing(t *testing.T) {
 	t.Parallel()
 	cfg, err := Load(context.Background(), t.TempDir())
@@ -199,6 +245,17 @@ func TestConfigDefaultWhenMissing(t *testing.T) {
 	}
 	if cfg.Review.Dossier.MaxFindings <= 0 || cfg.Review.Dossier.MinAttackAngles <= 0 || cfg.Review.Dossier.ReviewDepth == "" || cfg.Review.Dossier.RerunPolicy == "" {
 		t.Fatalf("default review dossier config missing = %+v", cfg.Review.Dossier)
+	}
+}
+
+func writeFile(t *testing.T, root string, rel string, text string) {
+	t.Helper()
+	path := filepath.Join(root, filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+		t.Fatal(err)
 	}
 }
 

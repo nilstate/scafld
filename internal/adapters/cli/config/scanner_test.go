@@ -36,13 +36,13 @@ func TestScannerFindsCommandsAndInvariants(t *testing.T) {
 	}
 }
 
-func TestScannerSuggestsExecutionEnvironmentFromRubyVersionManagers(t *testing.T) {
+func TestScannerSuggestsExecutionEnvironmentFromVersionManagers(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
 	writeFile(t, root, "api/.ruby-version", "3.4.5\n")
 	writeFile(t, root, "api/Gemfile", "gem 'rspec'\n")
-	writeFile(t, root, ".tool-versions", "ruby 3.4.5\nnodejs 24.0.0\n")
+	writeFile(t, root, ".tool-versions", "nodejs 24.0.0\npython 3.13.0\n")
 
 	snapshot, err := Scanner{Root: root}.Scan(context.Background())
 	if err != nil {
@@ -51,7 +51,7 @@ func TestScannerSuggestsExecutionEnvironmentFromRubyVersionManagers(t *testing.T
 	if snapshot.Execution == nil {
 		t.Fatalf("execution suggestion missing")
 	}
-	for _, want := range []string{"$HOME/.rbenv/shims", "$HOME/.asdf/shims"} {
+	for _, want := range []string{"$HOME/.rbenv/shims", "$HOME/.asdf/shims", "$HOME/.local/share/mise/shims"} {
 		if !contains(snapshot.Execution.PathPrepend, want) {
 			t.Fatalf("path_prepend = %+v, missing %s", snapshot.Execution.PathPrepend, want)
 		}
