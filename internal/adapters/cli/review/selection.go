@@ -7,6 +7,7 @@ import (
 	"os"
 	osexec "os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -151,19 +152,98 @@ func reviewContextSections(root string, cfg configadapter.ReviewContextConfig) [
 		if !ok {
 			continue
 		}
+		sections = append(sections, reviewContextSectionsForPath(root, clean, 1000+index*100)...)
+	}
+	return sections
+}
+
+func reviewContextSectionsForPath(root string, clean string, order int) []reviewcontext.Section {
+	info, ok := safeContextInfo(root, clean)
+	if !ok {
+		return nil
+	}
+	if !info.IsDir() {
 		data, ok := readSafeContextFile(root, clean)
+		if !ok {
+			return nil
+		}
+		return []reviewcontext.Section{contextFileSection(clean, order, data)}
+	}
+	files := contextDirectoryFiles(root, clean)
+	sections := make([]reviewcontext.Section, 0, len(files))
+	for index, file := range files {
+		data, ok := readSafeContextFile(root, file)
 		if !ok {
 			continue
 		}
-		sections = append(sections, reviewcontext.Section{
-			Key:     "file:" + clean,
-			Title:   "Project Context: " + clean,
-			Order:   1000 + index,
-			Body:    string(data),
-			Sources: []reviewcontext.Source{reviewcontext.SourceForContent("file", clean, data)},
-		})
+		sections = append(sections, contextFileSection(file, order+index, data))
 	}
 	return sections
+}
+
+func contextFileSection(clean string, order int, data []byte) reviewcontext.Section {
+	return reviewcontext.Section{
+		Key:     "file:" + clean,
+		Title:   "Project Context: " + clean,
+		Order:   order,
+		Body:    string(data),
+		Sources: []reviewcontext.Source{reviewcontext.SourceForContent("file", clean, data)},
+	}
+}
+
+func contextDirectoryFiles(root string, clean string) []string {
+	base := filepath.Join(root, filepath.FromSlash(clean))
+	var files []string
+	_ = filepath.WalkDir(base, func(path string, entry os.DirEntry, err error) error {
+		if err != nil || entry.IsDir() || entry.Type()&os.ModeSymlink != 0 {
+			return nil
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return nil
+		}
+		rel = filepath.ToSlash(rel)
+		if rel, ok := safeContextPath(rel); ok && contextRuleFile(rel) {
+			files = append(files, rel)
+		}
+		return nil
+	})
+	sort.Strings(files)
+	return files
+}
+
+func contextRuleFile(path string) bool {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".md", ".mdc", ".txt":
+		return true
+	default:
+		return false
+	}
+}
+
+func safeContextInfo(root string, clean string) (os.FileInfo, bool) {
+	path := filepath.Join(root, filepath.FromSlash(clean))
+	resolvedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return nil, false
+	}
+	resolvedPath, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return nil, false
+	}
+	rel, err := filepath.Rel(resolvedRoot, resolvedPath)
+	if err != nil {
+		return nil, false
+	}
+	rel = filepath.ToSlash(rel)
+	if _, ok := safeContextPath(rel); !ok || rel != clean {
+		return nil, false
+	}
+	info, err := os.Stat(resolvedPath)
+	if err != nil {
+		return nil, false
+	}
+	return info, true
 }
 
 func readSafeContextFile(root string, clean string) ([]byte, bool) {

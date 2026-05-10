@@ -415,6 +415,7 @@ review:
     files:
       - AGENTS.md
       - CLAUDE.md
+      - .claude/rules
       - README.md
       - docs/review.md
       - .scafld/core/schemas/review_dossier.json

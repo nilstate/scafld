@@ -200,6 +200,7 @@ func Default() Config {
 				Files: []string{
 					"AGENTS.md",
 					"CLAUDE.md",
+					".claude/rules",
 					"README.md",
 					"docs/review.md",
 					"docs/configuration.md",
