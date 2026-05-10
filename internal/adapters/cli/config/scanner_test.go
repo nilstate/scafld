@@ -36,6 +36,31 @@ func TestScannerFindsCommandsAndInvariants(t *testing.T) {
 	}
 }
 
+func TestScannerTreatsAgentRulesAsConventionSurface(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	writeFile(t, root, "AGENTS.md", "# Agent rules\n")
+	writeFile(t, root, "CLAUDE.md", "# Claude rules\n")
+	writeFile(t, root, ".claude/rules/style.md", "# Style\n")
+
+	snapshot, err := Scanner{Root: root}.Scan(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"AGENTS.md", "CLAUDE.md", ".claude/rules", ".claude/rules/style.md"} {
+		if !hasEvidence(snapshot.Files, path) {
+			t.Fatalf("evidence missing %s in %+v", path, snapshot.Files)
+		}
+	}
+	if !hasInvariantID(snapshot.Invariants, "agent_guidance_alignment") {
+		t.Fatalf("agent guidance invariant missing in %+v", snapshot.Invariants)
+	}
+	if !hasInvariantSource(snapshot.Invariants, "agent_guidance_alignment", ".claude/rules/style.md") {
+		t.Fatalf("agent guidance invariant did not cite claude rules: %+v", snapshot.Invariants)
+	}
+}
+
 func TestScannerSuggestsExecutionEnvironmentFromVersionManagers(t *testing.T) {
 	t.Parallel()
 
@@ -246,6 +271,20 @@ func contains(values []string, want string) bool {
 	for _, value := range values {
 		if value == want {
 			return true
+		}
+	}
+	return false
+}
+
+func hasInvariantSource(invariants []appconfig.InvariantSuggestion, id string, source string) bool {
+	for _, invariant := range invariants {
+		if invariant.ID != id {
+			continue
+		}
+		for _, candidate := range invariant.Sources {
+			if candidate == source {
+				return true
+			}
 		}
 	}
 	return false

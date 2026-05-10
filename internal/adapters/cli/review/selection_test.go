@@ -150,3 +150,45 @@ review:
 		t.Fatalf("context sections = %+v", selected.ContextSections)
 	}
 }
+
+func TestSelectLoadsClaudeRulesDirectoryAsReviewContext(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".scafld"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".scafld", "config.yaml"), []byte(`
+review:
+  context:
+    files:
+      - .claude/rules
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, ".claude", "rules", "nested"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".claude", "rules", "style.md"), []byte("style rules"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".claude", "rules", "nested", "review.mdc"), []byte("review rules"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".claude", "rules", "image.png"), []byte("not text"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	selected, err := Select(context.Background(), Options{Root: root, TaskID: "task", PrintContext: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(selected.ContextSections) != 2 {
+		t.Fatalf("context sections = %+v", selected.ContextSections)
+	}
+	got := selected.ContextSections[0].Title + "\n" + selected.ContextSections[1].Title
+	for _, want := range []string{"Project Context: .claude/rules/nested/review.mdc", "Project Context: .claude/rules/style.md"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("context titles %q missing %q", got, want)
+		}
+	}
+}

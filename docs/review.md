@@ -99,9 +99,10 @@ review, the contract changed while it was being judged.
 The reviewer receives a typed review-context packet rendered as Markdown:
 task contract, declared task scope, approval baseline, task changes since
 approval, acceptance evidence, configured review agenda, selected project docs,
-root agent guidance, and schema context. Each project-context section includes
-source path, hash, and byte count. `review.context.max_bytes` is an aggregate
-section-body budget for the rendered packet, not a per-file allowance.
+root agent guidance, `.claude/rules` when present, and schema context. Each
+project-context section includes source path, hash, and byte count.
+`review.context.max_bytes` is an aggregate section-body budget for the rendered
+packet, not a per-file allowance.
 
 The prompt tells the challenger not to mutate the workspace, not to emit
 placeholder output while investigating, and to return one final ReviewDossier.

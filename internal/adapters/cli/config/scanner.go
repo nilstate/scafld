@@ -37,6 +37,7 @@ func (s Scanner) Scan(ctx context.Context) (appconfig.Snapshot, error) {
 	}
 	snapshot.Files = append(snapshot.Files, nestedPackageEvidence(abs)...)
 	snapshot.Files = append(snapshot.Files, toolchainEvidence(abs)...)
+	snapshot.Files = append(snapshot.Files, agentRuleEvidence(abs)...)
 	workflowFiles, err := globRel(abs, ".github/workflows/*")
 	if err != nil {
 		return appconfig.Snapshot{}, err
@@ -94,6 +95,31 @@ func nestedPackageEvidence(root string) []appconfig.Evidence {
 			evidence = append(evidence, appconfig.Evidence{Path: rel, Role: item.role})
 		}
 	}
+	return evidence
+}
+
+func agentRuleEvidence(root string) []appconfig.Evidence {
+	var evidence []appconfig.Evidence
+	rules := filepath.Join(root, ".claude", "rules")
+	info, err := os.Stat(rules)
+	if err != nil {
+		return nil
+	}
+	evidence = append(evidence, appconfig.Evidence{Path: ".claude/rules", Role: "claude_rules"})
+	if !info.IsDir() {
+		return evidence
+	}
+	_ = filepath.WalkDir(rules, func(path string, entry os.DirEntry, err error) error {
+		if err != nil || entry.IsDir() {
+			return nil
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return nil
+		}
+		evidence = append(evidence, appconfig.Evidence{Path: filepath.ToSlash(rel), Role: "claude_rules"})
+		return nil
+	})
 	return evidence
 }
 

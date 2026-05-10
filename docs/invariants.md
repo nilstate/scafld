@@ -26,7 +26,8 @@ Convention enforcement has one hierarchy:
 
 1. `.scafld/config.yaml` names the canonical invariant IDs and review agenda.
 2. Each spec selects the invariants that apply to the task.
-3. `AGENTS.md` and `CLAUDE.md` carry the short operating contract for agents.
+3. `AGENTS.md`, `CLAUDE.md`, and `.claude/rules` carry agent-facing operating
+   guidance and project rule context.
 4. Optional project docs can explain local style, but they are context, not a
    required scafld control file.
 

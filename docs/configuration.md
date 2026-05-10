@@ -143,6 +143,9 @@ surfaced through protocol artifacts that the runtime and reviewers already use:
   out-of-scope work, touchpoints, risks, and acceptance criteria.
 - `AGENTS.md` and `CLAUDE.md` give agents the short operating contract at the
   root discovery surface.
+- `.claude/rules` is treated as project rule context when present. scafld can
+  include rule files in review context and `scafld config` will cite them as
+  `agent_guidance_alignment` evidence.
 - Optional project docs can explain local style, but they are only binding when
   a spec, invariant, or review pass explicitly cites them.
 
@@ -161,6 +164,10 @@ invariants:
 Specs select the relevant IDs for a task. Harden prints the configured catalog
 so the agent can choose the right constraint while tightening the draft. Review
 prompts include the invariants selected by the spec.
+
+Agent rule files are deliberately advisory until promoted. Put durable policy in
+config invariants, spec context, or review passes; use `CLAUDE.md` and
+`.claude/rules` to help agents find and apply those policies consistently.
 
 ## Config Proposals
 
@@ -228,6 +235,7 @@ review:
     files:
       - AGENTS.md
       - CLAUDE.md
+      - .claude/rules
       - README.md
       - docs/review.md
       - docs/configuration.md

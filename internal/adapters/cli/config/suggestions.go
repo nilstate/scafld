@@ -148,6 +148,13 @@ func invariantSuggestions(root string, files []appconfig.Evidence) []appconfig.I
 			Sources:     pathsByRole(files, "ci_workflow"),
 		})
 	}
+	if paths := agentGuidancePaths(files); len(paths) > 0 {
+		invariants = append(invariants, appconfig.InvariantSuggestion{
+			ID:          "agent_guidance_alignment",
+			Description: "Preserve project-specific agent guidance and rule surfaces when changing workflow, commands, review behavior, or conventions.",
+			Sources:     paths,
+		})
+	}
 	if readText(filepath.Join(root, "go.mod")) != "" {
 		invariants = append(invariants, appconfig.InvariantSuggestion{
 			ID:          "go_module_integrity",
@@ -212,6 +219,14 @@ func invariantSuggestions(root string, files []appconfig.Evidence) []appconfig.I
 		})
 	}
 	return dedupeInvariants(invariants)
+}
+
+func agentGuidancePaths(files []appconfig.Evidence) []string {
+	var paths []string
+	for _, role := range []string{"agent_contract", "claude_agent_contract", "claude_rules"} {
+		paths = append(paths, pathsByRole(files, role)...)
+	}
+	return dedupeStrings(paths)
 }
 
 func executionSuggestion(root string) *appconfig.ExecutionSuggestion {
