@@ -13,45 +13,11 @@ Plans outlive agents. Sessions hold the receipts. Reviews take nothing on faith.
 Given the same spec and session ledger, scafld derives the same state, next
 command, and review gate.
 
+scafld is spec-driven orchestration for AI coding agents.
+
 The work starts from an explicit spec, gets hardened before real effort,
 executes phase-bounded, and ships only through adversarial review. The
 differentiator is simple: **the agent does not get to grade its own homework**.
-
-## Identity
-
-scafld is a scaffold in the literal sense: temporary structure that shapes the
-build while the work is in progress.
-
-It turns a readable Markdown spec into a hardened contract, then into a
-phase-bounded build loop. It records every important event in a durable session
-ledger and blocks completion until the work has evidence and adversarial review
-behind it. The spec stays readable. The runner stays strict. The agent always
-has a contract, a next step, and a way to prove what happened.
-
-## Why
-
-Long-running AI coding work fails when the task only lives in chat. Context
-drifts, acceptance criteria soften, reviews become vibes, and nobody can tell
-which command proved which claim.
-
-scafld gives the work a hard shape:
-
-- `spec`: what must be true, hardened before execution
-- `session`: what happened
-- `handoff`: transport for the next model voice, never the source of truth
-
-The spec is the living task contract. The session is the durable evidence
-ledger. Adversarial review is the completion gate.
-
-## Agent-Facing Deterministic Gates
-
-Every gate has a repair contract: trusted state, failure reason, evidence path,
-expected shape, and allowed next command. That contract is visible in human
-output, projected into the spec, and available to automation through
-`status --json` and `handoff`.
-
-scafld is strict in what it trusts and generous in what it explains. A gate can
-block hard without making the next agent guess where to look.
 
 ## Install
 
@@ -147,7 +113,7 @@ checked-in toolchain files such as `.tool-versions`, `mise.toml`,
 `.java-version`, prepends the matching version-manager shims, then applies
 explicit `execution` config.
 
-## Concrete Artifacts
+## What scafld Writes
 
 scafld is not a wrapper around a prompt. It writes artifacts the next agent can
 read and the runtime can project deterministically.
@@ -239,39 +205,25 @@ findings:
 next: scafld handoff add-cache
 ```
 
-## Command Surface
-
-The daily surface is small:
-
-```bash
-scafld init
-scafld plan <task-id>
-scafld harden <task-id>
-scafld validate <task-id>
-scafld approve <task-id>
-scafld build <task-id>
-scafld review <task-id>
-scafld complete <task-id>
-scafld status <task-id>
-scafld list
-scafld report
-scafld handoff <task-id>
-scafld update
-```
-
-Wrapper intent:
-
-- `plan`: create a draft Markdown spec
-- `config`: propose evidence-backed project config without applying it
-- `harden`: stress-test the draft before approval
-- `validate`: reject malformed or non-executable spec structure
-- `approve`: accept a spec only after it is clear enough to execute
-- `build`: run phase acceptance criteria and write evidence
-- `review`: run the adversarial review gate
-- `status`: expose the current state and allowed follow-up command
-- `handoff`: render model-facing repair or execution material
-
 ## Mental Model
+
+scafld is a scaffold in the literal sense: temporary structure that shapes the
+build while the work is in progress.
+
+It turns a readable Markdown spec into a hardened contract, then into a
+phase-bounded build loop. The spec stays readable. The runner stays strict. The
+agent always has a contract, a next step, and a way to prove what happened.
+
+Long-running AI coding work fails when the task only lives in chat. Context
+drifts, acceptance criteria soften, reviews become vibes, and nobody can tell
+which command proved which claim. scafld gives that work a hard shape:
+
+- `spec`: what must be true, hardened before execution
+- `session`: what happened
+- `handoff`: transport for the next model voice, never the source of truth
+
+The spec is the living task contract. The session is the durable evidence
+ledger. Adversarial review is the completion gate.
 
 ```text
 draft spec -> hardening -> approval -> phase execution -> session evidence -> spec projection -> adversarial review
@@ -289,6 +241,14 @@ Markdown spec.
 
 That split is the core discipline: readable work surface, durable proof surface.
 
+Every gate has a repair contract: trusted state, failure reason, evidence path,
+expected shape, and allowed next command. That contract is visible in human
+output, projected into the spec, and available to automation through
+`status --json` and `handoff`.
+
+scafld is strict in what it trusts and generous in what it explains. A gate can
+block hard without making the next agent guess where to look.
+
 Hardening and adversarial review are the two pressure points:
 
 - hardening challenges the contract before work starts
@@ -301,6 +261,44 @@ Hard rules:
 - telemetry, status, and reports are views, not separate sources of truth
 - review providers must not mutate the workspace
 - completion is a lifecycle transition, not a sentiment
+
+## Command Surface
+
+The daily surface is small:
+
+```bash
+scafld init
+scafld config
+scafld plan <task-id>
+scafld harden <task-id>
+scafld validate <task-id>
+scafld approve <task-id>
+scafld build <task-id>
+scafld review <task-id>
+scafld complete <task-id>
+scafld status <task-id>
+scafld list
+scafld report
+scafld handoff <task-id>
+scafld update
+```
+
+Wrapper intent:
+
+- `init`: install the managed `.scafld/` workspace shape
+- `config`: propose evidence-backed project config without applying it
+- `plan`: create a draft Markdown spec
+- `harden`: stress-test the draft before approval
+- `validate`: reject malformed or non-executable spec structure
+- `approve`: accept a spec only after it is clear enough to execute
+- `build`: run phase acceptance criteria and write evidence
+- `review`: run the adversarial review gate
+- `complete`: archive only after passing review evidence exists
+- `status`: expose the current state and allowed follow-up command
+- `list`: list task specs by lifecycle state
+- `report`: summarize session-derived quality metrics
+- `handoff`: render model-facing repair or execution material
+- `update`: refresh managed core assets, prompts, root agent docs, and config shape
 
 ## Hardening
 
