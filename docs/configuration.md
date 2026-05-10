@@ -91,9 +91,26 @@ prose can explain intent, but the matcher is what scafld executes.
 ## Execution Environment
 
 Acceptance commands run in a deterministic non-login shell. scafld inherits the
-process environment, then applies `execution` overrides from config. It does
-not source `.zshrc`, `.bashrc`, rbenv init scripts, asdf init scripts, or other
-interactive shell startup files.
+process environment, prepends repo-detected version-manager shims, then applies
+`execution` overrides from config. It does not source `.zshrc`, `.bashrc`,
+rbenv init scripts, asdf init scripts, or other interactive shell startup files.
+
+Toolchain files are detected from checked-in project state. `.tool-versions`
+adds common asdf/mise shim directories, `mise.toml` adds common mise shim
+directories, and language-specific files such as `.ruby-version`,
+`.python-version`, `.node-version`, `.go-version`, and `.java-version` add the
+matching common shim directory. Explicit config paths are placed before
+detected shims.
+
+Detected shims are intentionally conservative:
+
+- `.tool-versions` -> asdf and mise shims
+- `mise.toml` / `.mise.toml` -> mise shims
+- `.ruby-version` -> rbenv shims
+- `.python-version` -> pyenv shims
+- `.node-version` / `.nvmrc` -> nodenv shims
+- `.go-version` -> goenv shims
+- `.java-version` -> jenv shims
 
 Shared project command environment belongs in `.scafld/config.yaml`:
 
@@ -165,11 +182,10 @@ read, the proposal includes an `ignored_config_keys` warning so cleanup is
 explicit rather than silent.
 
 When recognizable toolchain files exist, the proposal may include
-`config_patch.execution`. For example, `.ruby-version` can justify adding
-`$HOME/.rbenv/shims` to `execution.path_prepend`, and `.tool-versions` can
-justify `$HOME/.asdf/shims`. Those suggestions are still evidence, not magic:
-copy them only when they match how the project actually runs acceptance
-commands.
+`config_patch.execution`. For example, `.ruby-version` can justify rbenv
+shims, `.python-version` can justify pyenv shims, and `.tool-versions` can
+justify asdf/mise shims. Copy only project-specific overrides that need to
+outrank the auto-detected defaults.
 
 Config also recognizes common validation surfaces:
 

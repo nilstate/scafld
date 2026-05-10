@@ -19,8 +19,12 @@ llm:
   model_profile: "default"
 
 execution:
-  # Acceptance commands run in a non-login shell. Declare shared command
-  # environment here instead of relying on interactive shell startup.
+  # Acceptance commands run in a non-login shell. scafld automatically prepends
+  # common version-manager shims from checked-in toolchain files (.tool-versions,
+  # mise.toml, .ruby-version, .python-version, .node-version, and similar).
+  # Declare project-specific
+  # command environment here instead of relying on interactive shell startup.
+  # Explicit paths are placed before auto-detected shims.
   path_prepend: []
   env: {}
   # Example for Ruby projects that use rbenv:

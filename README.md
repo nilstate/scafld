@@ -139,6 +139,12 @@ For a new repository, or after project policy changes, run `scafld config`
 once to write an evidence-backed config proposal. It is setup discipline, not a
 per-task lifecycle step.
 
+Acceptance runs do not depend on interactive shell startup. scafld detects
+checked-in toolchain files such as `.tool-versions`, `mise.toml`,
+`.ruby-version`, `.python-version`, `.node-version`, `.go-version`, and
+`.java-version`, prepends the matching version-manager shims, then applies
+explicit `execution` config.
+
 ## Concrete Artifacts
 
 scafld is not a wrapper around a prompt. It writes artifacts the next agent can

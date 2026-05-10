@@ -23,9 +23,27 @@ being repaired. It marks the task active while work is executed, runs executable
 acceptance criteria, appends criterion evidence to the session ledger, and
 projects criterion/phase state back into the spec.
 
-Acceptance commands run in a non-login shell with inherited environment plus
-the `execution` overrides from `.scafld/config.yaml` and
-`.scafld/config.local.yaml`. Declare repo-wide toolchain setup there:
+Acceptance commands run in a non-login shell. scafld does not read interactive
+shell startup files. Instead it builds the command environment from checked-in
+project evidence, then overlays `.scafld/config.yaml` and
+`.scafld/config.local.yaml`.
+
+When repo toolchain files declare language versions, scafld automatically
+prepends common version-manager shims. `.tool-versions` enables asdf/mise
+shims, `mise.toml` enables mise shims, and language-specific files such as
+`.ruby-version`, `.python-version`, `.node-version`, `.go-version`, and
+`.java-version` enable the matching common shim directory. Declare
+project-specific overrides in config:
+
+| Checked-in file | Auto-prepended shims |
+| --- | --- |
+| `.tool-versions` | `$HOME/.asdf/shims`, `$HOME/.local/share/mise/shims`, `$HOME/.mise/shims` |
+| `mise.toml`, `.mise.toml` | `$HOME/.local/share/mise/shims`, `$HOME/.mise/shims` |
+| `.ruby-version` | `$HOME/.rbenv/shims` |
+| `.python-version` | `$HOME/.pyenv/shims` |
+| `.node-version`, `.nvmrc` | `$HOME/.nodenv/shims` |
+| `.go-version` | `$HOME/.goenv/shims` |
+| `.java-version` | `$HOME/.jenv/shims` |
 
 ```yaml
 execution:
@@ -38,7 +56,8 @@ execution:
 
 This makes validation deterministic. If a command needs rbenv, asdf, pnpm, or
 another shim, the dependency is visible in the workspace contract instead of
-hidden in a developer's interactive shell startup.
+hidden in a developer's interactive shell startup. Explicit config paths are
+placed before auto-detected shims.
 
 Approval captures the workspace baseline before task execution starts. Review
 uses that baseline later to separate task changes from unrelated pre-existing
