@@ -76,9 +76,21 @@ Watch the Actions tab. Verify:
 
 ## External Registry Follow-Up
 
-After the GitHub release is live, render package-manager manifests from release
-checksums:
+After the GitHub release is live, publish or submit the manifests rendered from
+the release checksums:
 
 - Homebrew: update `nilstate/homebrew-tap` with `Formula/scafld.rb`.
 - Scoop: update `nilstate/scoop-bucket` with `bucket/scafld.json`.
 - WinGet: submit `0state.scafld` manifests to `microsoft/winget-pkgs`.
+
+For WinGet, do not copy from a local `.stage/` directory. Stage the upstream
+submission from the uploaded release artifact so the manifest hashes are checked
+against the published `checksums.txt`:
+
+```bash
+scripts/prepare-winget-submission.sh X.Y.Z /path/to/winget-pkgs
+```
+
+That command downloads `package-managers-rendered.tar.gz` and `checksums.txt`
+from the GitHub release, verifies every `InstallerSha256`, and copies the
+versioned manifests into the WinGet checkout.

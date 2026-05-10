@@ -27,6 +27,12 @@ Templates for Homebrew, Scoop, WinGet, and OCI live under `package/`. Homebrew
 and Scoop render into owned registry repositories; WinGet requires upstream
 review in `microsoft/winget-pkgs`.
 
+WinGet submissions should be staged with
+`scripts/prepare-winget-submission.sh <version> <winget-pkgs-checkout>`. The
+script downloads the rendered manifests and `checksums.txt` from the GitHub
+release, verifies the installer hashes, then copies the versioned manifest set
+into the WinGet checkout.
+
 ## Release Contract
 
 1. A tag `vX.Y.Z` is pushed in `github.com/nilstate/scafld`.

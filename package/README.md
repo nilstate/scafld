@@ -23,3 +23,8 @@ The tag release workflow renders package-manager manifests from these templates.
 Channels owned by 0state publish automatically when their repository tokens are
 configured. WinGet manifests are uploaded as rendered release artifacts for the
 Microsoft submission flow.
+
+Use `scripts/prepare-winget-submission.sh <version> <winget-pkgs-checkout>` for
+WinGet. It stages the manifests from the uploaded release artifact and verifies
+the installer hashes against the release `checksums.txt`, avoiding stale local
+render output.
