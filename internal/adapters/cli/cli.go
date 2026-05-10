@@ -186,7 +186,7 @@ func runConfig(ctx context.Context, args []string, stdout io.Writer, stderr io.W
 	if err != nil {
 		return failOut(stderr, err, ExitGeneric, opts.JSON)
 	}
-	text := out.Prompt + fmt.Sprintf("\n---\nproposal: %s\nreview before copying changes into .scafld/config.yaml\n", out.Path)
+	text := out.Prompt + fmt.Sprintf("\n---\nproposal: %s\nfollow agent_instructions before updating config or rule surfaces\n", out.Path)
 	return okOut(stdout, "config", out, text, opts.JSON)
 }
 

@@ -2,6 +2,7 @@ package config
 
 import (
 	"context"
+	"strings"
 	"testing"
 )
 
@@ -45,6 +46,9 @@ func TestRunBuildsEvidenceBackedProposal(t *testing.T) {
 	if out.Proposal.Version != "proposal-1" {
 		t.Fatalf("proposal = %+v", out.Proposal)
 	}
+	if out.Proposal.AgentInstructions.Role == "" || len(out.Proposal.AgentInstructions.Deliverables) == 0 || len(out.Proposal.AgentInstructions.Rules) == 0 {
+		t.Fatalf("agent instructions = %+v", out.Proposal.AgentInstructions)
+	}
 	if out.Proposal.ConfigPatch.Invariants["architecture_boundaries"] != "Preserve architecture tests." {
 		t.Fatalf("invariants = %+v", out.Proposal.ConfigPatch.Invariants)
 	}
@@ -57,8 +61,8 @@ func TestRunBuildsEvidenceBackedProposal(t *testing.T) {
 	if out.Proposal.SpecGuidance.Execution == nil || out.Proposal.SpecGuidance.Execution.Sources[0] != ".ruby-version" {
 		t.Fatalf("execution guidance = %+v", out.Proposal.SpecGuidance.Execution)
 	}
-	if out.Prompt == "" {
-		t.Fatal("prompt was empty")
+	if out.Prompt == "" || !strings.Contains(out.Prompt, "configuration agent") || !strings.Contains(out.Prompt, ".claude/rules") {
+		t.Fatalf("prompt missing agent instructions:\n%s", out.Prompt)
 	}
 	if len(out.Proposal.Warnings) != 1 || out.Proposal.Warnings[0].ID != "ignored_config_keys" {
 		t.Fatalf("warnings = %+v", out.Proposal.Warnings)

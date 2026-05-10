@@ -181,12 +181,13 @@ scafld config
 ```
 
 The command scans recognizable project surfaces, writes
-`.scafld/config.proposed.yaml`, and prints CONFIG MODE instructions. The
-proposal is evidence-backed: every suggested command or invariant cites the
-file that implied it. Open questions are explicit when scafld cannot infer a
-safe answer. If an existing config contains old keys the Go runtime does not
-read, the proposal includes an `ignored_config_keys` warning so cleanup is
-explicit rather than silent.
+`.scafld/config.proposed.yaml`, and prints CONFIG MODE instructions for the
+agent. The proposal is evidence-backed: every suggested command or invariant
+cites the file that implied it. It also contains `agent_instructions`, so the
+agent knows what to update, what must stay out of runtime config, and which
+questions need a human or a deeper repo read. If an existing config contains
+old keys the Go runtime does not read, the proposal includes an
+`ignored_config_keys` warning so cleanup is explicit rather than silent.
 
 When recognizable toolchain files exist, the proposal may include
 `config_patch.execution`. For example, `.ruby-version` can justify rbenv
@@ -203,12 +204,19 @@ Config also recognizes common validation surfaces:
 - monorepo/workspace files, architecture tests, CI workflows, migrations, and
   package manifests as invariant evidence
 
-The proposal is not automatically applied. An operator or agent should inspect
-the cited sources, then copy only verified invariant IDs, execution
-environment, or local review defaults into `.scafld/config.yaml`. Commands and
-review focus are guidance for future specs or real `review.automated_passes` /
-`review.adversarial_passes` entries. If scafld does not read a field, do not add
-it to config as if it were enforced.
+The proposal is not automatically applied because the best project config has
+to come from an agent or operator that has inspected the repo. The safe flow is:
+
+1. Read `.scafld/config.proposed.yaml`.
+2. Open the cited sources.
+3. Copy only verified runtime policy into `.scafld/config.yaml`.
+4. Put non-runtime guidance in `AGENTS.md`, `CLAUDE.md`, `.claude/rules`, or
+   project prompts instead of inventing config fields.
+5. Use suggested commands and review focus while drafting or hardening specs,
+   unless you translate them into real `review.automated_passes` or
+   `review.adversarial_passes` entries.
+
+If scafld does not read a field, do not add it to config as if it were enforced.
 
 ## Review Provider Selection
 

@@ -88,10 +88,13 @@ scafld config [--root PATH] [--json]
 
 Scans the workspace in read-only mode and writes
 `.scafld/config.proposed.yaml`. The proposal contains cited evidence,
-suggested invariant IDs, discovered validation commands, and open questions.
+agent instructions, suggested invariant IDs, discovered validation commands,
+and open questions.
 
 `config` does not mutate `.scafld/config.yaml`. The operator or agent must
-open the cited sources and copy only verified changes into the real config.
+open the cited sources and copy only verified runtime policy into the real
+config. Agent guidance belongs in `AGENTS.md`, `CLAUDE.md`, `.claude/rules`, or
+project prompts rather than unsupported config fields.
 
 ## update
 
