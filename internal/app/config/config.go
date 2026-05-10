@@ -65,13 +65,22 @@ type Warning struct {
 // Proposal is the written config proposal. It is intentionally not the runtime
 // config schema; humans and agents must review it before applying changes.
 type Proposal struct {
-	Version       string       `json:"version" yaml:"version"`
-	Purpose       string       `json:"purpose" yaml:"purpose"`
-	Evidence      []Evidence   `json:"evidence" yaml:"evidence"`
-	ConfigPatch   ConfigPatch  `json:"config_patch" yaml:"config_patch"`
-	SpecGuidance  SpecGuidance `json:"spec_guidance,omitempty" yaml:"spec_guidance,omitempty"`
-	Warnings      []Warning    `json:"warnings,omitempty" yaml:"warnings,omitempty"`
-	OpenQuestions []Question   `json:"open_questions,omitempty" yaml:"open_questions,omitempty"`
+	Version           string            `json:"version" yaml:"version"`
+	Purpose           string            `json:"purpose" yaml:"purpose"`
+	AgentInstructions AgentInstructions `json:"agent_instructions" yaml:"agent_instructions"`
+	Evidence          []Evidence        `json:"evidence" yaml:"evidence"`
+	ConfigPatch       ConfigPatch       `json:"config_patch" yaml:"config_patch"`
+	SpecGuidance      SpecGuidance      `json:"spec_guidance,omitempty" yaml:"spec_guidance,omitempty"`
+	Warnings          []Warning         `json:"warnings,omitempty" yaml:"warnings,omitempty"`
+	OpenQuestions     []Question        `json:"open_questions,omitempty" yaml:"open_questions,omitempty"`
+}
+
+// AgentInstructions tells the consuming agent how to turn evidence into real
+// project configuration without inventing unsupported runtime fields.
+type AgentInstructions struct {
+	Role         string   `json:"role" yaml:"role"`
+	Deliverables []string `json:"deliverables" yaml:"deliverables"`
+	Rules        []string `json:"rules" yaml:"rules"`
 }
 
 // ConfigPatch contains concrete changes that may be copied into config.yaml
@@ -110,9 +119,10 @@ func Run(ctx context.Context, scanner Scanner) (Output, error) {
 	}
 	normalizeSnapshot(&snapshot)
 	proposal := Proposal{
-		Version:  "proposal-1",
-		Purpose:  "Evidence-backed scafld configuration proposal. Review before copying anything into .scafld/config.yaml.",
-		Evidence: snapshot.Files,
+		Version:           "proposal-1",
+		Purpose:           "Evidence-backed instructions for configuring this repository for scafld.",
+		AgentInstructions: agentInstructions(),
+		Evidence:          snapshot.Files,
 		ConfigPatch: ConfigPatch{
 			Invariants: invariantMap(snapshot.Invariants),
 			Execution:  executionPatch(snapshot.Execution),
@@ -174,22 +184,43 @@ func invariantMap(invariants []InvariantSuggestion) map[string]string {
 	return out
 }
 
+func agentInstructions() AgentInstructions {
+	return AgentInstructions{
+		Role: "Configure this repository for scafld using only cited evidence.",
+		Deliverables: []string{
+			"Update .scafld/config.yaml with verified runtime config only: invariant IDs, execution environment, review provider defaults, timeouts, context, and review passes.",
+			"Update AGENTS.md, CLAUDE.md, .claude/rules, or .scafld/prompts/* when the repo needs agent guidance that scafld should read as context but does not enforce as runtime config.",
+			"Use spec_guidance.commands and spec_guidance.review_focus when drafting or tightening task specs; do not copy them into config unless they are translated into real config fields.",
+			"Resolve open_questions by inspecting the repo or asking the operator before treating the answer as policy.",
+		},
+		Rules: []string{
+			"Open every cited source before trusting a suggestion.",
+			"Do not invent commands, package managers, providers, architecture rules, or policy names.",
+			"Do not add fields to .scafld/config.yaml that the Go runtime does not read.",
+			"Leave uncertain policy out of config and record the question instead of guessing.",
+		},
+	}
+}
+
 func prompt(Proposal) string {
 	return `# CONFIG MODE
 
-scafld has written an evidence-backed proposal, not an applied config.
+You are the configuration agent for this repository.
 
-Your job:
+scafld has written .scafld/config.proposed.yaml as an instruction packet, not
+an applied config. The real config still has to come from an agent or operator
+that has inspected the repo.
 
 1. Read .scafld/config.proposed.yaml.
 2. Open every cited source before trusting a suggestion.
-3. Copy only verified invariant IDs, execution environment, or review defaults into .scafld/config.yaml.
-4. Resolve open_questions by inspecting the repo or asking the operator.
-5. Do not invent commands, policies, package managers, providers, or architecture rules.
+3. Update .scafld/config.yaml only with fields scafld actually enforces.
+4. Update AGENTS.md, CLAUDE.md, .claude/rules, or .scafld/prompts/* when the
+   finding belongs in agent guidance instead of runtime config.
+5. Use spec_guidance for future specs and review passes; do not paste it into
+   config as unsupported YAML.
+6. Resolve open_questions by inspecting the repo or asking the operator.
 
 The runtime config must stay truthful: if scafld does not read a field, do not
 add it to .scafld/config.yaml as if it were enforced.
-Treat commands and review focus as spec/review guidance unless you translate
-them into real config fields that scafld already reads.
 `
 }

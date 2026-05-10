@@ -136,8 +136,10 @@ issue, scafld sends the task to repair instead of letting the implementation
 agent wave itself through.
 
 For a new repository, or after project policy changes, run `scafld config`
-once to write an evidence-backed config proposal. It is setup discipline, not a
-per-task lifecycle step.
+once to write an evidence-backed configuration brief for the agent. The agent
+opens the cited sources, writes only verified runtime policy into
+`.scafld/config.yaml`, and puts non-runtime guidance in `AGENTS.md`,
+`CLAUDE.md`, `.claude/rules`, or project prompts.
 
 Acceptance runs do not depend on interactive shell startup. scafld detects
 checked-in toolchain files such as `.tool-versions`, `mise.toml`,

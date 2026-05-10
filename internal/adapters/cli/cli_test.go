@@ -183,7 +183,9 @@ func TestRunConfigWritesProposal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(proposal), "full_check") || !strings.Contains(string(proposal), "architecture_boundaries") {
+	if !strings.Contains(string(proposal), "agent_instructions:") ||
+		!strings.Contains(string(proposal), "full_check") ||
+		!strings.Contains(string(proposal), "architecture_boundaries") {
 		t.Fatalf("proposal missing grounded suggestions:\n%s", proposal)
 	}
 }

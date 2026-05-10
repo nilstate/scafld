@@ -23,8 +23,10 @@ serious spec:
 scafld config
 ```
 
-Review `.scafld/config.proposed.yaml` and copy only verified invariant IDs or
-local review defaults into `.scafld/config.yaml`.
+Review `.scafld/config.proposed.yaml`, follow its `agent_instructions`, and
+copy only verified runtime policy into `.scafld/config.yaml`. Put agent-facing
+guidance in `AGENTS.md`, `CLAUDE.md`, `.claude/rules`, or project prompts
+instead of inventing config fields.
 
 ## Create a Draft Spec
 
