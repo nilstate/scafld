@@ -57,6 +57,48 @@ func (f *fakeRunner) Run(_ context.Context, req execution.Request) (execution.Re
 	return f.result, f.err
 }
 
+func writeClaudeSubmission(t *testing.T, req execution.Request, body string) {
+	t.Helper()
+	_, path := claudeSubmissionCommand(t, req)
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func claudeSubmissionCommand(t *testing.T, req execution.Request) (string, string) {
+	t.Helper()
+	var raw string
+	for i, arg := range req.Args {
+		if arg == "--mcp-config" && i+1 < len(req.Args) {
+			raw = req.Args[i+1]
+			break
+		}
+	}
+	if raw == "" {
+		t.Fatalf("missing --mcp-config: %+v", req.Args)
+	}
+	var cfg struct {
+		MCPServers map[string]struct {
+			Command string   `json:"command"`
+			Args    []string `json:"args"`
+		} `json:"mcpServers"`
+	}
+	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
+		t.Fatalf("mcp config: %v\n%s", err, raw)
+	}
+	server, ok := cfg.MCPServers["scafld"]
+	if !ok {
+		t.Fatalf("missing scafld MCP server: %+v", cfg)
+	}
+	for i, arg := range server.Args {
+		if arg == "--out" && i+1 < len(server.Args) {
+			return server.Command, server.Args[i+1]
+		}
+	}
+	t.Fatalf("missing --out in mcp args: %+v", server.Args)
+	return "", ""
+}
+
 func TestCommandProviderParsesStdoutOnlyAndPassesTimeouts(t *testing.T) {
 	t.Parallel()
 
@@ -103,15 +145,20 @@ func TestClaudeProviderBuildsRestrictedStreamJSONArgsAndExtractsStructuredOutput
 	t.Parallel()
 
 	stdout := `{"type":"system","subtype":"init","model":"claude-test","session_id":"observed-session"}` + "\n" +
-		`{"type":"result","structured_output":` + dossierJSON(review.VerdictFail) + `}` + "\n"
-	runner := &fakeRunner{result: execution.Result{Stdout: stdout}}
+		`{"type":"result","result":"submitted"}` + "\n"
+	runner := &fakeRunner{
+		result: execution.Result{Stdout: stdout},
+		onRun: func(req execution.Request) {
+			writeClaudeSubmission(t, req, dossierJSON(review.VerdictFail))
+		},
+	}
 	dossier, err := (ClaudeProvider{
-		Binary:     "claude-bin",
-		Model:      "claude-model",
-		SessionID:  "00000000-0000-4000-8000-000000000000",
-		SchemaJSON: `{"type":"object"}`,
-		CWD:        "/tmp/work",
-		Runner:     runner,
+		Binary:       "claude-bin",
+		Model:        "claude-model",
+		SessionID:    "00000000-0000-4000-8000-000000000000",
+		ScafldBinary: "scafld-bin",
+		CWD:          "/tmp/work",
+		Runner:       runner,
 	}).Invoke(context.Background(), review.Request{TaskID: "task", Prompt: "prompt"})
 	if err != nil {
 		t.Fatal(err)
@@ -119,104 +166,48 @@ func TestClaudeProviderBuildsRestrictedStreamJSONArgsAndExtractsStructuredOutput
 	if dossier.Verdict != review.VerdictFail || len(dossier.Findings) != 1 {
 		t.Fatalf("dossier = %+v", dossier)
 	}
-	if dossier.Provider != "claude" || dossier.Model != "claude-test" || dossier.SessionID == "" || dossier.OutputFormat != "claude.structured_output" || dossier.EventSummary["system.init"] != 1 || dossier.EventSummary["result"] != 1 {
+	if dossier.Provider != "claude" || dossier.Model != "claude-test" || dossier.SessionID == "" || dossier.OutputFormat != "claude.mcp_submit_review" || dossier.EventSummary["system.init"] != 1 || dossier.EventSummary["result"] != 1 {
 		t.Fatalf("provenance = %+v", dossier)
 	}
-	wantArgs := []string{
+	wantPrefix := []string{
 		"claude-bin", "-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
-		"--allowedTools", "Read,Grep,Glob",
+		"--allowedTools", "Read,Grep,Glob,mcp__scafld__submit_review",
 		"--disallowedTools", "Agent,Task,Bash,Edit,MultiEdit,Write,NotebookEdit",
-		"--mcp-config", `{"mcpServers":{}}`, "--strict-mcp-config",
-		"--session-id", "00000000-0000-4000-8000-000000000000",
-		"--json-schema", `{"type":"object"}`, "--model", "claude-model",
+		"--mcp-config",
 	}
-	if !reflect.DeepEqual(runner.req.Args, wantArgs) || runner.req.Input != "prompt" || runner.req.CWD != "/tmp/work" {
+	if len(runner.req.Args) < len(wantPrefix) || !reflect.DeepEqual(runner.req.Args[:len(wantPrefix)], wantPrefix) || runner.req.Input != "prompt" || runner.req.CWD != "/tmp/work" {
 		t.Fatalf("request = %+v", runner.req)
+	}
+	command, _ := claudeSubmissionCommand(t, runner.req)
+	if command != "scafld-bin" {
+		t.Fatalf("mcp command = %q", command)
 	}
 }
 
-func TestClaudeProviderExtractsFencedJSONFromResultText(t *testing.T) {
+func TestClaudeProviderRequiresMCPSubmissionAndIgnoresResultText(t *testing.T) {
 	t.Parallel()
 
 	stdout := `{"type":"system","subtype":"init","model":"claude-test","session_id":"observed-session"}` + "\n" +
 		`{"type":"result","result":"Will produce the requested dossier.\n` + "```json" + `\n` + strings.ReplaceAll(dossierJSON(review.VerdictPass), `"`, `\"`) + `\n` + "```" + `"}` + "\n"
 	runner := &fakeRunner{result: execution.Result{Stdout: stdout}}
 	dossier, err := (ClaudeProvider{Runner: runner, SessionID: "00000000-0000-4000-8000-000000000000"}).Invoke(context.Background(), review.Request{TaskID: "task"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if dossier.Verdict != review.VerdictPass || dossier.Provider != "claude" || dossier.OutputFormat != "claude.result_text.fenced_json" {
-		t.Fatalf("dossier = %+v", dossier)
+	if !errors.Is(err, ErrProviderFailed) || !strings.Contains(err.Error(), "provider produced no submission") {
+		t.Fatalf("err = %v dossier=%+v", err, dossier)
 	}
 }
 
-func TestClaudeProviderCoercesStringLocationRange(t *testing.T) {
+func TestClaudeProviderRejectsInvalidSubmittedDossier(t *testing.T) {
 	t.Parallel()
 
-	stdout := `{"type":"result","structured_output":` + dossierWithStringLocationJSON() + `}` + "\n"
-	runner := &fakeRunner{result: execution.Result{Stdout: stdout}}
-	dossier, err := (ClaudeProvider{Runner: runner, SessionID: "00000000-0000-4000-8000-000000000000"}).Invoke(context.Background(), review.Request{TaskID: "task"})
-	if err != nil {
-		t.Fatal(err)
+	runner := &fakeRunner{
+		result: execution.Result{Stdout: `{"type":"result","result":"submitted"}` + "\n"},
+		onRun: func(req execution.Request) {
+			writeClaudeSubmission(t, req, dossierWithStringLocationJSON())
+		},
 	}
-	if dossier.OutputFormat != "claude.structured_output" {
-		t.Fatalf("output format = %q", dossier.OutputFormat)
-	}
-	if !reflect.DeepEqual(dossier.Normalizations, []string{"finding.location_string"}) {
-		t.Fatalf("normalizations = %+v", dossier.Normalizations)
-	}
-	if len(dossier.Findings) != 1 || dossier.Findings[0].Location == nil {
-		t.Fatalf("findings = %+v", dossier.Findings)
-	}
-	location := dossier.Findings[0].Location
-	if location.Path != "api/app/services/report/engagement.rb" || location.Line != 51 {
-		t.Fatalf("location = %+v", location)
-	}
-}
-
-func TestClaudeProviderCoercesLocationObjectLineRange(t *testing.T) {
-	t.Parallel()
-
-	body := `{"verdict":"pass","mode":"discover","summary":"advisory only","findings":[{"id":"advisory","severity":"low","blocks_completion":false,"location":{"path":"api/app/services/report/engagement.rb","line":"51-66"},"summary":"advisory"}],"attack_log":[{"target":"diff","attack":"scan","result":"clean"}],"budget":{"actual_findings":1,"actual_attack_angles":1,"depth":"test"}}`
-	stdout := `{"type":"result","structured_output":` + body + `}` + "\n"
-	runner := &fakeRunner{result: execution.Result{Stdout: stdout}}
-	dossier, err := (ClaudeProvider{Runner: runner, SessionID: "00000000-0000-4000-8000-000000000000"}).Invoke(context.Background(), review.Request{TaskID: "task"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(dossier.Normalizations, []string{"finding.location_line_string"}) {
-		t.Fatalf("normalizations = %+v", dossier.Normalizations)
-	}
-	location := dossier.Findings[0].Location
-	if location.Path != "api/app/services/report/engagement.rb" || location.Line != 51 {
-		t.Fatalf("location = %+v", location)
-	}
-}
-
-func TestExtractClaudeOutputFallsBackToBalancedJSONInProse(t *testing.T) {
-	t.Parallel()
-
-	body := "Here is the dossier:\n" + dossierJSON(review.VerdictFail) + "\nDone."
-	out := extractClaudeOutput(body)
-	dossier, err := review.ParseText(out.Body)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if dossier.Verdict != review.VerdictFail || out.Format != "claude.stdout.balanced_json" {
-		t.Fatalf("dossier = %+v output=%+v", dossier, out)
-	}
-}
-
-func TestClaudeProviderAttachesDefaultSchema(t *testing.T) {
-	t.Parallel()
-
-	runner := &fakeRunner{result: execution.Result{Stdout: `{"type":"result","structured_output":` + dossierJSON(review.VerdictPass) + `}` + "\n"}}
 	_, err := (ClaudeProvider{Runner: runner, SessionID: "00000000-0000-4000-8000-000000000000"}).Invoke(context.Background(), review.Request{TaskID: "task"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !containsArg(runner.req.Args, "--json-schema") {
-		t.Fatalf("args missing --json-schema: %+v", runner.req.Args)
+	if !errors.Is(err, review.ErrInvalidDossier) {
+		t.Fatalf("err = %v", err)
 	}
 }
 
@@ -311,8 +302,8 @@ func TestReviewDossierSchemaMatchesManagedCoreAsset(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if normalizeJSON(t, string(asset)) != normalizeJSON(t, ReviewDossierSchemaJSON()) {
-		t.Fatal("managed review_dossier.json drifted from provider schema generator")
+	if normalizeJSON(t, string(asset)) != normalizeJSON(t, review.DossierSchemaJSON()) {
+		t.Fatal("managed review_dossier.json drifted from core schema generator")
 	}
 }
 

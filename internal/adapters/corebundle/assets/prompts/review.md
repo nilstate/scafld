@@ -98,12 +98,13 @@ Do not file weak findings. Sharpen them into strong ones or drop them.
 1. Read the review prompt, spec contract, acceptance evidence, changed files,
    and the surrounding code the diff touches.
 2. Work the Attack Angles. For each, say what you checked and what you found.
-3. Return a ReviewDossier JSON object. Do not write files, update scaffolds, or
-   treat diagnostics as the primary finding surface.
+3. Call `submit_review` exactly once with the final ReviewDossier. Do not write
+   files, update scaffolds, or treat diagnostics as the primary finding surface.
 
 ## Output Contract
 
-- emit only the ReviewDossier JSON object expected by scafld
+- call the `submit_review` tool exactly once with the final ReviewDossier
+- do not emit a final prose or JSON text response
 - `verdict` must be `pass` or `fail`
 - `mode` must be `discover` or `verify`
 - `summary` must explain the review result

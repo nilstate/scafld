@@ -2,9 +2,11 @@ package review
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 
 	"github.com/nilstate/scafld/v2/internal/core/reviewcontext"
@@ -166,11 +168,10 @@ func DecodeDossier(text string) (Dossier, bool) {
 	if strings.TrimSpace(text) == "" {
 		return Dossier{}, false
 	}
-	var dossier Dossier
-	if err := json.Unmarshal([]byte(text), &dossier); err != nil {
+	dossier, err := decodeDossierStrict([]byte(text), text)
+	if err != nil {
 		return Dossier{}, false
 	}
-	dossier = NormalizeDossier(dossier)
 	if err := ValidateDossier(dossier); err != nil {
 		return Dossier{}, false
 	}
@@ -226,16 +227,7 @@ func ParseText(text string) (Dossier, error) {
 			return Dossier{}, fmt.Errorf("%w: %v", ErrInvalidDossier, err)
 		}
 		if _, hasType := probe["type"]; !hasType {
-			var dossier Dossier
-			if err := json.Unmarshal([]byte(trimmed), &dossier); err != nil {
-				return Dossier{}, fmt.Errorf("%w: %v", ErrInvalidDossier, err)
-			}
-			dossier.Raw = text
-			dossier = NormalizeDossier(dossier)
-			if err := ValidateDossier(dossier); err != nil {
-				return Dossier{}, err
-			}
-			return dossier, nil
+			return decodeAndValidateDossier([]byte(trimmed), text)
 		}
 	}
 	return ParseNDJSON(text)
@@ -265,9 +257,11 @@ func ParseNDJSON(text string) (Dossier, error) {
 			if len(raw) == 0 {
 				raw = []byte(line)
 			}
-			if err := json.Unmarshal(raw, &dossier); err != nil {
-				return Dossier{}, fmt.Errorf("%w: %v", ErrInvalidDossier, err)
+			parsed, err := decodeDossierStrict(raw, text)
+			if err != nil {
+				return Dossier{}, err
 			}
+			dossier = parsed
 			found = true
 		case "tick", "partial":
 		case "verdict", "finding", "workspace_mutation", "done":
@@ -282,12 +276,39 @@ func ParseNDJSON(text string) (Dossier, error) {
 	if !found {
 		return Dossier{}, fmt.Errorf("%w: missing dossier frame", ErrInvalidDossier)
 	}
-	dossier.Raw = text
-	dossier = NormalizeDossier(dossier)
 	if err := ValidateDossier(dossier); err != nil {
 		return Dossier{}, err
 	}
 	return dossier, nil
+}
+
+func decodeAndValidateDossier(data []byte, raw string) (Dossier, error) {
+	dossier, err := decodeDossierStrict(data, raw)
+	if err != nil {
+		return Dossier{}, err
+	}
+	if err := ValidateDossier(dossier); err != nil {
+		return Dossier{}, err
+	}
+	return dossier, nil
+}
+
+func decodeDossierStrict(data []byte, raw string) (Dossier, error) {
+	var dossier Dossier
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&dossier); err != nil {
+		return Dossier{}, fmt.Errorf("%w: %v", ErrInvalidDossier, err)
+	}
+	var extra any
+	if err := dec.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return Dossier{}, fmt.Errorf("%w: multiple JSON values", ErrInvalidDossier)
+		}
+		return Dossier{}, fmt.Errorf("%w: %v", ErrInvalidDossier, err)
+	}
+	dossier.Raw = raw
+	return NormalizeDossier(dossier), nil
 }
 
 // NormalizeDossier fills derived defaults without hiding invalid provider shape.
