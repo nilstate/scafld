@@ -28,10 +28,9 @@
           }
         },
         "required": [
+          "target",
           "attack",
-          "notes",
-          "result",
-          "target"
+          "result"
         ],
         "type": "object"
       },
@@ -72,13 +71,7 @@
           ]
         }
       },
-      "required": [
-        "actual_attack_angles",
-        "actual_findings",
-        "depth",
-        "max_findings",
-        "min_attack_angles"
-      ],
+      "required": [],
       "type": "object"
     },
     "findings": {
@@ -136,7 +129,6 @@
               }
             },
             "required": [
-              "line",
               "path"
             ],
             "type": [
@@ -204,21 +196,9 @@
           }
         },
         "required": [
-          "blocks_completion",
-          "category",
-          "confidence",
-          "evidence",
           "id",
-          "impact",
-          "location",
-          "related_spec",
-          "reproducer",
-          "review_pass",
           "severity",
-          "status",
-          "suggested_fix",
-          "summary",
-          "validation"
+          "blocks_completion"
         ],
         "type": "object"
       },
@@ -244,12 +224,12 @@
     }
   },
   "required": [
-    "attack_log",
-    "budget",
-    "findings",
+    "verdict",
     "mode",
     "summary",
-    "verdict"
+    "findings",
+    "attack_log",
+    "budget"
   ],
   "title": "scafld ReviewDossier provider response",
   "type": "object"

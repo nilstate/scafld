@@ -139,6 +139,10 @@ func TestParseTextAcceptsDossierAndRejectsLegacyPacket(t *testing.T) {
 	if !errors.Is(err, ErrInvalidDossier) {
 		t.Fatalf("core parser should reject provider location shorthand, err = %v", err)
 	}
+	_, err = ParseText(`{"verdict":"pass","mode":"discover","summary":"clean","findings":[],"attack_log":[{"angle":"diff","description":"scan","result":"clean"}],"budget":{"actual_attack_angles":1}}`)
+	if !errors.Is(err, ErrInvalidDossier) {
+		t.Fatalf("core parser should reject provider field aliases, err = %v", err)
+	}
 }
 
 func TestParseNDJSONAcceptsDossierFrameAndRejectsLegacyFrames(t *testing.T) {

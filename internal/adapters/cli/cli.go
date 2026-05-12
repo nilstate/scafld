@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"runtime/debug"
 	"strings"
 
@@ -15,6 +16,7 @@ import (
 	initcmd "github.com/nilstate/scafld/v2/internal/adapters/cli/initcmd"
 	"github.com/nilstate/scafld/v2/internal/adapters/cli/output"
 	reviewcli "github.com/nilstate/scafld/v2/internal/adapters/cli/review"
+	reviewsubmitcli "github.com/nilstate/scafld/v2/internal/adapters/cli/reviewsubmit"
 	"github.com/nilstate/scafld/v2/internal/adapters/clock"
 	configadapter "github.com/nilstate/scafld/v2/internal/adapters/config"
 	"github.com/nilstate/scafld/v2/internal/adapters/corebundle"
@@ -69,23 +71,24 @@ type command struct{ name, summary string }
 type commandHandler func(context.Context, []string, io.Writer, io.Writer) int
 
 var commandHandlers = map[string]commandHandler{
-	"init":     runInit,
-	"config":   runConfig,
-	"plan":     runPlan,
-	"harden":   runHarden,
-	"validate": runValidate,
-	"approve":  runApprove,
-	"build":    runBuild,
-	"exec":     runBuild,
-	"review":   runReview,
-	"complete": runComplete,
-	"fail":     runFail,
-	"cancel":   runCancel,
-	"status":   runStatus,
-	"list":     runList,
-	"report":   runReport,
-	"handoff":  runHandoff,
-	"update":   runUpdate,
+	"init":                runInit,
+	"config":              runConfig,
+	"plan":                runPlan,
+	"harden":              runHarden,
+	"validate":            runValidate,
+	"approve":             runApprove,
+	"build":               runBuild,
+	"exec":                runBuild,
+	"review":              runReview,
+	"complete":            runComplete,
+	"fail":                runFail,
+	"cancel":              runCancel,
+	"status":              runStatus,
+	"list":                runList,
+	"report":              runReport,
+	"handoff":             runHandoff,
+	"update":              runUpdate,
+	"review-submit-stdio": reviewsubmitcli.Handler(os.Stdin),
 }
 
 // Run executes the CLI command and returns the process exit code.

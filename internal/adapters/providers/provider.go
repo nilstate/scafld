@@ -9,7 +9,6 @@ import (
 	"os"
 	osexec "os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -170,17 +169,19 @@ func (p CommandProvider) Invoke(ctx context.Context, req review.Request) (review
 	return dossier, nil
 }
 
-// ClaudeProvider invokes Claude in restricted stream-json review mode.
+// ClaudeProvider invokes Claude with a restricted read-only toolset and a
+// scafld-owned MCP submit tool for the final dossier.
 type ClaudeProvider struct {
-	Binary      string
-	Model       string
-	SessionID   string
-	SchemaJSON  string
-	CWD         string
-	Env         []string
-	Runner      Runner
-	Timeout     time.Duration
-	IdleTimeout time.Duration
+	Binary         string
+	Model          string
+	SessionID      string
+	ScafldBinary   string
+	SubmissionPath string
+	CWD            string
+	Env            []string
+	Runner         Runner
+	Timeout        time.Duration
+	IdleTimeout    time.Duration
 }
 
 // Invoke sends the review prompt to Claude and parses the resulting dossier.
@@ -192,12 +193,20 @@ func (p ClaudeProvider) Invoke(ctx context.Context, req review.Request) (review.
 	if sessionID == "" {
 		sessionID = newUUID()
 	}
-	schemaJSON := p.SchemaJSON
-	if schemaJSON == "" {
-		schemaJSON = ReviewDossierSchemaJSON()
+	submissionPath := p.SubmissionPath
+	cleanup := func() {}
+	if submissionPath == "" {
+		file, err := os.CreateTemp("", "scafld-claude-review-*.json")
+		if err != nil {
+			return review.Dossier{}, fmt.Errorf("%w: create submission file: %v", ErrProviderFailed, err)
+		}
+		submissionPath = file.Name()
+		_ = file.Close()
+		cleanup = func() { _ = os.Remove(submissionPath) }
 	}
+	defer cleanup()
 	result, err := p.Runner.Run(ctx, execution.Request{
-		Args:                   ClaudeArgs(binaryOrDefault(p.Binary, "claude"), p.Model, sessionID, schemaJSON),
+		Args:                   ClaudeArgs(binaryOrDefault(p.Binary, "claude"), p.Model, sessionID, ClaudeMCPConfig(scafldBinaryOrDefault(p.ScafldBinary), submissionPath)),
 		Input:                  req.Prompt,
 		CWD:                    p.CWD,
 		Env:                    p.Env,
@@ -206,21 +215,24 @@ func (p ClaudeProvider) Invoke(ctx context.Context, req review.Request) (review.
 		SuppressProgressStderr: true,
 		StdoutEventInspector:   ClaudeEventName,
 	})
-	extracted := extractClaudeOutput(result.Stdout)
-	if body, normalizations := normalizeDossierShape(extracted.Body); len(normalizations) > 0 {
-		extracted.Body = body
-		extracted.Normalizations = append(extracted.Normalizations, normalizations...)
+	provenance := extractClaudeProvenance(result.Stdout)
+	data, readErr := os.ReadFile(filepath.Clean(submissionPath))
+	if readErr != nil && !os.IsNotExist(readErr) {
+		return review.Dossier{}, fmt.Errorf("%w: read submission: %v", ErrProviderFailed, readErr)
 	}
-	dossier, dossierErr := dossierFromProviderResult(result, err, extracted.Body)
+	body := strings.TrimSpace(string(data))
+	if body == "" {
+		return review.Dossier{}, providerFailedError(result, errors.New("provider produced no submission"))
+	}
+	dossier, dossierErr := dossierFromProviderResult(result, err, body)
 	if dossierErr != nil {
 		return review.Dossier{}, dossierErr
 	}
 	dossier.Provider = "claude"
-	dossier.Model = extracted.Model
-	dossier.SessionID = extracted.SessionID
-	dossier.OutputFormat = extracted.Format
-	dossier.Normalizations = appendUnique(dossier.Normalizations, extracted.Normalizations...)
-	dossier.EventSummary = eventSummary(result.StdoutEvents, extracted.Events)
+	dossier.Model = provenance.Model
+	dossier.SessionID = provenance.SessionID
+	dossier.OutputFormat = "claude.mcp_submit_review"
+	dossier.EventSummary = eventSummary(result.StdoutEvents, provenance.Events)
 	return dossier, nil
 }
 
@@ -295,7 +307,7 @@ func (p CodexProvider) Invoke(ctx context.Context, req review.Request) (review.D
 }
 
 // ClaudeArgs builds the argv for restricted Claude review execution.
-func ClaudeArgs(binary string, model string, sessionID string, schemaJSON string) []string {
+func ClaudeArgs(binary string, model string, sessionID string, mcpConfig string) []string {
 	args := []string{
 		binary,
 		"-p",
@@ -304,22 +316,36 @@ func ClaudeArgs(binary string, model string, sessionID string, schemaJSON string
 		"--verbose",
 		"--include-partial-messages",
 		"--allowedTools",
-		"Read,Grep,Glob",
+		"Read,Grep,Glob,mcp__scafld__submit_review",
 		"--disallowedTools",
 		"Agent,Task,Bash,Edit,MultiEdit,Write,NotebookEdit",
 		"--mcp-config",
-		`{"mcpServers":{}}`,
+		mcpConfig,
 		"--strict-mcp-config",
 		"--session-id",
 		sessionID,
-	}
-	if schemaJSON != "" {
-		args = append(args, "--json-schema", schemaJSON)
 	}
 	if model != "" {
 		args = append(args, "--model", model)
 	}
 	return args
+}
+
+// ClaudeMCPConfig returns the single-tool MCP config used by the Claude provider.
+func ClaudeMCPConfig(scafldBinary string, submissionPath string) string {
+	config := map[string]any{
+		"mcpServers": map[string]any{
+			"scafld": map[string]any{
+				"command": scafldBinary,
+				"args":    []string{"review-submit-stdio", "--out", submissionPath},
+			},
+		},
+	}
+	data, err := json.Marshal(config)
+	if err != nil {
+		return `{"mcpServers":{}}`
+	}
+	return string(data)
 }
 
 // CodexArgs builds the argv for read-only Codex review execution.
@@ -396,20 +422,14 @@ func errorSnippet(text string) string {
 	return "... " + text[len(text)-max:]
 }
 
-type claudeOutput struct {
-	Body           string
-	Format         string
-	Normalizations []string
-	Model          string
-	SessionID      string
-	Events         map[string]int
+type claudeProvenance struct {
+	Model     string
+	SessionID string
+	Events    map[string]int
 }
 
-func extractClaudeOutput(stdout string) claudeOutput {
-	out := claudeOutput{Body: stdout, Format: "claude.stdout", Events: map[string]int{}}
-	var result map[string]any
-	sawStreamEvent := false
-	bodyFromResultText := false
+func extractClaudeProvenance(stdout string) claudeProvenance {
+	out := claudeProvenance{Events: map[string]int{}}
 	for _, raw := range strings.Split(stdout, "\n") {
 		line := strings.TrimSpace(raw)
 		if line == "" {
@@ -419,9 +439,6 @@ func extractClaudeOutput(stdout string) claudeOutput {
 		if err := json.Unmarshal([]byte(line), &event); err != nil {
 			continue
 		}
-		if event["type"] != nil {
-			sawStreamEvent = true
-		}
 		if name := ClaudeEventName(line); name != "" {
 			out.Events[name]++
 		}
@@ -429,240 +446,8 @@ func extractClaudeOutput(stdout string) claudeOutput {
 			out.Model = stringField(event, "model", "model_id", "modelId")
 			out.SessionID = stringField(event, "session_id", "sessionId")
 		}
-		if event["type"] == "result" {
-			result = event
-		}
-	}
-	if len(result) > 0 {
-		if structured, ok := result["structured_output"].(map[string]any); ok {
-			if data, err := json.Marshal(structured); err == nil {
-				out.Body = string(data)
-				out.Format = "claude.structured_output"
-				return out
-			}
-		}
-		for _, key := range []string{"result", "output", "response", "text", "content"} {
-			if value, ok := result[key].(string); ok && strings.TrimSpace(value) != "" {
-				out.Body = value
-				out.Format = "claude.result_text"
-				bodyFromResultText = true
-				break
-			}
-		}
-	}
-	if bodyFromResultText || !sawStreamEvent {
-		if extracted, format, ok := extractJSONEnvelope(out.Body); ok {
-			out.Body = extracted
-			if bodyFromResultText {
-				out.Format = "claude.result_text." + format
-			} else {
-				out.Format = "claude.stdout." + format
-			}
-		}
 	}
 	return out
-}
-
-func extractJSONEnvelope(text string) (string, string, bool) {
-	trimmed := strings.TrimSpace(text)
-	if json.Valid([]byte(trimmed)) {
-		return trimmed, "json", true
-	}
-	if candidate, ok := extractFencedJSON(text); ok {
-		return candidate, "fenced_json", true
-	}
-	if candidate, ok := extractBalancedJSONObject(text); ok {
-		return candidate, "balanced_json", true
-	}
-	return "", "", false
-}
-
-func normalizeDossierShape(text string) (string, []string) {
-	var root map[string]any
-	if err := json.Unmarshal([]byte(strings.TrimSpace(text)), &root); err != nil {
-		return "", nil
-	}
-	normalizations := normalizeFindingLocations(root)
-	if len(normalizations) == 0 {
-		return "", nil
-	}
-	data, err := json.Marshal(root)
-	if err != nil {
-		return "", nil
-	}
-	return string(data), normalizations
-}
-
-func normalizeFindingLocations(root map[string]any) []string {
-	findings, ok := root["findings"].([]any)
-	if !ok {
-		return nil
-	}
-	var normalizations []string
-	for _, raw := range findings {
-		finding, ok := raw.(map[string]any)
-		if !ok {
-			continue
-		}
-		switch location := finding["location"].(type) {
-		case string:
-			finding["location"] = normalizedLocationString(location)
-			normalizations = appendUnique(normalizations, "finding.location_string")
-		case map[string]any:
-			if normalizeLocationLine(location) {
-				normalizations = appendUnique(normalizations, "finding.location_line_string")
-			}
-		}
-	}
-	return normalizations
-}
-
-func normalizedLocationString(location string) any {
-	location = strings.TrimSpace(location)
-	if location == "" {
-		return nil
-	}
-	return locationObject(location)
-}
-
-func locationObject(location string) map[string]any {
-	out := map[string]any{"path": location}
-	idx := strings.LastIndex(location, ":")
-	if idx < 0 {
-		return out
-	}
-	path := strings.TrimSpace(location[:idx])
-	lineText := strings.TrimSpace(location[idx+1:])
-	if cut := strings.Index(lineText, "-"); cut >= 0 {
-		lineText = strings.TrimSpace(lineText[:cut])
-	}
-	line, err := strconv.Atoi(lineText)
-	if err != nil || line < 1 || path == "" {
-		return out
-	}
-	out["path"] = path
-	out["line"] = line
-	return out
-}
-
-func normalizeLocationLine(location map[string]any) bool {
-	lineText, ok := location["line"].(string)
-	if !ok {
-		return false
-	}
-	lineText = strings.TrimSpace(lineText)
-	if cut := strings.Index(lineText, "-"); cut >= 0 {
-		lineText = strings.TrimSpace(lineText[:cut])
-	}
-	line, err := strconv.Atoi(lineText)
-	if err != nil || line < 1 {
-		return false
-	}
-	location["line"] = line
-	return true
-}
-
-func appendUnique(values []string, next ...string) []string {
-	for _, value := range next {
-		value = strings.TrimSpace(value)
-		if value == "" {
-			continue
-		}
-		exists := false
-		for _, existing := range values {
-			if existing == value {
-				exists = true
-				break
-			}
-		}
-		if !exists {
-			values = append(values, value)
-		}
-	}
-	return values
-}
-
-func extractFencedJSON(text string) (string, bool) {
-	for _, lang := range []string{"json", "JSON", ""} {
-		fence := "```" + lang
-		searchFrom := 0
-		for {
-			start := strings.Index(text[searchFrom:], fence)
-			if start < 0 {
-				break
-			}
-			start += searchFrom + len(fence)
-			if lang != "" && start < len(text) {
-				switch text[start] {
-				case '\r':
-					start++
-					if start < len(text) && text[start] == '\n' {
-						start++
-					}
-				case '\n':
-					start++
-				}
-			}
-			end := strings.Index(text[start:], "```")
-			if end < 0 {
-				break
-			}
-			candidate := strings.TrimSpace(text[start : start+end])
-			if json.Valid([]byte(candidate)) {
-				return candidate, true
-			}
-			searchFrom = start + end + len("```")
-		}
-	}
-	return "", false
-}
-
-func extractBalancedJSONObject(text string) (string, bool) {
-	start := strings.Index(text, "{")
-	for start >= 0 {
-		inString := false
-		escaped := false
-		depth := 0
-		for i := start; i < len(text); i++ {
-			ch := text[i]
-			if inString {
-				if escaped {
-					escaped = false
-					continue
-				}
-				switch ch {
-				case '\\':
-					escaped = true
-				case '"':
-					inString = false
-				}
-				continue
-			}
-			switch ch {
-			case '"':
-				inString = true
-			case '{':
-				depth++
-			case '}':
-				depth--
-				if depth == 0 {
-					candidate := strings.TrimSpace(text[start : i+1])
-					if json.Valid([]byte(candidate)) {
-						return candidate, true
-					}
-					next := strings.Index(text[start+1:], "{")
-					if next < 0 {
-						return "", false
-					}
-					start += next + 1
-					goto nextCandidate
-				}
-			}
-		}
-		return "", false
-	nextCandidate:
-	}
-	return "", false
 }
 
 // ClaudeEventName extracts a liveness event name from one Claude stream frame.
@@ -711,6 +496,16 @@ func binaryOrDefault(binary string, fallback string) string {
 		return fallback
 	}
 	return binary
+}
+
+func scafldBinaryOrDefault(binary string) string {
+	if strings.TrimSpace(binary) != "" {
+		return binary
+	}
+	if executable, err := os.Executable(); err == nil && strings.TrimSpace(executable) != "" {
+		return executable
+	}
+	return "scafld"
 }
 
 func newUUID() string {

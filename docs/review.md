@@ -105,7 +105,7 @@ project-context section includes source path, hash, and byte count.
 packet, not a per-file allowance.
 
 The prompt tells the challenger not to mutate the workspace, not to emit
-placeholder output while investigating, and to return one final ReviewDossier.
+placeholder output while investigating, and to submit one final ReviewDossier.
 
 Print the exact packet without invoking a provider:
 
@@ -128,18 +128,14 @@ The dossier is the provider content contract:
 }
 ```
 
-Provider adapters normalize provider-native transport into this one dossier
-shape before core validation. Codex normally returns an output file; Claude
-normally returns `structured_output` inside its stream. If a provider wraps the
-same dossier in a single Markdown JSON fence, the adapter may extract that at
-the transport boundary, but the core parser still accepts only the canonical
-dossier. Accepted reviews record `output_format` so operators can see whether
-scafld consumed `claude.structured_output`, `claude.result_text.fenced_json`,
-`codex.output_file`, or another explicit provider path. Lossless adapter
-repairs are recorded separately in `normalizations`. For example,
-`finding.location_string` means the provider emitted a finding location as a
-single `path:line` or `path:start-end` string and the adapter normalized it to
-the canonical `{path, line}` object before validation.
+Provider adapters must deliver this one dossier shape before core validation.
+Codex writes a schema-constrained output file. Claude must call scafld's
+`submit_review` MCP tool exactly once; scafld reads the tool payload from that
+submission channel and ignores final prose or fenced JSON. Accepted reviews
+record `output_format` so operators can see whether scafld consumed
+`claude.mcp_submit_review`, `codex.output_file`, or another explicit provider
+path. Provider text that does not arrive through the configured submit channel
+does not satisfy the gate.
 
 Findings require:
 
