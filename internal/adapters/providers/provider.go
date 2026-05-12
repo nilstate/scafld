@@ -165,6 +165,7 @@ func (p CommandProvider) Invoke(ctx context.Context, req review.Request) (review
 		return review.Dossier{}, fmt.Errorf("%w: exit code %d", ErrProviderFailed, result.ExitCode)
 	}
 	dossier.Provider = "command"
+	dossier.OutputFormat = first(dossier.OutputFormat, "command.stdout")
 	return dossier, nil
 }
 
@@ -212,6 +213,7 @@ func (p ClaudeProvider) Invoke(ctx context.Context, req review.Request) (review.
 	dossier.Provider = "claude"
 	dossier.Model = extracted.Model
 	dossier.SessionID = extracted.SessionID
+	dossier.OutputFormat = extracted.Format
 	dossier.EventSummary = eventSummary(result.StdoutEvents, extracted.Events)
 	return dossier, nil
 }
@@ -272,14 +274,17 @@ func (p CodexProvider) Invoke(ctx context.Context, req review.Request) (review.D
 		SuppressProgressStderr: true,
 	})
 	body := strings.TrimSpace(result.Stdout)
+	outputFormat := "codex.stdout"
 	if data, readErr := os.ReadFile(filepath.Clean(outputPath)); readErr == nil && strings.TrimSpace(string(data)) != "" {
 		body = string(data)
+		outputFormat = "codex.output_file"
 	}
 	dossier, dossierErr := dossierFromProviderResult(result, err, body)
 	if dossierErr != nil {
 		return review.Dossier{}, dossierErr
 	}
 	dossier.Provider = "codex"
+	dossier.OutputFormat = first(dossier.OutputFormat, outputFormat)
 	return dossier, nil
 }
 
@@ -387,13 +392,14 @@ func errorSnippet(text string) string {
 
 type claudeOutput struct {
 	Body      string
+	Format    string
 	Model     string
 	SessionID string
 	Events    map[string]int
 }
 
 func extractClaudeOutput(stdout string) claudeOutput {
-	out := claudeOutput{Body: stdout, Events: map[string]int{}}
+	out := claudeOutput{Body: stdout, Format: "claude.stdout", Events: map[string]int{}}
 	var result map[string]any
 	sawStreamEvent := false
 	bodyFromResultText := false
@@ -424,23 +430,44 @@ func extractClaudeOutput(stdout string) claudeOutput {
 		if structured, ok := result["structured_output"].(map[string]any); ok {
 			if data, err := json.Marshal(structured); err == nil {
 				out.Body = string(data)
+				out.Format = "claude.structured_output"
 				return out
 			}
 		}
 		for _, key := range []string{"result", "output", "response", "text", "content"} {
 			if value, ok := result[key].(string); ok && strings.TrimSpace(value) != "" {
 				out.Body = value
+				out.Format = "claude.result_text"
 				bodyFromResultText = true
 				break
 			}
 		}
 	}
 	if bodyFromResultText || !sawStreamEvent {
-		if extracted, ok := extractFencedJSON(out.Body); ok {
+		if extracted, format, ok := extractJSONEnvelope(out.Body); ok {
 			out.Body = extracted
+			if bodyFromResultText {
+				out.Format = "claude.result_text." + format
+			} else {
+				out.Format = "claude.stdout." + format
+			}
 		}
 	}
 	return out
+}
+
+func extractJSONEnvelope(text string) (string, string, bool) {
+	trimmed := strings.TrimSpace(text)
+	if json.Valid([]byte(trimmed)) {
+		return trimmed, "json", true
+	}
+	if candidate, ok := extractFencedJSON(text); ok {
+		return candidate, "fenced_json", true
+	}
+	if candidate, ok := extractBalancedJSONObject(text); ok {
+		return candidate, "balanced_json", true
+	}
+	return "", "", false
 }
 
 func extractFencedJSON(text string) (string, bool) {
@@ -474,9 +501,6 @@ func extractFencedJSON(text string) (string, bool) {
 			}
 			searchFrom = start + end + len("```")
 		}
-	}
-	if candidate, ok := extractBalancedJSONObject(text); ok {
-		return candidate, true
 	}
 	return "", false
 }

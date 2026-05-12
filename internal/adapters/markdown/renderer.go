@@ -145,6 +145,16 @@ func renderReview(b *strings.Builder, review spec.ReviewState) {
 	if review.Mode != "" {
 		fmt.Fprintf(b, "Mode: %s\n", review.Mode)
 	}
+	if review.Provider != "" {
+		if review.Model != "" {
+			fmt.Fprintf(b, "Provider: %s:%s\n", review.Provider, review.Model)
+		} else {
+			fmt.Fprintf(b, "Provider: %s\n", review.Provider)
+		}
+	}
+	if review.OutputFormat != "" {
+		fmt.Fprintf(b, "Output: %s\n", review.OutputFormat)
+	}
 	if review.Summary != "" {
 		fmt.Fprintf(b, "Summary: %s\n", review.Summary)
 	}

@@ -46,18 +46,19 @@ type Clock interface{ Now() time.Time }
 
 // Output describes a completed review run.
 type Output struct {
-	TaskID    string                  `json:"task_id"`
-	Verdict   string                  `json:"verdict"`
-	Mode      review.Mode             `json:"mode,omitempty"`
-	Summary   string                  `json:"summary,omitempty"`
-	Provider  string                  `json:"provider,omitempty"`
-	Model     string                  `json:"model,omitempty"`
-	Findings  []review.Finding        `json:"findings"`
-	AttackLog []review.AttackLogEntry `json:"attack_log,omitempty"`
-	Budget    review.Budget           `json:"budget,omitempty"`
-	Next      string                  `json:"next"`
-	Context   string                  `json:"context,omitempty"`
-	Repair    *gate.Failure           `json:"repair,omitempty"`
+	TaskID       string                  `json:"task_id"`
+	Verdict      string                  `json:"verdict"`
+	Mode         review.Mode             `json:"mode,omitempty"`
+	Summary      string                  `json:"summary,omitempty"`
+	Provider     string                  `json:"provider,omitempty"`
+	Model        string                  `json:"model,omitempty"`
+	OutputFormat string                  `json:"output_format,omitempty"`
+	Findings     []review.Finding        `json:"findings"`
+	AttackLog    []review.AttackLogEntry `json:"attack_log,omitempty"`
+	Budget       review.Budget           `json:"budget,omitempty"`
+	Next         string                  `json:"next"`
+	Context      string                  `json:"context,omitempty"`
+	Repair       *gate.Failure           `json:"repair,omitempty"`
 }
 
 // GateFailure exposes review blockers to the CLI JSON envelope.
@@ -196,6 +197,9 @@ func recordReviewDossier(ctx context.Context, specs SpecStore, sessions SessionS
 	model.Review.Findings = dossier.Findings
 	model.Review.AttackLog = dossier.AttackLog
 	model.Review.Budget = dossier.Budget
+	model.Review.Provider = dossier.Provider
+	model.Review.Model = dossier.Model
+	model.Review.OutputFormat = dossier.OutputFormat
 	model.CurrentState.ReviewGate = dossier.Verdict
 	next, command := nextForVerdict(model.TaskID, dossier.Verdict)
 	model.CurrentState.Next = next
@@ -222,13 +226,16 @@ func recordReviewDossier(ctx context.Context, specs SpecStore, sessions SessionS
 	model.Review.Findings = dossier.Findings
 	model.Review.AttackLog = dossier.AttackLog
 	model.Review.Budget = dossier.Budget
+	model.Review.Provider = dossier.Provider
+	model.Review.Model = dossier.Model
+	model.Review.OutputFormat = dossier.OutputFormat
 	model.CurrentState.ReviewGate = dossier.Verdict
 	model.CurrentState.Next = next
 	model.CurrentState.AllowedFollowUp = command
 	if err := specs.Save(ctx, path, model); err != nil {
 		return Output{}, err
 	}
-	return Output{TaskID: model.TaskID, Verdict: dossier.Verdict, Mode: dossier.Mode, Summary: dossier.Summary, Provider: dossier.Provider, Model: dossier.Model, Findings: dossier.Findings, AttackLog: dossier.AttackLog, Budget: dossier.Budget, Next: command, Repair: reviewRepair(model, dossier, command, latestReviewEvidence(ledger))}, nil
+	return Output{TaskID: model.TaskID, Verdict: dossier.Verdict, Mode: dossier.Mode, Summary: dossier.Summary, Provider: dossier.Provider, Model: dossier.Model, OutputFormat: dossier.OutputFormat, Findings: dossier.Findings, AttackLog: dossier.AttackLog, Budget: dossier.Budget, Next: command, Repair: reviewRepair(model, dossier, command, latestReviewEvidence(ledger))}, nil
 }
 
 func runHumanReviewed(ctx context.Context, specs SpecStore, sessions SessionStore, clock Clock, model spec.Model, path string, reason string) (Output, error) {

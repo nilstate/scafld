@@ -128,6 +128,15 @@ The dossier is the provider content contract:
 }
 ```
 
+Provider adapters normalize provider-native transport into this one dossier
+shape before core validation. Codex normally returns an output file; Claude
+normally returns `structured_output` inside its stream. If a provider wraps the
+same dossier in a single Markdown JSON fence, the adapter may extract that at
+the transport boundary, but the core parser still accepts only the canonical
+dossier. Accepted reviews record `output_format` so operators can see whether
+scafld consumed `claude.structured_output`, `claude.result_text.fenced_json`,
+`codex.output_file`, or another explicit provider path.
+
 Findings require:
 
 - `id`
