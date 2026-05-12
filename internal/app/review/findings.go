@@ -10,25 +10,6 @@ import (
 	coreworkspace "github.com/nilstate/scafld/v2/internal/core/workspace"
 )
 
-func scopeDriftFinding(scopeDrift []coreworkspace.Mutation) review.Finding {
-	path := "."
-	if len(scopeDrift) > 0 {
-		path = scopeDrift[0].Path
-	}
-	return review.Finding{
-		ID:               "scope_drift",
-		Severity:         review.SeverityHigh,
-		BlocksCompletion: true,
-		Category:         "scope",
-		Confidence:       review.ConfidenceHigh,
-		Location:         &review.Location{Path: path},
-		Evidence:         "workspace changed outside declared task scope since approval: " + strings.Join(coreworkspace.MutationStrings(scopeDrift), ", "),
-		Impact:           "The review would be grading unrelated work as if it belonged to this task.",
-		Validation:       "Commit, revert, or declare the unrelated drift, then rerun scafld review.",
-		Summary:          "Workspace changed outside declared task scope.",
-	}
-}
-
 func workspaceMutationFinding(mutated []string) review.Finding {
 	path := "."
 	if len(mutated) > 0 {

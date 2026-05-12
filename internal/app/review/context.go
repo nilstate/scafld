@@ -27,7 +27,7 @@ func reviewContextPacket(model spec.Model, specPath string, passes []Pass, invar
 		contextSection("task_scope", "Task Scope", 20, taskScopeBody(model, reviewScope), "spec", sourcePath),
 		contextSection("workspace_baseline", "Workspace Baseline Before Review", 30, workspaceBaselineBody(baseline), "session", model.TaskID),
 		contextSection("task_changes", "Task Changes Since Approval Baseline", 40, workspaceChangesBody("Task Changes Since Approval Baseline", taskChanges), "session", model.TaskID),
-		contextSection("scope_drift", "Scope Drift Since Approval Baseline", 50, workspaceChangesBody("Scope Drift Since Approval Baseline", scopeDrift), "session", model.TaskID),
+		contextSection("ambient_drift", "Ambient Workspace Drift Outside Task Scope", 50, workspaceChangesBody("Ambient Workspace Drift Outside Task Scope", scopeDrift), "session", model.TaskID),
 		contextSection("acceptance_evidence", "Acceptance Criteria", 60, acceptanceBody(model), "session", model.TaskID),
 		contextSection("provider_instruction", "Provider Instruction", 90, providerInstructionBody(), "scafld", "review"),
 	}
@@ -156,7 +156,7 @@ func reviewRequestBody(mode review.Mode, maxFindings int, minAttackAngles int, d
 }
 
 func providerInstructionBody() string {
-	return "Review mode is read-only. Do not run build, test, or mutation commands; treat recorded acceptance evidence above as already executed. Treat review as task-scoped: unchanged dirty paths from the approval baseline are context, not findings by themselves. Scope drift since the approval baseline is blocking unless the spec explicitly declares it. Do not emit placeholder output while investigating; the final output must be one complete ReviewDossier JSON object. Separate severity from the gate: use severity `critical`, `high`, `medium`, or `low`, then set `blocks_completion` true only when completion must stop. Completion-blocking findings must include location, evidence, impact, and validation. Record attack_log entries for the bounded checks you actually performed, using result `finding`, `clean`, or `skipped`."
+	return "Review mode is read-only. Do not run build, test, or mutation commands; treat recorded acceptance evidence above as already executed. Treat review as task-scoped: unchanged dirty paths from the approval baseline are context, not findings by themselves. Ambient workspace drift outside the task scope is context, not a finding by itself; use it only to avoid attributing unrelated work to this task. Do not emit placeholder output while investigating; the final output must be one complete ReviewDossier JSON object. Separate severity from the gate: use severity `critical`, `high`, `medium`, or `low`, then set `blocks_completion` true only when completion must stop. Completion-blocking findings must include location, evidence, impact, and validation. Record attack_log entries for the bounded checks you actually performed, using result `finding`, `clean`, or `skipped`."
 }
 
 func stripSectionHeading(text string, title string) string {

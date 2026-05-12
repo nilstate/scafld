@@ -216,7 +216,7 @@ func Default() Config {
 			},
 			AutomatedPasses: map[string]ReviewPassConfig{
 				"spec_compliance": {Order: 10, Title: "Spec Compliance", Description: "Verify recorded acceptance evidence against the spec"},
-				"scope_drift":     {Order: 20, Title: "Scope Drift", Description: "Compare spec scope vs current workspace changes and flag undeclared changes"},
+				"ambient_drift":   {Order: 20, Title: "Ambient Drift", Description: "Compare task scope against current workspace changes and separate task changes from unrelated workspace drift"},
 			},
 			AdversarialPasses: map[string]ReviewPassConfig{
 				"regression_hunt":  {Order: 30, Title: "Regression Hunt", Description: "Trace callers, importers, and downstream consumers for regressions"},

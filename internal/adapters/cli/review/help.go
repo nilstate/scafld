@@ -39,8 +39,9 @@ Review scope:
     scafld review email-contracts --review-scope api
     scafld review email-contracts --review-scope api,cli/packages/mcp
 
-  The approval baseline is recorded before task execution. Scope drift fails
-  before provider spend. Task-relevant changes during review still fail closed.
+  The approval baseline is recorded before task execution. Outside-scope drift
+  is included as ambient workspace context, not blocked before provider spend.
+  Task-relevant changes during review still fail closed.
 
 Context:
   Print the deterministic reviewer brief without spending provider tokens:

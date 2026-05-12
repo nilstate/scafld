@@ -97,7 +97,7 @@ func reviewAttemptOutput(baseline []string, taskChanges []coreworkspace.Mutation
 	for _, line := range coreworkspace.MutationStrings(taskChanges) {
 		fmt.Fprintf(&b, "- %s\n", line)
 	}
-	b.WriteString("scope_drift_since_baseline:\n")
+	b.WriteString("ambient_drift_outside_task_scope:\n")
 	for _, line := range coreworkspace.MutationStrings(scopeDrift) {
 		fmt.Fprintf(&b, "- %s\n", line)
 	}

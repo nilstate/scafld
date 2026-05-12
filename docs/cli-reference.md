@@ -235,10 +235,10 @@ scafld review email-contracts --review-scope api,cli/packages/mcp
 
 The approval baseline is captured before task execution. Review compares the
 current workspace to that baseline, reports task-scoped changes to the provider,
-and blocks new changes outside declared scope before invoking the provider.
-Unchanged baseline dirt is context, not a finding by itself. Task-relevant files
-changed during review still fail closed; unrelated workspace churn does not
-discard a valid review.
+and includes changes outside declared scope as ambient workspace drift.
+Unchanged baseline dirt and ambient drift are context, not findings by
+themselves. Task-relevant files changed during review still fail closed;
+unrelated workspace churn does not discard a valid review.
 
 The provider returns a ReviewDossier. scafld validates it, rejects workspace
 mutation in the review-relevant surface, writes the review event to session, and

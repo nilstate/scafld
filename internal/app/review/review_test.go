@@ -600,11 +600,11 @@ func TestReviewComparisonIgnoresManagedSpecProjection(t *testing.T) {
 		t.Fatal(err)
 	}
 	if out.Verdict != corereview.VerdictPass {
-		t.Fatalf("managed spec projection should not be scope drift: %+v", out)
+		t.Fatalf("managed spec projection should not be ambient drift: %+v", out)
 	}
 }
 
-func TestReviewUsesApprovalBaselineForScopeDrift(t *testing.T) {
+func TestReviewReportsAmbientDriftWithoutBlockingProvider(t *testing.T) {
 	t.Parallel()
 
 	ledger := session.New("task", "now")
@@ -626,27 +626,31 @@ func TestReviewUsesApprovalBaselineForScopeDrift(t *testing.T) {
 		{" M root-old README.md", " M api-new api/handler.go", " M docs-new docs/index.md"},
 		{" M root-old README.md", " M api-new api/handler.go", " M docs-new docs/index.md"},
 	}}
-	provider := providerFunc(func(context.Context, corereview.Request) (corereview.Dossier, error) {
-		t.Fatal("provider should not run when local scope drift blocks review")
-		return corereview.Dossier{}, nil
+	var req corereview.Request
+	provider := providerFunc(func(_ context.Context, captured corereview.Request) (corereview.Dossier, error) {
+		req = captured
+		return passingDossier(), nil
 	})
 	out, err := RunWithInput(context.Background(), specs, sessions, workspace, provider, fakeClock{}, Input{TaskID: "task"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out.Verdict != corereview.VerdictFail || len(out.Findings) != 1 || out.Findings[0].ID != "scope_drift" {
-		t.Fatalf("scope drift should fail review: %+v", out)
+	if out.Verdict != corereview.VerdictPass || len(out.Findings) != 0 {
+		t.Fatalf("ambient outside-scope drift should not fail review: %+v", out)
 	}
-	if !strings.Contains(out.Findings[0].Evidence, "docs/index.md") || strings.Contains(out.Findings[0].Evidence, "README.md") {
-		t.Fatalf("scope drift should cite new outside-scope drift only: %+v", out.Findings)
+	if req.TaskID != "task" {
+		t.Fatalf("provider was not invoked with review request: %+v", req)
+	}
+	if !strings.Contains(req.Prompt, "Ambient Workspace Drift Outside Task Scope") || !strings.Contains(req.Prompt, "docs/index.md") || strings.Contains(req.Prompt, "README.md") {
+		t.Fatalf("ambient drift should be provided to reviewer without unchanged baseline dirt: %s", req.Prompt)
 	}
 	entries := sessions.ledger.Entries
 	if len(entries) < 3 ||
 		entries[len(entries)-2].Type != "review_attempt" ||
-		entries[len(entries)-2].Status != "blocked" ||
+		entries[len(entries)-2].Status != "running" ||
 		entries[len(entries)-1].Type != "review" ||
-		entries[len(entries)-1].Provider != "scafld" {
-		t.Fatalf("scope drift should be recorded without provider spend: %+v", sessions.ledger.Entries)
+		entries[len(entries)-1].Provider == "scafld" {
+		t.Fatalf("ambient drift should be recorded while still spending provider review: %+v", sessions.ledger.Entries)
 	}
 }
 
@@ -674,15 +678,16 @@ func TestReviewDerivesScopeFromTouchpointsAndScopeBullets(t *testing.T) {
 		{" M new internal/app/report/report.go", " M new docs/review.md", " M new README.md"},
 		{" M new internal/app/report/report.go", " M new docs/review.md", " M new README.md"},
 	}}
-	out, err := RunWithInput(context.Background(), specs, sessions, workspace, fakeProvider{packet: passingDossier()}, fakeClock{}, Input{TaskID: "task"})
+	provider := &promptProvider{packet: passingDossier()}
+	out, err := RunWithInput(context.Background(), specs, sessions, workspace, provider, fakeClock{}, Input{TaskID: "task"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out.Verdict != corereview.VerdictFail || len(out.Findings) != 1 || out.Findings[0].ID != "scope_drift" {
-		t.Fatalf("outside touchpoint should fail review: %+v", out)
+	if out.Verdict != corereview.VerdictPass || len(out.Findings) != 0 {
+		t.Fatalf("outside touchpoint drift should be ambient, not blocking: %+v", out)
 	}
-	if strings.Contains(out.Findings[0].Evidence, "internal/app/report") || strings.Contains(out.Findings[0].Evidence, "docs/review.md") || !strings.Contains(out.Findings[0].Evidence, "README.md") {
-		t.Fatalf("scope drift should only cite outside-scope README change: %+v", out.Findings)
+	if !strings.Contains(provider.req.Prompt, "Ambient Workspace Drift Outside Task Scope") || !strings.Contains(provider.req.Prompt, "README.md") {
+		t.Fatalf("outside touchpoint drift should be visible as ambient review context: %s", provider.req.Prompt)
 	}
 }
 
