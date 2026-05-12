@@ -115,7 +115,7 @@ func TestClaudeProviderBuildsRestrictedStreamJSONArgsAndExtractsStructuredOutput
 	if dossier.Verdict != review.VerdictFail || len(dossier.Findings) != 1 {
 		t.Fatalf("dossier = %+v", dossier)
 	}
-	if dossier.Provider != "claude" || dossier.Model != "claude-test" || dossier.SessionID == "" || dossier.EventSummary["system.init"] != 1 || dossier.EventSummary["result"] != 1 {
+	if dossier.Provider != "claude" || dossier.Model != "claude-test" || dossier.SessionID == "" || dossier.OutputFormat != "claude.structured_output" || dossier.EventSummary["system.init"] != 1 || dossier.EventSummary["result"] != 1 {
 		t.Fatalf("provenance = %+v", dossier)
 	}
 	wantArgs := []string{
@@ -141,7 +141,7 @@ func TestClaudeProviderExtractsFencedJSONFromResultText(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if dossier.Verdict != review.VerdictPass || dossier.Provider != "claude" {
+	if dossier.Verdict != review.VerdictPass || dossier.Provider != "claude" || dossier.OutputFormat != "claude.result_text.fenced_json" {
 		t.Fatalf("dossier = %+v", dossier)
 	}
 }
@@ -155,8 +155,8 @@ func TestExtractClaudeOutputFallsBackToBalancedJSONInProse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if dossier.Verdict != review.VerdictFail {
-		t.Fatalf("dossier = %+v body=%q", dossier, out.Body)
+	if dossier.Verdict != review.VerdictFail || out.Format != "claude.stdout.balanced_json" {
+		t.Fatalf("dossier = %+v output=%+v", dossier, out)
 	}
 }
 
@@ -199,8 +199,8 @@ func TestCodexProviderBuildsReadOnlyEphemeralArgsAndReadsOutputFile(t *testing.T
 	if dossier.Verdict != review.VerdictPass {
 		t.Fatalf("dossier = %+v", dossier)
 	}
-	if dossier.Provider != "codex" {
-		t.Fatalf("provider = %q", dossier.Provider)
+	if dossier.Provider != "codex" || dossier.OutputFormat != "codex.output_file" {
+		t.Fatalf("dossier = %+v", dossier)
 	}
 	wantArgs := []string{
 		"codex-bin", "exec", "--sandbox", "read-only", "--skip-git-repo-check", "--cd", "/tmp/work",

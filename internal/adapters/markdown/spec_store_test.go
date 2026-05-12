@@ -64,7 +64,7 @@ func TestRoundTripPreservesLiterateSpecFields(t *testing.T) {
 			AnsweredWith:      "Adapter-owned.",
 		}},
 	}}
-	model.Review = spec.ReviewState{Status: "completed", Verdict: corereview.VerdictFail, Mode: corereview.ModeDiscover, Summary: "Review found an open blocker.", Findings: []corereview.Finding{{ID: "f1", Severity: corereview.SeverityHigh, BlocksCompletion: true, Location: &corereview.Location{Path: "file.go"}, Evidence: "bug", Impact: "test impact", Validation: "rerun test", Summary: "bug"}}}
+	model.Review = spec.ReviewState{Status: "completed", Verdict: corereview.VerdictFail, Mode: corereview.ModeDiscover, Provider: "claude", Model: "claude-test", OutputFormat: "claude.structured_output", Summary: "Review found an open blocker.", Findings: []corereview.Finding{{ID: "f1", Severity: corereview.SeverityHigh, BlocksCompletion: true, Location: &corereview.Location{Path: "file.go"}, Evidence: "bug", Impact: "test impact", Validation: "rerun test", Summary: "bug"}}}
 	model.Phases[0].Dependencies = []string{"phase0"}
 	model.Phases[0].Acceptance[0].Status = "pass"
 	model.Phases[0].Acceptance[0].Evidence = "exit code was 0"
@@ -97,6 +97,9 @@ func TestRoundTripPreservesLiterateSpecFields(t *testing.T) {
 	}
 	if got := parsed.Review.Findings; len(got) != 1 || got[0].Summary != "bug" {
 		t.Fatalf("review findings lost: %+v", got)
+	}
+	if parsed.Review.Provider != "claude" || parsed.Review.Model != "claude-test" || parsed.Review.OutputFormat != "claude.structured_output" {
+		t.Fatalf("review provenance lost: %+v", parsed.Review)
 	}
 }
 

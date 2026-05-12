@@ -136,6 +136,7 @@ type Dossier struct {
 	Provider     string           `json:"provider,omitempty"`
 	Model        string           `json:"model,omitempty"`
 	SessionID    string           `json:"session_id,omitempty"`
+	OutputFormat string           `json:"output_format,omitempty"`
 	EventSummary map[string]int   `json:"event_summary,omitempty"`
 	Raw          string           `json:"-"`
 }

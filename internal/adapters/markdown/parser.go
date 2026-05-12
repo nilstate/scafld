@@ -227,6 +227,16 @@ func (p *parser) handleReview(line string) bool {
 		case "mode":
 			p.model.Review.Mode = corereview.Mode(value)
 			return true
+		case "provider":
+			p.model.Review.Provider = value
+			if provider, model, ok := strings.Cut(value, ":"); ok {
+				p.model.Review.Provider = strings.TrimSpace(provider)
+				p.model.Review.Model = strings.TrimSpace(model)
+			}
+			return true
+		case "output":
+			p.model.Review.OutputFormat = value
+			return true
 		case "summary":
 			p.model.Review.Summary = value
 			return true

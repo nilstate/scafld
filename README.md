@@ -174,6 +174,9 @@ Review failure is structured, not a vibe:
 {
   "verdict": "fail",
   "mode": "discover",
+  "provider": "claude",
+  "model": "claude-opus-4-7",
+  "output_format": "claude.structured_output",
   "summary": "Review found one open completion blocker.",
   "findings": [
     {
@@ -197,6 +200,8 @@ Review failure is structured, not a vibe:
 ```text
 review verdict: fail
 review mode: discover
+review provider: claude:claude-opus-4-7
+review output: claude.structured_output
 summary: Review found one open completion blocker.
 findings:
 - [high/blocks completion] cache-tenant-leak: internal/cache/store.go:88 invalidation keys omit tenant id.

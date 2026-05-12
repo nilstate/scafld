@@ -12,8 +12,9 @@ type schema map[string]any
 // Codex/OpenAI structured outputs require every object property to be listed in
 // required, even when the property is semantically optional. Optional fields are
 // therefore represented as nullable required fields. Provenance fields such as
-// provider, model, session_id, and event_summary are filled by scafld after the
-// provider returns and are intentionally not part of this schema.
+// provider, model, session_id, output_format, and event_summary are filled by
+// scafld after the provider returns and are intentionally not part of this
+// schema.
 func ReviewDossierSchemaJSON() string {
 	data, err := json.Marshal(reviewDossierSchema())
 	if err != nil {

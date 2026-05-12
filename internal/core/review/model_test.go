@@ -131,6 +131,10 @@ func TestParseTextAcceptsDossierAndRejectsLegacyPacket(t *testing.T) {
 	if !errors.Is(err, ErrInvalidDossier) {
 		t.Fatalf("invalid attack result err = %v", err)
 	}
+	_, err = ParseText("Here is the dossier:\n```json\n" + `{"verdict":"pass","mode":"discover","summary":"clean","findings":[],"attack_log":[{"target":"diff","attack":"scan","result":"clean"}],"budget":{"actual_attack_angles":1}}` + "\n```")
+	if !errors.Is(err, ErrInvalidDossier) {
+		t.Fatalf("core parser should reject provider prose/fences, err = %v", err)
+	}
 }
 
 func TestParseNDJSONAcceptsDossierFrameAndRejectsLegacyFrames(t *testing.T) {

@@ -81,6 +81,9 @@ func Review(out appreview.Output) string {
 			fmt.Fprintf(&b, "review provider: %s\n", out.Provider)
 		}
 	}
+	if out.OutputFormat != "" {
+		fmt.Fprintf(&b, "review output: %s\n", out.OutputFormat)
+	}
 	if out.Summary != "" {
 		fmt.Fprintf(&b, "summary: %s\n", out.Summary)
 	}

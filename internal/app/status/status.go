@@ -43,6 +43,9 @@ type ReviewInfo struct {
 	OpenBlockers  int                         `json:"open_blockers,omitempty"`
 	AttackLog     []corereview.AttackLogEntry `json:"attack_log,omitempty"`
 	Budget        corereview.Budget           `json:"budget,omitempty"`
+	Provider      string                      `json:"provider,omitempty"`
+	Model         string                      `json:"model,omitempty"`
+	OutputFormat  string                      `json:"output_format,omitempty"`
 	Attempt       *ReviewAttemptInfo          `json:"attempt,omitempty"`
 	Running       bool                        `json:"running,omitempty"`
 	AttemptStatus string                      `json:"attempt_status,omitempty"`
@@ -97,6 +100,9 @@ func latestReviewInfo(ledger session.Session) ReviewInfo {
 				info.OpenBlockers = corereview.OpenBlockerCount(dossier.Findings)
 				info.AttackLog = dossier.AttackLog
 				info.Budget = dossier.Budget
+				info.Provider = dossier.Provider
+				info.Model = dossier.Model
+				info.OutputFormat = dossier.OutputFormat
 			}
 			return info
 		case "review_attempt":
