@@ -78,10 +78,10 @@ review:
       order: 10
       title: "Spec Compliance"
       description: "Verify recorded acceptance evidence against the spec."
-    scope_drift:
+    ambient_drift:
       order: 20
-      title: "Scope Drift"
-      description: "Compare spec scope against current workspace changes and flag undeclared changes."
+      title: "Ambient Drift"
+      description: "Compare task scope against current workspace changes and separate task changes from unrelated workspace drift."
 
   adversarial_passes:
     regression_hunt:

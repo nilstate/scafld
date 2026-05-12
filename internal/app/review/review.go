@@ -125,30 +125,10 @@ func RunWithInput(ctx context.Context, specs SpecStore, sessions SessionStore, w
 		return Output{TaskID: model.TaskID, Verdict: "not_run", Next: "scafld review " + model.TaskID, Context: prompt}, nil
 	}
 	now := clock.Now().UTC().Format(time.RFC3339)
-	if len(scopeDrift) > 0 {
-		if _, err := sessions.Append(ctx, model.TaskID, session.Entry{
-			Type:   "review_attempt",
-			Status: "blocked",
-			Reason: fmt.Sprintf("review local gates blocked before provider; %d scope drift change(s)", len(scopeDrift)),
-			Output: reviewAttemptOutput(baselineScoped, taskChanges, scopeDrift),
-		}, now); err != nil {
-			return Output{}, err
-		}
-		dossier := review.Dossier{
-			Verdict:   review.VerdictFail,
-			Mode:      mode,
-			Summary:   "Review blocked before provider because workspace drift is outside the declared task scope.",
-			Provider:  "scafld",
-			Findings:  []review.Finding{scopeDriftFinding(scopeDrift)},
-			AttackLog: []review.AttackLogEntry{{Target: "workspace scope", Attack: "compare approval baseline to current state", Result: "finding", Notes: fmt.Sprintf("%d scope drift change(s)", len(scopeDrift))}},
-			Budget:    reviewBudget(input, 1, 1),
-		}
-		return recordReviewDossier(ctx, specs, sessions, model, path, dossier, now)
-	}
 	if _, err := sessions.Append(ctx, model.TaskID, session.Entry{
 		Type:   "review_attempt",
 		Status: "running",
-		Reason: fmt.Sprintf("review provider running; baseline %d changed path(s), %d task change(s), %d scope drift change(s)", len(coreworkspace.Paths(baselineScoped)), len(taskChanges), len(scopeDrift)),
+		Reason: fmt.Sprintf("review provider running; baseline %d changed path(s), %d task change(s), %d ambient drift change(s)", len(coreworkspace.Paths(baselineScoped)), len(taskChanges), len(scopeDrift)),
 		Output: reviewAttemptOutput(baselineScoped, taskChanges, scopeDrift),
 	}, now); err != nil {
 		return Output{}, err

@@ -83,10 +83,10 @@ scafld review email-contracts --review-scope api,cli/packages/mcp
 
 At approval, scafld records the dirty workspace baseline. At review, it compares
 the current workspace to that baseline, sends task-scoped changes to the
-reviewer, and blocks new changes outside declared scope before invoking the
-provider. Unchanged baseline dirt is context, not a finding by itself. This
-keeps dirty monorepos cheap: if local scope drift is already blocking, scafld
-fails fast instead of spending a provider run.
+reviewer, and includes new changes outside declared scope as ambient workspace
+drift. Unchanged baseline dirt and ambient drift are context, not findings by
+themselves. This keeps dirty monorepos cheap: unrelated active work from another
+task should not force a stash, commit, human override, or extra provider run.
 
 The read-only mutation guard is task-relevant rather than global. Changes inside
 review scope still fail closed because the provider judged moving code.

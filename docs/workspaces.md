@@ -55,7 +55,8 @@ Commands should stay relative to the workspace root and must not escape it.
 Adversarial review should inspect the whole workspace state, not only the
 subdirectory where a command ran. The spec should make cross-repo ownership
 obvious enough that the challenger can tell expected multi-package work from
-scope drift.
+ambient workspace drift. Changes outside the task scope are sent as context, not
+treated as a local pre-flight blocker by themselves.
 
 ## Branches
 
