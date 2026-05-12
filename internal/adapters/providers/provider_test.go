@@ -120,7 +120,7 @@ func TestClaudeProviderBuildsRestrictedStreamJSONArgsAndExtractsStructuredOutput
 	}
 	wantArgs := []string{
 		"claude-bin", "-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
-		"--permission-mode", "plan", "--allowedTools", "Read,Grep,Glob",
+		"--allowedTools", "Read,Grep,Glob",
 		"--disallowedTools", "Agent,Task,Bash,Edit,MultiEdit,Write,NotebookEdit",
 		"--mcp-config", `{"mcpServers":{}}`, "--strict-mcp-config",
 		"--session-id", "00000000-0000-4000-8000-000000000000",
@@ -128,6 +128,35 @@ func TestClaudeProviderBuildsRestrictedStreamJSONArgsAndExtractsStructuredOutput
 	}
 	if !reflect.DeepEqual(runner.req.Args, wantArgs) || runner.req.Input != "prompt" || runner.req.CWD != "/tmp/work" {
 		t.Fatalf("request = %+v", runner.req)
+	}
+}
+
+func TestClaudeProviderExtractsFencedJSONFromResultText(t *testing.T) {
+	t.Parallel()
+
+	stdout := `{"type":"system","subtype":"init","model":"claude-test","session_id":"observed-session"}` + "\n" +
+		`{"type":"result","result":"Will produce the requested dossier.\n` + "```json" + `\n` + strings.ReplaceAll(dossierJSON(review.VerdictPass), `"`, `\"`) + `\n` + "```" + `"}` + "\n"
+	runner := &fakeRunner{result: execution.Result{Stdout: stdout}}
+	dossier, err := (ClaudeProvider{Runner: runner, SessionID: "00000000-0000-4000-8000-000000000000"}).Invoke(context.Background(), review.Request{TaskID: "task"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dossier.Verdict != review.VerdictPass || dossier.Provider != "claude" {
+		t.Fatalf("dossier = %+v", dossier)
+	}
+}
+
+func TestExtractClaudeOutputFallsBackToBalancedJSONInProse(t *testing.T) {
+	t.Parallel()
+
+	body := "Here is the dossier:\n" + dossierJSON(review.VerdictFail) + "\nDone."
+	out := extractClaudeOutput(body)
+	dossier, err := review.ParseText(out.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dossier.Verdict != review.VerdictFail {
+		t.Fatalf("dossier = %+v body=%q", dossier, out.Body)
 	}
 }
 
