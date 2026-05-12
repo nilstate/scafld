@@ -135,7 +135,11 @@ same dossier in a single Markdown JSON fence, the adapter may extract that at
 the transport boundary, but the core parser still accepts only the canonical
 dossier. Accepted reviews record `output_format` so operators can see whether
 scafld consumed `claude.structured_output`, `claude.result_text.fenced_json`,
-`codex.output_file`, or another explicit provider path.
+`codex.output_file`, or another explicit provider path. Lossless adapter
+repairs are recorded separately in `normalizations`. For example,
+`finding.location_string` means the provider emitted a finding location as a
+single `path:line` or `path:start-end` string and the adapter normalized it to
+the canonical `{path, line}` object before validation.
 
 Findings require:
 

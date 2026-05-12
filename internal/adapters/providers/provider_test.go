@@ -34,6 +34,10 @@ func dossierJSON(verdict string) string {
 	return `{"verdict":"pass","mode":"discover","summary":"clean","findings":[],"attack_log":[{"target":"diff","attack":"scan","result":"clean"}],"budget":{"actual_attack_angles":1,"depth":"test"}}`
 }
 
+func dossierWithStringLocationJSON() string {
+	return `{"verdict":"pass","mode":"discover","summary":"advisory only","findings":[{"id":"advisory","severity":"low","blocks_completion":false,"location":"api/app/services/report/engagement.rb:51-66","evidence":"review note","impact":"minor clarity issue","validation":"optional inspection","summary":"api/app/services/report/engagement.rb:51-66 has an advisory."}],"attack_log":[{"target":"diff","attack":"scan","result":"clean"}],"budget":{"actual_findings":1,"actual_attack_angles":1,"depth":"test"}}`
+}
+
 func dossierFrame(verdict string) string {
 	return `{"type":"dossier","dossier":` + dossierJSON(verdict) + `}`
 }
@@ -143,6 +147,49 @@ func TestClaudeProviderExtractsFencedJSONFromResultText(t *testing.T) {
 	}
 	if dossier.Verdict != review.VerdictPass || dossier.Provider != "claude" || dossier.OutputFormat != "claude.result_text.fenced_json" {
 		t.Fatalf("dossier = %+v", dossier)
+	}
+}
+
+func TestClaudeProviderCoercesStringLocationRange(t *testing.T) {
+	t.Parallel()
+
+	stdout := `{"type":"result","structured_output":` + dossierWithStringLocationJSON() + `}` + "\n"
+	runner := &fakeRunner{result: execution.Result{Stdout: stdout}}
+	dossier, err := (ClaudeProvider{Runner: runner, SessionID: "00000000-0000-4000-8000-000000000000"}).Invoke(context.Background(), review.Request{TaskID: "task"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dossier.OutputFormat != "claude.structured_output" {
+		t.Fatalf("output format = %q", dossier.OutputFormat)
+	}
+	if !reflect.DeepEqual(dossier.Normalizations, []string{"finding.location_string"}) {
+		t.Fatalf("normalizations = %+v", dossier.Normalizations)
+	}
+	if len(dossier.Findings) != 1 || dossier.Findings[0].Location == nil {
+		t.Fatalf("findings = %+v", dossier.Findings)
+	}
+	location := dossier.Findings[0].Location
+	if location.Path != "api/app/services/report/engagement.rb" || location.Line != 51 {
+		t.Fatalf("location = %+v", location)
+	}
+}
+
+func TestClaudeProviderCoercesLocationObjectLineRange(t *testing.T) {
+	t.Parallel()
+
+	body := `{"verdict":"pass","mode":"discover","summary":"advisory only","findings":[{"id":"advisory","severity":"low","blocks_completion":false,"location":{"path":"api/app/services/report/engagement.rb","line":"51-66"},"summary":"advisory"}],"attack_log":[{"target":"diff","attack":"scan","result":"clean"}],"budget":{"actual_findings":1,"actual_attack_angles":1,"depth":"test"}}`
+	stdout := `{"type":"result","structured_output":` + body + `}` + "\n"
+	runner := &fakeRunner{result: execution.Result{Stdout: stdout}}
+	dossier, err := (ClaudeProvider{Runner: runner, SessionID: "00000000-0000-4000-8000-000000000000"}).Invoke(context.Background(), review.Request{TaskID: "task"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(dossier.Normalizations, []string{"finding.location_line_string"}) {
+		t.Fatalf("normalizations = %+v", dossier.Normalizations)
+	}
+	location := dossier.Findings[0].Location
+	if location.Path != "api/app/services/report/engagement.rb" || location.Line != 51 {
+		t.Fatalf("location = %+v", location)
 	}
 }
 

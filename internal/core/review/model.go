@@ -127,18 +127,19 @@ type Budget struct {
 
 // Dossier is the normalized review-provider payload consumed by scafld.
 type Dossier struct {
-	Verdict      string           `json:"verdict"`
-	Mode         Mode             `json:"mode"`
-	Summary      string           `json:"summary"`
-	Findings     []Finding        `json:"findings"`
-	AttackLog    []AttackLogEntry `json:"attack_log"`
-	Budget       Budget           `json:"budget"`
-	Provider     string           `json:"provider,omitempty"`
-	Model        string           `json:"model,omitempty"`
-	SessionID    string           `json:"session_id,omitempty"`
-	OutputFormat string           `json:"output_format,omitempty"`
-	EventSummary map[string]int   `json:"event_summary,omitempty"`
-	Raw          string           `json:"-"`
+	Verdict        string           `json:"verdict"`
+	Mode           Mode             `json:"mode"`
+	Summary        string           `json:"summary"`
+	Findings       []Finding        `json:"findings"`
+	AttackLog      []AttackLogEntry `json:"attack_log"`
+	Budget         Budget           `json:"budget"`
+	Provider       string           `json:"provider,omitempty"`
+	Model          string           `json:"model,omitempty"`
+	SessionID      string           `json:"session_id,omitempty"`
+	OutputFormat   string           `json:"output_format,omitempty"`
+	Normalizations []string         `json:"normalizations,omitempty"`
+	EventSummary   map[string]int   `json:"event_summary,omitempty"`
+	Raw            string           `json:"-"`
 }
 
 // Request is the provider-facing review prompt request.

@@ -155,6 +155,9 @@ func renderReview(b *strings.Builder, review spec.ReviewState) {
 	if review.OutputFormat != "" {
 		fmt.Fprintf(b, "Output: %s\n", review.OutputFormat)
 	}
+	if len(review.Normalizations) > 0 {
+		fmt.Fprintf(b, "Normalizations: %s\n", strings.Join(review.Normalizations, ", "))
+	}
 	if review.Summary != "" {
 		fmt.Fprintf(b, "Summary: %s\n", review.Summary)
 	}

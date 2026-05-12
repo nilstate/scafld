@@ -36,20 +36,21 @@ type Output struct {
 
 // ReviewInfo is the latest review evidence visible from status.
 type ReviewInfo struct {
-	Verdict       string                      `json:"verdict,omitempty"`
-	Mode          corereview.Mode             `json:"mode,omitempty"`
-	Summary       string                      `json:"summary,omitempty"`
-	Findings      []corereview.Finding        `json:"findings,omitempty"`
-	OpenBlockers  int                         `json:"open_blockers,omitempty"`
-	AttackLog     []corereview.AttackLogEntry `json:"attack_log,omitempty"`
-	Budget        corereview.Budget           `json:"budget,omitempty"`
-	Provider      string                      `json:"provider,omitempty"`
-	Model         string                      `json:"model,omitempty"`
-	OutputFormat  string                      `json:"output_format,omitempty"`
-	Attempt       *ReviewAttemptInfo          `json:"attempt,omitempty"`
-	Running       bool                        `json:"running,omitempty"`
-	AttemptStatus string                      `json:"attempt_status,omitempty"`
-	Reason        string                      `json:"reason,omitempty"`
+	Verdict        string                      `json:"verdict,omitempty"`
+	Mode           corereview.Mode             `json:"mode,omitempty"`
+	Summary        string                      `json:"summary,omitempty"`
+	Findings       []corereview.Finding        `json:"findings,omitempty"`
+	OpenBlockers   int                         `json:"open_blockers,omitempty"`
+	AttackLog      []corereview.AttackLogEntry `json:"attack_log,omitempty"`
+	Budget         corereview.Budget           `json:"budget,omitempty"`
+	Provider       string                      `json:"provider,omitempty"`
+	Model          string                      `json:"model,omitempty"`
+	OutputFormat   string                      `json:"output_format,omitempty"`
+	Normalizations []string                    `json:"normalizations,omitempty"`
+	Attempt        *ReviewAttemptInfo          `json:"attempt,omitempty"`
+	Running        bool                        `json:"running,omitempty"`
+	AttemptStatus  string                      `json:"attempt_status,omitempty"`
+	Reason         string                      `json:"reason,omitempty"`
 }
 
 // ReviewAttemptInfo describes the latest provider attempt separately from the
@@ -103,6 +104,7 @@ func latestReviewInfo(ledger session.Session) ReviewInfo {
 				info.Provider = dossier.Provider
 				info.Model = dossier.Model
 				info.OutputFormat = dossier.OutputFormat
+				info.Normalizations = dossier.Normalizations
 			}
 			return info
 		case "review_attempt":

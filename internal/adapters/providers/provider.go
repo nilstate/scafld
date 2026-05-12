@@ -9,6 +9,7 @@ import (
 	"os"
 	osexec "os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -206,6 +207,10 @@ func (p ClaudeProvider) Invoke(ctx context.Context, req review.Request) (review.
 		StdoutEventInspector:   ClaudeEventName,
 	})
 	extracted := extractClaudeOutput(result.Stdout)
+	if body, normalizations := normalizeDossierShape(extracted.Body); len(normalizations) > 0 {
+		extracted.Body = body
+		extracted.Normalizations = append(extracted.Normalizations, normalizations...)
+	}
 	dossier, dossierErr := dossierFromProviderResult(result, err, extracted.Body)
 	if dossierErr != nil {
 		return review.Dossier{}, dossierErr
@@ -214,6 +219,7 @@ func (p ClaudeProvider) Invoke(ctx context.Context, req review.Request) (review.
 	dossier.Model = extracted.Model
 	dossier.SessionID = extracted.SessionID
 	dossier.OutputFormat = extracted.Format
+	dossier.Normalizations = appendUnique(dossier.Normalizations, extracted.Normalizations...)
 	dossier.EventSummary = eventSummary(result.StdoutEvents, extracted.Events)
 	return dossier, nil
 }
@@ -391,11 +397,12 @@ func errorSnippet(text string) string {
 }
 
 type claudeOutput struct {
-	Body      string
-	Format    string
-	Model     string
-	SessionID string
-	Events    map[string]int
+	Body           string
+	Format         string
+	Normalizations []string
+	Model          string
+	SessionID      string
+	Events         map[string]int
 }
 
 func extractClaudeOutput(stdout string) claudeOutput {
@@ -468,6 +475,111 @@ func extractJSONEnvelope(text string) (string, string, bool) {
 		return candidate, "balanced_json", true
 	}
 	return "", "", false
+}
+
+func normalizeDossierShape(text string) (string, []string) {
+	var root map[string]any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(text)), &root); err != nil {
+		return "", nil
+	}
+	normalizations := normalizeFindingLocations(root)
+	if len(normalizations) == 0 {
+		return "", nil
+	}
+	data, err := json.Marshal(root)
+	if err != nil {
+		return "", nil
+	}
+	return string(data), normalizations
+}
+
+func normalizeFindingLocations(root map[string]any) []string {
+	findings, ok := root["findings"].([]any)
+	if !ok {
+		return nil
+	}
+	var normalizations []string
+	for _, raw := range findings {
+		finding, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		switch location := finding["location"].(type) {
+		case string:
+			finding["location"] = normalizedLocationString(location)
+			normalizations = appendUnique(normalizations, "finding.location_string")
+		case map[string]any:
+			if normalizeLocationLine(location) {
+				normalizations = appendUnique(normalizations, "finding.location_line_string")
+			}
+		}
+	}
+	return normalizations
+}
+
+func normalizedLocationString(location string) any {
+	location = strings.TrimSpace(location)
+	if location == "" {
+		return nil
+	}
+	return locationObject(location)
+}
+
+func locationObject(location string) map[string]any {
+	out := map[string]any{"path": location}
+	idx := strings.LastIndex(location, ":")
+	if idx < 0 {
+		return out
+	}
+	path := strings.TrimSpace(location[:idx])
+	lineText := strings.TrimSpace(location[idx+1:])
+	if cut := strings.Index(lineText, "-"); cut >= 0 {
+		lineText = strings.TrimSpace(lineText[:cut])
+	}
+	line, err := strconv.Atoi(lineText)
+	if err != nil || line < 1 || path == "" {
+		return out
+	}
+	out["path"] = path
+	out["line"] = line
+	return out
+}
+
+func normalizeLocationLine(location map[string]any) bool {
+	lineText, ok := location["line"].(string)
+	if !ok {
+		return false
+	}
+	lineText = strings.TrimSpace(lineText)
+	if cut := strings.Index(lineText, "-"); cut >= 0 {
+		lineText = strings.TrimSpace(lineText[:cut])
+	}
+	line, err := strconv.Atoi(lineText)
+	if err != nil || line < 1 {
+		return false
+	}
+	location["line"] = line
+	return true
+}
+
+func appendUnique(values []string, next ...string) []string {
+	for _, value := range next {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		exists := false
+		for _, existing := range values {
+			if existing == value {
+				exists = true
+				break
+			}
+		}
+		if !exists {
+			values = append(values, value)
+		}
+	}
+	return values
 }
 
 func extractFencedJSON(text string) (string, bool) {

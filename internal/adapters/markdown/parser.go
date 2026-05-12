@@ -237,6 +237,9 @@ func (p *parser) handleReview(line string) bool {
 		case "output":
 			p.model.Review.OutputFormat = value
 			return true
+		case "normalizations":
+			p.model.Review.Normalizations = splitCSV(value)
+			return true
 		case "summary":
 			p.model.Review.Summary = value
 			return true
