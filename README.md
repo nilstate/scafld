@@ -177,6 +177,7 @@ Review failure is structured, not a vibe:
   "provider": "claude",
   "model": "claude-opus-4-7",
   "output_format": "claude.structured_output",
+  "normalizations": [],
   "summary": "Review found one open completion blocker.",
   "findings": [
     {

@@ -185,16 +185,17 @@ type Risk struct {
 
 // ReviewState stores the latest review gate projection.
 type ReviewState struct {
-	Status       string                      `json:"status"`
-	Verdict      string                      `json:"verdict"`
-	Mode         corereview.Mode             `json:"mode,omitempty"`
-	Summary      string                      `json:"summary,omitempty"`
-	Findings     []corereview.Finding        `json:"findings,omitempty"`
-	AttackLog    []corereview.AttackLogEntry `json:"attack_log,omitempty"`
-	Budget       corereview.Budget           `json:"budget,omitempty"`
-	Provider     string                      `json:"provider,omitempty"`
-	Model        string                      `json:"model,omitempty"`
-	OutputFormat string                      `json:"output_format,omitempty"`
+	Status         string                      `json:"status"`
+	Verdict        string                      `json:"verdict"`
+	Mode           corereview.Mode             `json:"mode,omitempty"`
+	Summary        string                      `json:"summary,omitempty"`
+	Findings       []corereview.Finding        `json:"findings,omitempty"`
+	AttackLog      []corereview.AttackLogEntry `json:"attack_log,omitempty"`
+	Budget         corereview.Budget           `json:"budget,omitempty"`
+	Provider       string                      `json:"provider,omitempty"`
+	Model          string                      `json:"model,omitempty"`
+	OutputFormat   string                      `json:"output_format,omitempty"`
+	Normalizations []string                    `json:"normalizations,omitempty"`
 }
 
 // Origin records where the spec came from.

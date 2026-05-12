@@ -135,6 +135,10 @@ func TestParseTextAcceptsDossierAndRejectsLegacyPacket(t *testing.T) {
 	if !errors.Is(err, ErrInvalidDossier) {
 		t.Fatalf("core parser should reject provider prose/fences, err = %v", err)
 	}
+	_, err = ParseText(`{"verdict":"pass","mode":"discover","summary":"advisory","findings":[{"id":"advisory","severity":"low","blocks_completion":false,"location":"file.go:12","summary":"note"}],"attack_log":[{"target":"diff","attack":"scan","result":"clean"}],"budget":{"actual_findings":1,"actual_attack_angles":1}}`)
+	if !errors.Is(err, ErrInvalidDossier) {
+		t.Fatalf("core parser should reject provider location shorthand, err = %v", err)
+	}
 }
 
 func TestParseNDJSONAcceptsDossierFrameAndRejectsLegacyFrames(t *testing.T) {

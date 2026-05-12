@@ -74,6 +74,7 @@ func FromSession(model spec.Model, ledger session.Session) spec.Model {
 			next.Review.Provider = dossier.Provider
 			next.Review.Model = dossier.Model
 			next.Review.OutputFormat = dossier.OutputFormat
+			next.Review.Normalizations = dossier.Normalizations
 		}
 		break
 	}

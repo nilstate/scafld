@@ -84,6 +84,9 @@ func Review(out appreview.Output) string {
 	if out.OutputFormat != "" {
 		fmt.Fprintf(&b, "review output: %s\n", out.OutputFormat)
 	}
+	if len(out.Normalizations) > 0 {
+		fmt.Fprintf(&b, "review normalizations: %s\n", strings.Join(out.Normalizations, ", "))
+	}
 	if out.Summary != "" {
 		fmt.Fprintf(&b, "summary: %s\n", out.Summary)
 	}
