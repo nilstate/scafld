@@ -203,6 +203,9 @@ func failOut(w io.Writer, err error, exit int, asJSON bool) int {
 		return exit
 	}
 	fmt.Fprintf(w, "error: %v\n", err)
+	if gateText := output.Gate(output.GateFailure(err)); gateText != "" {
+		fmt.Fprint(w, gateText)
+	}
 	return exit
 }
 

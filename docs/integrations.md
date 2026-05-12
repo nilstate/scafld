@@ -25,10 +25,10 @@ adapters without turning wrapper behavior into the core lifecycle contract.
 
 ## What The Wrappers Do
 
-For executor work:
+For build work:
 
-- approved task -> resolve the current `executor × phase` handoff
-- recovery state -> resolve the current `executor × recovery` handoff
+- approved task -> resolve the current `build × phase` handoff
+- recovery state -> resolve the current `build × recovery` handoff
 
 For challenger review work:
 

@@ -91,7 +91,7 @@ Files impacted:
 - `.scafld/core/scripts/` (all) - Managed provider adapter scripts move into the disposable core bundle; there is no project-owned script override directory in v2.
 - `.scafld/prompts/plan.md` (task-selected) - Planning prompt must instruct agents to edit Markdown specs and runner sections.
 - `.scafld/prompts/harden.md` (task-selected) - Hardening prompt must reference Markdown harden-round regions.
-- `.scafld/prompts/exec.md` (task-selected) - Executor prompt must refer to Markdown spec anchors and living current-state blocks.
+- `.scafld/prompts/build.md` (task-selected) - Build prompt must refer to Markdown spec anchors and living current-state blocks.
 - `.scafld/prompts/review.md` (task-selected) - Review prompt must allow stable Markdown spec anchors and no YAML-specific wording.
 - `.scafld/README.md` (task-selected) - Workspace runtime docs must describe Markdown specs.
 - `README.md` (task-selected) - Product description, install notes, and runtime primitive claims must reflect living Markdown specs.

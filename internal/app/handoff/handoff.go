@@ -26,18 +26,34 @@ func Run(ctx context.Context, specs SpecStore, sessions SessionStore, taskID str
 	if err != nil {
 		return "", err
 	}
-	var b strings.Builder
-	fmt.Fprintf(&b, "# Handoff: %s\n\nStatus: %s\nNext: %s\n", model.Title, model.Status, model.CurrentState.AllowedFollowUp)
-	writeTaskContract(&b, model)
+	var ledger session.Session
+	haveLedger := false
 	if sessions != nil {
-		if ledger, err := sessions.Load(ctx, model.TaskID); err == nil {
-			writeAcceptanceEvidence(&b, model, ledger)
-			writeBlockedAcceptance(&b, model, ledger)
-			writeReviewGate(&b, model, ledger)
-			writeLatestReviewFindings(&b, ledger)
+		if loaded, err := sessions.Load(ctx, model.TaskID); err == nil {
+			ledger = loaded
+			haveLedger = true
 		}
 	}
+	next := handoffNext(model, ledger, haveLedger)
+	var b strings.Builder
+	fmt.Fprintf(&b, "# Handoff: %s\n\nStatus: %s\nNext: %s\n", model.Title, model.Status, next)
+	writeTaskContract(&b, model)
+	writeBuildPhase(&b, model)
+	if haveLedger {
+		writeAcceptanceEvidence(&b, model, ledger)
+		writeBlockedAcceptance(&b, model, ledger)
+		writeReviewGate(&b, model, ledger, next)
+		writeLatestReviewFindings(&b, ledger)
+	}
 	return b.String(), nil
+}
+
+func handoffNext(model spec.Model, ledger session.Session, haveLedger bool) string {
+	next := model.CurrentState.AllowedFollowUp
+	if _, failed := latestReviewAttemptFailed(ledger); haveLedger && failed {
+		return "scafld handoff " + model.TaskID
+	}
+	return next
 }
 
 func writeTaskContract(b *strings.Builder, model spec.Model) {
@@ -50,6 +66,65 @@ func writeTaskContract(b *strings.Builder, model spec.Model) {
 	}
 	writeStringList(b, "Scope", model.Scope, 5)
 	writeStringList(b, "Touchpoints", model.Touchpoints, 8)
+}
+
+func writeBuildPhase(b *strings.Builder, model spec.Model) {
+	if model.Status != spec.StatusActive && model.Status != spec.StatusBlocked {
+		return
+	}
+	phaseID := strings.TrimSpace(model.CurrentState.CurrentPhase)
+	if phaseID == "" || phaseID == "none" {
+		return
+	}
+	b.WriteString("\n## Build Step\n\n")
+	if phaseID == "final" {
+		b.WriteString("Current step: final acceptance\n")
+		fmt.Fprintf(b, "After repair or implementation, run `%s` to record evidence.\n", "scafld build "+model.TaskID)
+		writeCriteriaList(b, "Final acceptance", model.Acceptance.Criteria)
+		return
+	}
+	phase, ok := findPhase(model, phaseID)
+	if !ok {
+		fmt.Fprintf(b, "Current phase: %s\n", phaseID)
+		fmt.Fprintf(b, "After implementation, run `%s` to record evidence.\n", "scafld build "+model.TaskID)
+		return
+	}
+	fmt.Fprintf(b, "Current phase: %s (%s)\n", phase.ID, phase.Name)
+	if strings.TrimSpace(phase.Objective) != "" {
+		fmt.Fprintf(b, "Objective: %s\n", phase.Objective)
+	}
+	writeStringList(b, "Changes", phase.Changes, 12)
+	writeCriteriaList(b, "Phase acceptance", phase.Acceptance)
+	fmt.Fprintf(b, "After implementing this phase, run `%s` to record evidence.\n", "scafld build "+model.TaskID)
+}
+
+func findPhase(model spec.Model, phaseID string) (spec.Phase, bool) {
+	for _, phase := range model.Phases {
+		if phase.ID == phaseID {
+			return phase, true
+		}
+	}
+	return spec.Phase{}, false
+}
+
+func writeCriteriaList(b *strings.Builder, title string, criteria []spec.Criterion) {
+	if len(criteria) == 0 {
+		return
+	}
+	fmt.Fprintf(b, "\n%s:\n", title)
+	for _, criterion := range criteria {
+		fmt.Fprintf(b, "- %s", criterionTitle(criterion))
+		if criterion.ID != "" {
+			fmt.Fprintf(b, " (`%s`)", criterion.ID)
+		}
+		if strings.TrimSpace(criterion.Command) != "" {
+			fmt.Fprintf(b, "\n  Command: `%s`", criterion.Command)
+		}
+		if criterion.ExpectedKind != "" {
+			fmt.Fprintf(b, "\n  Expected kind: `%s`", criterion.ExpectedKind)
+		}
+		b.WriteString("\n")
+	}
 }
 
 func writeStringList(b *strings.Builder, title string, values []string, limit int) {
@@ -117,7 +192,7 @@ func writeBlockedAcceptance(b *strings.Builder, model spec.Model, ledger session
 	}
 	replayed := session.Replay(ledger)
 	var rows []string
-	for _, criterion := range model.AllCriteria() {
+	for _, criterion := range blockedCriteria(model) {
 		state, ok := replayed.CriterionStates[criterion.ID]
 		source, _ := entryBySource(ledger, state.SourceID)
 		context := phaseDependencyContext(model, criterion.PhaseID)
@@ -138,6 +213,28 @@ func writeBlockedAcceptance(b *strings.Builder, model spec.Model, ledger session
 	b.WriteString("\n## Blocked Acceptance\n\n")
 	for _, row := range rows {
 		b.WriteString(row)
+	}
+}
+
+func blockedCriteria(model spec.Model) []spec.Criterion {
+	switch strings.TrimSpace(model.CurrentState.CurrentPhase) {
+	case "", "none":
+		return model.AllCriteria()
+	case "final":
+		return append([]spec.Criterion(nil), model.Acceptance.Criteria...)
+	default:
+		for _, phase := range model.Phases {
+			if phase.ID == model.CurrentState.CurrentPhase {
+				criteria := append([]spec.Criterion(nil), phase.Acceptance...)
+				for i := range criteria {
+					if criteria[i].PhaseID == "" {
+						criteria[i].PhaseID = phase.ID
+					}
+				}
+				return criteria
+			}
+		}
+		return model.AllCriteria()
 	}
 }
 
@@ -203,7 +300,7 @@ func criterionTitle(criterion spec.Criterion) string {
 	return title
 }
 
-func writeReviewGate(b *strings.Builder, model spec.Model, ledger session.Session) {
+func writeReviewGate(b *strings.Builder, model spec.Model, ledger session.Session, next string) {
 	if model.Status != spec.StatusReview {
 		return
 	}
@@ -214,8 +311,17 @@ func writeReviewGate(b *strings.Builder, model spec.Model, ledger session.Sessio
 	if model.CurrentState.Reason != "" {
 		fmt.Fprintf(b, "Reason: %s\n", model.CurrentState.Reason)
 	}
-	if model.CurrentState.AllowedFollowUp != "" {
-		fmt.Fprintf(b, "Allowed command: `%s`\n", model.CurrentState.AllowedFollowUp)
+	if next != "" {
+		fmt.Fprintf(b, "Allowed command: `%s`\n", next)
+	}
+	if attempt, ok := latestReviewAttemptFailed(ledger); ok {
+		fmt.Fprintf(b, "Latest review attempt: failed\n")
+		if attempt.Reason != "" {
+			fmt.Fprintf(b, "Attempt reason: %s\n", attempt.Reason)
+		}
+		if attempt.Path != "" {
+			fmt.Fprintf(b, "Attempt diagnostic: `%s`\n", attempt.Path)
+		}
 	}
 	if baseline, ok := session.FirstWorkspaceBaseline(ledger); ok {
 		fmt.Fprintf(b, "Workspace baseline: `%s`\n", baseline.ID)
@@ -226,10 +332,26 @@ func writeReviewGate(b *strings.Builder, model spec.Model, ledger session.Sessio
 	b.WriteString("- Return a structured review verdict through `scafld review`, not by editing the spec.\n")
 }
 
+func latestReviewAttemptFailed(ledger session.Session) (session.Entry, bool) {
+	for i := len(ledger.Entries) - 1; i >= 0; i-- {
+		switch ledger.Entries[i].Type {
+		case "review_attempt":
+			return ledger.Entries[i], ledger.Entries[i].Status == "failed"
+		case "build", "criterion", "phase", "review", "approval", session.EntryWorkspaceBaseline, "fail", "cancel":
+			return session.Entry{}, false
+		}
+	}
+	return session.Entry{}, false
+}
+
 func writeLatestReviewFindings(b *strings.Builder, ledger session.Session) {
 	for i := len(ledger.Entries) - 1; i >= 0; i-- {
 		entry := ledger.Entries[i]
-		if entry.Type != "review" {
+		switch entry.Type {
+		case "review":
+		case "build", "criterion", "phase", "approval", session.EntryWorkspaceBaseline, "fail", "cancel":
+			return
+		default:
 			continue
 		}
 		dossier, ok := corereview.DecodeDossier(entry.Output)

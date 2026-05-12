@@ -76,6 +76,48 @@ func TestStatusShowsRunningReviewAttemptAndLatestAcceptedReview(t *testing.T) {
 	}
 }
 
+func TestStatusDoesNotSurfaceReviewAfterLaterBuildEvidence(t *testing.T) {
+	t.Parallel()
+
+	ledger := session.New("task", "2026-05-05T00:00:00Z")
+	ledger = ledger.WithEntry(session.Entry{Type: "review", Status: corereview.VerdictFail, Output: corereview.EncodeDossier(reviewDossier("old", "old blocker"))})
+	ledger = ledger.WithEntry(session.Entry{Type: "build", Status: "active", Reason: "repair started"})
+	out, err := Run(context.Background(), fakeSpecStore{model: spec.Model{TaskID: "task", Status: spec.StatusActive}}, fakeSessionStore{ledger: ledger}, "task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Review.Verdict != "" || len(out.Review.Findings) != 0 {
+		t.Fatalf("later build evidence should invalidate stale review info: %+v", out.Review)
+	}
+}
+
+func TestStatusReviewAttemptFailureCreatesRepairContract(t *testing.T) {
+	t.Parallel()
+
+	ledger := session.New("task", "2026-05-05T00:00:00Z")
+	ledger = ledger.WithEntry(session.Entry{Type: "review", Status: corereview.VerdictPass, Output: corereview.EncodeDossier(corereview.Dossier{Verdict: corereview.VerdictPass, Mode: corereview.ModeDiscover, Summary: "clean", AttackLog: []corereview.AttackLogEntry{{Target: "diff", Attack: "scan", Result: "clean"}}})})
+	ledger = ledger.WithEntry(session.Entry{Type: "review_attempt", Status: "failed", Reason: "review provider failed: invalid dossier", Path: "/tmp/review-diagnostic.txt"})
+	out, err := Run(context.Background(), fakeSpecStore{model: spec.Model{
+		TaskID: "task",
+		Status: spec.StatusReview,
+		CurrentState: spec.CurrentState{
+			AllowedFollowUp: "scafld complete task",
+		},
+	}}, fakeSessionStore{ledger: ledger}, "task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Repair == nil || out.Repair.Gate != "review" || out.Repair.Next != "scafld handoff task" {
+		t.Fatalf("repair contract = %+v", out.Repair)
+	}
+	if len(out.Repair.Evidence) != 1 || out.Repair.Evidence[0] != "/tmp/review-diagnostic.txt" {
+		t.Fatalf("repair evidence = %+v", out.Repair.Evidence)
+	}
+	if out.Next != "scafld handoff task" {
+		t.Fatalf("next = %q, want handoff", out.Next)
+	}
+}
+
 func TestStatusIncludesBlockedRepairContract(t *testing.T) {
 	t.Parallel()
 
@@ -104,5 +146,55 @@ func TestStatusIncludesBlockedRepairContract(t *testing.T) {
 	}
 	if out.Repair == nil || out.Repair.Expected != "all acceptance criteria pass" || len(out.Repair.Blockers) != 1 || len(out.Repair.Evidence) != 1 {
 		t.Fatalf("repair contract = %+v", out.Repair)
+	}
+}
+
+func TestStatusBlockedRepairContractUsesCurrentPhaseOnly(t *testing.T) {
+	t.Parallel()
+
+	model := spec.Model{
+		TaskID: "task",
+		Status: spec.StatusBlocked,
+		Title:  "Task",
+		CurrentState: spec.CurrentState{
+			CurrentPhase:    "phase1",
+			Reason:          "phase acceptance failed",
+			AllowedFollowUp: "scafld handoff task",
+		},
+		Phases: []spec.Phase{
+			{
+				ID: "phase1",
+				Acceptance: []spec.Criterion{{
+					ID:          "p1",
+					Title:       "current phase test",
+					Status:      "fail",
+					Evidence:    "exit code was 1",
+					SourceEvent: "entry-1",
+				}},
+			},
+			{
+				ID: "phase2",
+				Acceptance: []spec.Criterion{{
+					ID:     "p2",
+					Title:  "future phase test",
+					Status: "pending",
+				}},
+			},
+		},
+		Acceptance: spec.Acceptance{Criteria: []spec.Criterion{{
+			ID:     "final",
+			Title:  "final acceptance",
+			Status: "pending",
+		}}},
+	}
+	out, err := Run(context.Background(), fakeSpecStore{model: model}, fakeSessionStore{ledger: session.New("task", "now")}, "task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Repair == nil {
+		t.Fatal("repair contract missing")
+	}
+	if len(out.Repair.Blockers) != 1 || out.Repair.Blockers[0] != "p1: current phase test (exit code was 1)" {
+		t.Fatalf("repair blockers = %+v", out.Repair.Blockers)
 	}
 }

@@ -97,6 +97,162 @@ func TestFailOutJSONIncludesGateFailure(t *testing.T) {
 	}
 }
 
+func TestFailOutHumanIncludesGateFailure(t *testing.T) {
+	t.Parallel()
+
+	var stderr bytes.Buffer
+	code := failOut(&stderr, gate.New(errors.New("review gate has not passed"), gate.Failure{
+		Gate:     "complete",
+		Status:   "review",
+		Reason:   "latest review gate has not passed",
+		Evidence: []string{"session review entries"},
+		Expected: "review verdict pass",
+		Actual:   "review verdict fail",
+		Blockers: []string{"blocking finding"},
+		Next:     "scafld review task",
+	}), ExitValidation, false)
+	if code != ExitValidation {
+		t.Fatalf("exit = %d", code)
+	}
+	for _, want := range []string{
+		"error: review gate has not passed",
+		"gate: complete",
+		"expected: review verdict pass",
+		"actual: review verdict fail",
+		"evidence:",
+		"- session review entries",
+		"blockers:",
+		"- blocking finding",
+		"next: scafld review task",
+	} {
+		if !strings.Contains(stderr.String(), want) {
+			t.Fatalf("stderr missing %q:\n%s", want, stderr.String())
+		}
+	}
+}
+
+func TestBlockedBuildHumanOutputUsesGateFailureContract(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	initGitWorkspace(t, root)
+	runCLI(t, []string{"init", "--root", root, "--no-agent-docs"})
+	runCLI(t, []string{"plan", "--root", root, "blocked-build", "--command", "false"})
+	runCLI(t, []string{"approve", "--root", root, "blocked-build"})
+	runCLI(t, []string{"build", "--root", root, "blocked-build"})
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run(context.Background(), []string{"build", "--root", root, "blocked-build"}, &stdout, &stderr)
+	if code != ExitValidation {
+		t.Fatalf("Run(build) exit = %d, want %d; stdout=%q stderr=%q", code, ExitValidation, stdout.String(), stderr.String())
+	}
+	for _, want := range []string{
+		"build blocked:",
+		"gate: build",
+		"status: blocked",
+		"reason:",
+		"evidence:",
+		"expected: all acceptance criteria pass",
+		"actual:",
+		"blockers:",
+		"next: scafld handoff blocked-build",
+	} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("stdout missing %q:\n%s", want, stdout.String())
+		}
+	}
+}
+
+func TestBuildConfigFailureUsesGateFailureContract(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	initGitWorkspace(t, root)
+	runCLI(t, []string{"init", "--root", root, "--no-agent-docs"})
+	if err := os.WriteFile(filepath.Join(root, ".scafld", "config.yaml"), []byte("invariants:\n  canonical:\n    - bad\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run(context.Background(), []string{"build", "--root", root, "task"}, &stdout, &stderr)
+	if code != ExitGeneric {
+		t.Fatalf("Run(build) exit = %d, want %d; stdout=%q stderr=%q", code, ExitGeneric, stdout.String(), stderr.String())
+	}
+	for _, want := range []string{
+		"gate: config",
+		"status: invalid",
+		"reason: workspace config could not be loaded",
+		"evidence:",
+		".scafld/config.yaml",
+		"expected: valid scafld config shape",
+		"actual:",
+		"blockers:",
+		"next: scafld config",
+	} {
+		if !strings.Contains(stderr.String(), want) {
+			t.Fatalf("stderr missing %q:\n%s", want, stderr.String())
+		}
+	}
+}
+
+func TestReviewProviderSelectionFailureUsesGateFailureContract(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	initGitWorkspace(t, root)
+	runCLI(t, []string{"init", "--root", root, "--no-agent-docs"})
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run(context.Background(), []string{"review", "--root", root, "--provider", "command", "task"}, &stdout, &stderr)
+	if code != ExitInvalid {
+		t.Fatalf("Run(review) exit = %d, want %d; stdout=%q stderr=%q", code, ExitInvalid, stdout.String(), stderr.String())
+	}
+	for _, want := range []string{
+		"gate: review",
+		"status: review",
+		"reason: review provider could not be selected",
+		"evidence:",
+		".scafld/config.yaml",
+		"expected: external review provider configured and available",
+		"actual: --provider=command requires --provider-command",
+		"blockers:",
+		"next: scafld config",
+	} {
+		if !strings.Contains(stderr.String(), want) {
+			t.Fatalf("stderr missing %q:\n%s", want, stderr.String())
+		}
+	}
+}
+
+func TestReviewProviderSelectionFailureJSONIncludesGateFailure(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	initGitWorkspace(t, root)
+	runCLI(t, []string{"init", "--root", root, "--no-agent-docs"})
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run(context.Background(), []string{"review", "--root", root, "--provider", "command", "--json", "task"}, &stdout, &stderr)
+	if code != ExitInvalid {
+		t.Fatalf("Run(review) exit = %d, want %d; stdout=%q stderr=%q", code, ExitInvalid, stdout.String(), stderr.String())
+	}
+	var payload struct {
+		OK    bool `json:"ok"`
+		Error struct {
+			Gate gate.Failure `json:"gate"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(stderr.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.OK || payload.Error.Gate.Gate != "review" || payload.Error.Gate.Actual != "--provider=command requires --provider-command" {
+		t.Fatalf("payload = %+v", payload)
+	}
+}
+
 func TestRunInit(t *testing.T) {
 	t.Parallel()
 
@@ -370,6 +526,7 @@ func TestRunLifecycleMovesSpecsByState(t *testing.T) {
 	if _, err := os.Stat(activePath); err != nil {
 		t.Fatalf("active path missing: %v", err)
 	}
+	runCLI(t, []string{"build", "--root", root, "lifecycle-task"})
 
 	command := `printf '{"verdict":"pass","mode":"discover","summary":"clean","findings":[],"attack_log":[{"target":"diff","attack":"scan","result":"clean"}],"budget":{"actual_attack_angles":1}}'`
 	runCLI(t, []string{"review", "--root", root, "lifecycle-task", "--provider", "command", "--provider-command", command})
@@ -395,6 +552,7 @@ func TestRunBuildUsesExecutionConfig(t *testing.T) {
 	}
 	runCLI(t, []string{"plan", "--root", root, "env-task", "--command", `printf '%s' "$PATH" > path.txt`})
 	runCLI(t, []string{"approve", "--root", root, "env-task"})
+	runCLI(t, []string{"build", "--root", root, "env-task"})
 	runCLI(t, []string{"build", "--root", root, "env-task"})
 	data, err := os.ReadFile(filepath.Join(root, "path.txt"))
 	if err != nil {
@@ -422,6 +580,7 @@ func TestRunBuildUsesDetectedRubyToolchainShims(t *testing.T) {
 	runCLI(t, []string{"plan", "--root", root, "ruby-env-task", "--command", `printf '%s' "$PATH" > path.txt`})
 	runCLI(t, []string{"approve", "--root", root, "ruby-env-task"})
 	runCLI(t, []string{"build", "--root", root, "ruby-env-task"})
+	runCLI(t, []string{"build", "--root", root, "ruby-env-task"})
 	data, err := os.ReadFile(filepath.Join(root, "path.txt"))
 	if err != nil {
 		t.Fatal(err)
@@ -440,6 +599,7 @@ func TestRunReviewSurfacesFindingsInReviewStatusAndHandoff(t *testing.T) {
 	runCLI(t, []string{"init", "--root", root, "--no-agent-docs"})
 	runCLI(t, []string{"plan", "--root", root, "review-task", "--command", "true"})
 	runCLI(t, []string{"approve", "--root", root, "review-task"})
+	runCLI(t, []string{"build", "--root", root, "review-task"})
 	runCLI(t, []string{"build", "--root", root, "review-task"})
 	command := `printf '{"verdict":"fail","mode":"discover","summary":"bug found","findings":[{"id":"f1","severity":"high","blocks_completion":true,"location":{"path":"file.go"},"evidence":"bug","impact":"breaks behavior","validation":"rerun tests","summary":"bug"}],"attack_log":[{"target":"diff","attack":"scan","result":"finding"}],"budget":{"actual_findings":1,"actual_attack_angles":1}}'`
 	var stdout bytes.Buffer
@@ -470,6 +630,7 @@ func TestRunReviewHumanReviewedOverrideCompletes(t *testing.T) {
 	runCLI(t, []string{"plan", "--root", root, "human-review-task", "--command", "true"})
 	runCLI(t, []string{"approve", "--root", root, "human-review-task"})
 	runCLI(t, []string{"build", "--root", root, "human-review-task"})
+	runCLI(t, []string{"build", "--root", root, "human-review-task"})
 	stdout := runCLI(t, []string{"review", "--root", root, "human-review-task", "--human-reviewed", "--reason", "operator reviewed PR 123"})
 	if !strings.Contains(stdout, "review verdict: pass") || !strings.Contains(stdout, "next: scafld complete human-review-task") {
 		t.Fatalf("human review output = %q", stdout)
@@ -493,6 +654,7 @@ func TestRunReviewPrintContextDoesNotInvokeProvider(t *testing.T) {
 	runCLI(t, []string{"init", "--root", root, "--no-agent-docs"})
 	runCLI(t, []string{"plan", "--root", root, "context-task", "--command", "true"})
 	runCLI(t, []string{"approve", "--root", root, "context-task"})
+	runCLI(t, []string{"build", "--root", root, "context-task"})
 	runCLI(t, []string{"build", "--root", root, "context-task"})
 	stdout := runCLI(t, []string{"review", "--root", root, "context-task", "--print-context", "--provider", "command", "--provider-command", `printf 'should-not-run'`})
 	if !strings.Contains(stdout, "Review Context Packet") || strings.Contains(stdout, "should-not-run") {
@@ -518,6 +680,20 @@ func TestReviewHelpIncludesContextFlags(t *testing.T) {
 		if !strings.Contains(stdout.String(), want) {
 			t.Fatalf("review help missing %q:\n%s", want, stdout.String())
 		}
+	}
+}
+
+func TestExecCommandIsNotPublicSurface(t *testing.T) {
+	t.Parallel()
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run(context.Background(), []string{"exec", "task"}, &stdout, &stderr)
+	if code != ExitInvalid {
+		t.Fatalf("exec exit = %d, want %d; stdout=%q stderr=%q", code, ExitInvalid, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), `unknown command "exec"`) {
+		t.Fatalf("exec stderr = %q", stderr.String())
 	}
 }
 

@@ -142,8 +142,9 @@ func RunWithInput(ctx context.Context, specs SpecStore, sessions SessionStore, w
 			Type:   "review_attempt",
 			Status: "failed",
 			Reason: "review workspace snapshot failed: " + mutationErr.Error(),
+			Path:   diagnosticPath(mutationErr),
 		}, now)
-		return Output{}, mutationErr
+		return Output{}, reviewGateError(model, mutationErr, "review workspace snapshot failed", mutationErr.Error())
 	}
 	if mutated := coreworkspace.MutationStrings(reviewBlockingMutations(beforeFull, afterFull, scope, path)); len(mutated) > 0 {
 		dossier.Findings = append(dossier.Findings, workspaceMutationFinding(mutated))
@@ -164,26 +165,58 @@ func RunWithInput(ctx context.Context, specs SpecStore, sessions SessionStore, w
 			Type:   "review_attempt",
 			Status: "failed",
 			Reason: "review provider failed: " + err.Error(),
+			Path:   diagnosticPath(err),
 		}, now)
-		return Output{}, err
+		return Output{}, reviewGateError(model, err, "review provider failed", err.Error())
 	}
 	if dossier.Mode != mode {
+		err := fmt.Errorf("%w: mode %q does not match requested mode %q", review.ErrInvalidDossier, dossier.Mode, mode)
 		_, _ = sessions.Append(context.WithoutCancel(ctx), model.TaskID, session.Entry{
 			Type:   "review_attempt",
 			Status: "failed",
 			Reason: fmt.Sprintf("review dossier invalid: mode %q does not match requested mode %q", dossier.Mode, mode),
+			Path:   diagnosticPath(err),
 		}, now)
-		return Output{}, fmt.Errorf("%w: mode %q does not match requested mode %q", review.ErrInvalidDossier, dossier.Mode, mode)
+		return Output{}, reviewGateError(model, err, "review dossier invalid", err.Error())
 	}
 	if err := review.ValidateDossier(dossier); err != nil {
 		_, _ = sessions.Append(context.WithoutCancel(ctx), model.TaskID, session.Entry{
 			Type:   "review_attempt",
 			Status: "failed",
 			Reason: "review dossier invalid: " + err.Error(),
+			Path:   diagnosticPath(err),
 		}, now)
-		return Output{}, err
+		return Output{}, reviewGateError(model, err, "review dossier invalid", err.Error())
 	}
 	return recordReviewDossier(ctx, specs, sessions, model, path, dossier, now)
+}
+
+func reviewGateError(model spec.Model, err error, reason string, actual string) error {
+	if err == nil {
+		err = errors.New(reason)
+	}
+	evidence := []string{"review_attempt session entry", "provider diagnostic output"}
+	if path := diagnosticPath(err); path != "" {
+		evidence = []string{path}
+	}
+	return gate.New(err, gate.Failure{
+		Gate:     "review",
+		Status:   string(model.Status),
+		Reason:   reason,
+		Evidence: evidence,
+		Expected: "valid ReviewDossier submitted by an external reviewer",
+		Actual:   actual,
+		Blockers: []string{reason},
+		Next:     "scafld handoff " + model.TaskID,
+	})
+}
+
+func diagnosticPath(err error) string {
+	var withDiagnostic interface{ DiagnosticPath() string }
+	if errors.As(err, &withDiagnostic) {
+		return withDiagnostic.DiagnosticPath()
+	}
+	return ""
 }
 
 func recordReviewDossier(ctx context.Context, specs SpecStore, sessions SessionStore, model spec.Model, path string, dossier review.Dossier, now string) (Output, error) {

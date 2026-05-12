@@ -1,6 +1,6 @@
-# EXECUTOR HANDOFF TEMPLATE
+# BUILD HANDOFF TEMPLATE
 
-This file is the project-owned template source for the `executor × phase`
+This file is the project-owned template source for the `build × phase`
 handoff. Follow the generated handoff, not this template alone.
 
 ## Mission
@@ -19,7 +19,7 @@ win.
 - read the generated handoff before touching code
 - stay inside the declared phase unless the contract explicitly expands scope
 - prefer the curated context and prior phase summaries over old trial-and-error
-- run the declared validation instead of guessing
+- run `scafld build <task-id>` after implementation instead of guessing
 - leave the task in a state that can survive adversarial review
 
 ## Execution Loop
@@ -27,8 +27,8 @@ win.
 1. Read the task contract, phase objective, declared changes, and acceptance criteria.
 2. Inspect the current code only where the handoff says it matters.
 3. Make the smallest coherent change that satisfies the current phase.
-4. Run the declared acceptance checks.
-5. If validation fails, switch to the generated `executor × recovery` handoff instead of broadening the task.
+4. Run `scafld build <task-id>` to record acceptance evidence.
+5. If build blocks, use the generated recovery handoff instead of broadening the task.
 
 ## Do Not
 

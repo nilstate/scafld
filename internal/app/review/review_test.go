@@ -199,6 +199,17 @@ func (f providerFunc) Invoke(ctx context.Context, req corereview.Request) (corer
 	return f(ctx, req)
 }
 
+type diagnosticErr struct {
+	path string
+	err  error
+}
+
+func (e diagnosticErr) Error() string { return e.err.Error() }
+func (e diagnosticErr) Unwrap() error { return e.err }
+func (e diagnosticErr) DiagnosticPath() string {
+	return e.path
+}
+
 func TestProviderTimeoutMutationInvalidOutputDossierRepairFindingSignal(t *testing.T) {
 	t.Parallel()
 
@@ -223,6 +234,32 @@ func TestReviewRejectsInvalidDirectProviderDossier(t *testing.T) {
 	_, err := Run(context.Background(), specs, &fakeSessions{}, nil, fakeProvider{packet: corereview.Dossier{Verdict: "maybe"}}, fakeClock{}, "task")
 	if !errors.Is(err, corereview.ErrInvalidDossier) {
 		t.Fatalf("invalid provider packet err = %v", err)
+	}
+}
+
+func TestReviewProviderFailureRecordsDiagnosticPath(t *testing.T) {
+	t.Parallel()
+
+	diagnostic := "/tmp/review-diagnostic.txt"
+	specs := &fakeSpecs{model: spec.Model{TaskID: "task", Title: "Task", Status: spec.StatusReview}}
+	sessions := &fakeSessions{}
+	_, err := Run(context.Background(), specs, sessions, nil, providerFunc(func(context.Context, corereview.Request) (corereview.Dossier, error) {
+		return corereview.Dossier{}, diagnosticErr{path: diagnostic, err: errors.New("provider failed")}
+	}), fakeClock{}, "task")
+	if err == nil {
+		t.Fatal("expected provider failure")
+	}
+	var found bool
+	for _, entry := range sessions.ledger.Entries {
+		if entry.Type == "review_attempt" && entry.Status == "failed" {
+			found = true
+			if entry.Path != diagnostic {
+				t.Fatalf("review attempt path = %q, want %q", entry.Path, diagnostic)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("failed review attempt not recorded: %+v", sessions.ledger.Entries)
 	}
 }
 
@@ -524,10 +561,10 @@ func TestDerivedReviewScopeExcludesPrivateAndLocalPaths(t *testing.T) {
 		TaskID: "task",
 		Scope: []string{
 			"Update `api/handler.go`.",
-			"Out of scope: `.git/**`, `.priv/**`, `.env*`, `nested/.env.production`, `.scafld/config.local.yaml`, `.scafld/reviews/`.",
+			"Out of scope: `.git/**`, `.priv/**`, `.env*`, `nested/.env.production`, `.scafld/config.local.yaml`.",
 		},
 	}, nil, []string{" M hash api/handler.go"})
-	for _, denied := range []string{".git", ".priv", ".env", ".envrc", "nested/.env.production", ".scafld/config.local.yaml", ".scafld/reviews"} {
+	for _, denied := range []string{".git", ".priv", ".env", ".envrc", "nested/.env.production", ".scafld/config.local.yaml"} {
 		if containsString(scope, denied) {
 			t.Fatalf("derived review scope should not include %s: %+v", denied, scope)
 		}

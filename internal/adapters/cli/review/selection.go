@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/nilstate/scafld/v2/internal/adapters/cli/output"
 	configadapter "github.com/nilstate/scafld/v2/internal/adapters/config"
 	"github.com/nilstate/scafld/v2/internal/adapters/process"
 	"github.com/nilstate/scafld/v2/internal/adapters/providers"
@@ -45,7 +46,7 @@ type Selection struct {
 func Select(ctx context.Context, opts Options) (Selection, error) {
 	cfg, err := configadapter.Load(ctx, opts.Root)
 	if err != nil {
-		return Selection{}, fmt.Errorf("load config: %w", err)
+		return Selection{}, output.ConfigGateError(fmt.Errorf("load config: %w", err))
 	}
 	contextSections := reviewContextSections(opts.Root, cfg.Review.Context)
 	selection := Selection{
@@ -79,7 +80,7 @@ func Select(ctx context.Context, opts Options) (Selection, error) {
 		FallbackPolicy: external.FallbackPolicy,
 	})
 	if err != nil {
-		return Selection{}, err
+		return Selection{}, output.ReviewProviderGateError(err)
 	}
 	selection.Provider = provider
 	return selection, nil

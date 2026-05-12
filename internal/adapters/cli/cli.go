@@ -54,8 +54,7 @@ var commands = []command{
 	{"harden", "Stress-test a draft spec before approval"},
 	{"validate", "Validate a task spec"},
 	{"approve", "Approve a draft spec"},
-	{"build", "Execute approved work"},
-	{"exec", "Run selected acceptance criteria"},
+	{"build", "Open or advance governed build phases"},
 	{"review", "Run the adversarial review gate"},
 	{"complete", "Complete reviewed work"},
 	{"fail", "Mark work failed"},
@@ -78,7 +77,6 @@ var commandHandlers = map[string]commandHandler{
 	"validate":            runValidate,
 	"approve":             runApprove,
 	"build":               runBuild,
-	"exec":                runBuild,
 	"review":              runReview,
 	"complete":            runComplete,
 	"fail":                runFail,
@@ -293,7 +291,7 @@ func runBuild(ctx context.Context, args []string, stdout io.Writer, stderr io.Wr
 	root, _ := commandRoot(ctx, opts, false)
 	cfg, err := configadapter.Load(ctx, root)
 	if err != nil {
-		return failOut(stderr, fmt.Errorf("load config: %w", err), ExitGeneric, opts.JSON)
+		return failOut(stderr, output.ConfigGateError(fmt.Errorf("load config: %w", err)), ExitGeneric, opts.JSON)
 	}
 	runner := process.Runner{DiagnosticsDir: root + "/.scafld/runs/" + opts.Positionals[0] + "/diagnostics"}
 	executionEnv := configadapter.EffectiveExecution(root, cfg.Execution).ProcessEnv()

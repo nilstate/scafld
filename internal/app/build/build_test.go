@@ -65,17 +65,52 @@ type fakeBuildClock struct{}
 
 func (fakeBuildClock) Now() time.Time { return time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC) }
 
-func TestPhaseCriterionEvidence(t *testing.T) {
+func TestBuildOpensPhaseWithoutRunningAcceptance(t *testing.T) {
+	t.Parallel()
+
+	runner := &fakeRunner{}
+	specs := &fakeSpecs{model: spec.Model{TaskID: "task", Status: spec.StatusApproved, Phases: []spec.Phase{{ID: "phase1", Name: "Phase", Acceptance: []spec.Criterion{{ID: "ac1", PhaseID: "phase1", Command: "false", ExpectedKind: acceptance.ExpectedExitCodeZero}}}}}}
+	sessions := &fakeSessions{}
+	out, err := Run(context.Background(), specs, sessions, nil, runner, fakeBuildClock{}, Input{TaskID: "task"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Passed != 0 || out.Failed != 0 || specs.model.Status != spec.StatusActive {
+		t.Fatalf("output %+v model %+v", out, specs.model)
+	}
+	if len(runner.commands) != 0 {
+		t.Fatalf("first build should not run future acceptance, commands = %+v", runner.commands)
+	}
+	if specs.model.Phases[0].Status != "active" || specs.model.CurrentState.CurrentPhase != "phase1" {
+		t.Fatalf("phase state = %+v current=%q, want active phase1", specs.model.Phases[0], specs.model.CurrentState.CurrentPhase)
+	}
+	if specs.model.CurrentState.AllowedFollowUp != "scafld handoff task" {
+		t.Fatalf("next action = %q", specs.model.CurrentState.AllowedFollowUp)
+	}
+	latest := sessions.ledger.Entries[len(sessions.ledger.Entries)-1]
+	if latest.Type != "build" || latest.Status != string(spec.StatusActive) {
+		t.Fatalf("latest session entry = %+v, want build active result", latest)
+	}
+}
+
+func TestBuildRunsOpenedPhaseAndMovesToReview(t *testing.T) {
 	t.Parallel()
 
 	specs := &fakeSpecs{model: spec.Model{TaskID: "task", Status: spec.StatusApproved, Phases: []spec.Phase{{ID: "phase1", Name: "Phase", Acceptance: []spec.Criterion{{ID: "ac1", PhaseID: "phase1", Command: "true", ExpectedKind: acceptance.ExpectedExitCodeZero}}}}}}
 	sessions := &fakeSessions{}
-	out, err := Run(context.Background(), specs, sessions, nil, &fakeRunner{}, fakeBuildClock{}, Input{TaskID: "task"})
+	runner := &fakeRunner{}
+	if _, err := Run(context.Background(), specs, sessions, nil, runner, fakeBuildClock{}, Input{TaskID: "task"}); err != nil {
+		t.Fatal(err)
+	}
+	out, err := Run(context.Background(), specs, sessions, nil, runner, fakeBuildClock{}, Input{TaskID: "task"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out.Passed != 1 || specs.model.Status != spec.StatusReview {
+	if out.Passed != 1 || out.Failed != 0 || specs.model.Status != spec.StatusReview {
 		t.Fatalf("output %+v model %+v", out, specs.model)
+	}
+	if len(runner.commands) != 1 || runner.commands[0] != "true" {
+		t.Fatalf("commands = %+v, want one phase command", runner.commands)
 	}
 	if specs.model.Phases[0].Status != "completed" {
 		t.Fatalf("phase status = %q, want completed", specs.model.Phases[0].Status)
@@ -83,30 +118,43 @@ func TestPhaseCriterionEvidence(t *testing.T) {
 	if specs.model.CurrentState.AllowedFollowUp != "scafld review task" {
 		t.Fatalf("next action = %q", specs.model.CurrentState.AllowedFollowUp)
 	}
-	latest := sessions.ledger.Entries[len(sessions.ledger.Entries)-1]
-	if latest.Type != "build" || latest.Status != string(spec.StatusReview) {
-		t.Fatalf("latest session entry = %+v, want build review result", latest)
-	}
 }
 
-func TestBuildBlocksWhenCriterionHasNoEvidence(t *testing.T) {
+func TestBuildBlocksOnlyAfterEvidenceAttempt(t *testing.T) {
 	t.Parallel()
 
-	specs := &fakeSpecs{model: spec.Model{TaskID: "task", Status: spec.StatusApproved, Phases: []spec.Phase{{ID: "phase1", Name: "Phase", Acceptance: []spec.Criterion{{ID: "ac1", PhaseID: "phase1", ExpectedKind: acceptance.ExpectedExitCodeZero}}}}}}
+	specs := &fakeSpecs{model: spec.Model{TaskID: "task", Status: spec.StatusApproved, Phases: []spec.Phase{{ID: "phase1", Name: "Phase", Acceptance: []spec.Criterion{{ID: "ac1", PhaseID: "phase1", Command: "false", ExpectedKind: acceptance.ExpectedExitCodeZero}}}}}}
+	runner := &fakeRunner{exitBy: map[string]int{"false": 1, "true": 0}}
 	sessions := &fakeSessions{}
-	out, err := Run(context.Background(), specs, sessions, nil, &fakeRunner{}, fakeBuildClock{}, Input{TaskID: "task"})
+	started, err := Run(context.Background(), specs, sessions, nil, runner, fakeBuildClock{}, Input{TaskID: "task"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out.Status != spec.StatusBlocked || out.Failed != 1 {
-		t.Fatalf("output = %+v, want blocked with one failed/pending criterion", out)
+	if started.Status != spec.StatusActive || len(runner.commands) != 0 {
+		t.Fatalf("first build = %+v commands=%+v, want active without evidence", started, runner.commands)
+	}
+	out, err := Run(context.Background(), specs, sessions, nil, runner, fakeBuildClock{}, Input{TaskID: "task"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Status != spec.StatusBlocked {
+		t.Fatalf("output = %+v, want blocked", out)
+	}
+	if len(runner.commands) != 1 || runner.commands[0] != "false" {
+		t.Fatalf("commands = %+v, want failed phase command only", runner.commands)
+	}
+	if specs.model.Phases[0].Status != "blocked" {
+		t.Fatalf("phase1 status = %q, want blocked", specs.model.Phases[0].Status)
+	}
+	if specs.model.CurrentState.Blockers == "" || specs.model.CurrentState.Blockers == "none" {
+		t.Fatalf("blocked state should describe blockers, got %q", specs.model.CurrentState.Blockers)
 	}
 	if out.Next != "scafld handoff task" || specs.model.CurrentState.AllowedFollowUp != "scafld handoff task" {
 		t.Fatalf("blocked next action = %+v model=%+v", out, specs.model.CurrentState)
 	}
 }
 
-func TestBuildStopsAtFirstBlockedPhase(t *testing.T) {
+func TestBuildAdvancesOnePhasePerInvocation(t *testing.T) {
 	t.Parallel()
 
 	specs := &fakeSpecs{model: spec.Model{
@@ -118,26 +166,34 @@ func TestBuildStopsAtFirstBlockedPhase(t *testing.T) {
 			ExpectedKind: acceptance.ExpectedExitCodeZero,
 		}}},
 		Phases: []spec.Phase{
-			{ID: "phase1", Name: "First", Acceptance: []spec.Criterion{{ID: "ac1", PhaseID: "phase1", Command: "false", ExpectedKind: acceptance.ExpectedExitCodeZero}}},
-			{ID: "phase2", Name: "Second", Acceptance: []spec.Criterion{{ID: "ac2", PhaseID: "phase2", Command: "true", ExpectedKind: acceptance.ExpectedExitCodeZero}}},
+			{ID: "phase1", Name: "First", Acceptance: []spec.Criterion{{ID: "ac1", PhaseID: "phase1", Command: "phase1", ExpectedKind: acceptance.ExpectedExitCodeZero}}},
+			{ID: "phase2", Name: "Second", Acceptance: []spec.Criterion{{ID: "ac2", PhaseID: "phase2", Command: "phase2", ExpectedKind: acceptance.ExpectedExitCodeZero}}},
 		},
 	}}
-	runner := &fakeRunner{exitBy: map[string]int{"false": 1, "true": 0}}
-	out, err := Run(context.Background(), specs, &fakeSessions{}, nil, runner, fakeBuildClock{}, Input{TaskID: "task"})
+	runner := &fakeRunner{}
+	sessions := &fakeSessions{}
+	if _, err := Run(context.Background(), specs, sessions, nil, runner, fakeBuildClock{}, Input{TaskID: "task"}); err != nil {
+		t.Fatal(err)
+	}
+	out, err := Run(context.Background(), specs, sessions, nil, runner, fakeBuildClock{}, Input{TaskID: "task"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out.Status != spec.StatusBlocked {
-		t.Fatalf("output = %+v, want blocked", out)
+	if out.Status != spec.StatusActive || specs.model.CurrentState.CurrentPhase != "phase2" {
+		t.Fatalf("after phase1 output=%+v current=%q", out, specs.model.CurrentState.CurrentPhase)
 	}
-	if len(runner.commands) != 2 || runner.commands[0] != "false" || runner.commands[1] != "go test ./..." {
-		t.Fatalf("commands = %+v, want phase1 command then global validation", runner.commands)
+	if len(runner.commands) != 1 || runner.commands[0] != "phase1" {
+		t.Fatalf("commands after phase1 = %+v", runner.commands)
 	}
-	if specs.model.Phases[0].Status != "blocked" {
-		t.Fatalf("phase1 status = %q, want blocked", specs.model.Phases[0].Status)
+	out, err = Run(context.Background(), specs, sessions, nil, runner, fakeBuildClock{}, Input{TaskID: "task"})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if specs.model.Phases[1].Status == "completed" {
-		t.Fatalf("phase2 should not be completed after phase1 failure: %+v", specs.model.Phases[1])
+	if out.Status != spec.StatusReview {
+		t.Fatalf("after phase2 output=%+v, want review", out)
+	}
+	if len(runner.commands) != 3 || runner.commands[1] != "phase2" || runner.commands[2] != "go test ./..." {
+		t.Fatalf("commands = %+v, want phase2 then final acceptance", runner.commands)
 	}
 }
 
@@ -161,7 +217,11 @@ func TestBuildPassesExecutionEnvToCriteria(t *testing.T) {
 	specs := &fakeSpecs{model: spec.Model{TaskID: "task", Status: spec.StatusApproved, Phases: []spec.Phase{{ID: "phase1", Name: "Phase", Acceptance: []spec.Criterion{{ID: "ac1", PhaseID: "phase1", Command: "make api-test", ExpectedKind: acceptance.ExpectedExitCodeZero}}}}}}
 	runner := &fakeRunner{}
 	env := []string{"BUNDLE_GEMFILE=api/Gemfile", "PATH=/tmp/rbenv/shims:/usr/bin"}
-	out, err := Run(context.Background(), specs, &fakeSessions{}, nil, runner, fakeBuildClock{}, Input{TaskID: "task", Env: env})
+	sessions := &fakeSessions{}
+	if _, err := Run(context.Background(), specs, sessions, nil, runner, fakeBuildClock{}, Input{TaskID: "task", Env: env}); err != nil {
+		t.Fatal(err)
+	}
+	out, err := Run(context.Background(), specs, sessions, nil, runner, fakeBuildClock{}, Input{TaskID: "task", Env: env})
 	if err != nil {
 		t.Fatal(err)
 	}

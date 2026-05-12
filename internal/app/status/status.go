@@ -81,6 +81,10 @@ func Run(ctx context.Context, specs SpecStore, sessions SessionStore, taskID str
 			out.SessionOK = true
 			out.Review = latestReviewInfo(ledger)
 			out.Repair = repairContract(model, ledger)
+			if out.Repair != nil && out.Repair.Next != "" {
+				out.Next = out.Repair.Next
+				out.AllowedFollowUp = out.Repair.Next
+			}
 		}
 	}
 	return out, nil
@@ -116,6 +120,8 @@ func latestReviewInfo(ledger session.Session) ReviewInfo {
 			info.Reason = entry.Reason
 			info.Attempt = &ReviewAttemptInfo{Running: info.Running, Status: entry.Status, Reason: entry.Reason}
 			haveAttempt = true
+		case "build", "criterion", "phase", "approval", session.EntryWorkspaceBaseline, "fail", "cancel":
+			return info
 		}
 	}
 	return info
@@ -155,6 +161,22 @@ func repairContract(model spec.Model, ledger session.Session) *gate.Failure {
 		}
 	case spec.StatusReview:
 		review := latestReviewInfo(ledger)
+		if review.AttemptStatus == "failed" {
+			evidence := []string{"latest review_attempt session entry"}
+			if attempt, ok := latestFailedReviewAttempt(ledger); ok && attempt.Path != "" {
+				evidence = []string{attempt.Path}
+			}
+			return &gate.Failure{
+				Gate:     "review",
+				Status:   string(model.Status),
+				Reason:   fallback(review.Reason, "latest review attempt failed"),
+				Evidence: evidence,
+				Expected: "valid ReviewDossier submitted by an external reviewer",
+				Actual:   fallback(review.Reason, "review attempt failed"),
+				Blockers: []string{fallback(review.Reason, "latest review attempt failed")},
+				Next:     "scafld handoff " + model.TaskID,
+			}
+		}
 		if review.Verdict == corereview.VerdictFail {
 			return &gate.Failure{
 				Gate:     "review",
@@ -169,6 +191,26 @@ func repairContract(model spec.Model, ledger session.Session) *gate.Failure {
 		}
 	}
 	return nil
+}
+
+func latestFailedReviewAttempt(ledger session.Session) (session.Entry, bool) {
+	for i := len(ledger.Entries) - 1; i >= 0; i-- {
+		entry := ledger.Entries[i]
+		switch entry.Type {
+		case "review_attempt":
+			return entry, entry.Status == "failed"
+		case "review", "build", "criterion", "phase", "approval", session.EntryWorkspaceBaseline, "fail", "cancel":
+			return session.Entry{}, false
+		}
+	}
+	return session.Entry{}, false
+}
+
+func fallback(value string, fallback string) string {
+	if value != "" {
+		return value
+	}
+	return fallback
 }
 
 func latestReviewEvidence(ledger session.Session) string {
@@ -187,7 +229,7 @@ func latestReviewEvidence(ledger session.Session) string {
 
 func criterionBlockers(model spec.Model) []string {
 	var blockers []string
-	for _, criterion := range model.AllCriteria() {
+	for _, criterion := range blockingCriteria(model) {
 		if criterion.Status == "pass" {
 			continue
 		}
@@ -205,7 +247,7 @@ func criterionBlockers(model spec.Model) []string {
 
 func blockerEvidence(model spec.Model, ledger session.Session) []string {
 	var evidence []string
-	for _, criterion := range model.AllCriteria() {
+	for _, criterion := range blockingCriteria(model) {
 		if criterion.Status == "pass" || criterion.SourceEvent == "" {
 			continue
 		}
@@ -225,6 +267,28 @@ func evidenceReference(ledger session.Session, sourceID string) string {
 		return sourceID
 	}
 	return sourceID
+}
+
+func blockingCriteria(model spec.Model) []spec.Criterion {
+	switch model.CurrentState.CurrentPhase {
+	case "", "none":
+		return model.AllCriteria()
+	case "final":
+		return append([]spec.Criterion(nil), model.Acceptance.Criteria...)
+	default:
+		for _, phase := range model.Phases {
+			if phase.ID == model.CurrentState.CurrentPhase {
+				criteria := append([]spec.Criterion(nil), phase.Acceptance...)
+				for i := range criteria {
+					if criteria[i].PhaseID == "" {
+						criteria[i].PhaseID = phase.ID
+					}
+				}
+				return criteria
+			}
+		}
+		return model.AllCriteria()
+	}
 }
 
 func reviewFindingSummaries(findings []corereview.Finding) []string {

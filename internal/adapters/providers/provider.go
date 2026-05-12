@@ -149,20 +149,20 @@ func (p CommandProvider) Invoke(ctx context.Context, req review.Request) (review
 		SuppressProgressStderr: true,
 	})
 	if err != nil && strings.TrimSpace(result.Stdout) == "" {
-		return review.Dossier{}, fmt.Errorf("%w: %v", ErrProviderFailed, err)
+		return review.Dossier{}, providerFailedError(result, err)
 	}
 	dossier, parseErr := review.ParseText(result.Stdout)
 	if parseErr != nil {
 		if err != nil {
-			return review.Dossier{}, fmt.Errorf("%w: %v", ErrProviderFailed, err)
+			return review.Dossier{}, providerFailedError(result, err)
 		}
-		return review.Dossier{}, parseErr
+		return review.Dossier{}, providerFailedError(result, parseErr)
 	}
 	if err != nil {
-		return review.Dossier{}, fmt.Errorf("%w: %v", ErrProviderFailed, err)
+		return review.Dossier{}, providerFailedError(result, err)
 	}
 	if result.ExitCode != 0 && dossier.Verdict != review.VerdictFail {
-		return review.Dossier{}, fmt.Errorf("%w: exit code %d", ErrProviderFailed, result.ExitCode)
+		return review.Dossier{}, providerFailedError(result, fmt.Errorf("exit code %d", result.ExitCode))
 	}
 	dossier.Provider = "command"
 	dossier.OutputFormat = first(dossier.OutputFormat, "command.stdout")
@@ -398,16 +398,34 @@ func dossierFromProviderResult(result execution.Result, runErr error, text strin
 }
 
 func providerFailedError(result execution.Result, cause error) error {
-	message := strings.TrimSpace(cause.Error())
+	detail := ""
 	if stderr := errorSnippet(result.Stderr); stderr != "" {
-		message += ": " + stderr
+		detail += ": " + stderr
 	} else if stdout := errorSnippet(result.Stdout); stdout != "" {
-		message += ": " + stdout
+		detail += ": " + stdout
 	}
 	if result.DiagnosticPath != "" {
-		message += " (diagnostic: " + result.DiagnosticPath + ")"
+		detail += " (diagnostic: " + result.DiagnosticPath + ")"
 	}
-	return fmt.Errorf("%w: %s", ErrProviderFailed, message)
+	return providerFailureError{cause: cause, detail: detail, diagnosticPath: result.DiagnosticPath}
+}
+
+type providerFailureError struct {
+	cause          error
+	detail         string
+	diagnosticPath string
+}
+
+func (e providerFailureError) Error() string {
+	return fmt.Sprintf("%v: %v%s", ErrProviderFailed, e.cause, e.detail)
+}
+
+func (e providerFailureError) Unwrap() []error {
+	return []error{ErrProviderFailed, e.cause}
+}
+
+func (e providerFailureError) DiagnosticPath() string {
+	return e.diagnosticPath
 }
 
 func errorSnippet(text string) string {
