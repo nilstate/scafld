@@ -292,8 +292,6 @@ func ClaudeArgs(binary string, model string, sessionID string, schemaJSON string
 		"stream-json",
 		"--verbose",
 		"--include-partial-messages",
-		"--permission-mode",
-		"plan",
 		"--allowedTools",
 		"Read,Grep,Glob",
 		"--disallowedTools",
@@ -397,6 +395,8 @@ type claudeOutput struct {
 func extractClaudeOutput(stdout string) claudeOutput {
 	out := claudeOutput{Body: stdout, Events: map[string]int{}}
 	var result map[string]any
+	sawStreamEvent := false
+	bodyFromResultText := false
 	for _, raw := range strings.Split(stdout, "\n") {
 		line := strings.TrimSpace(raw)
 		if line == "" {
@@ -405,6 +405,9 @@ func extractClaudeOutput(stdout string) claudeOutput {
 		var event map[string]any
 		if err := json.Unmarshal([]byte(line), &event); err != nil {
 			continue
+		}
+		if event["type"] != nil {
+			sawStreamEvent = true
 		}
 		if name := ClaudeEventName(line); name != "" {
 			out.Events[name]++
@@ -427,11 +430,103 @@ func extractClaudeOutput(stdout string) claudeOutput {
 		for _, key := range []string{"result", "output", "response", "text", "content"} {
 			if value, ok := result[key].(string); ok && strings.TrimSpace(value) != "" {
 				out.Body = value
-				return out
+				bodyFromResultText = true
+				break
 			}
 		}
 	}
+	if bodyFromResultText || !sawStreamEvent {
+		if extracted, ok := extractFencedJSON(out.Body); ok {
+			out.Body = extracted
+		}
+	}
 	return out
+}
+
+func extractFencedJSON(text string) (string, bool) {
+	for _, lang := range []string{"json", "JSON", ""} {
+		fence := "```" + lang
+		searchFrom := 0
+		for {
+			start := strings.Index(text[searchFrom:], fence)
+			if start < 0 {
+				break
+			}
+			start += searchFrom + len(fence)
+			if lang != "" && start < len(text) {
+				switch text[start] {
+				case '\r':
+					start++
+					if start < len(text) && text[start] == '\n' {
+						start++
+					}
+				case '\n':
+					start++
+				}
+			}
+			end := strings.Index(text[start:], "```")
+			if end < 0 {
+				break
+			}
+			candidate := strings.TrimSpace(text[start : start+end])
+			if json.Valid([]byte(candidate)) {
+				return candidate, true
+			}
+			searchFrom = start + end + len("```")
+		}
+	}
+	if candidate, ok := extractBalancedJSONObject(text); ok {
+		return candidate, true
+	}
+	return "", false
+}
+
+func extractBalancedJSONObject(text string) (string, bool) {
+	start := strings.Index(text, "{")
+	for start >= 0 {
+		inString := false
+		escaped := false
+		depth := 0
+		for i := start; i < len(text); i++ {
+			ch := text[i]
+			if inString {
+				if escaped {
+					escaped = false
+					continue
+				}
+				switch ch {
+				case '\\':
+					escaped = true
+				case '"':
+					inString = false
+				}
+				continue
+			}
+			switch ch {
+			case '"':
+				inString = true
+			case '{':
+				depth++
+			case '}':
+				depth--
+				if depth == 0 {
+					candidate := strings.TrimSpace(text[start : i+1])
+					if json.Valid([]byte(candidate)) {
+						return candidate, true
+					}
+					next := strings.Index(text[start+1:], "{")
+					if next < 0 {
+						return "", false
+					}
+					start += next + 1
+					goto nextCandidate
+				}
+			}
+		}
+		return "", false
+	nextCandidate:
+	}
+	return "", false
 }
 
 // ClaudeEventName extracts a liveness event name from one Claude stream frame.
