@@ -22,7 +22,7 @@ plan -> harden -> approve -> build -> review -> complete
   config.local.yaml
   prompts/
     plan.md
-    exec.md
+    build.md
     recovery.md
     review.md
     harden.md
@@ -70,8 +70,8 @@ When the workspace includes them, prefer:
 - `.scafld/core/scripts/scafld-claude-review.sh <task-id>`
 
 They resolve the current scafld handoff first, then pass it to the external
-agent runtime. That keeps handoff consumption as the default path instead of a
-manual convention.
+agent runtime. That keeps phase handoff consumption as the default path instead
+of a manual convention.
 
 ## Adversarial Review
 

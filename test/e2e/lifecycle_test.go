@@ -22,6 +22,7 @@ func TestLifecycleJSONContractsAgentSurfaceFailCancelReviewProviderMutationGuard
 	assertSnakeEnvelope(t, run(t, bin, "validate", "--root", root, "lifecycle-task", "--json"), "valid")
 	assertSnakeEnvelope(t, run(t, bin, "approve", "--root", root, "lifecycle-task", "--json"), "status")
 	assertSnakeEnvelope(t, run(t, bin, "build", "--root", root, "lifecycle-task", "--json"), "passed")
+	assertSnakeEnvelope(t, run(t, bin, "build", "--root", root, "lifecycle-task", "--json"), "passed")
 	assertSnakeEnvelope(t, run(t, bin, "list", "--root", root, "--json"), "task_id")
 	assertSnakeEnvelope(t, run(t, bin, "review", "--root", root, "--provider", "command", "--provider-command", `printf '{"verdict":"pass","mode":"discover","summary":"clean","findings":[],"attack_log":[{"target":"diff","attack":"scan","result":"clean"}],"budget":{"actual_attack_angles":1}}'`, "lifecycle-task", "--json"), "verdict")
 	assertSnakeEnvelope(t, run(t, bin, "complete", "--root", root, "lifecycle-task", "--json"), "current_state")
@@ -53,6 +54,7 @@ func TestReviewCommandProviderBlockingFindingExitsReviewFailure(t *testing.T) {
 	initGitWorkspace(t, root)
 	run(t, bin, "plan", "--root", root, "provider-task", "--command", "true")
 	run(t, bin, "approve", "--root", root, "provider-task")
+	run(t, bin, "build", "--root", root, "provider-task")
 	run(t, bin, "build", "--root", root, "provider-task")
 	cmd := exec.Command(
 		bin,
@@ -104,6 +106,7 @@ func TestReviewProviderMutationGuardFailsReview(t *testing.T) {
 	run(t, bin, "plan", "--root", root, "mutation-task", "--command", "true")
 	run(t, bin, "approve", "--root", root, "mutation-task")
 	run(t, bin, "build", "--root", root, "mutation-task")
+	run(t, bin, "build", "--root", root, "mutation-task")
 	cmd := exec.Command(
 		bin,
 		"review",
@@ -136,6 +139,7 @@ func TestReviewContextPreview(t *testing.T) {
 	initGitWorkspace(t, root)
 	run(t, bin, "plan", "--root", root, "context-preview", "--title", "Context Preview", "--command", "true")
 	run(t, bin, "approve", "--root", root, "context-preview")
+	run(t, bin, "build", "--root", root, "context-preview")
 	run(t, bin, "build", "--root", root, "context-preview")
 	out := string(run(t, bin, "review", "--root", root, "context-preview", "--print-context", "--provider", "command", "--provider-command", `printf 'should-not-run'`))
 	for _, want := range []string{"Review Context Packet", "Task: context-preview", "Task Contract"} {

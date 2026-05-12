@@ -38,9 +38,10 @@ contract.
 
 ## Build-Time Evaluation
 
-`scafld build` runs the command and evaluates the result against
-`Expected kind`. The full command output is captured in the session/diagnostic
-surface; the spec keeps only concise projected evidence.
+After a phase is open and implemented, `scafld build` runs that phase's command
+criteria and evaluates the result against `Expected kind`. The full command
+output is captured in the session/diagnostic surface; the spec keeps only
+concise projected evidence.
 
 ## Manual Evidence
 

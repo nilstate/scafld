@@ -15,8 +15,8 @@ under `.scafld/runs/`.
 |--------|-----------|-------------|
 | `draft` | `drafts/` | Spec is being written and hardened. |
 | `approved` | `approved/` | Human accepted the contract. Ready to execute. |
-| `active` | `active/` | Acceptance criteria are being executed. |
-| `blocked` | `active/` | Execution found a blocking failure. |
+| `active` | `active/` | A build phase is open or phase evidence is being recorded. |
+| `blocked` | `active/` | Attempted build evidence found a blocking failure. |
 | `review` | `active/` | Work reached the adversarial review gate. |
 | `completed` | `archive/YYYY-MM/` | Review passed and work was archived. |
 | `failed` | `archive/YYYY-MM/` | Work was explicitly failed. |
@@ -39,6 +39,8 @@ scafld harden add-auth
 scafld harden add-auth --mark-passed
 scafld validate add-auth
 scafld approve add-auth
+scafld build add-auth
+# implement the opened phase, then repeat build until review
 scafld build add-auth
 scafld review add-auth
 scafld complete add-auth

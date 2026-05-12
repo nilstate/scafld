@@ -296,7 +296,7 @@ Wrapper intent:
 - `harden`: stress-test the draft before approval
 - `validate`: reject malformed or non-executable spec structure
 - `approve`: accept a spec only after it is clear enough to execute
-- `build`: run phase acceptance criteria and write evidence
+- `build`: open phases, record evidence, and advance governed execution
 - `review`: run the adversarial review gate
 - `complete`: archive only after passing review evidence exists
 - `status`: expose the current state and allowed follow-up command

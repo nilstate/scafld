@@ -18,7 +18,7 @@ scafld handoff <task-id>
 ## Boundaries
 
 - Use `scafld harden` to strengthen the draft before approval.
-- Use `scafld build` to run acceptance evidence.
+- Use `scafld build` to open one phase, then run it again after implementation to record evidence.
 - Use `scafld review` as the adversarial gate.
 - Use `scafld status --json` for automation.
 - Use `scafld handoff` for compact model context without moving state.

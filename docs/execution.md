@@ -18,10 +18,14 @@ draft -> harden -> approve -> build -> review -> complete
 scafld build <task-id>
 ```
 
-`build` loads approved work, or previously active/blocked/review work that is
-being repaired. It marks the task active while work is executed, runs executable
-acceptance criteria, appends criterion evidence to the session ledger, and
-projects criterion/phase state back into the spec.
+`build` is the governed implementation loop. From `approved`, it activates the
+task, captures the workspace baseline, opens the first phase, and prints the
+allowed handoff. It does not run acceptance for files that do not exist yet.
+
+After the agent implements the opened phase, run `scafld build <task-id>`
+again. That second call records evidence for the current phase, then either
+blocks, opens the next phase, or moves the task to review after final
+acceptance.
 
 Acceptance commands run in a non-login shell. scafld does not read interactive
 shell startup files. Instead it builds the command environment from checked-in
@@ -63,9 +67,19 @@ Approval captures the workspace baseline before task execution starts. Review
 uses that baseline later to separate task changes from unrelated pre-existing
 dirty state.
 
-Build is phase-sequenced. scafld runs a phase's acceptance criteria, records
-that evidence, and stops immediately if the phase blocks. Later phases do not
-get passing evidence while an earlier phase is failed or pending.
+Build is phase-sequenced. scafld opens exactly one phase at a time. A phase is
+`active` while the agent is implementing it, `completed` only after its
+acceptance evidence passes, and `blocked` only after attempted evidence fails.
+Later phases do not get evidence while an earlier phase is active or blocked.
+
+The normal agent loop is:
+
+```bash
+scafld build <task-id>   # open current phase
+scafld handoff <task-id> # read what to implement
+# implement the phase
+scafld build <task-id>   # record phase evidence and advance
+```
 
 If all criteria pass, the task moves to `review` and the allowed follow-up is:
 
@@ -73,19 +87,10 @@ If all criteria pass, the task moves to `review` and the allowed follow-up is:
 scafld review <task-id>
 ```
 
-If any criterion is missing evidence, fails, or cannot be evaluated, the task
-becomes `blocked`; use `scafld handoff <task-id>` to get the failed or pending
-criteria, commands, and reasons for the repair agent.
-
-## exec
-
-```bash
-scafld exec <task-id>
-```
-
-`exec` uses the same execution path as `build`. It exists as a narrower command
-name for wrappers that want to distinguish "execute acceptance" from the broader
-build lifecycle verb.
+If attempted evidence fails or cannot be evaluated, the task becomes
+`blocked`; use `scafld handoff <task-id>` to get the failed criteria, commands,
+and reasons for the repair agent. Pending future phase criteria are not
+blockers.
 
 ## Evidence Flow
 

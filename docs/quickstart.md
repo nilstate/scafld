@@ -70,8 +70,10 @@ scafld approve add-auth
 scafld build add-auth
 ```
 
-`build` activates approved work, runs acceptance criteria, writes evidence to
-the session ledger, and projects the current state back into the spec.
+`build` activates approved work, opens the current phase, and projects the
+current state back into the spec. The first build does not run future
+acceptance. Read the handoff, implement the phase, then run
+`scafld build add-auth` again to record evidence and advance.
 
 ## Run Adversarial Review
 

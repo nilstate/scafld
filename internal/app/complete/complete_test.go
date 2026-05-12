@@ -47,18 +47,45 @@ func (fakeClock) Now() time.Time { return time.Date(2026, 5, 1, 0, 0, 0, 0, time
 
 func TestCompleteRequiresPassedReviewGate(t *testing.T) {
 	t.Parallel()
-	specs := &fakeSpecs{model: spec.Model{TaskID: "task", Status: spec.StatusReview, Review: spec.ReviewState{Status: "completed", Verdict: "pass"}}}
+	specs := &fakeSpecs{model: spec.Model{
+		TaskID:       "task",
+		Status:       spec.StatusReview,
+		Review:       spec.ReviewState{Status: "completed", Verdict: "pass"},
+		CurrentState: spec.CurrentState{AllowedFollowUp: "scafld handoff task"},
+	}}
 	ledger := session.New("task", "now").WithEntry(session.Entry{Type: "review", Status: corereview.VerdictFail, Provider: "codex"})
 	_, err := Run(context.Background(), specs, &fakeSessions{ledger: ledger}, fakeClock{}, "task")
 	if !errors.Is(err, ErrReviewGate) {
 		t.Fatalf("error = %v, want %v", err, ErrReviewGate)
 	}
 	var gateErr gate.Error
-	if !errors.As(err, &gateErr) || gateErr.Failure.Gate != "complete" || gateErr.Failure.Next != "scafld review task" {
+	if !errors.As(err, &gateErr) || gateErr.Failure.Gate != "complete" || gateErr.Failure.Next != "scafld handoff task" {
 		t.Fatalf("gate error = %#v, ok=%v", gateErr, errors.As(err, &gateErr))
 	}
 	if specs.model.Status == spec.StatusCompleted {
 		t.Fatalf("complete should not mutate spec after failed review")
+	}
+}
+
+func TestCompleteRejectionDoesNotPointBackToCompleteAfterLaterReviewAttempt(t *testing.T) {
+	t.Parallel()
+
+	specs := &fakeSpecs{model: spec.Model{
+		TaskID:       "task",
+		Status:       spec.StatusReview,
+		Review:       spec.ReviewState{Status: "completed", Verdict: "pass"},
+		CurrentState: spec.CurrentState{AllowedFollowUp: "scafld complete task"},
+	}}
+	ledger := session.New("task", "now").
+		WithEntry(session.Entry{Type: "review", Status: corereview.VerdictPass, Provider: "codex"}).
+		WithEntry(session.Entry{Type: "review_attempt", Status: "failed", Reason: "provider failed"})
+	_, err := Run(context.Background(), specs, &fakeSessions{ledger: ledger}, fakeClock{}, "task")
+	if !errors.Is(err, ErrReviewGate) {
+		t.Fatalf("error = %v, want %v", err, ErrReviewGate)
+	}
+	var gateErr gate.Error
+	if !errors.As(err, &gateErr) || gateErr.Failure.Next != "scafld handoff task" {
+		t.Fatalf("gate error = %#v, ok=%v", gateErr, errors.As(err, &gateErr))
 	}
 }
 

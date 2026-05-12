@@ -148,7 +148,6 @@ func reviewScopePathAllowed(path string) bool {
 		".git",
 		".priv",
 		".scafld/config.local.yaml",
-		".scafld/reviews",
 	} {
 		if normalized == denied || strings.HasPrefix(normalized+"/", denied+"/") {
 			return false

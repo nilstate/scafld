@@ -189,7 +189,7 @@ Changes:
 - `internal/app/build/**` - Resolve validation profile from spec risk/profile and execute configured per-phase validation commands only if this becomes runtime behavior.
 - `internal/app/complete/**` - Run or verify configured pre-commit validation only if this becomes a release gate.
 - `internal/adapters/config/**` - Add typed validation profile fields only for runtime-enforced behavior; otherwise move profile comments to docs/prompt guidance.
-- `.scafld/core/prompts/exec.md` - If validation profiles remain guidance, ensure the exec prompt explains how agents should use them without claiming runtime enforcement.
+- `.scafld/core/prompts/build.md` - If validation profiles remain guidance, ensure the build prompt explains how agents should use them without claiming runtime enforcement.
 - `docs/validation.md` - State the exact ownership split between acceptance criteria, validation profiles, manual evidence, and complete gates.
 - `test/e2e/**` - Add lifecycle smoke coverage for profile resolution and validation command failure behavior if profiles are runtime-enforced.
 

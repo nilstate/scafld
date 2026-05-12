@@ -141,6 +141,22 @@ func TestCommandProviderFailsClosedOnMissingRunnerInvalidOutputAndCleanPacketNon
 	}
 }
 
+func TestCommandProviderFailureIncludesDiagnosticPath(t *testing.T) {
+	t.Parallel()
+
+	diagnostic := filepath.Join(t.TempDir(), "diagnostic.txt")
+	_, err := (CommandProvider{Command: "reviewer", Runner: &fakeRunner{result: execution.Result{
+		Stdout:         "{invalid\n",
+		DiagnosticPath: diagnostic,
+	}}}).Invoke(context.Background(), review.Request{TaskID: "task"})
+	if !errors.Is(err, ErrProviderFailed) || !errors.Is(err, review.ErrInvalidDossier) {
+		t.Fatalf("error = %v, want provider failure wrapping invalid dossier", err)
+	}
+	if !strings.Contains(err.Error(), diagnostic) {
+		t.Fatalf("error missing diagnostic path %q: %v", diagnostic, err)
+	}
+}
+
 func TestClaudeProviderBuildsRestrictedStreamJSONArgsAndExtractsStructuredOutput(t *testing.T) {
 	t.Parallel()
 

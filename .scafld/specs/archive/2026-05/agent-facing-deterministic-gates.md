@@ -2,8 +2,8 @@
 spec_version: '2.0'
 task_id: agent-facing-deterministic-gates
 created: '2026-05-07T14:29:39Z'
-updated: '2026-05-07T16:16:22Z'
-status: review
+updated: '2026-05-12T14:43:54Z'
+status: completed
 harden_status: passed
 size: large
 risk_level: high
@@ -13,14 +13,14 @@ risk_level: high
 
 ## Current State
 
-Status: review
-Current phase: none
-Next: repair
-Reason: review gate fail: 1 finding(s), 1 blocking
+Status: completed
+Current phase: final
+Next: done
+Reason: task completed
 Blockers: none
-Allowed follow-up command: `scafld handoff agent-facing-deterministic-gates`
-Latest runner update: 2026-05-07T16:16:43Z
-Review gate: fail
+Allowed follow-up command: `none`
+Latest runner update: 2026-05-12T14:43:54Z
+Review gate: pass
 
 ## Summary
 
@@ -134,31 +134,31 @@ Validation:
   - Expected kind: `exit_code_zero`
   - Status: pass
   - Evidence: exit code was 0
-  - Source event: entry-352
+  - Source event: entry-461
 - [x] `v2` command - This spec validates.
   - Command: `go run ./cmd/scafld validate agent-facing-deterministic-gates`
   - Expected kind: `exit_code_zero`
   - Status: pass
   - Evidence: exit code was 0
-  - Source event: entry-353
+  - Source event: entry-462
 - [x] `v3` command - Docs contain the core concept and repair-contract language.
   - Command: `rg -n "agent-facing deterministic gates|repair contract|trusted state|allowed next command|strict in what scafld trusts" README.md docs`
   - Expected kind: `exit_code_zero`
   - Status: pass
   - Evidence: exit code was 0
-  - Source event: entry-354
+  - Source event: entry-463
 - [x] `v4` command - Runtime and prompts stop referring agents to stale review storage paths.
   - Command: `rg -n "\\.scafld/reviews" README.md docs .scafld/core/prompts .scafld/prompts internal`
   - Expected kind: `no_matches`
   - Status: pass
   - Evidence: output was empty
-  - Source event: entry-355
+  - Source event: entry-464
 - [x] `v5` command - Review-provider progress stays summary-oriented while raw stderr remains captured.
   - Command: `go test ./internal/adapters/process ./internal/adapters/providers ./internal/adapters/cli/review`
   - Expected kind: `exit_code_zero`
   - Status: pass
   - Evidence: exit code was 0
-  - Source event: entry-356
+  - Source event: entry-465
 
 ## Phase 1: Core concept and docs vocabulary
 
@@ -393,10 +393,25 @@ Acceptance:
 ## Review
 
 Status: completed
-Verdict: fail
+Verdict: pass
+Mode: verify
+Provider: codex
+Output: codex.output_file
+Summary: No open blockers found in static verification. The previously recorded provider-selection, status, handoff, and report issues appear fixed with targeted regression coverage. Runtime command/test execution could not be rerun in this read-only sandbox because Go needs a writable build directory.
+
+Attack log:
+- `ambient drift`: Workspace drift and declared scope comparison -> clean (Inspected `git status --short`, `git diff --stat`, and specific diffs. Broad changes are within the task’s declared runtime/docs/prompt scope; the two draft spec edits are narrow `exec.md` to `build.md` references caused by the command rename.)
+- `runtime verification`: Lifecycle/status command execution -> skipped (Attempted `./bin/scafld status agent-facing-deterministic-gates --json`; blocked by the read-only sandbox because `go run` could not create its Go build work directory.)
+- `review provider selection`: Previously reported review-provider selection blocker -> clean (Verified `internal/adapters/cli/review/selection.go` now wraps provider-selection failures with `output.ReviewProviderGateError`, and CLI tests assert human and JSON gate payloads.)
+- `status repair output`: Previously reported status repair blocker -> clean (Verified `internal/adapters/cli/output/output.go` now renders `out.Repair` in `Status`, and status tests cover failed review attempts overriding next command to handoff.)
+- `handoff after failed review attempt`: Previously reported handoff evidence blocker -> clean (Verified `internal/app/handoff/handoff.go` now prints failed review attempt reason and diagnostic path, with regression coverage in `handoff_test.go`.)
+- `build gate`: Build phase sequencing and blocked handoff contract -> clean (Traced `internal/app/build/build.go` phase-open, phase-evidence, final-acceptance, and blocked repair paths. Tests cover no pre-implementation acceptance, one phase per invocation, current-phase blockers only, and env propagation.)
+- `review/status/handoff state separation`: Review stale snapshot and accepted-vs-attempt state -> clean (Traced `latestReviewInfo`, `latestFailedReviewAttempt`, handoff review dossier filtering, and completion’s latest-review guard. Tests cover stale review after later build evidence and failed review attempts after a pass.)
+- `report metrics`: Report zero-denominator guidance -> clean (Verified report human output now always prints the metrics block and tests assert `n/a (0/0)` guidance for empty output.)
+- `harden gate`: Harden citation shape and canonicalization -> clean (Verified harden citation failures return `gate.Failure` with expected shape, and markdown parser tests cover mixed old/canonical harden question forms normalizing without duplicate questions.)
 
 Findings:
-- [blocking] `scope_drift` workspace changed outside declared task scope since approval: changed .scafld/core/agentdocs/AGENTS.md (M f535adf0db09f3e676d9bc7012532787199d25759597722c3e25f76e6a1935e5 -> M e48306d3c5ab64955aa7110c8f327ad358931b8a5392cd8a2e7367b5b43118df), added .scafld/core/prompts/recovery.md (M d8b88b33da7e29c6e39c87756e01bee1b783d44e18c9ac1761039644ddbc71b4), added .scafld/prompts/recovery.md (M d8b88b33da7e29c6e39c87756e01bee1b783d44e18c9ac1761039644ddbc71b4)
+- none
 
 ## Self Eval
 

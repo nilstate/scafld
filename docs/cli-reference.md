@@ -15,7 +15,6 @@ scafld harden <task-id>
 scafld validate <task-id>
 scafld approve <task-id>
 scafld build <task-id>
-scafld exec <task-id>
 scafld review <task-id>
 scafld complete <task-id>
 scafld fail <task-id>
@@ -43,10 +42,11 @@ Automation-relevant commands emit one envelope:
   "command": "build",
   "result": {
     "task_id": "add-auth",
-    "status": "review",
-    "passed": 1,
+    "status": "active",
+    "phase": "phase1",
+    "passed": 0,
     "failed": 0,
-    "next": "scafld review add-auth"
+    "next": "scafld handoff add-auth"
   }
 }
 ```
@@ -167,9 +167,15 @@ implied by hardening.
 scafld build <task-id> [--json]
 ```
 
-Activates approved, active, blocked, or review-state work and runs executable
-acceptance criteria. Evidence is written to the session first and projected back
-into the Markdown spec. Drafts and terminal specs are rejected.
+Runs the governed implementation loop. From `approved`, it activates the task,
+captures the workspace baseline, opens the first phase, and points the agent at
+`scafld handoff <task-id>`. It does not run future acceptance before the phase
+has been implemented.
+
+From `active` or `blocked`, `build` records evidence for the current phase. If
+the phase passes, it opens the next phase. If the final phase and global
+acceptance pass, it moves the task to `review`. Drafts, terminal specs, and
+already-ready review specs are rejected.
 
 Acceptance commands inherit the process environment plus `execution` overrides
 from `.scafld/config.yaml` and `.scafld/config.local.yaml`. Use that config for
@@ -180,15 +186,6 @@ Phase acceptance runs in order. If a phase blocks, later phase commands are not
 run and the next command becomes `scafld handoff <task-id>` so the repair agent
 gets the failed criterion, command, and evidence instead of a vague blocked
 status.
-
-## exec
-
-```bash
-scafld exec <task-id> [--json]
-```
-
-Runs the execution path against the current task. It uses the same acceptance
-model and evidence-writing discipline as `build`.
 
 ## review
 
@@ -208,7 +205,7 @@ Provider modes:
 
 - `auto`: choose an installed external challenger.
 - `codex`: run Codex in read-only ephemeral mode.
-- `claude`: run Claude with read-only tools and structured JSON output.
+- `claude`: run Claude with read-only tools and the `submit_review` MCP tool.
 - `command`: run a custom reviewer command; requires `--provider-command`.
 - `local`: deterministic pass-through provider for development and tests only;
   its verdict cannot satisfy `complete`.

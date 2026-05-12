@@ -44,6 +44,8 @@ plan -> harden -> approve -> build -> review -> complete
 ```
 
 Hardening attacks the draft. Review attacks the result.
+Build opens one phase at a time. After implementing the opened phase, run
+`scafld build <task-id>` again to record evidence and advance.
 
 ## Do Not
 

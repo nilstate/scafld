@@ -88,6 +88,13 @@ func Run(ctx context.Context, specs SpecStore, sessions SessionStore, clock Cloc
 }
 
 func reviewGateError(model spec.Model, reason string, actual string) error {
+	next := model.CurrentState.AllowedFollowUp
+	if next == "scafld complete "+model.TaskID {
+		next = "scafld handoff " + model.TaskID
+	}
+	if next == "" || next == "none" {
+		next = "scafld review " + model.TaskID
+	}
 	return gate.New(ErrReviewGate, gate.Failure{
 		Gate:     "complete",
 		Status:   string(model.Status),
@@ -96,7 +103,7 @@ func reviewGateError(model spec.Model, reason string, actual string) error {
 		Expected: "latest accepted review verdict pass from codex, claude, command, or audited human provider",
 		Actual:   actual,
 		Blockers: []string{reason},
-		Next:     "scafld review " + model.TaskID,
+		Next:     next,
 	})
 }
 

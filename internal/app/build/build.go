@@ -16,7 +16,9 @@ import (
 )
 
 // ErrSpecNotBuildable is returned when execution is attempted before approval or after terminal state.
-var ErrSpecNotBuildable = errors.New("build requires approved, active, blocked, or review state")
+var ErrSpecNotBuildable = errors.New("build requires approved, active, blocked, or failed-review state")
+
+const finalPhaseID = "final"
 
 // SpecStore is the spec persistence port used by build.
 type SpecStore interface {
@@ -50,10 +52,11 @@ type Input struct {
 	Env    []string
 }
 
-// Output summarizes acceptance execution.
+// Output summarizes one build lifecycle step.
 type Output struct {
 	TaskID string        `json:"task_id"`
 	Status spec.Status   `json:"status"`
+	Phase  string        `json:"phase,omitempty"`
 	Passed int           `json:"passed"`
 	Failed int           `json:"failed"`
 	Next   string        `json:"next"`
@@ -63,7 +66,9 @@ type Output struct {
 // GateFailure exposes blocked build repair details to the CLI envelope.
 func (o Output) GateFailure() *gate.Failure { return o.Repair }
 
-// Run executes acceptance criteria and projects evidence into the spec.
+// Run advances the governed execution lifecycle. The first build call opens the
+// first phase without running future acceptance. Later calls run evidence for
+// the current phase, open the next phase, or move the task to review.
 func Run(ctx context.Context, specs SpecStore, sessions SessionStore, workspace WorkspaceStatus, runner Runner, clock Clock, input Input) (Output, error) {
 	model, path, err := specs.Load(ctx, input.TaskID)
 	if err != nil {
@@ -72,38 +77,160 @@ func Run(ctx context.Context, specs SpecStore, sessions SessionStore, workspace 
 	if !buildable(model.Status) {
 		return Output{}, fmt.Errorf("%w: %s", ErrSpecNotBuildable, model.Status)
 	}
-	model.Status = spec.StatusActive
+	if model.Status == spec.StatusReview && model.CurrentState.Next != "repair" {
+		return Output{}, fmt.Errorf("%w: %s is ready for review", ErrSpecNotBuildable, model.Status)
+	}
 	now := clock.Now().UTC().Format(time.RFC3339)
 	if err := ensureWorkspaceBaseline(ctx, sessions, workspace, model, now); err != nil {
-		return Output{}, err
-	}
-	if _, err := sessions.Append(ctx, model.TaskID, session.Entry{Type: "build", Status: "active", Reason: "build started"}, now); err != nil {
-		return Output{}, fmt.Errorf("append build start: %w", err)
-	}
-	if err := runCriteria(ctx, sessions, runner, model, input.CWD, input.Env, now); err != nil {
 		return Output{}, err
 	}
 	ledger, err := sessions.Load(ctx, model.TaskID)
 	if err != nil {
 		return Output{}, fmt.Errorf("load session evidence: %w", err)
 	}
-	ledger, err = appendPhaseEvidence(ctx, sessions, model, ledger, now)
+	if model.Status == spec.StatusApproved {
+		return openBuild(ctx, specs, sessions, model, path, ledger, now)
+	}
+	return continueBuild(ctx, specs, sessions, runner, model, path, ledger, input.CWD, input.Env, now)
+}
+
+func openBuild(ctx context.Context, specs SpecStore, sessions SessionStore, model spec.Model, path string, ledger session.Session, now string) (Output, error) {
+	phaseID, ok := firstPendingPhase(model)
+	if !ok {
+		ledger, err := appendBuild(ctx, sessions, model.TaskID, spec.StatusActive, "final acceptance opened", now)
+		if err != nil {
+			return Output{}, err
+		}
+		model = reconcile.FromSession(model, ledger)
+		model.Updated = now
+		applyActiveState(&model, finalPhaseID, "final acceptance opened")
+		if err := specs.Save(ctx, path, model); err != nil {
+			return Output{}, fmt.Errorf("save projected spec: %w", err)
+		}
+		return Output{TaskID: model.TaskID, Status: model.Status, Phase: finalPhaseID, Next: model.CurrentState.AllowedFollowUp}, nil
+	}
+	var err error
+	ledger, err = appendPhase(ctx, sessions, model.TaskID, phaseID, "active", "phase "+phaseID+" opened", now)
 	if err != nil {
 		return Output{}, err
 	}
-	replayed := session.Replay(ledger)
-	passed, failed := countCriterionOutcomes(model, replayed)
-	applyPostBuildState(&model, failed)
-	model.Updated = now
-	ledger, err = sessions.Append(ctx, model.TaskID, session.Entry{Type: "build", Status: string(model.Status), Reason: "build completed"}, now)
+	ledger, err = appendBuild(ctx, sessions, model.TaskID, spec.StatusActive, "phase "+phaseID+" opened", now)
 	if err != nil {
-		return Output{}, fmt.Errorf("append build result: %w", err)
+		return Output{}, err
 	}
 	model = reconcile.FromSession(model, ledger)
+	model.Updated = now
+	applyActiveState(&model, phaseID, "phase "+phaseID+" opened")
 	if err := specs.Save(ctx, path, model); err != nil {
 		return Output{}, fmt.Errorf("save projected spec: %w", err)
 	}
-	return Output{TaskID: model.TaskID, Status: model.Status, Passed: passed, Failed: failed, Next: model.CurrentState.AllowedFollowUp, Repair: buildRepair(model, ledger)}, nil
+	return Output{TaskID: model.TaskID, Status: model.Status, Phase: phaseID, Next: model.CurrentState.AllowedFollowUp}, nil
+}
+
+func continueBuild(ctx context.Context, specs SpecStore, sessions SessionStore, runner Runner, model spec.Model, path string, ledger session.Session, cwd string, env []string, now string) (Output, error) {
+	phaseID := currentPhaseID(model)
+	if phaseID == "" {
+		phaseID = finalPhaseID
+	}
+	if phaseID == finalPhaseID {
+		return runFinalAcceptance(ctx, specs, sessions, runner, model, path, ledger, cwd, env, now, 0, 0)
+	}
+	phase, ok := phaseByID(model, phaseID)
+	if !ok {
+		return Output{}, fmt.Errorf("%w: current phase %s is not declared", ErrSpecNotBuildable, phaseID)
+	}
+	var err error
+	ledger, err = appendBuild(ctx, sessions, model.TaskID, spec.StatusActive, "running phase "+phaseID+" evidence", now)
+	if err != nil {
+		return Output{}, err
+	}
+	ledger, passed, failed, err := runCriterionList(ctx, sessions, runner, model.TaskID, phase.Acceptance, phaseID, cwd, env, now)
+	if err != nil {
+		return Output{}, err
+	}
+	if failed > 0 {
+		ledger, err = appendPhase(ctx, sessions, model.TaskID, phaseID, "blocked", "phase "+phaseID+" acceptance failed", now)
+		if err != nil {
+			return Output{}, err
+		}
+		ledger, err = appendBuild(ctx, sessions, model.TaskID, spec.StatusBlocked, "phase "+phaseID+" acceptance failed", now)
+		if err != nil {
+			return Output{}, err
+		}
+		model = reconcile.FromSession(model, ledger)
+		model.Updated = now
+		applyBlockedState(&model, phaseID, "phase "+phaseID+" acceptance failed")
+		if err := specs.Save(ctx, path, model); err != nil {
+			return Output{}, fmt.Errorf("save projected spec: %w", err)
+		}
+		return Output{TaskID: model.TaskID, Status: model.Status, Phase: phaseID, Passed: passed, Failed: failed, Next: model.CurrentState.AllowedFollowUp, Repair: buildRepair(model, ledger)}, nil
+	}
+	ledger, err = appendPhase(ctx, sessions, model.TaskID, phaseID, "completed", "all phase criteria passed", now)
+	if err != nil {
+		return Output{}, err
+	}
+	model = reconcile.FromSession(model, ledger)
+	if nextPhase, ok := firstPendingPhase(model); ok {
+		ledger, err = appendPhase(ctx, sessions, model.TaskID, nextPhase, "active", "phase "+nextPhase+" opened", now)
+		if err != nil {
+			return Output{}, err
+		}
+		ledger, err = appendBuild(ctx, sessions, model.TaskID, spec.StatusActive, "phase "+phaseID+" completed; phase "+nextPhase+" opened", now)
+		if err != nil {
+			return Output{}, err
+		}
+		model = reconcile.FromSession(model, ledger)
+		model.Updated = now
+		applyActiveState(&model, nextPhase, "phase "+phaseID+" completed; phase "+nextPhase+" opened")
+		if err := specs.Save(ctx, path, model); err != nil {
+			return Output{}, fmt.Errorf("save projected spec: %w", err)
+		}
+		return Output{TaskID: model.TaskID, Status: model.Status, Phase: nextPhase, Passed: passed, Failed: failed, Next: model.CurrentState.AllowedFollowUp}, nil
+	}
+	return runFinalAcceptance(ctx, specs, sessions, runner, model, path, ledger, cwd, env, now, passed, failed)
+}
+
+func runFinalAcceptance(ctx context.Context, specs SpecStore, sessions SessionStore, runner Runner, model spec.Model, path string, ledger session.Session, cwd string, env []string, now string, passed int, failed int) (Output, error) {
+	if len(model.Acceptance.Criteria) > 0 {
+		var err error
+		ledger, err = appendBuild(ctx, sessions, model.TaskID, spec.StatusActive, "running final acceptance", now)
+		if err != nil {
+			return Output{}, err
+		}
+		var finalPassed, finalFailed int
+		ledger, finalPassed, finalFailed, err = runCriterionList(ctx, sessions, runner, model.TaskID, model.Acceptance.Criteria, "", cwd, env, now)
+		if err != nil {
+			return Output{}, err
+		}
+		passed += finalPassed
+		failed += finalFailed
+	}
+	if failed > 0 {
+		var err error
+		ledger, err = appendBuild(ctx, sessions, model.TaskID, spec.StatusBlocked, "final acceptance failed", now)
+		if err != nil {
+			return Output{}, err
+		}
+		model = reconcile.FromSession(model, ledger)
+		model.Updated = now
+		applyBlockedState(&model, finalPhaseID, "final acceptance failed")
+		if err := specs.Save(ctx, path, model); err != nil {
+			return Output{}, fmt.Errorf("save projected spec: %w", err)
+		}
+		return Output{TaskID: model.TaskID, Status: model.Status, Phase: finalPhaseID, Passed: passed, Failed: failed, Next: model.CurrentState.AllowedFollowUp, Repair: buildRepair(model, ledger)}, nil
+	}
+	var err error
+	ledger, err = appendBuild(ctx, sessions, model.TaskID, spec.StatusReview, "build completed; ready for review", now)
+	if err != nil {
+		return Output{}, err
+	}
+	model = reconcile.FromSession(model, ledger)
+	model.Updated = now
+	applyReviewState(&model)
+	if err := specs.Save(ctx, path, model); err != nil {
+		return Output{}, fmt.Errorf("save projected spec: %w", err)
+	}
+	return Output{TaskID: model.TaskID, Status: model.Status, Phase: finalPhaseID, Passed: passed, Failed: failed, Next: model.CurrentState.AllowedFollowUp}, nil
 }
 
 func ensureWorkspaceBaseline(ctx context.Context, sessions SessionStore, workspace WorkspaceStatus, model spec.Model, now string) error {
@@ -140,47 +267,55 @@ func buildable(status spec.Status) bool {
 	}
 }
 
-func runCriteria(ctx context.Context, sessions SessionStore, runner Runner, model spec.Model, cwd string, env []string, now string) error {
-	for _, phase := range model.Phases {
-		phaseBlocked := false
-		for _, criterion := range phase.Acceptance {
-			if criterion.PhaseID == "" {
-				criterion.PhaseID = phase.ID
-			}
-			if criterion.Command == "" {
-				if criterion.Status != "pass" {
-					phaseBlocked = true
-				}
-				continue
-			}
-			entry := criterionEntry(ctx, runner, criterion, cwd, env)
-			if _, err := sessions.Append(ctx, model.TaskID, entry, now); err != nil {
-				return fmt.Errorf("append criterion evidence: %w", err)
-			}
-			if entry.Status != "pass" {
-				phaseBlocked = true
-			}
-		}
-		if phaseBlocked {
-			break
-		}
-	}
-	for _, criterion := range model.Acceptance.Criteria {
-		if criterion.Command == "" {
-			continue
+func runCriterionList(ctx context.Context, sessions SessionStore, runner Runner, taskID string, criteria []spec.Criterion, phaseID string, cwd string, env []string, now string) (session.Session, int, int, error) {
+	var ledger session.Session
+	passed, failed := 0, 0
+	for _, criterion := range criteria {
+		if criterion.PhaseID == "" {
+			criterion.PhaseID = phaseID
 		}
 		entry := criterionEntry(ctx, runner, criterion, cwd, env)
-		if _, err := sessions.Append(ctx, model.TaskID, entry, now); err != nil {
-			return fmt.Errorf("append criterion evidence: %w", err)
+		var err error
+		ledger, err = sessions.Append(ctx, taskID, entry, now)
+		if err != nil {
+			return ledger, passed, failed, fmt.Errorf("append criterion evidence: %w", err)
+		}
+		if entry.Status == "pass" {
+			passed++
+		} else {
+			failed++
 		}
 	}
-	return nil
+	if len(criteria) == 0 {
+		var err error
+		ledger, err = sessions.Load(ctx, taskID)
+		if err != nil {
+			return ledger, passed, failed, fmt.Errorf("load session evidence: %w", err)
+		}
+	}
+	return ledger, passed, failed, nil
 }
 
 func criterionEntry(ctx context.Context, runner Runner, criterion spec.Criterion, cwd string, env []string) session.Entry {
-	result, runErr := runner.Run(ctx, execution.Request{Command: criterion.Command, CWD: cwd, Env: env, Timeout: 30 * time.Second})
+	var result execution.Result
+	var runErr error
+	if strings.TrimSpace(criterion.Command) == "" {
+		evaluation := acceptance.Evaluate(criterion.ExpectedKind, acceptance.Evidence{})
+		return session.Entry{
+			Type:        "criterion",
+			CriterionID: criterion.ID,
+			PhaseID:     criterion.PhaseID,
+			Status:      evaluation.Status,
+			Reason:      evaluation.Reason,
+		}
+	}
+	if runner != nil {
+		result, runErr = runner.Run(ctx, execution.Request{Command: criterion.Command, CWD: cwd, Env: env, Timeout: 30 * time.Second})
+	} else {
+		runErr = errors.New("missing acceptance runner")
+	}
 	evaluation := acceptance.Evaluate(criterion.ExpectedKind, acceptance.Evidence{ExitCode: result.ExitCode, Output: result.Output})
-	if runErr != nil && evaluation.Status == "pass" {
+	if runErr != nil {
 		evaluation.Status = "fail"
 		evaluation.Reason = runErr.Error()
 	}
@@ -197,55 +332,48 @@ func criterionEntry(ctx context.Context, runner Runner, criterion spec.Criterion
 	}
 }
 
-func appendPhaseEvidence(ctx context.Context, sessions SessionStore, model spec.Model, ledger session.Session, now string) (session.Session, error) {
-	var err error
-	for _, phase := range model.Phases {
-		status, reason := phaseEvidenceState(phase, ledger)
-		if status == "" {
-			continue
-		}
-		ledger, err = sessions.Append(ctx, model.TaskID, session.Entry{
-			Type:    "phase",
-			PhaseID: phase.ID,
-			Status:  status,
-			Reason:  reason,
-		}, now)
-		if err != nil {
-			return ledger, fmt.Errorf("append phase evidence: %w", err)
-		}
+func appendPhase(ctx context.Context, sessions SessionStore, taskID string, phaseID string, status string, reason string, now string) (session.Session, error) {
+	ledger, err := sessions.Append(ctx, taskID, session.Entry{Type: "phase", PhaseID: phaseID, Status: status, Reason: reason}, now)
+	if err != nil {
+		return ledger, fmt.Errorf("append phase evidence: %w", err)
 	}
 	return ledger, nil
 }
 
-func countCriterionOutcomes(model spec.Model, replayed session.Session) (int, int) {
-	passed, failed := 0, 0
-	for _, criterion := range model.AllCriteria() {
-		state, ok := replayed.CriterionStates[criterion.ID]
-		if !ok {
-			failed++
-			continue
-		}
-		switch state.Status {
-		case "pass":
-			passed++
-		default:
-			failed++
-		}
+func appendBuild(ctx context.Context, sessions SessionStore, taskID string, status spec.Status, reason string, now string) (session.Session, error) {
+	ledger, err := sessions.Append(ctx, taskID, session.Entry{Type: "build", Status: string(status), Reason: reason}, now)
+	if err != nil {
+		return ledger, fmt.Errorf("append build state: %w", err)
 	}
-	return passed, failed
+	return ledger, nil
 }
 
-func applyPostBuildState(model *spec.Model, failed int) {
-	if failed > 0 {
-		model.Status = spec.StatusBlocked
-		model.CurrentState.Next = "repair"
-		model.CurrentState.Reason = "acceptance criteria failed"
-		model.CurrentState.AllowedFollowUp = "scafld handoff " + model.TaskID
-		model.CurrentState.ReviewGate = "not_started"
-		return
-	}
+func applyActiveState(model *spec.Model, phaseID string, reason string) {
+	model.Status = spec.StatusActive
+	model.CurrentState.CurrentPhase = phaseID
+	model.CurrentState.Next = "build"
+	model.CurrentState.Reason = reason
+	model.CurrentState.Blockers = "none"
+	model.CurrentState.AllowedFollowUp = "scafld handoff " + model.TaskID
+	model.CurrentState.ReviewGate = "not_started"
+}
+
+func applyBlockedState(model *spec.Model, phaseID string, reason string) {
+	model.Status = spec.StatusBlocked
+	model.CurrentState.CurrentPhase = phaseID
+	model.CurrentState.Next = "repair"
+	model.CurrentState.Reason = reason
+	model.CurrentState.Blockers = reason
+	model.CurrentState.AllowedFollowUp = "scafld handoff " + model.TaskID
+	model.CurrentState.ReviewGate = "not_started"
+}
+
+func applyReviewState(model *spec.Model) {
 	model.Status = spec.StatusReview
+	model.CurrentState.CurrentPhase = finalPhaseID
 	model.CurrentState.Next = "review"
+	model.CurrentState.Reason = "build completed; ready for review"
+	model.CurrentState.Blockers = "none"
 	model.CurrentState.AllowedFollowUp = "scafld review " + model.TaskID
 	model.CurrentState.ReviewGate = "not_started"
 }
@@ -254,9 +382,16 @@ func buildRepair(model spec.Model, ledger session.Session) *gate.Failure {
 	if model.Status != spec.StatusBlocked {
 		return nil
 	}
+	currentPhase := strings.TrimSpace(model.CurrentState.CurrentPhase)
 	var blockers []string
 	var evidence []string
 	for _, criterion := range model.AllCriteria() {
+		if currentPhase != "" && currentPhase != finalPhaseID && criterion.PhaseID != currentPhase {
+			continue
+		}
+		if currentPhase == finalPhaseID && criterion.PhaseID != "" {
+			continue
+		}
 		if criterion.Status == "pass" {
 			continue
 		}
@@ -307,22 +442,44 @@ func snippet(s string) string {
 	return s
 }
 
-func phaseEvidenceState(phase spec.Phase, ledger session.Session) (string, string) {
-	if len(phase.Acceptance) == 0 {
-		return "", ""
-	}
-	allPass := true
-	for _, criterion := range phase.Acceptance {
-		state, ok := ledger.CriterionStates[criterion.ID]
-		if !ok {
-			return "", ""
-		}
-		if state.Status != "pass" {
-			allPass = false
+func firstPendingPhase(model spec.Model) (string, bool) {
+	for _, phase := range model.Phases {
+		switch phase.Status {
+		case "completed":
+			continue
+		default:
+			return phase.ID, true
 		}
 	}
-	if allPass {
-		return "completed", "all phase criteria passed"
+	return "", false
+}
+
+func currentPhaseID(model spec.Model) string {
+	current := strings.TrimSpace(model.CurrentState.CurrentPhase)
+	if current == finalPhaseID {
+		return finalPhaseID
 	}
-	return "blocked", "one or more phase criteria failed"
+	if current != "" && current != "none" {
+		if phase, ok := phaseByID(model, current); ok && phase.Status != "completed" {
+			return current
+		}
+	}
+	for _, phase := range model.Phases {
+		if phase.Status == "active" || phase.Status == "blocked" {
+			return phase.ID
+		}
+	}
+	if phaseID, ok := firstPendingPhase(model); ok {
+		return phaseID
+	}
+	return finalPhaseID
+}
+
+func phaseByID(model spec.Model, phaseID string) (spec.Phase, bool) {
+	for _, phase := range model.Phases {
+		if phase.ID == phaseID {
+			return phase, true
+		}
+	}
+	return spec.Phase{}, false
 }
