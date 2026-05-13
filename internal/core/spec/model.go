@@ -210,7 +210,16 @@ type HardenRound struct {
 	Status    string           `json:"status"`
 	StartedAt string           `json:"started_at"`
 	EndedAt   string           `json:"ended_at"`
+	Checks    []HardenCheck    `json:"checks"`
 	Questions []HardenQuestion `json:"questions"`
+}
+
+// HardenCheck records one evidence-backed audit pass from a hardening round.
+type HardenCheck struct {
+	Name       string `json:"name"`
+	GroundedIn string `json:"grounded_in"`
+	Result     string `json:"result"`
+	Evidence   string `json:"evidence"`
 }
 
 // HardenQuestion is one grounded question from a hardening round.

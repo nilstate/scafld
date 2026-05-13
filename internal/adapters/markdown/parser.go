@@ -63,6 +63,7 @@ type parser struct {
 	criterion      *spec.Criterion
 	reviewFinding  *corereview.Finding
 	hardenRound    *spec.HardenRound
+	hardenCheck    *spec.HardenCheck
 	hardenQuestion *spec.HardenQuestion
 	phaseField     string
 	hardenField    string
@@ -139,6 +140,7 @@ func (p *parser) startPhase(match []string) error {
 	p.criterion = nil
 	p.reviewFinding = nil
 	p.hardenRound = nil
+	p.hardenCheck = nil
 	p.hardenQuestion = nil
 	p.phaseField = ""
 	p.hardenField = ""
@@ -152,6 +154,7 @@ func (p *parser) startSection(section string) {
 	p.criterion = nil
 	p.reviewFinding = nil
 	p.hardenRound = nil
+	p.hardenCheck = nil
 	p.hardenQuestion = nil
 	p.phaseField = ""
 	p.hardenField = ""
@@ -332,6 +335,11 @@ func (p *parser) handleHardenLine(line string) bool {
 			return true
 		case "questions":
 			p.hardenField = "questions"
+			p.hardenCheck = nil
+			return true
+		case "checks":
+			p.hardenField = "checks"
+			p.hardenQuestion = nil
 			return true
 		}
 	}
@@ -350,6 +358,7 @@ func (p *parser) handleHardenLine(line string) bool {
 func (p *parser) startHardenRound(id string) {
 	p.model.HardenRounds = append(p.model.HardenRounds, spec.HardenRound{ID: id})
 	p.hardenRound = &p.model.HardenRounds[len(p.model.HardenRounds)-1]
+	p.hardenCheck = nil
 	p.hardenQuestion = nil
 	p.hardenField = ""
 }
@@ -374,8 +383,37 @@ func (p *parser) handleHardenBullet(value string) bool {
 			return true
 		}
 		p.startHardenQuestion(value)
+		return true
+	}
+	if p.hardenField == "checks" {
+		if key, body, ok := parseSpecKeyValue(value); ok && normalizeSpecKey(key) == "check" {
+			p.startHardenCheck(body)
+			return true
+		}
+		p.startHardenCheck(value)
+		return true
 	}
 	return true
+}
+
+func (p *parser) startHardenCheck(value string) {
+	if p.hardenRound == nil {
+		return
+	}
+	value = cleanSpecValue(value)
+	if value == "" {
+		return
+	}
+	normalized := normalizeHardenQuestion(value)
+	for i := range p.hardenRound.Checks {
+		if normalizeHardenQuestion(p.hardenRound.Checks[i].Name) == normalized {
+			p.hardenCheck = &p.hardenRound.Checks[i]
+			return
+		}
+	}
+	p.hardenRound.Checks = append(p.hardenRound.Checks, spec.HardenCheck{Name: value})
+	p.hardenCheck = &p.hardenRound.Checks[len(p.hardenRound.Checks)-1]
+	p.hardenQuestion = nil
 }
 
 func (p *parser) startHardenQuestion(value string) {
@@ -400,6 +438,24 @@ func (p *parser) startHardenQuestion(value string) {
 func (p *parser) handleHardenQuestionDetail(value string) bool {
 	key, body, ok := parseSpecKeyValue(value)
 	if !ok {
+		return true
+	}
+	if p.hardenField == "checks" {
+		if normalizeSpecKey(key) == "check" {
+			p.startHardenCheck(body)
+			return true
+		}
+		if p.hardenCheck == nil {
+			return true
+		}
+		switch normalizeSpecKey(key) {
+		case "grounded in":
+			p.hardenCheck.GroundedIn = body
+		case "result":
+			p.hardenCheck.Result = body
+		case "evidence":
+			p.hardenCheck.Evidence = body
+		}
 		return true
 	}
 	if normalizeSpecKey(key) == "question" {
@@ -427,13 +483,29 @@ func normalizeHardenQuestion(value string) string {
 }
 
 func (p *parser) handleListItem(line string) bool {
-	if p.listTarget == nil || !strings.HasPrefix(line, "- ") {
+	if p.listTarget == nil {
 		return false
+	}
+	if !strings.HasPrefix(line, "- ") {
+		return p.handleListContinuation(line)
 	}
 	value := strings.TrimSpace(strings.TrimPrefix(line, "- "))
 	if value != "none" && value != "" {
 		*p.listTarget = append(*p.listTarget, value)
 	}
+	return true
+}
+
+func (p *parser) handleListContinuation(line string) bool {
+	if p.listTarget == nil || len(*p.listTarget) == 0 || !strings.HasPrefix(line, "  ") {
+		return false
+	}
+	value := strings.TrimSpace(line)
+	if value == "" || strings.HasPrefix(value, "- ") {
+		return false
+	}
+	items := *p.listTarget
+	items[len(items)-1] = strings.TrimSpace(items[len(items)-1] + " " + value)
 	return true
 }
 
@@ -443,6 +515,9 @@ func (p *parser) handlePhaseLine(line string) bool {
 	}
 	if p.phaseField == "changes" && strings.HasPrefix(line, "- ") {
 		p.appendPhaseChange(line)
+		return true
+	}
+	if p.phaseField == "changes" && p.appendPhaseChangeContinuation(line) {
 		return true
 	}
 	if strings.HasPrefix(strings.TrimSpace(line), "- ") {
@@ -474,6 +549,18 @@ func (p *parser) appendPhaseChange(line string) {
 	if value != "none" {
 		p.phase.Changes = append(p.phase.Changes, value)
 	}
+}
+
+func (p *parser) appendPhaseChangeContinuation(line string) bool {
+	if p.phase == nil || len(p.phase.Changes) == 0 || !strings.HasPrefix(line, "  ") {
+		return false
+	}
+	value := strings.TrimSpace(line)
+	if value == "" || strings.HasPrefix(value, "- ") {
+		return false
+	}
+	p.phase.Changes[len(p.phase.Changes)-1] = strings.TrimSpace(p.phase.Changes[len(p.phase.Changes)-1] + " " + value)
+	return true
 }
 
 func (p *parser) handleCriterionStart(line string) bool {

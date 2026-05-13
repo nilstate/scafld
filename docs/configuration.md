@@ -198,11 +198,17 @@ outrank the auto-detected defaults.
 Config also recognizes common validation surfaces:
 
 - `Makefile`, `justfile`, and `Taskfile.*` check/test targets
-- `package.json` scripts with npm, pnpm, yarn, or bun based on package manager
-  metadata and lockfiles
+- `package.json` scripts including `check`, `test`, `lint`, `typecheck`, and
+  `build`, using npm, pnpm, yarn, or bun based on package manager metadata and
+  lockfiles
 - Go, Rust, Python, and Ruby manifests for language-specific test commands
-- monorepo/workspace files, architecture tests, CI workflows, migrations, and
-  package manifests as invariant evidence
+- Python runners and locks: pytest, Ruff, `uv.lock`, `poetry.lock`,
+  `requirements.txt`
+- Ruby/Bundler and Rails: `Gemfile`, `Gemfile.lock`, `config/routes.rb`
+- TypeScript config and workspace pipelines: `tsconfig.json`, `turbo.json`,
+  `nx.json`
+- Docker, Compose, Procfile, deployment config, and OpenAPI schemas as
+  invariant evidence
 
 The proposal is not automatically applied because the best project config has
 to come from an agent or operator that has inspected the repo. The safe flow is:
@@ -304,8 +310,15 @@ Hardening is operator-driven. `scafld approve` does not force
 `harden_status: passed`, but a complete nontrivial plan spec should usually be
 hardened before approval.
 
-The active harden prompt asks the agent to record grounded questions under the
-latest `## Harden Rounds` entry. `harden.max_questions_per_round` is read from
-config and injected into that prompt as a cap, not a target. `--mark-passed`
-verifies the cited code or archive references and refuses to close the round
-when they do not resolve.
+The active harden prompt asks the agent to record evidence-backed checks under
+the latest `## Harden Rounds` entry before asking questions. The required
+checks are path audit, command audit, scope/migration audit, acceptance timing
+audit, rollback/repair audit, and design challenge. The design challenge asks
+whether the plan is a bandaid, future bloat, compatibility debt, or the wrong
+abstraction.
+
+`harden.max_questions_per_round` is read from config and injected into that
+prompt as a cap, not a target. Questions are optional; `Questions: none` is
+valid only after checks have evidence. `--mark-passed` verifies check evidence,
+resolved questions, and cited code or archive references before closing the
+round.

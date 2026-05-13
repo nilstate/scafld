@@ -97,12 +97,34 @@ review, the contract changed while it was being judged.
 ## What scafld Sends
 
 The reviewer receives a typed review-context packet rendered as Markdown:
-task contract, declared task scope, approval baseline, task changes since
-approval, acceptance evidence, configured review agenda, selected project docs,
-root agent guidance, `.claude/rules` when present, and schema context. Each
-project-context section includes source path, hash, and byte count.
+task contract, review request, declared task scope, workspace classification,
+approval baseline, task changes since approval, ambient drift, acceptance
+evidence, configured review agenda, selected project docs, root agent guidance,
+`.claude/rules` when present, and schema context. Each project-context section
+includes source path, hash, and byte count.
+
+Every packet begins with a `Context Budget Manifest`. It records:
+
+- max section-body bytes
+- rendered section-body bytes
+- omitted section-body bytes
+- included sections
+- truncated sections
+- omitted sections with source paths and reason
+
 `review.context.max_bytes` is an aggregate section-body budget for the rendered
-packet, not a per-file allowance.
+packet, not a per-file allowance. Omission is never silent: the reviewer can see
+what did not fit and which source paths to open if a specific attack requires
+that material.
+
+Review modes change the attack shape, not the completion standard:
+
+- `discover`: broad search for new completion blockers across the approved
+  task scope.
+- `verify`: check known findings, repair regressions, and release blockers
+  introduced by the fix.
+
+Both modes use the same ReviewDossier schema and the same pass/fail gate.
 
 The prompt tells the challenger not to mutate the workspace, not to emit
 placeholder output while investigating, and to submit one final ReviewDossier.

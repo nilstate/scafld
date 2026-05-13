@@ -47,6 +47,9 @@ func commandSuggestions(root string) []appconfig.CommandSuggestion {
 		}
 		if json.Unmarshal([]byte(packageJSON), &pkg) == nil {
 			manager := nodePackageManager(root, pkg.PackageManager)
+			if _, ok := pkg.Scripts["check"]; ok {
+				commands = append(commands, appconfig.CommandSuggestion{ID: "full_check", Command: nodeRun(manager, "check"), Sources: []string{"package.json:scripts.check"}})
+			}
 			if _, ok := pkg.Scripts["test"]; ok {
 				commands = append(commands, appconfig.CommandSuggestion{ID: "node_test", Command: manager + " test", Sources: []string{"package.json:scripts.test"}})
 			}
@@ -55,6 +58,9 @@ func commandSuggestions(root string) []appconfig.CommandSuggestion {
 			}
 			if _, ok := pkg.Scripts["typecheck"]; ok {
 				commands = append(commands, appconfig.CommandSuggestion{ID: "node_typecheck", Command: nodeRun(manager, "typecheck"), Sources: []string{"package.json:scripts.typecheck"}})
+			}
+			if _, ok := pkg.Scripts["build"]; ok {
+				commands = append(commands, appconfig.CommandSuggestion{ID: "node_build", Command: nodeRun(manager, "build"), Sources: []string{"package.json:scripts.build"}})
 			}
 		}
 	}
@@ -65,16 +71,19 @@ func commandSuggestions(root string) []appconfig.CommandSuggestion {
 		commands = append(commands, appconfig.CommandSuggestion{ID: "cargo_test", Command: "cargo test", Sources: []string{"Cargo.toml"}})
 	}
 	if pyproject := readText(filepath.Join(root, "pyproject.toml")); pyproject != "" {
+		runner := pythonRunner(root)
 		if strings.Contains(pyproject, "pytest") || exists(filepath.Join(root, "tests")) {
-			commands = append(commands, appconfig.CommandSuggestion{ID: "python_test", Command: "python -m pytest", Sources: []string{"pyproject.toml"}})
+			commands = append(commands, appconfig.CommandSuggestion{ID: "python_test", Command: runner + "pytest", Sources: []string{"pyproject.toml"}})
 		}
 		if strings.Contains(pyproject, "ruff") {
-			commands = append(commands, appconfig.CommandSuggestion{ID: "python_lint", Command: "python -m ruff check .", Sources: []string{"pyproject.toml"}})
+			commands = append(commands, appconfig.CommandSuggestion{ID: "python_lint", Command: runner + "ruff check .", Sources: []string{"pyproject.toml"}})
 		}
 	}
 	if gemfile := readText(filepath.Join(root, "Gemfile")); gemfile != "" {
 		if strings.Contains(gemfile, "rspec") || exists(filepath.Join(root, "spec")) {
 			commands = append(commands, appconfig.CommandSuggestion{ID: "ruby_test", Command: "bundle exec rspec", Sources: []string{"Gemfile"}})
+		} else if strings.Contains(gemfile, "rails") {
+			commands = append(commands, appconfig.CommandSuggestion{ID: "ruby_test", Command: "bundle exec rails test", Sources: []string{"Gemfile"}})
 		}
 	}
 	commands = append(commands, nestedCommandSuggestions(root)...)
@@ -98,6 +107,9 @@ func nestedCommandSuggestions(root string) []appconfig.CommandSuggestion {
 			continue
 		}
 		manager := nodePackageManager(filepath.Join(root, filepath.FromSlash(dir)), pkg.PackageManager)
+		if _, ok := pkg.Scripts["check"]; ok {
+			commands = append(commands, appconfig.CommandSuggestion{ID: "node_check_" + idPart(dir), Command: "(cd " + dir + " && " + nodeRun(manager, "check") + ")", Sources: []string{rel + ":scripts.check"}})
+		}
 		if _, ok := pkg.Scripts["test"]; ok {
 			commands = append(commands, appconfig.CommandSuggestion{ID: "node_test_" + idPart(dir), Command: "(cd " + dir + " && " + manager + " test)", Sources: []string{rel + ":scripts.test"}})
 		}
@@ -107,15 +119,19 @@ func nestedCommandSuggestions(root string) []appconfig.CommandSuggestion {
 		if _, ok := pkg.Scripts["typecheck"]; ok {
 			commands = append(commands, appconfig.CommandSuggestion{ID: "node_typecheck_" + idPart(dir), Command: "(cd " + dir + " && " + nodeRun(manager, "typecheck") + ")", Sources: []string{rel + ":scripts.typecheck"}})
 		}
+		if _, ok := pkg.Scripts["build"]; ok {
+			commands = append(commands, appconfig.CommandSuggestion{ID: "node_build_" + idPart(dir), Command: "(cd " + dir + " && " + nodeRun(manager, "build") + ")", Sources: []string{rel + ":scripts.build"}})
+		}
 	}
 	for _, rel := range oneLevelMatches(root, "pyproject.toml") {
 		dir := filepath.ToSlash(filepath.Dir(rel))
 		text := readText(filepath.Join(root, filepath.FromSlash(rel)))
+		runner := pythonRunner(filepath.Join(root, filepath.FromSlash(dir)))
 		if strings.Contains(text, "pytest") || exists(filepath.Join(root, filepath.FromSlash(dir), "tests")) {
-			commands = append(commands, appconfig.CommandSuggestion{ID: "python_test_" + idPart(dir), Command: "(cd " + dir + " && python -m pytest)", Sources: []string{rel}})
+			commands = append(commands, appconfig.CommandSuggestion{ID: "python_test_" + idPart(dir), Command: "(cd " + dir + " && " + runner + "pytest)", Sources: []string{rel}})
 		}
 		if strings.Contains(text, "ruff") {
-			commands = append(commands, appconfig.CommandSuggestion{ID: "python_lint_" + idPart(dir), Command: "(cd " + dir + " && python -m ruff check .)", Sources: []string{rel}})
+			commands = append(commands, appconfig.CommandSuggestion{ID: "python_lint_" + idPart(dir), Command: "(cd " + dir + " && " + runner + "ruff check .)", Sources: []string{rel}})
 		}
 	}
 	for _, rel := range oneLevelMatches(root, "Cargo.toml") {
@@ -127,6 +143,8 @@ func nestedCommandSuggestions(root string) []appconfig.CommandSuggestion {
 		gemfile := readText(filepath.Join(root, filepath.FromSlash(rel)))
 		if strings.Contains(gemfile, "rspec") || exists(filepath.Join(root, filepath.FromSlash(dir), "spec")) {
 			commands = append(commands, appconfig.CommandSuggestion{ID: "ruby_test_" + idPart(dir), Command: "(cd " + dir + " && bundle exec rspec)", Sources: []string{rel}})
+		} else if strings.Contains(gemfile, "rails") {
+			commands = append(commands, appconfig.CommandSuggestion{ID: "ruby_test_" + idPart(dir), Command: "(cd " + dir + " && bundle exec rails test)", Sources: []string{rel}})
 		}
 	}
 	return commands
@@ -169,11 +187,32 @@ func invariantSuggestions(root string, files []appconfig.Evidence) []appconfig.I
 			Sources:     []string{"package.json"},
 		})
 	}
+	if paths := pathsByRole(files, "node_lockfile"); len(paths) > 0 {
+		invariants = append(invariants, appconfig.InvariantSuggestion{
+			ID:          "node_lockfile_integrity",
+			Description: "Keep package-manager lockfiles aligned with dependency and script changes.",
+			Sources:     paths,
+		})
+	}
+	if paths := append(pathsByRole(files, "typescript_config"), pathsByRole(files, "nested_typescript_config")...); len(paths) > 0 {
+		invariants = append(invariants, appconfig.InvariantSuggestion{
+			ID:          "typescript_boundary_integrity",
+			Description: "Keep TypeScript compiler boundaries and path aliases aligned with package layout.",
+			Sources:     dedupeStrings(paths),
+		})
+	}
 	if readText(filepath.Join(root, "pnpm-workspace.yaml")) != "" {
 		invariants = append(invariants, appconfig.InvariantSuggestion{
 			ID:          "workspace_package_boundaries",
 			Description: "Preserve workspace package boundaries and avoid undeclared cross-package coupling.",
 			Sources:     []string{"pnpm-workspace.yaml"},
+		})
+	}
+	if paths := pathsByRole(files, "workspace_pipeline"); len(paths) > 0 {
+		invariants = append(invariants, appconfig.InvariantSuggestion{
+			ID:          "workspace_pipeline_integrity",
+			Description: "Keep workspace pipeline configuration aligned with package scripts and build graph changes.",
+			Sources:     paths,
 		})
 	}
 	if readText(filepath.Join(root, "pyproject.toml")) != "" {
@@ -183,6 +222,13 @@ func invariantSuggestions(root string, files []appconfig.Evidence) []appconfig.I
 			Sources:     []string{"pyproject.toml"},
 		})
 	}
+	if paths := append(pathsByRole(files, "python_lockfile"), pathsByRole(files, "python_requirements")...); len(paths) > 0 {
+		invariants = append(invariants, appconfig.InvariantSuggestion{
+			ID:          "python_lockfile_integrity",
+			Description: "Keep Python lockfiles and requirements aligned with validation commands and runtime metadata.",
+			Sources:     dedupeStrings(paths),
+		})
+	}
 	if readText(filepath.Join(root, "Gemfile")) != "" {
 		invariants = append(invariants, appconfig.InvariantSuggestion{
 			ID:          "ruby_bundle_integrity",
@@ -190,11 +236,39 @@ func invariantSuggestions(root string, files []appconfig.Evidence) []appconfig.I
 			Sources:     []string{"Gemfile"},
 		})
 	}
+	if paths := append(pathsByRole(files, "ruby_lockfile"), pathsByRole(files, "nested_ruby_lockfile")...); len(paths) > 0 {
+		invariants = append(invariants, appconfig.InvariantSuggestion{
+			ID:          "ruby_lockfile_integrity",
+			Description: "Keep Gemfile.lock and Bundler runtime assumptions aligned with test commands.",
+			Sources:     dedupeStrings(paths),
+		})
+	}
 	if readText(filepath.Join(root, "Cargo.toml")) != "" {
 		invariants = append(invariants, appconfig.InvariantSuggestion{
 			ID:          "rust_crate_integrity",
 			Description: "Keep Cargo manifests, lockfiles, and crate validation aligned.",
 			Sources:     []string{"Cargo.toml"},
+		})
+	}
+	if paths := pathsByRole(files, "public_api_schema"); len(paths) > 0 {
+		invariants = append(invariants, appconfig.InvariantSuggestion{
+			ID:          "public_api_contract",
+			Description: "Public API schema changes require explicit spec scope and compatibility review.",
+			Sources:     paths,
+		})
+	}
+	if paths := append(pathsByRole(files, "container_runtime"), pathsByRole(files, "nested_container_runtime")...); len(paths) > 0 {
+		invariants = append(invariants, appconfig.InvariantSuggestion{
+			ID:          "container_runtime_integrity",
+			Description: "Keep container entrypoints, build context, and runtime assumptions aligned with code changes.",
+			Sources:     dedupeStrings(paths),
+		})
+	}
+	if paths := pathsByRole(files, "deployment_surface"); len(paths) > 0 {
+		invariants = append(invariants, appconfig.InvariantSuggestion{
+			ID:          "deployment_surface_integrity",
+			Description: "Deployment configuration changes require explicit review of public runtime behavior.",
+			Sources:     paths,
 		})
 	}
 	if exists(filepath.Join(root, "db", "migrate")) {
@@ -335,6 +409,17 @@ func nodeRun(manager string, script string) string {
 		return "npm run " + script
 	}
 	return manager + " " + script
+}
+
+func pythonRunner(root string) string {
+	switch {
+	case exists(filepath.Join(root, "uv.lock")):
+		return "uv run "
+	case exists(filepath.Join(root, "poetry.lock")):
+		return "poetry run "
+	default:
+		return "python -m "
+	}
 }
 
 func idPart(path string) string {

@@ -134,6 +134,57 @@ func TestScannerDetectsRealWorldCommandSurfaces(t *testing.T) {
 	}
 }
 
+func TestScannerDetectsProductAndDeploymentSurfaces(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	writeFile(t, root, "package.json", `{"packageManager":"bun@1.2.0","scripts":{"check":"bun test && bun run typecheck","build":"vite build","typecheck":"tsc --noEmit"}}`)
+	writeFile(t, root, "bun.lock", "lock\n")
+	writeFile(t, root, "tsconfig.json", "{}\n")
+	writeFile(t, root, "turbo.json", "{}\n")
+	writeFile(t, root, "openapi.yaml", "openapi: 3.1.0\n")
+	writeFile(t, root, "Dockerfile", "FROM scratch\n")
+	writeFile(t, root, "vercel.json", "{}\n")
+	writeFile(t, root, "pyproject.toml", "[project]\nname='app'\n[tool.pytest.ini_options]\n[tool.ruff]\n")
+	writeFile(t, root, "uv.lock", "version = 1\n")
+	writeFile(t, root, "Gemfile", "gem 'rails'\n")
+	writeFile(t, root, "Gemfile.lock", "GEM\n")
+
+	snapshot, err := Scanner{Root: root}.Scan(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for id, command := range map[string]string{
+		"full_check":     "bun check",
+		"node_build":     "bun build",
+		"python_test":    "uv run pytest",
+		"python_lint":    "uv run ruff check .",
+		"ruby_test":      "bundle exec rails test",
+		"node_typecheck": "bun typecheck",
+	} {
+		if !hasCommandSuggestion(snapshot.Commands, id, command) {
+			t.Fatalf("missing command %s=%q in %+v", id, command, snapshot.Commands)
+		}
+	}
+	for _, id := range []string{
+		"node_lockfile_integrity",
+		"typescript_boundary_integrity",
+		"workspace_pipeline_integrity",
+		"public_api_contract",
+		"container_runtime_integrity",
+		"deployment_surface_integrity",
+		"python_lockfile_integrity",
+		"ruby_lockfile_integrity",
+	} {
+		if !hasInvariantID(snapshot.Invariants, id) {
+			t.Fatalf("missing invariant %s in %+v", id, snapshot.Invariants)
+		}
+	}
+	if len(snapshot.Questions) != 0 {
+		t.Fatalf("full_check should avoid command question: %+v", snapshot.Questions)
+	}
+}
+
 func TestScannerDetectsNestedPackageSurfaces(t *testing.T) {
 	t.Parallel()
 

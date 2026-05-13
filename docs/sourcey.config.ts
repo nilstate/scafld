@@ -23,7 +23,7 @@ export default {
           },
           {
             group: "Reference",
-            pages: ["cli-reference", "spec-schema", "configuration"],
+            pages: ["cli-reference", "spec-schema", "configuration", "artifacts"],
           },
           {
             group: "Advanced",

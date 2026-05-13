@@ -328,7 +328,7 @@ func TestUpdateMigratesLegacyHardenPromptWithoutManifest(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(got)
-	for _, want := range []string{"single `Grounded in:` value", "Use `Grounded in:` as", "include `If unanswered:`", "Do not use YAML object keys"} {
+	for _, want := range []string{"Path audit:", "Design challenge:", "single `Grounded in:` value", "Use `Grounded in:` as", "include `If unanswered:`", "Questions:\n- none", "Do not use YAML object keys"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("migrated harden prompt missing %q:\n%s", want, text)
 		}

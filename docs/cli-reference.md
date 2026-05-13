@@ -132,14 +132,20 @@ Without flags, `harden` appends a round, sets `harden_status: in_progress`, and
 prints the active prompt from `.scafld/prompts/harden.md`, falling back to
 `.scafld/core/prompts/harden.md` and then the built-in prompt.
 
-With `--mark-passed`, it verifies the latest round's `Grounded in` citations,
-closes the round, and sets `harden_status: passed`. Unresolved citations fail
-closed and leave the round in progress.
+With `--mark-passed`, it verifies the latest round's harden checks and
+`Grounded in` citations, closes the round, and sets `harden_status: passed`.
+Missing checks, failed checks, unresolved questions, and unresolved citations
+fail closed and leave the round in progress.
 
 Accepted citation shapes are `Grounded in: spec_gap:<field>`,
 `Grounded in: code:<path>:<line>`, and `Grounded in: archive:<task-id>`.
 Code citations must use an existing workspace-relative path and a real line
 number.
+
+Required checks are `Path audit`, `Command audit`, `Scope/migration audit`,
+`Acceptance timing audit`, `Rollback/repair audit`, and `Design challenge`.
+Each check must record `Result: passed` or `Result: not_applicable` plus
+evidence. `Questions: none` is valid only after those checks have evidence.
 
 ## validate
 

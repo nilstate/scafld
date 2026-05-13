@@ -1,0 +1,202 @@
+---
+title: Artifacts
+description: Concrete scafld artifact examples
+---
+
+# Artifacts
+
+scafld is deterministic because the workflow is made of durable artifacts. The
+agent can change; the spec, session, gate repair contract, and review dossier
+remain.
+
+## Spec Excerpt
+
+Specs are Markdown projections of the task contract and session state:
+
+```markdown
+# Add typed error codes to document processing module
+
+## Current State
+
+Status: review
+Current phase: final
+Next: scafld review add-error-codes
+Reason: build complete; review gate ready
+Allowed follow-up command: scafld review add-error-codes
+Review gate: not_started
+
+## Acceptance
+
+Validation:
+- [x] v1 compile - Project compiles with no type errors
+  - Command: npm run build
+  - Status: pass
+  - Evidence: exit=0 duration=4.2s
+- [x] v2 test - Unit tests pass
+  - Command: npm test -- --filter documents
+  - Status: pass
+  - Evidence: exit=0 duration=2.1s
+```
+
+The spec is readable state. The session ledger is the evidence source.
+
+## Harden Round
+
+A harden round records the pre-build challenge. Questions are optional; checks
+are the evidence that the plan survived hardening.
+
+```markdown
+## Harden Rounds
+
+### round-1
+
+Status: passed
+Started: 2026-05-13T00:10:00Z
+Ended: 2026-05-13T00:18:00Z
+
+Checks:
+- Path audit
+  - Grounded in: code:internal/app/review/context.go:30
+  - Result: passed
+  - Evidence: Target package and docs paths exist; new docs file is declared.
+- Command audit
+  - Grounded in: code:Makefile:1
+  - Result: passed
+  - Evidence: `make check` is the repository validation command.
+- Scope/migration audit
+  - Grounded in: spec_gap:Risks
+  - Result: passed
+  - Evidence: No compatibility fallback or data migration is introduced.
+- Acceptance timing audit
+  - Grounded in: spec_gap:Phases
+  - Result: passed
+  - Evidence: Criteria run after the parser and docs updates are in place.
+- Rollback/repair audit
+  - Grounded in: spec_gap:Rollback
+  - Result: not_applicable
+  - Evidence: Change is source-only and reverts cleanly through git.
+- Design challenge
+  - Grounded in: spec_gap:Summary
+  - Result: passed
+  - Evidence: The plan removes an escape hatch instead of adding a fallback.
+
+Questions:
+- none
+```
+
+`Questions: none` is valid when the checks have evidence and no unresolved
+operator decision remains.
+
+## Status JSON
+
+`status --json` is the stable automation surface:
+
+```json
+{
+  "ok": true,
+  "command": "status",
+  "result": {
+    "task_id": "add-error-codes",
+    "status": "review",
+    "next": "scafld review add-error-codes",
+    "gate": "review",
+    "trusted_state": "session ledger replay projected into the Markdown spec",
+    "allowed_follow_up": "scafld review add-error-codes",
+    "session_ok": true
+  }
+}
+```
+
+Agents should use this instead of scraping Markdown.
+
+## Failed Gate
+
+Every blocked gate should say what happened and what to do next:
+
+```text
+gate: review
+status: review
+reason: review provider failed
+evidence:
+- .scafld/runs/add-error-codes/diagnostics/command-1.txt
+expected: valid ReviewDossier submitted by an external reviewer
+actual: provider produced no submission
+blockers:
+- review provider failed
+next: scafld handoff add-error-codes
+```
+
+The same repair contract appears in JSON under `error.gate` or
+`result.repair`.
+
+## Review Context Manifest
+
+Every provider prompt starts with a budget manifest:
+
+```text
+## Context Budget Manifest
+
+Max section body bytes: 16384
+Rendered section body bytes: 9211
+Omitted section body bytes: 1840
+
+Included sections:
+- `task_contract` (Task Contract): rendered=822 body=822 omitted=0
+- `task_changes` (Task Changes Since Approval Baseline): rendered=1410 body=1410 omitted=0
+
+Truncated sections:
+- `project_context:README.md` (Project Context: README.md): rendered=800 body=1900 omitted=1100 sources=`README.md`
+
+Omitted sections:
+- `project_context:docs/review.md` (Project Context: docs/review.md): rendered=0 body=740 omitted=740 sources=`docs/review.md` reason=context budget exhausted
+```
+
+Budgeting never hides omissions. The reviewer can see what fit, what was
+truncated, and which source paths to open when a specific attack requires more
+context.
+
+## Review Dossier
+
+The accepted review payload is one strict dossier shape:
+
+```json
+{
+  "verdict": "fail",
+  "mode": "discover",
+  "summary": "One completion blocker found.",
+  "findings": [
+    {
+      "id": "missing-error-envelope-mapping",
+      "severity": "high",
+      "blocks_completion": true,
+      "category": "Spec Compliance",
+      "confidence": "high",
+      "location": {"path": "src/errors/document-error.ts", "line": 44},
+      "evidence": "DocumentProcessingError exposes code but the API adapter still serializes message only.",
+      "impact": "Callers cannot branch on the new typed error code.",
+      "validation": "Add an API adapter test asserting the response envelope includes code.",
+      "status": "open",
+      "summary": "Typed error codes are not exposed at the API boundary."
+    }
+  ],
+  "attack_log": [
+    {
+      "target": "error envelope callers",
+      "attack": "Trace serialization from processor errors to API response",
+      "result": "finding"
+    }
+  ],
+  "budget": {
+    "max_findings": 12,
+    "min_attack_angles": 6,
+    "actual_findings": 1,
+    "actual_attack_angles": 1,
+    "depth": "standard"
+  },
+  "provider": "codex",
+  "output_format": "codex.output_file"
+}
+```
+
+`complete` only trusts a passing dossier from an external provider or an
+audited human review override.

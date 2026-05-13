@@ -56,6 +56,12 @@ func TestRoundTripPreservesLiterateSpecFields(t *testing.T) {
 		ID:        "round-1",
 		Status:    string(spec.HardenInProgress),
 		StartedAt: "2026-05-04T00:00:00Z",
+		Checks: []spec.HardenCheck{{
+			Name:       "Path audit",
+			GroundedIn: "spec_gap:Scope",
+			Result:     "passed",
+			Evidence:   "Scope paths checked.",
+		}},
 		Questions: []spec.HardenQuestion{{
 			Question:          "What owns the parser contract?",
 			GroundedIn:        "code:internal/adapters/markdown/spec_store.go:1",
@@ -89,6 +95,9 @@ func TestRoundTripPreservesLiterateSpecFields(t *testing.T) {
 	if parsed.HardenStatus != spec.HardenInProgress || len(parsed.HardenRounds) != 1 || parsed.HardenRounds[0].Status != string(spec.HardenInProgress) {
 		t.Fatalf("harden state lost: %s %+v", parsed.HardenStatus, parsed.HardenRounds)
 	}
+	if got := parsed.HardenRounds[0].Checks[0]; got.Name != "Path audit" || got.Result != "passed" || got.Evidence == "" {
+		t.Fatalf("harden check lost: %+v", got)
+	}
 	if got := parsed.HardenRounds[0].Questions[0]; got.GroundedIn == "" || got.AnsweredWith != "Adapter-owned." {
 		t.Fatalf("harden question lost: %+v", got)
 	}
@@ -103,6 +112,31 @@ func TestRoundTripPreservesLiterateSpecFields(t *testing.T) {
 	}
 }
 
+func TestParsePreservesWrappedListItems(t *testing.T) {
+	t.Parallel()
+
+	model := fixtureModel()
+	model.Objectives = []string{"Keep specs readable"}
+	model.Touchpoints = []string{"CLI"}
+	input := string(Render(model))
+	input = strings.Replace(input, "## Objectives\n\n- Keep specs readable", "## Objectives\n\n- Keep specs readable\n  across wrapped lines", 1)
+	input = strings.Replace(input, "## Touchpoints\n\n- CLI", "## Touchpoints\n\n- `docs/review.md`, `docs/sourcey.config.ts`: docs nav\n  and review guidance", 1)
+	input = strings.Replace(input, "Changes:\n- Add tests.", "Changes:\n- Add tests.\n  And update renderer.", 1)
+	parsed, err := Parse([]byte(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := parsed.Objectives[0]; got != "Keep specs readable across wrapped lines" {
+		t.Fatalf("wrapped objective = %q", got)
+	}
+	if got := parsed.Touchpoints[0]; got != "`docs/review.md`, `docs/sourcey.config.ts`: docs nav and review guidance" {
+		t.Fatalf("wrapped touchpoint = %q", got)
+	}
+	if got := parsed.Phases[0].Changes[0]; got != "Add tests. And update renderer." {
+		t.Fatalf("wrapped phase change = %q", got)
+	}
+}
+
 func TestParseNormalizesMixedHardenQuestionFormats(t *testing.T) {
 	t.Parallel()
 
@@ -114,6 +148,12 @@ func TestParseNormalizesMixedHardenQuestionFormats(t *testing.T) {
 Status: in_progress
 Started: 2026-05-04T00:00:00Z
 Ended: none
+
+Checks:
+- Path audit
+  - Grounded in: spec_gap:Scope
+  - Result: passed
+  - Evidence: Scope paths checked.
 
 Questions:
 - question: "Should the implementation hard-block compose tool calls unless the client proves it read ` + "`" + `nitro://email-design` + "`" + `?"
@@ -136,6 +176,9 @@ Questions:
 		t.Fatalf("harden rounds = %+v", parsed.HardenRounds)
 	}
 	questions := parsed.HardenRounds[0].Questions
+	if len(parsed.HardenRounds[0].Checks) != 1 || parsed.HardenRounds[0].Checks[0].Name != "Path audit" {
+		t.Fatalf("checks = %+v", parsed.HardenRounds[0].Checks)
+	}
 	if len(questions) != 1 {
 		t.Fatalf("questions = %+v", questions)
 	}

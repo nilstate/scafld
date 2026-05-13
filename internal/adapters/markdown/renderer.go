@@ -207,6 +207,24 @@ func renderHardenRound(b *strings.Builder, round spec.HardenRound) {
 	fmt.Fprintf(b, "Status: %s\n", fallback(round.Status, "in_progress"))
 	fmt.Fprintf(b, "Started: %s\n", fallback(round.StartedAt, "none"))
 	fmt.Fprintf(b, "Ended: %s\n\n", fallback(round.EndedAt, "none"))
+	fmt.Fprintf(b, "Checks:\n")
+	if len(round.Checks) == 0 {
+		fmt.Fprintf(b, "- none\n\n")
+	} else {
+		for _, check := range round.Checks {
+			fmt.Fprintf(b, "- %s\n", fallback(check.Name, "Check not recorded."))
+			if check.GroundedIn != "" {
+				fmt.Fprintf(b, "  - Grounded in: %s\n", check.GroundedIn)
+			}
+			if check.Result != "" {
+				fmt.Fprintf(b, "  - Result: %s\n", check.Result)
+			}
+			if check.Evidence != "" {
+				fmt.Fprintf(b, "  - Evidence: %s\n", check.Evidence)
+			}
+		}
+		fmt.Fprintf(b, "\n")
+	}
 	fmt.Fprintf(b, "Questions:\n")
 	if len(round.Questions) == 0 {
 		fmt.Fprintf(b, "- none\n\n")

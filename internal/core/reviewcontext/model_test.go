@@ -21,6 +21,9 @@ func TestRenderMarkdownIsDeterministic(t *testing.T) {
 	if strings.Index(got, "## A") > strings.Index(got, "## B") {
 		t.Fatalf("sections not ordered:\n%s", got)
 	}
+	if !strings.Contains(got, "## Context Budget Manifest") || !strings.Contains(got, "Included sections:") {
+		t.Fatalf("budget manifest missing:\n%s", got)
+	}
 	again := RenderMarkdown(Packet{TaskID: "task", Title: "Task", Status: "review", Sections: []Section{
 		{Key: "a", Title: "A", Order: 10, Body: "first"},
 		{Key: "b", Title: "B", Order: 20, Body: "second"},
@@ -55,7 +58,7 @@ func TestRenderMarkdownTruncatesWithOmissionCount(t *testing.T) {
 		Order: 10,
 		Body:  "abcdef",
 	}}}, Options{MaxBytes: 3})
-	if !strings.Contains(got, "abc") || !strings.Contains(got, "[truncated: omitted 3 byte(s)]") {
+	if !strings.Contains(got, "abc") || !strings.Contains(got, "[truncated: omitted 3 byte(s); see Context Budget Manifest]") {
 		t.Fatalf("truncate marker missing:\n%s", got)
 	}
 }
@@ -75,5 +78,20 @@ func TestRenderMarkdownAppliesBudgetAcrossSections(t *testing.T) {
 	}
 	if !strings.Contains(got, "truncated") {
 		t.Fatalf("budget exhaustion marker missing:\n%s", got)
+	}
+}
+
+func TestRenderMarkdownListsOmittedSectionsWithSources(t *testing.T) {
+	t.Parallel()
+
+	got := RenderMarkdown(Packet{TaskID: "task", Sections: []Section{
+		{Key: "first", Title: "First", Order: 10, Body: "abc"},
+		{Key: "second", Title: "Second", Order: 20, Body: "def", Sources: []Source{SourceForContent("file", "docs/review.md", []byte("def"))}},
+	}}, Options{MaxBytes: 3})
+	if !strings.Contains(got, "Omitted sections:") || !strings.Contains(got, "`second` (Second): rendered=0 body=3 omitted=3 sources=`docs/review.md` reason=context budget exhausted") {
+		t.Fatalf("omission manifest missing:\n%s", got)
+	}
+	if strings.Contains(got, "## Second") {
+		t.Fatalf("omitted section body rendered despite exhausted budget:\n%s", got)
 	}
 }

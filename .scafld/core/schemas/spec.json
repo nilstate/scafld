@@ -199,10 +199,24 @@
         "status": {"type": "string", "enum": ["in_progress", "passed", "failed"]},
         "started_at": {"type": "string"},
         "ended_at": {"type": "string"},
+        "checks": {
+          "type": "array",
+          "items": {"$ref": "#/definitions/harden_check"}
+        },
         "questions": {
           "type": "array",
           "items": {"$ref": "#/definitions/harden_question"}
         }
+      }
+    },
+    "harden_check": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {"type": "string"},
+        "grounded_in": {"type": "string", "pattern": "^(spec_gap:|code:|archive:).+"},
+        "result": {"type": "string", "enum": ["passed", "failed", "not_applicable"]},
+        "evidence": {"type": "string"}
       }
     },
     "harden_question": {
