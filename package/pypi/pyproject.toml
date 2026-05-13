@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "scafld"
 version = "0.0.0"
-description = "Markdown-native task execution framework CLI."
+description = "Deterministic protocol for multi-phase agent work."
 readme = "README.md"
 requires-python = ">=3.9"
 license = "MIT"
@@ -22,7 +22,8 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/nilstate/scafld"
+Homepage = "https://0state.com/scafld"
+Documentation = "https://0state.com/scafld/docs"
 Repository = "https://github.com/nilstate/scafld"
 Issues = "https://github.com/nilstate/scafld/issues"
 
