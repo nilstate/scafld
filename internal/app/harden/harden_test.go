@@ -61,7 +61,7 @@ func TestRunMarkPassedClosesLatestRound(t *testing.T) {
 	model.HardenStatus = spec.HardenInProgress
 	model.HardenRounds = []spec.HardenRound{
 		{ID: "round-1", Status: string(spec.HardenFailed)},
-		{ID: "round-2", Status: string(spec.HardenInProgress)},
+		{ID: "round-2", Status: string(spec.HardenInProgress), Checks: passedChecks()},
 	}
 	store := newMemorySpecStore(model)
 	out, err := Run(context.Background(), store, fixedClock{}, Input{TaskID: "fixture-task", MarkPassed: true})
@@ -108,11 +108,12 @@ func TestRunMarkPassedRejectsUngroundedQuestions(t *testing.T) {
 	model.HardenRounds = []spec.HardenRound{{
 		ID:     "round-1",
 		Status: string(spec.HardenInProgress),
+		Checks: passedChecks(),
 		Questions: []spec.HardenQuestion{
-			{Question: "Who owns this?", GroundedIn: "code:code.go:1"},
-			{Question: "What proves this?", GroundedIn: "code:missing.go:1"},
-			{Question: "Why now?"},
-			{Question: "Where?", GroundedIn: "code:code.go"},
+			{Question: "Who owns this?", GroundedIn: "code:code.go:1", RecommendedAnswer: "Use the owner.", AnsweredWith: "Use the owner."},
+			{Question: "What proves this?", GroundedIn: "code:missing.go:1", RecommendedAnswer: "Use missing.", AnsweredWith: "Use missing."},
+			{Question: "Why now?", RecommendedAnswer: "Because scope requires it.", AnsweredWith: "Keep scope."},
+			{Question: "Where?", GroundedIn: "code:code.go", RecommendedAnswer: "Use code.go.", AnsweredWith: "Use code.go."},
 		},
 	}}
 	store := newMemorySpecStore(model)
@@ -131,13 +132,95 @@ func TestRunMarkPassedRejectsUngroundedQuestions(t *testing.T) {
 	joined := strings.Join(out.Warnings, "\n")
 	if !strings.Contains(joined, "missing.go") ||
 		!strings.Contains(joined, "missing grounded_in") ||
-		!strings.Contains(joined, `expected "Grounded in: spec_gap:<field>"`) ||
 		!strings.Contains(joined, "expected code:<path>:<line>") ||
 		!strings.Contains(joined, "code:src/file.go:42") {
 		t.Fatalf("warnings did not explain citation issues: %+v", out.Warnings)
 	}
 	if store.model.HardenStatus == spec.HardenPassed {
 		t.Fatalf("hardening passed despite invalid citations: %+v", store.model.HardenRounds)
+	}
+}
+
+func TestRunMarkPassedRejectsMissingHardenChecks(t *testing.T) {
+	t.Parallel()
+
+	model := fixtureModel()
+	model.HardenStatus = spec.HardenInProgress
+	model.HardenRounds = []spec.HardenRound{{
+		ID:     "round-1",
+		Status: string(spec.HardenInProgress),
+		Questions: []spec.HardenQuestion{{
+			Question:          "Is this ready?",
+			GroundedIn:        "spec_gap:Scope",
+			RecommendedAnswer: "No until checks exist.",
+			AnsweredWith:      "Add checks.",
+		}},
+	}}
+	store := newMemorySpecStore(model)
+	out, err := Run(context.Background(), store, fixedClock{}, Input{TaskID: "fixture-task", MarkPassed: true})
+	if !errors.Is(err, ErrInvalidHardenEvidence) {
+		t.Fatalf("error = %v, want %v", err, ErrInvalidHardenEvidence)
+	}
+	if len(out.Warnings) == 0 || !strings.Contains(strings.Join(out.Warnings, "\n"), "missing harden checks") {
+		t.Fatalf("warnings did not require harden checks: %+v", out.Warnings)
+	}
+}
+
+func TestRunMarkPassedRejectsOpenQuestions(t *testing.T) {
+	t.Parallel()
+
+	model := fixtureModel()
+	model.HardenStatus = spec.HardenInProgress
+	model.HardenRounds = []spec.HardenRound{{
+		ID:     "round-1",
+		Status: string(spec.HardenInProgress),
+		Checks: passedChecks(),
+		Questions: []spec.HardenQuestion{{
+			Question:   "Who owns this?",
+			GroundedIn: "spec_gap:Scope",
+		}},
+	}}
+	store := newMemorySpecStore(model)
+	out, err := Run(context.Background(), store, fixedClock{}, Input{TaskID: "fixture-task", MarkPassed: true})
+	if !errors.Is(err, ErrInvalidHardenEvidence) {
+		t.Fatalf("error = %v, want %v", err, ErrInvalidHardenEvidence)
+	}
+	joined := strings.Join(out.Warnings, "\n")
+	if !strings.Contains(joined, "missing recommended answer") || !strings.Contains(joined, "missing answered with resolution") {
+		t.Fatalf("warnings did not reject open question: %+v", out.Warnings)
+	}
+}
+
+func TestRunMarkPassedAllowsNotApplicableChecks(t *testing.T) {
+	t.Parallel()
+
+	checks := passedChecks()
+	checks[4] = spec.HardenCheck{Name: "Rollback/repair audit", GroundedIn: "spec_gap:Rollback", Result: "not_applicable", Evidence: "Docs-only change with no runtime rollback."}
+	model := fixtureModel()
+	model.HardenStatus = spec.HardenInProgress
+	model.HardenRounds = []spec.HardenRound{{
+		ID:     "round-1",
+		Status: string(spec.HardenInProgress),
+		Checks: checks,
+	}}
+	store := newMemorySpecStore(model)
+	out, err := Run(context.Background(), store, fixedClock{}, Input{TaskID: "fixture-task", MarkPassed: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !out.MarkedPassed {
+		t.Fatalf("output = %+v", out)
+	}
+}
+
+func passedChecks() []spec.HardenCheck {
+	return []spec.HardenCheck{
+		{Name: "Path audit", GroundedIn: "spec_gap:Scope", Result: "passed", Evidence: "Paths checked."},
+		{Name: "Command audit", GroundedIn: "spec_gap:Validation", Result: "passed", Evidence: "Commands checked."},
+		{Name: "Scope/migration audit", GroundedIn: "spec_gap:Risks", Result: "passed", Evidence: "Migration claims checked."},
+		{Name: "Acceptance timing audit", GroundedIn: "spec_gap:Phases", Result: "passed", Evidence: "Criteria timing checked."},
+		{Name: "Rollback/repair audit", GroundedIn: "spec_gap:Rollback", Result: "passed", Evidence: "Rollback checked."},
+		{Name: "Design challenge", GroundedIn: "spec_gap:Summary", Result: "passed", Evidence: "Plan is not a bandaid or future compatibility layer."},
 	}
 }
 

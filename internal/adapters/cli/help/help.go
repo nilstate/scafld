@@ -29,6 +29,36 @@ func PrintCommand(w io.Writer, name string, commands []Command) {
 		reviewhelp.PrintHelp(w)
 		return
 	}
+	if name == "harden" {
+		fmt.Fprint(w, `scafld harden - Stress-test a draft spec before approval
+
+Usage:
+  scafld harden <task_id> [--mark-passed] [--root PATH] [--json]
+
+Without flags, opens a harden round and prints the active prompt. The agent
+attacks the draft contract before build.
+
+Required checks:
+  Path audit
+  Command audit
+  Scope/migration audit
+  Acceptance timing audit
+  Rollback/repair audit
+  Design challenge
+
+Each check needs Grounded in, Result, and Evidence. Result must be passed or
+not_applicable before --mark-passed can close the round.
+
+Questions are optional. Questions: none is valid only after the checks have
+evidence. Any recorded question needs a recommended answer and final answer.
+
+Flags:
+  --mark-passed  Verify harden evidence and close the latest round
+  --root PATH    Workspace root
+  --json         Print JSON envelope
+`)
+		return
+	}
 	if name == "update" {
 		fmt.Fprint(w, `scafld update - Refresh managed scafld files
 

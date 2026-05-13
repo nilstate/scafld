@@ -29,6 +29,15 @@ var (
 
 const groundedInShape = `expected "Grounded in: spec_gap:<field>", "Grounded in: code:<path>:<line>", or "Grounded in: archive:<task-id>"`
 
+var requiredHardenChecks = []string{
+	"path audit",
+	"command audit",
+	"scope/migration audit",
+	"acceptance timing audit",
+	"rollback/repair audit",
+	"design challenge",
+}
+
 // SpecStore is the spec persistence port used by hardening.
 type SpecStore interface {
 	Load(context.Context, string) (spec.Model, string, error)
@@ -113,18 +122,18 @@ func markPassed(ctx context.Context, store SpecStore, path string, model spec.Mo
 		return Output{}, ErrNoHardenRound
 	}
 	latest := len(model.HardenRounds) - 1
-	warnings := verifyHardenRoundCitations(root, model.HardenRounds[latest])
+	warnings := verifyHardenRoundEvidence(root, model.HardenRounds[latest])
 	if len(warnings) > 0 {
 		out := Output{TaskID: model.TaskID, Path: path, HardenStatus: model.HardenStatus, RoundID: model.HardenRounds[latest].ID, Warnings: warnings}
 		return out, gate.New(ErrInvalidHardenEvidence, gate.Failure{
 			Gate:     "harden",
 			Status:   string(model.Status),
-			Reason:   "hardening citations are not grounded",
+			Reason:   "hardening evidence is incomplete",
 			Evidence: warnings,
-			Expected: groundedInShape,
+			Expected: "required harden checks with grounded evidence, plus resolved questions when questions exist",
 			Actual:   strings.Join(warnings, "; "),
 			Blockers: warnings,
-			Next:     "fix the harden questions, then run scafld harden " + model.TaskID + " --mark-passed",
+			Next:     "fix the harden checks/questions, then run scafld harden " + model.TaskID + " --mark-passed",
 		})
 	}
 	model.HardenRounds[latest].Status = string(spec.HardenPassed)
@@ -162,61 +171,111 @@ func nextRoundID(rounds []spec.HardenRound) string {
 	}
 }
 
-func verifyHardenRoundCitations(root string, round spec.HardenRound) []string {
+func verifyHardenRoundEvidence(root string, round spec.HardenRound) []string {
 	if root == "" {
-		return nil
+		root = "."
 	}
 	var warnings []string
+	warnings = append(warnings, verifyHardenChecks(root, round.Checks)...)
 	for i, question := range round.Questions {
 		idx := i + 1
-		grounded := strings.TrimSpace(question.GroundedIn)
-		switch {
-		case grounded == "":
-			warnings = append(warnings, fmt.Sprintf("question %d: missing grounded_in (%s)", idx, groundedInShape))
-		case strings.HasPrefix(grounded, "spec_gap:"):
-		case strings.HasPrefix(grounded, "code:"):
-			warnings = append(warnings, verifyCodeCitation(root, idx, grounded)...)
-		case strings.HasPrefix(grounded, "archive:"):
-			warnings = append(warnings, verifyArchiveCitation(root, idx, grounded)...)
-		default:
-			warnings = append(warnings, fmt.Sprintf("question %d: invalid grounded_in prefix %q (%s)", idx, grounded, groundedInShape))
+		warnings = append(warnings, verifyGroundedIn(root, fmt.Sprintf("question %d", idx), groundedInShape, question.GroundedIn)...)
+		if strings.TrimSpace(question.RecommendedAnswer) == "" {
+			warnings = append(warnings, fmt.Sprintf("question %d: missing recommended answer", idx))
+		}
+		if strings.TrimSpace(question.AnsweredWith) == "" {
+			warnings = append(warnings, fmt.Sprintf("question %d: missing answered with resolution", idx))
 		}
 	}
 	return warnings
 }
 
-func verifyCodeCitation(root string, idx int, grounded string) []string {
+func verifyHardenChecks(root string, checks []spec.HardenCheck) []string {
+	var warnings []string
+	if len(checks) == 0 {
+		return []string{"missing harden checks: record path audit, command audit, scope/migration audit, acceptance timing audit, rollback/repair audit, and design challenge before marking hardening passed"}
+	}
+	seen := map[string]bool{}
+	for i, check := range checks {
+		idx := i + 1
+		name := strings.TrimSpace(check.Name)
+		if name == "" {
+			warnings = append(warnings, fmt.Sprintf("check %d: missing name", idx))
+			continue
+		}
+		normalized := normalizeCheckName(name)
+		seen[normalized] = true
+		label := fmt.Sprintf("check %q", name)
+		warnings = append(warnings, verifyGroundedIn(root, label, groundedInShape, check.GroundedIn)...)
+		if strings.TrimSpace(check.Evidence) == "" {
+			warnings = append(warnings, fmt.Sprintf("%s: missing evidence", label))
+		}
+		switch result := strings.TrimSpace(strings.ToLower(check.Result)); result {
+		case "passed", "not_applicable":
+		default:
+			warnings = append(warnings, fmt.Sprintf("%s: result must be passed or not_applicable before marking hardening passed", label))
+		}
+	}
+	for _, required := range requiredHardenChecks {
+		if !seen[required] {
+			warnings = append(warnings, fmt.Sprintf("missing required harden check: %s", required))
+		}
+	}
+	return warnings
+}
+
+func verifyGroundedIn(root string, label string, expected string, grounded string) []string {
+	grounded = strings.TrimSpace(grounded)
+	switch {
+	case grounded == "":
+		return []string{fmt.Sprintf("%s: missing grounded_in (%s)", label, expected)}
+	case strings.HasPrefix(grounded, "spec_gap:"):
+		return nil
+	case strings.HasPrefix(grounded, "code:"):
+		return verifyCodeCitation(root, label, grounded)
+	case strings.HasPrefix(grounded, "archive:"):
+		return verifyArchiveCitation(root, label, grounded)
+	default:
+		return []string{fmt.Sprintf("%s: invalid grounded_in prefix %q (%s)", label, grounded, expected)}
+	}
+}
+
+func normalizeCheckName(value string) string {
+	return strings.Join(strings.Fields(strings.ToLower(strings.TrimSpace(value))), " ")
+}
+
+func verifyCodeCitation(root string, label string, grounded string) []string {
 	rel, lineNumber, ok := parseCodeGroundedIn(grounded)
 	if !ok {
-		return []string{fmt.Sprintf("question %d: invalid code citation %q (expected code:<path>:<line>, for example code:src/file.go:42)", idx, grounded)}
+		return []string{fmt.Sprintf("%s: invalid code citation %q (expected code:<path>:<line>, for example code:src/file.go:42)", label, grounded)}
 	}
 	rootAbs, err := filepath.Abs(root)
 	if err != nil {
-		return []string{fmt.Sprintf("question %d: cannot resolve workspace root: %v", idx, err)}
+		return []string{fmt.Sprintf("%s: cannot resolve workspace root: %v", label, err)}
 	}
 	candidate := filepath.Clean(filepath.Join(rootAbs, filepath.FromSlash(rel)))
 	if !isInside(candidate, rootAbs) {
-		return []string{fmt.Sprintf("question %d: code citation escapes workspace root: %s", idx, grounded)}
+		return []string{fmt.Sprintf("%s: code citation escapes workspace root: %s", label, grounded)}
 	}
 	lines, err := countLines(candidate)
 	if err != nil {
-		return []string{fmt.Sprintf("question %d: code citation not found: %s", idx, grounded)}
+		return []string{fmt.Sprintf("%s: code citation not found: %s", label, grounded)}
 	}
 	if lineNumber > lines {
-		return []string{fmt.Sprintf("question %d: code citation line %d exceeds %d lines in %s", idx, lineNumber, lines, rel)}
+		return []string{fmt.Sprintf("%s: code citation line %d exceeds %d lines in %s", label, lineNumber, lines, rel)}
 	}
 	return nil
 }
 
-func verifyArchiveCitation(root string, idx int, grounded string) []string {
+func verifyArchiveCitation(root string, label string, grounded string) []string {
 	taskID := strings.TrimSpace(strings.TrimPrefix(grounded, "archive:"))
 	if taskID == "" {
-		return []string{fmt.Sprintf("question %d: archive citation is empty (expected archive:<task-id>)", idx)}
+		return []string{fmt.Sprintf("%s: archive citation is empty (expected archive:<task-id>)", label)}
 	}
 	pattern := filepath.Join(root, ".scafld", "specs", "archive", "*", taskID+".md")
 	matches, err := filepath.Glob(pattern)
 	if err != nil || len(matches) == 0 {
-		return []string{fmt.Sprintf("question %d: archive citation not found: %s", idx, grounded)}
+		return []string{fmt.Sprintf("%s: archive citation not found: %s", label, grounded)}
 	}
 	return nil
 }

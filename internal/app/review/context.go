@@ -25,6 +25,7 @@ func reviewContextPacket(model spec.Model, specPath string, passes []Pass, invar
 		contextSection("configured_invariants", "Configured Invariants", 15, configuredInvariantsBody(invariants), "config", ".scafld/config.yaml"),
 		contextSection("review_focus", "Review Focus", 18, reviewFocusBody(passes), "config", ".scafld/config.yaml"),
 		contextSection("task_scope", "Task Scope", 20, taskScopeBody(model, reviewScope), "spec", sourcePath),
+		contextSection("workspace_classification", "Workspace Classification", 25, workspaceClassificationBody(baseline, taskChanges, scopeDrift), "session", model.TaskID),
 		contextSection("workspace_baseline", "Workspace Baseline Before Review", 30, workspaceBaselineBody(baseline), "session", model.TaskID),
 		contextSection("task_changes", "Task Changes Since Approval Baseline", 40, workspaceChangesBody("Task Changes Since Approval Baseline", taskChanges), "session", model.TaskID),
 		contextSection("ambient_drift", "Ambient Workspace Drift Outside Task Scope", 50, workspaceChangesBody("Ambient Workspace Drift Outside Task Scope", scopeDrift), "session", model.TaskID),
@@ -140,6 +141,12 @@ func configuredInvariantsBody(invariants map[string]string) string {
 func reviewRequestBody(mode review.Mode, maxFindings int, minAttackAngles int, depth string, rerunPolicy string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Mode: %s\n", mode)
+	switch mode {
+	case review.ModeVerify:
+		b.WriteString("Mode contract: verify known findings, repair regressions, and release blockers introduced by the fix. The completion gate is unchanged.\n")
+	default:
+		b.WriteString("Mode contract: discover new completion blockers across the approved task scope. The completion gate is unchanged.\n")
+	}
 	if maxFindings > 0 {
 		fmt.Fprintf(&b, "Max findings: %d\n", maxFindings)
 	}
@@ -155,8 +162,22 @@ func reviewRequestBody(mode review.Mode, maxFindings int, minAttackAngles int, d
 	return b.String()
 }
 
+func workspaceClassificationBody(baseline []string, taskChanges []coreworkspace.Mutation, scopeDrift []coreworkspace.Mutation) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Baseline dirty paths: %d\n", len(coreworkspace.Paths(baseline)))
+	fmt.Fprintf(&b, "Task-scoped changes since baseline: %d\n", len(taskChanges))
+	fmt.Fprintf(&b, "Ambient drift outside task scope: %d\n\n", len(scopeDrift))
+	b.WriteString("Classifier:\n")
+	b.WriteString("- `baseline_dirty`: unchanged dirt captured before task execution; context only.\n")
+	b.WriteString("- `task_changes`: changes inside declared task scope; primary review target.\n")
+	b.WriteString("- `ambient_drift`: new changes outside declared task scope; context only, not a finding by itself.\n")
+	b.WriteString("- `overlap_drift`: changes that touch task scope even if another agent made them; review as task-relevant.\n")
+	b.WriteString("- `review_self_mutation`: changes during review inside task scope or to the current spec; fail closed.\n")
+	return b.String()
+}
+
 func providerInstructionBody() string {
-	return "Review mode is read-only. Do not run build, test, or mutation commands; treat recorded acceptance evidence above as already executed. Treat review as task-scoped: unchanged dirty paths from the approval baseline are context, not findings by themselves. Ambient workspace drift outside the task scope is context, not a finding by itself; use it only to avoid attributing unrelated work to this task. Call `submit_review` exactly once with the final ReviewDossier; do not emit a final prose or JSON text response. Separate severity from the gate: use severity `critical`, `high`, `medium`, or `low`, then set `blocks_completion` true only when completion must stop. Completion-blocking findings must include location, evidence, impact, and validation. Record attack_log entries for the bounded checks you actually performed, using result `finding`, `clean`, or `skipped`."
+	return "Review mode is read-only. Do not run build, test, or mutation commands; treat recorded acceptance evidence above as already executed. Treat review as task-scoped: unchanged dirty paths from the approval baseline are context, not findings by themselves. Ambient workspace drift outside the task scope is context, not a finding by itself; use it only to avoid attributing unrelated work to this task. The Context Budget Manifest is part of the contract: do not assume omitted or truncated sections were clean; read cited source paths directly only when needed for the attack you are performing. Call `submit_review` exactly once with the final ReviewDossier; do not emit a final prose or JSON text response. Separate severity from the gate: use severity `critical`, `high`, `medium`, or `low`, then set `blocks_completion` true only when completion must stop. Completion-blocking findings must include location, evidence, impact, and validation. Record attack_log entries for the bounded checks you actually performed, using result `finding`, `clean`, or `skipped`."
 }
 
 func stripSectionHeading(text string, title string) string {

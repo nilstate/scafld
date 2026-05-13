@@ -385,7 +385,7 @@ func TestReviewPromptCarriesTaskContractToProvider(t *testing.T) {
 	if !strings.Contains(provider.req.Prompt, "## Review Focus") || !strings.Contains(provider.req.Prompt, "adversarial: Regression Hunt") {
 		t.Fatalf("provider request missing configured review focus = %+v", provider.req)
 	}
-	for _, want := range []string{"## Task Scope", "Explicit review scope", "`api`", "`api/handler.go`", "MCP API", "Implementation changes", "## Workspace Baseline Before Review", "`api/handler.go`", "unchanged dirty paths from the approval baseline are context"} {
+	for _, want := range []string{"## Task Scope", "Explicit review scope", "`api`", "`api/handler.go`", "MCP API", "Implementation changes", "## Workspace Classification", "Ambient drift outside task scope", "`review_self_mutation`", "## Workspace Baseline Before Review", "`api/handler.go`", "unchanged dirty paths from the approval baseline are context"} {
 		if !strings.Contains(provider.req.Prompt, want) {
 			t.Fatalf("provider request missing %q:\n%s", want, provider.req.Prompt)
 		}

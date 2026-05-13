@@ -47,11 +47,11 @@ scafld harden add-auth
 The command enters HARDEN MODE and records a hardening round in the spec. Use
 the printed prompt to attack the plan before execution:
 
-- what the product goal really is
-- what artifact is authoritative when facts overlap
-- which files and modules are in or out of bounds
-- what can fail halfway and how a human recovers
-- what invariants and golden examples prove the shape
+- whether paths and commands are real
+- whether scope, migration, and cutover claims are honest
+- whether acceptance criteria run at the right phase
+- whether rollback or repair is realistic
+- whether the design is a bandaid, future bloat, or the wrong abstraction
 
 When the answers are worked into the spec:
 

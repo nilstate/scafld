@@ -100,6 +100,32 @@ Status: in_progress
 Started: 2026-05-04T00:00:00Z
 Ended: none
 
+Checks:
+- Path audit
+  - Grounded in: code:src/auth/session.ts:84
+  - Result: passed
+  - Evidence: Existing session owner and target path verified.
+- Command audit
+  - Grounded in: spec_gap:Acceptance
+  - Result: not_applicable
+  - Evidence: Docs-only change has no runnable command beyond final validation.
+- Scope/migration audit
+  - Grounded in: spec_gap:Risks
+  - Result: passed
+  - Evidence: No migration or compatibility fallback is introduced.
+- Acceptance timing audit
+  - Grounded in: spec_gap:Phases
+  - Result: passed
+  - Evidence: Criteria run after the phase creates the target files.
+- Rollback/repair audit
+  - Grounded in: spec_gap:Rollback
+  - Result: not_applicable
+  - Evidence: No runtime rollback is required for the documented change.
+- Design challenge
+  - Grounded in: spec_gap:Summary
+  - Result: passed
+  - Evidence: The plan fixes the root cause without adding aliases or fallback behavior.
+
 Questions:
 - Which module owns session cleanup?
   - Grounded in: code:src/auth/session.ts:84
@@ -108,10 +134,12 @@ Questions:
   - Answered with: Use cleanupSession.
 ````
 
-Each question should carry one `Grounded in` value matching
-`spec_gap:<field>`, `code:<file>:<line>`, or `archive:<task_id>`.
-`scafld harden <task-id> --mark-passed` verifies code and archive citations
-before closing the round.
+Each check and question should carry one `Grounded in` value matching
+`spec_gap:<field>`, `code:<file>:<line>`, or `archive:<task_id>`. Checks use
+`Result: passed`, `Result: failed`, or `Result: not_applicable`; only `passed`
+and `not_applicable` can close a round. Questions are optional, but any
+recorded question must have a recommended answer and final answer before
+`scafld harden <task-id> --mark-passed` closes the round.
 
 ## Reconcile Contract
 

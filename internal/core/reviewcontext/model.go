@@ -58,8 +58,8 @@ func RenderMarkdown(packet Packet, opts Options) string {
 	if maxBytes <= 0 {
 		maxBytes = defaultMaxBytes
 	}
-	remainingBodyBytes := maxBytes
 	sections := normalizeSections(packet.Sections)
+	rendered := budgetSections(sections, maxBytes)
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Review Context Packet\n\n")
 	fmt.Fprintf(&b, "Task: %s\n", strings.TrimSpace(packet.TaskID))
@@ -70,7 +70,11 @@ func RenderMarkdown(packet Packet, opts Options) string {
 		fmt.Fprintf(&b, "Status: %s\n", strings.TrimSpace(packet.Status))
 	}
 	fmt.Fprintf(&b, "\n")
-	for _, section := range sections {
+	writeBudgetManifest(&b, rendered, maxBytes)
+	for _, section := range rendered {
+		if section.Omitted && section.BodyBytes > 0 {
+			continue
+		}
 		title := strings.TrimSpace(section.Title)
 		if title == "" {
 			title = section.Key
@@ -83,42 +87,119 @@ func RenderMarkdown(packet Packet, opts Options) string {
 			}
 			b.WriteString("\n")
 		}
-		body, omitted := truncateBytes(strings.TrimSpace(section.Body), remainingBodyBytes)
-		if body != "" {
-			b.WriteString(body)
+		if section.RenderedBody != "" {
+			b.WriteString(section.RenderedBody)
 			b.WriteString("\n")
-			remainingBodyBytes -= len([]byte(body))
 		} else {
 			b.WriteString("- none\n")
 		}
-		if omitted > 0 {
-			fmt.Fprintf(&b, "\n[truncated: omitted %d byte(s)]\n", omitted)
+		if section.OmittedBytes > 0 {
+			fmt.Fprintf(&b, "\n[truncated: omitted %d byte(s); see Context Budget Manifest]\n", section.OmittedBytes)
 		}
 		b.WriteString("\n")
-		if remainingBodyBytes <= 0 {
-			omittedSections := remainingSectionsBodyBytes(sections, section.Key)
-			if omittedSections > 0 {
-				fmt.Fprintf(&b, "[context budget exhausted: omitted %d byte(s) from remaining section body text]\n\n", omittedSections)
-			}
-			break
-		}
 	}
 	return strings.TrimRight(b.String(), "\n") + "\n"
 }
 
-func remainingSectionsBodyBytes(sections []Section, currentKey string) int {
-	afterCurrent := false
-	total := 0
+type renderedSection struct {
+	Section
+	RenderedBody  string
+	BodyBytes     int
+	RenderedBytes int
+	OmittedBytes  int
+	Omitted       bool
+}
+
+func budgetSections(sections []Section, maxBytes int) []renderedSection {
+	remaining := maxBytes
+	rendered := make([]renderedSection, 0, len(sections))
 	for _, section := range sections {
-		if afterCurrent {
-			total += len([]byte(strings.TrimSpace(section.Body)))
+		bodyText := strings.TrimSpace(section.Body)
+		bodyBytes := len([]byte(bodyText))
+		item := renderedSection{Section: section, BodyBytes: bodyBytes}
+		if bodyBytes == 0 {
+			rendered = append(rendered, item)
 			continue
 		}
-		if section.Key == currentKey {
-			afterCurrent = true
+		if remaining <= 0 {
+			item.Omitted = true
+			item.OmittedBytes = bodyBytes
+			rendered = append(rendered, item)
+			continue
+		}
+		body, omitted := truncateBytes(bodyText, remaining)
+		item.RenderedBody = body
+		item.RenderedBytes = len([]byte(body))
+		item.OmittedBytes = omitted
+		if item.RenderedBytes == 0 && omitted > 0 {
+			item.Omitted = true
+		}
+		remaining -= item.RenderedBytes
+		rendered = append(rendered, item)
+	}
+	return rendered
+}
+
+func writeBudgetManifest(b *strings.Builder, sections []renderedSection, maxBytes int) {
+	renderedBytes := 0
+	omittedBytes := 0
+	included := []renderedSection{}
+	truncated := []renderedSection{}
+	omitted := []renderedSection{}
+	for _, section := range sections {
+		renderedBytes += section.RenderedBytes
+		omittedBytes += section.OmittedBytes
+		switch {
+		case section.Omitted && section.BodyBytes > 0:
+			omitted = append(omitted, section)
+		case section.OmittedBytes > 0:
+			truncated = append(truncated, section)
+		default:
+			included = append(included, section)
 		}
 	}
-	return total
+	fmt.Fprintf(b, "## Context Budget Manifest\n\n")
+	fmt.Fprintf(b, "Max section body bytes: %d\n", maxBytes)
+	fmt.Fprintf(b, "Rendered section body bytes: %d\n", renderedBytes)
+	fmt.Fprintf(b, "Omitted section body bytes: %d\n\n", omittedBytes)
+	writeManifestGroup(b, "Included sections", included, false)
+	writeManifestGroup(b, "Truncated sections", truncated, true)
+	writeManifestGroup(b, "Omitted sections", omitted, true)
+}
+
+func writeManifestGroup(b *strings.Builder, title string, sections []renderedSection, includeSources bool) {
+	fmt.Fprintf(b, "%s:\n", title)
+	if len(sections) == 0 {
+		b.WriteString("- none\n\n")
+		return
+	}
+	for _, section := range sections {
+		titleText := strings.TrimSpace(section.Title)
+		if titleText == "" {
+			titleText = section.Key
+		}
+		fmt.Fprintf(b, "- `%s` (%s): rendered=%d body=%d omitted=%d", section.Key, titleText, section.RenderedBytes, section.BodyBytes, section.OmittedBytes)
+		if includeSources {
+			if paths := sourcePaths(section.Sources); len(paths) > 0 {
+				fmt.Fprintf(b, " sources=%s", strings.Join(paths, ", "))
+			}
+			if section.Omitted && section.BodyBytes > 0 {
+				b.WriteString(" reason=context budget exhausted")
+			}
+		}
+		b.WriteString("\n")
+	}
+	b.WriteString("\n")
+}
+
+func sourcePaths(sources []Source) []string {
+	paths := make([]string, 0, len(sources))
+	for _, source := range normalizeSources(sources) {
+		if source.Path != "" {
+			paths = append(paths, "`"+source.Path+"`")
+		}
+	}
+	return paths
 }
 
 func normalizeSections(sections []Section) []Section {

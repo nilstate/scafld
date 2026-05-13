@@ -134,6 +134,6 @@ Risk level determines the default validation profile:
 
 ## Hardening
 
-When a spec is finished but you want to stress-test it before approval, run `scafld harden <task-id>`. This enters HARDEN MODE: the agent interrogates the draft one question at a time, walking down the design tree and resolving upstream decisions before downstream ones. If a question can be answered by exploring the codebase, it should inspect the code instead of asking. When the contract is sharp enough to execute, run `scafld harden <task-id> --mark-passed`. The round is recorded in `harden_rounds` for audit.
+When a spec is finished but you want to stress-test it before approval, run `scafld harden <task-id>`. This enters HARDEN MODE: the agent audits paths, commands, scope and migration claims, acceptance timing, rollback or repair shape, and the core design before asking questions. The design challenge asks whether the plan is a bandaid, future bloat, compatibility debt, or the wrong abstraction. If a question can be answered by exploring the codebase, the agent should inspect the code instead of asking. When the contract is sharp enough to execute, run `scafld harden <task-id> --mark-passed`. The round is recorded in `harden_rounds` for audit.
 
 Hardening is optional and operator-driven. `scafld approve` does not require it. Run it on high-risk or ambiguous specs; skip it on trivial or well-understood ones. See [CLI reference](./cli-reference.md#harden) for flags.

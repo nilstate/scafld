@@ -149,7 +149,7 @@ func migrateLegacyProjectPrompt(rel string, existing []byte, current []byte) ([]
 	case "review.md":
 		return migrateLegacyReviewPrompt(string(existing), string(current))
 	case "harden.md":
-		return migrateLegacyHardenPrompt(string(existing))
+		return migrateLegacyHardenPrompt(string(existing), string(current))
 	default:
 		return existing, false
 	}
@@ -176,11 +176,43 @@ func migrateLegacyReviewPrompt(existing string, current string) ([]byte, bool) {
 	return []byte(updated), updated != existing
 }
 
-func migrateLegacyHardenPrompt(existing string) ([]byte, bool) {
+func migrateLegacyHardenPrompt(existing string, current string) ([]byte, bool) {
+	if !isLegacyHardenPrompt(existing) {
+		return []byte(existing), false
+	}
 	updated := existing
+	if !strings.Contains(updated, "Path audit:") {
+		block := hardenChecksBlock(current)
+		if block != "" {
+			next := strings.Replace(
+				updated,
+				"Work these harden questions before polishing wording:",
+				block+"\nWork these harden questions after the checks expose the real uncertainty:",
+				1,
+			)
+			if next == updated {
+				next = block + "\n\n" + updated
+			}
+			updated = next
+		}
+	}
 	updated = strings.ReplaceAll(updated, "single `grounded_in` value", "single `Grounded in:` value")
 	updated = strings.ReplaceAll(updated, "Use `grounded_in` as", "Use `Grounded in:` as")
 	updated = strings.ReplaceAll(updated, "include `if_unanswered` with", "include `If unanswered:` with")
+	updated = strings.Replace(
+		updated,
+		"If you cannot form a genuine grounded question, stop. Do not pad the round.",
+		"If the checks pass and you cannot form a genuine grounded question, record:\n\n```markdown\nQuestions:\n- none\n```\n\nDo not pad the round.",
+		1,
+	)
+	if !strings.Contains(updated, "Questions:\n- none") {
+		updated = strings.Replace(
+			updated,
+			"Record each question in this Markdown shape under the latest harden round:",
+			"If the checks pass and you cannot form a genuine grounded question, record:\n\n```markdown\nQuestions:\n- none\n```\n\nDo not pad the round.\n\nRecord each question in this Markdown shape under the latest harden round:",
+			1,
+		)
+	}
 	updated = strings.Replace(
 		updated,
 		"Record each question in this Markdown shape under the latest harden round:",
@@ -188,6 +220,21 @@ func migrateLegacyHardenPrompt(existing string) ([]byte, bool) {
 		1,
 	)
 	return []byte(updated), updated != existing
+}
+
+func isLegacyHardenPrompt(existing string) bool {
+	return strings.Contains(existing, "grounded_in") ||
+		strings.Contains(existing, "Record each question in this Markdown shape under the latest harden round:") ||
+		strings.Contains(existing, "If you cannot form a genuine grounded question, stop.")
+}
+
+func hardenChecksBlock(current string) string {
+	start := strings.Index(current, "Run these checks before polishing wording:")
+	end := strings.Index(current, "Work these harden questions after the checks expose the real uncertainty:")
+	if start < 0 || end <= start {
+		return ""
+	}
+	return strings.TrimSpace(current[start:end])
 }
 
 func markdownSection(text string, heading string) (string, bool) {
