@@ -1,10 +1,10 @@
 {
   "name": "scafld",
   "version": "0.0.0",
-  "description": "Markdown-native task execution framework CLI.",
+  "description": "Deterministic protocol for multi-phase agent work.",
   "author": "0state",
   "license": "MIT",
-  "homepage": "https://github.com/nilstate/scafld#readme",
+  "homepage": "https://0state.com/scafld",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/nilstate/scafld.git",
