@@ -118,3 +118,47 @@ func TestStatusPrintsRepairContractBeforeStaleReviewVerdict(t *testing.T) {
 		}
 	}
 }
+
+func TestStatusPrintsCompletionAuthority(t *testing.T) {
+	t.Parallel()
+
+	text := Status(appstatus.Output{
+		TaskID: "task",
+		Status: spec.StatusCompleted,
+		Next:   "none",
+		Completion: &appstatus.CompletionInfo{
+			Status:      "valid",
+			Kind:        "human_reviewed",
+			Provider:    "human",
+			Verdict:     "pass",
+			Summary:     "human-reviewed override: manual audit",
+			ReviewEvent: "review-1",
+		},
+	})
+	for _, want := range []string{"completion authority: valid (human_reviewed)", "authority review: pass by human", "authority summary: human-reviewed override: manual audit"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("status output missing %q:\n%s", want, text)
+		}
+	}
+}
+
+func TestStatusPrintsInvalidCompletionAuthority(t *testing.T) {
+	t.Parallel()
+
+	text := Status(appstatus.Output{
+		TaskID: "task",
+		Status: spec.StatusCompleted,
+		Next:   "none",
+		Completion: &appstatus.CompletionInfo{
+			Status: "invalid",
+			Kind:   "invalid",
+			Reason: "latest review gate has not passed",
+			Actual: "latest review verdict fail",
+		},
+	})
+	for _, want := range []string{"completion authority: invalid (invalid)", "authority error: latest review gate has not passed", "authority actual: latest review verdict fail"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("status output missing %q:\n%s", want, text)
+		}
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	corecompletion "github.com/nilstate/scafld/v2/internal/core/completion"
 	"github.com/nilstate/scafld/v2/internal/core/gate"
 	"github.com/nilstate/scafld/v2/internal/core/reconcile"
 	corereview "github.com/nilstate/scafld/v2/internal/core/review"
@@ -41,28 +42,9 @@ func Run(ctx context.Context, specs SpecStore, sessions SessionStore, clock Cloc
 	if err != nil {
 		return spec.Model{}, reviewGateError(model, "session ledger could not be loaded", "missing review evidence")
 	}
-	reviewEntry, ok := latestCompletionReviewEntry(ledger)
-	if !ok || reviewEntry.Status != corereview.VerdictPass {
-		actual := "no current accepted review"
-		if ok {
-			actual = "latest review verdict " + reviewEntry.Status
-		}
-		return spec.Model{}, reviewGateError(model, "latest review gate has not passed", actual)
-	}
-	if !corereview.ValidCompletionProvider(reviewEntry.Provider) {
-		return spec.Model{}, reviewGateError(model, "passing review came from an unsupported provider", fmt.Sprintf("provider %q", reviewEntry.Provider))
-	}
-	if reviewEntry.Output != "" {
-		dossier, ok := corereview.DecodeDossier(reviewEntry.Output)
-		if !ok {
-			return spec.Model{}, reviewGateError(model, "latest review dossier is invalid", "review entry output could not be decoded as ReviewDossier")
-		}
-		if blockers := corereview.OpenBlockerCount(dossier.Findings); blockers > 0 {
-			return spec.Model{}, reviewGateError(model, "latest review dossier still has open completion blockers", fmt.Sprintf("%d open blocker(s)", blockers))
-		}
-	}
-	if reviewEntry.Provider == "human" && !hasAuditedHumanOverride(ledger) {
-		return spec.Model{}, reviewGateError(model, "human-reviewed gate is missing audit evidence", "latest human review has no adjacent review_override entry")
+	authority := corecompletion.CurrentReviewGate(ledger)
+	if !authority.Valid {
+		return spec.Model{}, reviewGateError(model, authority.Reason, authority.Actual)
 	}
 	model = reconcile.FromSession(model, ledger)
 	if model.Status != spec.StatusReview || model.Review.Verdict != corereview.VerdictPass {
@@ -105,35 +87,4 @@ func reviewGateError(model spec.Model, reason string, actual string) error {
 		Blockers: []string{reason},
 		Next:     next,
 	})
-}
-
-func hasAuditedHumanOverride(ledger session.Session) bool {
-	for i := len(ledger.Entries) - 1; i >= 0; i-- {
-		entry := ledger.Entries[i]
-		if entry.Type != "review" {
-			continue
-		}
-		if entry.Provider != "human" {
-			return true
-		}
-		if i == 0 {
-			return false
-		}
-		previous := ledger.Entries[i-1]
-		return previous.Type == "review_override" && previous.Provider == "human" && previous.Status == "accepted"
-	}
-	return false
-}
-
-func latestCompletionReviewEntry(ledger session.Session) (session.Entry, bool) {
-	for i := len(ledger.Entries) - 1; i >= 0; i-- {
-		entry := ledger.Entries[i]
-		switch entry.Type {
-		case "review":
-			return entry, true
-		case "review_attempt", "build", "criterion", "phase", "approval", session.EntryWorkspaceBaseline, "fail", "cancel":
-			return session.Entry{}, false
-		}
-	}
-	return session.Entry{}, false
 }

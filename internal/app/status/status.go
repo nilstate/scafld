@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	corecompletion "github.com/nilstate/scafld/v2/internal/core/completion"
 	"github.com/nilstate/scafld/v2/internal/core/gate"
 	corereview "github.com/nilstate/scafld/v2/internal/core/review"
 	"github.com/nilstate/scafld/v2/internal/core/session"
@@ -22,16 +23,17 @@ type SessionStore interface {
 
 // Output describes the task status projection.
 type Output struct {
-	TaskID          string        `json:"task_id"`
-	Status          spec.Status   `json:"status"`
-	Title           string        `json:"title"`
-	Next            string        `json:"next"`
-	Gate            string        `json:"gate,omitempty"`
-	TrustedState    string        `json:"trusted_state,omitempty"`
-	AllowedFollowUp string        `json:"allowed_follow_up,omitempty"`
-	SessionOK       bool          `json:"session_ok"`
-	Repair          *gate.Failure `json:"repair,omitempty"`
-	Review          ReviewInfo    `json:"review,omitempty"`
+	TaskID          string          `json:"task_id"`
+	Status          spec.Status     `json:"status"`
+	Title           string          `json:"title"`
+	Next            string          `json:"next"`
+	Gate            string          `json:"gate,omitempty"`
+	TrustedState    string          `json:"trusted_state,omitempty"`
+	AllowedFollowUp string          `json:"allowed_follow_up,omitempty"`
+	SessionOK       bool            `json:"session_ok"`
+	Repair          *gate.Failure   `json:"repair,omitempty"`
+	Review          ReviewInfo      `json:"review,omitempty"`
+	Completion      *CompletionInfo `json:"completion_authority,omitempty"`
 }
 
 // ReviewInfo is the latest review evidence visible from status.
@@ -61,6 +63,20 @@ type ReviewAttemptInfo struct {
 	Reason  string `json:"reason,omitempty"`
 }
 
+// CompletionInfo describes the terminal review authority for completed tasks.
+type CompletionInfo struct {
+	Status        string   `json:"status"`
+	Kind          string   `json:"kind"`
+	Provider      string   `json:"provider,omitempty"`
+	Verdict       string   `json:"verdict,omitempty"`
+	Reason        string   `json:"reason,omitempty"`
+	Actual        string   `json:"actual,omitempty"`
+	Summary       string   `json:"summary,omitempty"`
+	ReviewEvent   string   `json:"review_event,omitempty"`
+	CompleteEvent string   `json:"complete_event,omitempty"`
+	Evidence      []string `json:"evidence,omitempty"`
+}
+
 // Run reads status for taskID.
 func Run(ctx context.Context, specs SpecStore, sessions SessionStore, taskID string) (Output, error) {
 	model, _, err := specs.Load(ctx, taskID)
@@ -80,6 +96,9 @@ func Run(ctx context.Context, specs SpecStore, sessions SessionStore, taskID str
 		if ledger, err := sessions.Load(ctx, model.TaskID); err == nil {
 			out.SessionOK = true
 			out.Review = latestReviewInfo(ledger)
+			if model.Status == spec.StatusCompleted {
+				out.Completion = completionInfo(corecompletion.TerminalAuthority(ledger))
+			}
 			out.Repair = repairContract(model, ledger)
 			if out.Repair != nil && out.Repair.Next != "" {
 				out.Next = out.Repair.Next
@@ -90,6 +109,24 @@ func Run(ctx context.Context, specs SpecStore, sessions SessionStore, taskID str
 	return out, nil
 }
 
+func completionInfo(authority corecompletion.Authority) *CompletionInfo {
+	if !authority.Completed {
+		return nil
+	}
+	return &CompletionInfo{
+		Status:        authority.Status(),
+		Kind:          authority.Kind(),
+		Provider:      authority.Provider(),
+		Verdict:       authority.Verdict(),
+		Reason:        authority.Reason,
+		Actual:        authority.Actual,
+		Summary:       authority.Summary(),
+		ReviewEvent:   eventReference(authority.ReviewEntry),
+		CompleteEvent: eventReference(authority.CompleteEntry),
+		Evidence:      authority.Evidence,
+	}
+}
+
 func latestReviewInfo(ledger session.Session) ReviewInfo {
 	var info ReviewInfo
 	haveAttempt := false
@@ -98,6 +135,8 @@ func latestReviewInfo(ledger session.Session) ReviewInfo {
 		switch entry.Type {
 		case "review":
 			info.Verdict = entry.Status
+			info.Provider = entry.Provider
+			info.Summary = entry.Reason
 			if dossier, ok := corereview.DecodeDossier(entry.Output); ok {
 				info.Mode = dossier.Mode
 				info.Summary = dossier.Summary
@@ -225,6 +264,16 @@ func latestReviewEvidence(ledger session.Session) string {
 		return "review event"
 	}
 	return "review event"
+}
+
+func eventReference(entry session.Entry) string {
+	if entry.ID != "" {
+		return entry.ID
+	}
+	if entry.Type != "" {
+		return entry.Type + " session entry"
+	}
+	return ""
 }
 
 func criterionBlockers(model spec.Model) []string {

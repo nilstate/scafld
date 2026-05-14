@@ -3,11 +3,13 @@ package build
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/nilstate/scafld/v2/internal/core/acceptance"
 	"github.com/nilstate/scafld/v2/internal/core/execution"
+	corereview "github.com/nilstate/scafld/v2/internal/core/review"
 	"github.com/nilstate/scafld/v2/internal/core/session"
 	"github.com/nilstate/scafld/v2/internal/core/spec"
 )
@@ -94,6 +96,33 @@ func TestBuildOpensPhaseWithoutRunningAcceptance(t *testing.T) {
 	latest := sessions.ledger.Entries[len(sessions.ledger.Entries)-1]
 	if latest.Type != "build" || latest.Status != string(spec.StatusActive) {
 		t.Fatalf("latest session entry = %+v, want build active result", latest)
+	}
+}
+
+func TestBuildRefusesCompletedTaskWithCompletionAuthority(t *testing.T) {
+	t.Parallel()
+
+	ledger := session.New("task", "now")
+	ledger = ledger.WithEntry(session.Entry{Type: "review", Status: corereview.VerdictPass, Provider: "codex", Output: corereview.EncodeDossier(corereview.Dossier{
+		Verdict:  corereview.VerdictPass,
+		Mode:     corereview.ModeVerify,
+		Provider: "codex",
+		Summary:  "review passed",
+		AttackLog: []corereview.AttackLogEntry{{
+			Target: "diff",
+			Attack: "scan",
+			Result: corereview.AttackResultClean,
+		}},
+	})})
+	ledger = ledger.WithEntry(session.Entry{Type: "complete", Status: "completed"})
+	_, err := Run(context.Background(), &fakeSpecs{model: spec.Model{TaskID: "task", Status: spec.StatusCompleted}}, &fakeSessions{ledger: ledger}, nil, &fakeRunner{}, fakeBuildClock{}, Input{TaskID: "task"})
+	if !errors.Is(err, ErrSpecNotBuildable) {
+		t.Fatalf("error = %v, want %v", err, ErrSpecNotBuildable)
+	}
+	for _, want := range []string{"task is archived/completed", "create a new task", "completion authority valid (review)", "review pass by codex"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error missing %q: %v", want, err)
+		}
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	corecompletion "github.com/nilstate/scafld/v2/internal/core/completion"
 	"github.com/nilstate/scafld/v2/internal/core/gate"
 	"github.com/nilstate/scafld/v2/internal/core/reconcile"
 	"github.com/nilstate/scafld/v2/internal/core/review"
@@ -105,6 +106,9 @@ func RunWithInput(ctx context.Context, specs SpecStore, sessions SessionStore, w
 		return Output{}, err
 	}
 	if model.Status != spec.StatusReview {
+		if model.Status == spec.StatusCompleted {
+			return Output{}, fmt.Errorf("%w: task is archived/completed; create a new task to continue%s", ErrSpecNotReviewable, reviewCompletionSuffix(ctx, sessions, model.TaskID))
+		}
 		return Output{}, fmt.Errorf("%w: run scafld build %s first", ErrSpecNotReviewable, model.TaskID)
 	}
 	if input.HumanReviewed {
@@ -189,6 +193,17 @@ func RunWithInput(ctx context.Context, specs SpecStore, sessions SessionStore, w
 		return Output{}, reviewGateError(model, err, "review dossier invalid", err.Error())
 	}
 	return recordReviewDossier(ctx, specs, sessions, model, path, dossier, now)
+}
+
+func reviewCompletionSuffix(ctx context.Context, sessions SessionStore, taskID string) string {
+	if sessions == nil {
+		return ""
+	}
+	ledger, err := sessions.Load(ctx, taskID)
+	if err != nil {
+		return ""
+	}
+	return corecompletion.TerminalAuthority(ledger).RefusalSuffix()
 }
 
 func reviewGateError(model spec.Model, err error, reason string, actual string) error {

@@ -207,6 +207,29 @@ func Status(out appstatus.Output) string {
 	if out.Repair != nil {
 		b.WriteString(Gate(out.Repair))
 	}
+	if out.Completion != nil {
+		fmt.Fprintf(&b, "completion authority: %s", out.Completion.Status)
+		if out.Completion.Kind != "" {
+			fmt.Fprintf(&b, " (%s)", out.Completion.Kind)
+		}
+		b.WriteString("\n")
+		if out.Completion.Provider != "" || out.Completion.Verdict != "" {
+			fmt.Fprintf(&b, "authority review: %s", out.Completion.Verdict)
+			if out.Completion.Provider != "" {
+				fmt.Fprintf(&b, " by %s", out.Completion.Provider)
+			}
+			b.WriteString("\n")
+		}
+		if out.Completion.Summary != "" {
+			fmt.Fprintf(&b, "authority summary: %s\n", out.Completion.Summary)
+		}
+		if out.Completion.Status == "invalid" && out.Completion.Reason != "" {
+			fmt.Fprintf(&b, "authority error: %s\n", out.Completion.Reason)
+			if out.Completion.Actual != "" {
+				fmt.Fprintf(&b, "authority actual: %s\n", out.Completion.Actual)
+			}
+		}
+	}
 	if out.Review.Running {
 		fmt.Fprintf(&b, "review: running\n")
 		if out.Review.Reason != "" {
