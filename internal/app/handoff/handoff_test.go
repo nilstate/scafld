@@ -287,3 +287,62 @@ func TestHandoffReviewStateIncludesContractEvidenceAndReviewerFocus(t *testing.T
 		}
 	}
 }
+
+func TestHandoffCompletedShowsCompletionAuthorityNotHistoricalFailedReview(t *testing.T) {
+	t.Parallel()
+
+	ledger := session.New("task", "2026-05-05T00:00:00Z")
+	ledger = ledger.WithEntry(session.Entry{ID: "review-old", Type: "review", Status: corereview.VerdictFail, Provider: "codex", Output: corereview.EncodeDossier(reviewDossier())})
+	ledger = ledger.WithEntry(session.Entry{ID: "review-pass", Type: "review", Status: corereview.VerdictPass, Provider: "codex", Output: corereview.EncodeDossier(corereview.Dossier{
+		Verdict:  corereview.VerdictPass,
+		Mode:     corereview.ModeVerify,
+		Provider: "codex",
+		Summary:  "review passed",
+		AttackLog: []corereview.AttackLogEntry{{
+			Target: "diff",
+			Attack: "scan",
+			Result: corereview.AttackResultClean,
+		}},
+	})})
+	ledger = ledger.WithEntry(session.Entry{ID: "complete-1", Type: "complete", Status: "completed"})
+	out, err := Run(context.Background(), fakeSpecStore{model: spec.Model{
+		TaskID: "task",
+		Title:  "Task",
+		Status: spec.StatusCompleted,
+		CurrentState: spec.CurrentState{
+			AllowedFollowUp: "none",
+		},
+	}}, fakeSessionStore{ledger: ledger}, "task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"## Completion Authority", "Status: valid", "Kind: review", "Review: pass by codex", "Review event: `review-pass`", "Complete event: `complete-1`", "Archived tasks are immutable"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("handoff missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "old blocker") || strings.Contains(out, "## Review Dossier") {
+		t.Fatalf("handoff surfaced historical failed review as current:\n%s", out)
+	}
+}
+
+func TestHandoffCompletedFlagsInvalidCompletionAuthority(t *testing.T) {
+	t.Parallel()
+
+	ledger := session.New("task", "2026-05-05T00:00:00Z")
+	ledger = ledger.WithEntry(session.Entry{ID: "review-fail", Type: "review", Status: corereview.VerdictFail, Provider: "codex", Output: corereview.EncodeDossier(reviewDossier())})
+	ledger = ledger.WithEntry(session.Entry{ID: "complete-1", Type: "complete", Status: "completed"})
+	out, err := Run(context.Background(), fakeSpecStore{model: spec.Model{
+		TaskID: "task",
+		Title:  "Task",
+		Status: spec.StatusCompleted,
+	}}, fakeSessionStore{ledger: ledger}, "task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"## Completion Authority", "Status: invalid", "Kind: invalid", "Integrity error: latest review gate has not passed", "Actual: latest review verdict fail"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("handoff missing %q:\n%s", want, out)
+		}
+	}
+}

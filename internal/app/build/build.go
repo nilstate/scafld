@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/nilstate/scafld/v2/internal/core/acceptance"
+	corecompletion "github.com/nilstate/scafld/v2/internal/core/completion"
 	"github.com/nilstate/scafld/v2/internal/core/execution"
 	"github.com/nilstate/scafld/v2/internal/core/gate"
 	"github.com/nilstate/scafld/v2/internal/core/reconcile"
@@ -79,6 +80,9 @@ func Run(ctx context.Context, specs SpecStore, sessions SessionStore, workspace 
 		return Output{}, err
 	}
 	if !buildable(model.Status) {
+		if model.Status == spec.StatusCompleted {
+			return Output{}, fmt.Errorf("%w: task is archived/completed; create a new task to continue%s", ErrSpecNotBuildable, buildCompletionSuffix(ctx, sessions, model.TaskID))
+		}
 		return Output{}, fmt.Errorf("%w: %s", ErrSpecNotBuildable, model.Status)
 	}
 	if model.Status == spec.StatusReview && model.CurrentState.Next != "repair" {
@@ -100,6 +104,17 @@ func Run(ctx context.Context, specs SpecStore, sessions SessionStore, workspace 
 		timeout = defaultAcceptanceTimeout
 	}
 	return continueBuild(ctx, specs, sessions, runner, model, path, ledger, input.CWD, input.Env, timeout, input.IdleTimeout, now)
+}
+
+func buildCompletionSuffix(ctx context.Context, sessions SessionStore, taskID string) string {
+	if sessions == nil {
+		return ""
+	}
+	ledger, err := sessions.Load(ctx, taskID)
+	if err != nil {
+		return ""
+	}
+	return corecompletion.TerminalAuthority(ledger).RefusalSuffix()
 }
 
 func openBuild(ctx context.Context, specs SpecStore, sessions SessionStore, model spec.Model, path string, ledger session.Session, now string) (Output, error) {

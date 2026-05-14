@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	corecompletion "github.com/nilstate/scafld/v2/internal/core/completion"
 	corereview "github.com/nilstate/scafld/v2/internal/core/review"
 	"github.com/nilstate/scafld/v2/internal/core/session"
 	"github.com/nilstate/scafld/v2/internal/core/spec"
@@ -43,6 +44,7 @@ func Run(ctx context.Context, specs SpecStore, sessions SessionStore, taskID str
 		writeAcceptanceEvidence(&b, model, ledger)
 		writeBlockedAcceptance(&b, model, ledger)
 		writeReviewGate(&b, model, ledger, next)
+		writeCompletionAuthority(&b, model, ledger)
 		writeLatestReviewFindings(&b, ledger)
 	}
 	return b.String(), nil
@@ -330,6 +332,41 @@ func writeReviewGate(b *strings.Builder, model spec.Model, ledger session.Sessio
 	b.WriteString("- Attack the diff against the approved contract and recorded baseline.\n")
 	b.WriteString("- Treat session evidence as trusted state; treat this handoff as transport.\n")
 	b.WriteString("- Return a structured review verdict through `scafld review`, not by editing the spec.\n")
+}
+
+func writeCompletionAuthority(b *strings.Builder, model spec.Model, ledger session.Session) {
+	if model.Status != spec.StatusCompleted {
+		return
+	}
+	authority := corecompletion.TerminalAuthority(ledger)
+	b.WriteString("\n## Completion Authority\n\n")
+	fmt.Fprintf(b, "Status: %s\n", authority.Status())
+	fmt.Fprintf(b, "Kind: %s\n", authority.Kind())
+	if authority.Provider() != "" || authority.Verdict() != "" {
+		fmt.Fprintf(b, "Review: %s", authority.Verdict())
+		if authority.Provider() != "" {
+			fmt.Fprintf(b, " by %s", authority.Provider())
+		}
+		b.WriteString("\n")
+	}
+	if summary := authority.Summary(); summary != "" {
+		fmt.Fprintf(b, "Summary: %s\n", summary)
+	}
+	if authority.ReviewEntry.ID != "" {
+		fmt.Fprintf(b, "Review event: `%s`\n", authority.ReviewEntry.ID)
+	}
+	if authority.CompleteEntry.ID != "" {
+		fmt.Fprintf(b, "Complete event: `%s`\n", authority.CompleteEntry.ID)
+	}
+	if !authority.Valid {
+		if authority.Reason != "" {
+			fmt.Fprintf(b, "Integrity error: %s\n", authority.Reason)
+		}
+		if authority.Actual != "" {
+			fmt.Fprintf(b, "Actual: %s\n", authority.Actual)
+		}
+	}
+	b.WriteString("Archived tasks are immutable; create a new task for follow-up work.\n")
 }
 
 func latestReviewAttemptFailed(ledger session.Session) (session.Entry, bool) {

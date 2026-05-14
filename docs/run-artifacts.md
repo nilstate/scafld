@@ -164,13 +164,64 @@ agent to scrape diagnostics:
 }
 ```
 
+## Completion Authority
+
+Archived completed tasks are immutable. `scafld build` and `scafld review`
+will not reopen them; create a new task for follow-up work.
+
+For completed tasks, scafld derives a terminal completion authority from the
+session ledger:
+
+- latest passing external review before `complete`
+- audited human-reviewed override before `complete`
+- integrity error when a completed ledger has no valid terminal authority
+
+Historical failed reviews remain in the ledger. They are evidence, not current
+state, once a later passing review or audited human-reviewed override has
+authorized completion.
+
+`scafld status --json` exposes this under `completion_authority`:
+
+```json
+{
+  "task_id": "add-cache",
+  "status": "completed",
+  "completion_authority": {
+    "status": "valid",
+    "kind": "review",
+    "provider": "codex",
+    "verdict": "pass",
+    "review_event": "review-2",
+    "complete_event": "complete-1",
+    "summary": "Review passed with no open completion blockers."
+  }
+}
+```
+
+If archive state and ledger evidence disagree, the authority is invalid:
+
+```json
+{
+  "task_id": "add-cache",
+  "status": "completed",
+  "completion_authority": {
+    "status": "invalid",
+    "kind": "invalid",
+    "reason": "latest review gate has not passed",
+    "actual": "latest review verdict fail"
+  }
+}
+```
+
 ## Handoff
 
 `scafld handoff <task-id>` renders model-facing context to stdout from the
 current spec and session. Blocked handoffs include failed or pending acceptance
 criteria with commands and reasons. Review handoffs include the latest accepted
-review findings. Handoff is transport only: scafld does not persist handoff
-JSON, and it does not use handoff text as state.
+review findings. Completed handoffs include the terminal completion authority so
+old failed reviews are not mistaken for current blockers. Handoff is transport
+only: scafld does not persist handoff JSON, and it does not use handoff text as
+state.
 
 ## Retention
 

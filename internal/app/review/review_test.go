@@ -144,6 +144,25 @@ func TestProviderVerdictDrivesReviewState(t *testing.T) {
 	}
 }
 
+func TestReviewRefusesCompletedTaskWithCompletionAuthority(t *testing.T) {
+	t.Parallel()
+
+	ledger := session.New("task", "now")
+	dossier := passingDossierWithMode(corereview.ModeVerify)
+	dossier.Provider = "claude"
+	ledger = ledger.WithEntry(session.Entry{Type: "review", Status: corereview.VerdictPass, Provider: "claude", Output: corereview.EncodeDossier(dossier)})
+	ledger = ledger.WithEntry(session.Entry{Type: "complete", Status: "completed"})
+	_, err := Run(context.Background(), &fakeSpecs{model: spec.Model{TaskID: "task", Title: "Task", Status: spec.StatusCompleted}}, &fakeSessions{ledger: ledger}, nil, fakeProvider{packet: passingDossier()}, fakeClock{}, "task")
+	if !errors.Is(err, ErrSpecNotReviewable) {
+		t.Fatalf("error = %v, want %v", err, ErrSpecNotReviewable)
+	}
+	for _, want := range []string{"task is archived/completed", "create a new task", "completion authority valid (review)", "review pass by claude"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error missing %q: %v", want, err)
+		}
+	}
+}
+
 func TestReviewPreservesRequestedBudgetWhenProviderOmitsCaps(t *testing.T) {
 	t.Parallel()
 

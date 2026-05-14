@@ -41,6 +41,20 @@ func reviewDossier(id string, summary string) corereview.Dossier {
 	}
 }
 
+func passingReviewDossier(provider string) corereview.Dossier {
+	return corereview.Dossier{
+		Verdict:  corereview.VerdictPass,
+		Mode:     corereview.ModeVerify,
+		Provider: provider,
+		Summary:  "review passed",
+		AttackLog: []corereview.AttackLogEntry{{
+			Target: "diff",
+			Attack: "scan",
+			Result: corereview.AttackResultClean,
+		}},
+	}
+}
+
 func TestStatusIncludesLatestReviewFindings(t *testing.T) {
 	t.Parallel()
 
@@ -196,5 +210,45 @@ func TestStatusBlockedRepairContractUsesCurrentPhaseOnly(t *testing.T) {
 	}
 	if len(out.Repair.Blockers) != 1 || out.Repair.Blockers[0] != "p1: current phase test (exit code was 1)" {
 		t.Fatalf("repair blockers = %+v", out.Repair.Blockers)
+	}
+}
+
+func TestStatusCompletedShowsTerminalCompletionAuthority(t *testing.T) {
+	t.Parallel()
+
+	ledger := session.New("task", "2026-05-05T00:00:00Z")
+	ledger = ledger.WithEntry(session.Entry{ID: "review-old", Type: "review", Status: corereview.VerdictFail, Provider: "codex", Output: corereview.EncodeDossier(reviewDossier("old", "old blocker"))})
+	ledger = ledger.WithEntry(session.Entry{ID: "review-pass", Type: "review", Status: corereview.VerdictPass, Provider: "codex", Output: corereview.EncodeDossier(passingReviewDossier("codex"))})
+	ledger = ledger.WithEntry(session.Entry{ID: "complete-1", Type: "complete", Status: "completed"})
+	out, err := Run(context.Background(), fakeSpecStore{model: spec.Model{
+		TaskID: "task",
+		Status: spec.StatusCompleted,
+	}}, fakeSessionStore{ledger: ledger}, "task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Completion == nil || out.Completion.Status != "valid" || out.Completion.Kind != "review" || out.Completion.Provider != "codex" || out.Completion.ReviewEvent != "review-pass" {
+		t.Fatalf("completion authority = %+v", out.Completion)
+	}
+	if out.Review.Verdict != corereview.VerdictPass || len(out.Review.Findings) != 0 {
+		t.Fatalf("latest review should be the terminal pass, not old failure: %+v", out.Review)
+	}
+}
+
+func TestStatusCompletedFlagsMissingCompletionAuthority(t *testing.T) {
+	t.Parallel()
+
+	ledger := session.New("task", "2026-05-05T00:00:00Z")
+	ledger = ledger.WithEntry(session.Entry{ID: "review-fail", Type: "review", Status: corereview.VerdictFail, Provider: "codex", Output: corereview.EncodeDossier(reviewDossier("old", "old blocker"))})
+	ledger = ledger.WithEntry(session.Entry{ID: "complete-1", Type: "complete", Status: "completed"})
+	out, err := Run(context.Background(), fakeSpecStore{model: spec.Model{
+		TaskID: "task",
+		Status: spec.StatusCompleted,
+	}}, fakeSessionStore{ledger: ledger}, "task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Completion == nil || out.Completion.Status != "invalid" || out.Completion.Reason != "latest review gate has not passed" || out.Completion.Actual != "latest review verdict fail" {
+		t.Fatalf("completion authority = %+v", out.Completion)
 	}
 }
