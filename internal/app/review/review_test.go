@@ -343,9 +343,12 @@ func TestReviewPromptCarriesTaskContractToProvider(t *testing.T) {
 		Phases:      []spec.Phase{{ID: "phase1", Name: "Implementation", Changes: []string{"Update API prompt context"}}},
 	}}
 	_, err := RunWithInput(context.Background(), specs, &fakeSessions{}, workspace, provider, fakeClock{}, Input{
-		TaskID:      "task",
-		ReviewScope: []string{"api"},
-		Invariants:  map[string]string{"tenant_isolation": "Never leak data across tenants."},
+		TaskID:          "task",
+		ReviewScope:     []string{"api"},
+		Invariants:      map[string]string{"tenant_isolation": "Never leak data across tenants."},
+		MaxFindings:     4,
+		MinAttackAngles: 3,
+		ReviewDepth:     "light",
 		Passes: []Pass{{
 			ID:          "regression_hunt",
 			Category:    "adversarial",
@@ -385,7 +388,7 @@ func TestReviewPromptCarriesTaskContractToProvider(t *testing.T) {
 	if !strings.Contains(provider.req.Prompt, "## Review Focus") || !strings.Contains(provider.req.Prompt, "adversarial: Regression Hunt") {
 		t.Fatalf("provider request missing configured review focus = %+v", provider.req)
 	}
-	for _, want := range []string{"## Task Scope", "Explicit review scope", "`api`", "`api/handler.go`", "MCP API", "Implementation changes", "## Workspace Classification", "Ambient drift outside task scope", "`review_self_mutation`", "## Workspace Baseline Before Review", "`api/handler.go`", "unchanged dirty paths from the approval baseline are context"} {
+	for _, want := range []string{"Max findings: 4", "Minimum attack angles: 3", "Review depth: light", "Depth contract: Prioritize completion blockers", "## Task Scope", "Explicit review scope", "`api`", "`api/handler.go`", "MCP API", "Implementation changes", "## Workspace Classification", "Ambient drift outside task scope", "`review_self_mutation`", "## Workspace Baseline Before Review", "`api/handler.go`", "unchanged dirty paths from the approval baseline are context"} {
 		if !strings.Contains(provider.req.Prompt, want) {
 			t.Fatalf("provider request missing %q:\n%s", want, provider.req.Prompt)
 		}

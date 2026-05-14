@@ -25,6 +25,10 @@ execution:
   # Declare project-specific
   # command environment here instead of relying on interactive shell startup.
   # Explicit paths are placed before auto-detected shims.
+  # absolute_timeout_seconds caps each acceptance command wall clock.
+  # idle_timeout_seconds is optional; 0 disables idle timeout enforcement.
+  absolute_timeout_seconds: 300
+  idle_timeout_seconds: 0
   path_prepend: []
   env: {}
   # Example for Ruby projects that use rbenv:
@@ -68,6 +72,9 @@ review:
       - .scafld/core/schemas/review_dossier.json
 
   dossier:
+    # light: blocker-focused small-diff review
+    # standard: balanced blocker and regression hunt
+    # deep: broader adversarial pass within the same schema
     max_findings: 12
     min_attack_angles: 6
     review_depth: "standard"

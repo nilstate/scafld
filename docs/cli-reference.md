@@ -140,7 +140,8 @@ fail closed and leave the round in progress.
 Accepted citation shapes are `Grounded in: spec_gap:<field>`,
 `Grounded in: code:<path>:<line>`, and `Grounded in: archive:<task-id>`.
 Code citations must use an existing workspace-relative path and a real line
-number.
+number. Line ranges are rejected; cite the single line that anchors the
+evidence.
 
 Required checks are `Path audit`, `Command audit`, `Scope/migration audit`,
 `Acceptance timing audit`, `Rollback/repair audit`, and `Design challenge`.
@@ -186,7 +187,10 @@ already-ready review specs are rejected.
 Acceptance commands inherit the process environment plus `execution` overrides
 from `.scafld/config.yaml` and `.scafld/config.local.yaml`. Use that config for
 repo-wide toolchain setup such as rbenv shims instead of relying on interactive
-shell startup.
+shell startup. Acceptance commands default to a 300-second absolute timeout;
+raise `execution.absolute_timeout_seconds` for legitimate slow project tools.
+Set `execution.idle_timeout_seconds` only when an idle-output watchdog is useful
+for the project.
 
 Phase acceptance runs in order. If a phase blocks, later phase commands are not
 run and the next command becomes `scafld handoff <task-id>` so the repair agent
@@ -210,8 +214,12 @@ install a provider, use `--provider command`, or explicitly choose
 Provider modes:
 
 - `auto`: choose an installed external challenger.
-- `codex`: run Codex in read-only ephemeral mode.
-- `claude`: run Claude with read-only tools and the `submit_review` MCP tool.
+- `codex`: run Codex in read-only ephemeral mode with user config and
+  execpolicy rules disabled for the review subprocess.
+- `claude`: run Claude with session persistence, slash commands, and browser
+  integration disabled; built-in tools are restricted to `Read`, `Grep`, and
+  `Glob`, and the verdict must be submitted through the `submit_review` MCP
+  tool.
 - `command`: run a custom reviewer command; requires `--provider-command`.
 - `local`: deterministic pass-through provider for development and tests only;
   its verdict cannot satisfy `complete`.
@@ -222,6 +230,14 @@ Provider-specific model defaults come from
 `review.external.codex.model` and `review.external.claude.model`. `--provider`,
 `--provider-command`, `--provider-binary`, and `--model` override config for one
 invocation.
+
+`--review-depth`, `--max-findings`, and `--min-attack-angles` override the
+review dossier budget for one run. For small diffs, keep the same gate but
+request a cheaper blocker-focused review:
+
+```bash
+scafld review <task-id> --review-depth light --max-findings 4 --min-attack-angles 3
+```
 
 `--print-context` prints the exact deterministic review-context packet without
 invoking a provider. Use it when an agent needs to see why a reviewer is

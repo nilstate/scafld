@@ -81,7 +81,8 @@ If a question can be answered by exploring the codebase, explore the codebase in
 Record why each question exists with a single `Grounded in:` value:
 
 - `spec_gap:<field>` for a missing, vague, or contradictory spec field
-- `code:<file>:<line>` for code you actually verified in this session
+- `code:<file>:<line>` for code you actually verified in this session; cite a
+  single anchor line, not a line range
 - `archive:<task_id>` for a relevant archived spec precedent
 
 Use `Grounded in:` as audit trail, not ceremony. Do not invent citations. Do not cite code you have not read. Do not ask about behavior the spec already settles.

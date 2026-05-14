@@ -39,15 +39,19 @@ func (f *fakeSessions) Append(_ context.Context, taskID string, entry session.En
 func (f *fakeSessions) Load(context.Context, string) (session.Session, error) { return f.ledger, nil }
 
 type fakeRunner struct {
-	exit     int
-	exitBy   map[string]int
-	commands []string
-	env      []string
+	exit         int
+	exitBy       map[string]int
+	commands     []string
+	env          []string
+	timeouts     []time.Duration
+	idleTimeouts []time.Duration
 }
 
 func (f *fakeRunner) Run(_ context.Context, req execution.Request) (execution.Result, error) {
 	f.commands = append(f.commands, req.Command)
 	f.env = append([]string(nil), req.Env...)
+	f.timeouts = append(f.timeouts, req.Timeout)
+	f.idleTimeouts = append(f.idleTimeouts, req.IdleTimeout)
 	exit := f.exit
 	if f.exitBy != nil {
 		exit = f.exitBy[req.Command]
@@ -230,6 +234,24 @@ func TestBuildPassesExecutionEnvToCriteria(t *testing.T) {
 	}
 	if len(runner.env) != len(env) || runner.env[0] != env[0] || runner.env[1] != env[1] {
 		t.Fatalf("runner env = %+v, want %+v", runner.env, env)
+	}
+}
+
+func TestBuildPassesConfiguredTimeoutsToCriteria(t *testing.T) {
+	t.Parallel()
+
+	specs := &fakeSpecs{model: spec.Model{TaskID: "task", Status: spec.StatusApproved, Phases: []spec.Phase{{ID: "phase1", Name: "Phase", Acceptance: []spec.Criterion{{ID: "ac1", PhaseID: "phase1", Command: "make check", ExpectedKind: acceptance.ExpectedExitCodeZero}}}}}}
+	runner := &fakeRunner{}
+	sessions := &fakeSessions{}
+	input := Input{TaskID: "task", Timeout: 2 * time.Minute, IdleTimeout: 30 * time.Second}
+	if _, err := Run(context.Background(), specs, sessions, nil, runner, fakeBuildClock{}, input); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Run(context.Background(), specs, sessions, nil, runner, fakeBuildClock{}, input); err != nil {
+		t.Fatal(err)
+	}
+	if len(runner.timeouts) != 1 || runner.timeouts[0] != 2*time.Minute || runner.idleTimeouts[0] != 30*time.Second {
+		t.Fatalf("timeouts = %+v idle=%+v", runner.timeouts, runner.idleTimeouts)
 	}
 }
 

@@ -564,6 +564,13 @@ func (p *parser) appendPhaseChangeContinuation(line string) bool {
 }
 
 func (p *parser) handleCriterionStart(line string) bool {
+	if p.phase != nil {
+		if p.phaseField != "acceptance" {
+			return false
+		}
+	} else if p.section != "acceptance" {
+		return false
+	}
 	match := criterionLinePattern.FindStringSubmatch(line)
 	if match == nil {
 		return false

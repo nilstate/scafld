@@ -137,6 +137,30 @@ func TestParsePreservesWrappedListItems(t *testing.T) {
 	}
 }
 
+func TestParseOnlyReadsCriteriaFromAcceptanceBlocks(t *testing.T) {
+	t.Parallel()
+
+	input := string(Render(fixtureModel()))
+	input = strings.Replace(input, "## Objectives\n\n- none", "## Objectives\n\n- [ ] `not-ac` command - This is prose, not a criterion.", 1)
+	input = strings.Replace(input, "Changes:\n- Add tests.", "Changes:\n- [ ] `not-phase-ac` command - This is a change bullet, not acceptance.", 1)
+	parsed, err := Parse([]byte(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(parsed.Acceptance.Criteria) != 0 {
+		t.Fatalf("global criteria polluted from non-acceptance sections: %+v", parsed.Acceptance.Criteria)
+	}
+	if len(parsed.Phases) != 1 || len(parsed.Phases[0].Acceptance) != 1 || parsed.Phases[0].Acceptance[0].ID != "ac1" {
+		t.Fatalf("phase acceptance = %+v", parsed.Phases)
+	}
+	if len(parsed.Objectives) != 1 || !strings.Contains(parsed.Objectives[0], "not-ac") {
+		t.Fatalf("objective bullet lost: %+v", parsed.Objectives)
+	}
+	if len(parsed.Phases[0].Changes) != 1 || !strings.Contains(parsed.Phases[0].Changes[0], "not-phase-ac") {
+		t.Fatalf("phase change bullet lost: %+v", parsed.Phases[0].Changes)
+	}
+}
+
 func TestParseNormalizesMixedHardenQuestionFormats(t *testing.T) {
 	t.Parallel()
 

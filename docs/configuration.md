@@ -116,6 +116,8 @@ Shared project command environment belongs in `.scafld/config.yaml`:
 
 ```yaml
 execution:
+  absolute_timeout_seconds: 300
+  idle_timeout_seconds: 0
   path_prepend:
     - "$HOME/.rbenv/shims"
     - "$HOME/.rbenv/bin"
@@ -127,6 +129,12 @@ execution:
 and `~` expansion. `env` values are also expanded with the current process
 environment. Use `.scafld/config.local.yaml` for developer-local paths or model
 provider binaries that should not be committed.
+
+`absolute_timeout_seconds` caps each acceptance command. The default is 300
+seconds. Raise it for legitimate slow project commands such as cold framework
+typechecks; do not hide slow commands behind `true`. `idle_timeout_seconds` is
+optional and defaults to `0`, which disables idle-timeout enforcement for
+acceptance commands.
 
 Task-specific requirements can still live directly in a criterion command, but
 repo-wide toolchain setup should be declared once in config. That keeps build

@@ -15,12 +15,22 @@ import (
 
 func TestCommandWritesDiagnostic(t *testing.T) {
 	t.Parallel()
-	result, err := (Runner{DiagnosticsDir: t.TempDir()}).Run(context.Background(), execution.Request{Command: "printf ok", Timeout: time.Second})
+	result, err := (Runner{DiagnosticsDir: t.TempDir()}).Run(context.Background(), execution.Request{Command: "printf ok", CWD: t.TempDir(), Env: []string{"BUNDLE_GEMFILE=api/Gemfile"}, Timeout: time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if result.ExitCode != 0 || result.Output != "ok" || result.DiagnosticPath == "" {
 		t.Fatalf("unexpected result: %+v", result)
+	}
+	data, err := os.ReadFile(result.DiagnosticPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, want := range []string{"cwd: ", "env_overrides: BUNDLE_GEMFILE", "absolute_timeout: 1s"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("diagnostic missing %q:\n%s", want, text)
+		}
 	}
 }
 

@@ -187,6 +187,7 @@ func TestClaudeProviderBuildsRestrictedStreamJSONArgsAndExtractsStructuredOutput
 	}
 	wantPrefix := []string{
 		"claude-bin", "-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
+		"--no-session-persistence", "--disable-slash-commands", "--no-chrome", "--tools", "Read,Grep,Glob",
 		"--allowedTools", "Read,Grep,Glob,mcp__scafld__submit_review",
 		"--disallowedTools", "Agent,Task,Bash,Edit,MultiEdit,Write,NotebookEdit",
 		"--mcp-config",
@@ -207,7 +208,7 @@ func TestClaudeProviderRequiresMCPSubmissionAndIgnoresResultText(t *testing.T) {
 		`{"type":"result","result":"Will produce the requested dossier.\n` + "```json" + `\n` + strings.ReplaceAll(dossierJSON(review.VerdictPass), `"`, `\"`) + `\n` + "```" + `"}` + "\n"
 	runner := &fakeRunner{result: execution.Result{Stdout: stdout}}
 	dossier, err := (ClaudeProvider{Runner: runner, SessionID: "00000000-0000-4000-8000-000000000000"}).Invoke(context.Background(), review.Request{TaskID: "task"})
-	if !errors.Is(err, ErrProviderFailed) || !strings.Contains(err.Error(), "provider produced no submission") {
+	if !errors.Is(err, ErrProviderFailed) || !strings.Contains(err.Error(), "provider produced no submission") || !strings.Contains(err.Error(), "submit_review") {
 		t.Fatalf("err = %v dossier=%+v", err, dossier)
 	}
 }
@@ -258,7 +259,7 @@ func TestCodexProviderBuildsReadOnlyEphemeralArgsAndReadsOutputFile(t *testing.T
 	}
 	wantArgs := []string{
 		"codex-bin", "exec", "--sandbox", "read-only", "--skip-git-repo-check", "--cd", "/tmp/work",
-		"--ephemeral", "--ignore-user-config", "--color", "never", "--output-last-message", outputPath,
+		"--ephemeral", "--ignore-user-config", "--ignore-rules", "--color", "never", "--output-last-message", outputPath,
 		"--output-schema", "/tmp/schema.json", "-m", "gpt-test",
 	}
 	if !reflect.DeepEqual(runner.req.Args, wantArgs) || runner.req.Input != "prompt" {
