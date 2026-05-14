@@ -71,7 +71,7 @@ func (r Runner) Run(ctx context.Context, req execution.Request) (execution.Resul
 	result.Stdout, result.Stderr, result.Output, result.DroppedBytes, result.StdoutEvents = state.snapshot()
 	progress.result(result, waitErr)
 	if r.DiagnosticsDir != "" {
-		if path, writeErr := r.writeDiagnostic(displayCommand, result); writeErr == nil {
+		if path, writeErr := r.writeDiagnostic(req, displayCommand, result); writeErr == nil {
 			result.DiagnosticPath = path
 		}
 	}
@@ -122,14 +122,20 @@ func summarizeCommand(command string) string {
 	return summary
 }
 
-func (r Runner) writeDiagnostic(command string, result execution.Result) (string, error) {
+func (r Runner) writeDiagnostic(req execution.Request, command string, result execution.Result) (string, error) {
 	if err := os.MkdirAll(r.DiagnosticsDir, 0o755); err != nil {
 		return "", err
 	}
 	name := fmt.Sprintf("command-%d.txt", time.Now().UnixNano())
 	path := filepath.Join(r.DiagnosticsDir, name)
+	cwd := req.CWD
+	if cwd == "" {
+		cwd = "."
+	}
 	data := []byte(
 		"command: " + command +
+			"\ncwd: " + cwd +
+			"\nenv_overrides: " + strings.Join(envOverrideNames(req.Env), ",") +
 			"\nexit_code: " + fmt.Sprint(result.ExitCode) +
 			"\nkill_reason: " + result.KillReason +
 			"\nwall_elapsed: " + result.WallElapsed.String() +
@@ -142,4 +148,19 @@ func (r Runner) writeDiagnostic(command string, result execution.Result) (string
 			"\n\nstderr:\n" + result.Stderr,
 	)
 	return path, os.WriteFile(path, data, 0o644)
+}
+
+func envOverrideNames(env []string) []string {
+	names := make([]string, 0, len(env))
+	for _, item := range env {
+		name, _, ok := strings.Cut(item, "=")
+		if !ok {
+			name = item
+		}
+		name = strings.TrimSpace(name)
+		if name != "" {
+			names = append(names, name)
+		}
+	}
+	return names
 }

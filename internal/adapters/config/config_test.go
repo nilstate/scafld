@@ -19,6 +19,8 @@ version: "1.0"
 llm:
   model_profile: "team-default"
 execution:
+  absolute_timeout_seconds: 600
+  idle_timeout_seconds: 90
   path_prepend:
     - "$HOME/.rbenv/shims"
   env:
@@ -69,7 +71,7 @@ review:
 	if cfg.Harden.MaxQuestionsPerRound != 5 {
 		t.Fatalf("harden config = %+v", cfg.Harden)
 	}
-	if len(cfg.Execution.PathPrepend) != 1 || cfg.Execution.PathPrepend[0] != "$HOME/.rbenv/shims" || cfg.Execution.Env["BUNDLE_GEMFILE"] != "api/Gemfile" {
+	if len(cfg.Execution.PathPrepend) != 1 || cfg.Execution.PathPrepend[0] != "$HOME/.rbenv/shims" || cfg.Execution.Env["BUNDLE_GEMFILE"] != "api/Gemfile" || cfg.Execution.AbsoluteTimeoutSeconds != 600 || cfg.Execution.IdleTimeoutSeconds != 90 {
 		t.Fatalf("execution config = %+v", cfg.Execution)
 	}
 	if cfg.Invariants.Canonical["tenant_isolation"] != "Do not leak data across tenants." {
@@ -113,6 +115,7 @@ review:
 	}
 	if err := os.WriteFile(filepath.Join(root, ".scafld", "config.local.yaml"), []byte(`
 execution:
+  absolute_timeout_seconds: 900
   path_prepend:
     - "$HOME/.local/bin"
   env:
@@ -147,7 +150,7 @@ review:
 	if !contains(cfg.Review.Context.Files, "MEMORY.md") || !contains(cfg.Review.Context.Files, "AGENTS.md") {
 		t.Fatalf("review context overlay did not apply: %+v", cfg.Review.Context)
 	}
-	if len(cfg.Execution.PathPrepend) != 1 || cfg.Execution.PathPrepend[0] != "$HOME/.local/bin" || cfg.Execution.Env["RUBYOPT"] != "-W0" {
+	if len(cfg.Execution.PathPrepend) != 1 || cfg.Execution.PathPrepend[0] != "$HOME/.local/bin" || cfg.Execution.Env["RUBYOPT"] != "-W0" || cfg.Execution.AbsoluteTimeoutSeconds != 900 {
 		t.Fatalf("execution overlay did not apply: %+v", cfg.Execution)
 	}
 	if cfg.Review.AdversarialPasses["regression_hunt"].Description != "Local override" {
@@ -213,8 +216,10 @@ func TestEffectiveExecutionPutsExplicitConfigBeforeDetectedShims(t *testing.T) {
 	writeFile(t, root, "api/.ruby-version", "3.4.5\n")
 
 	env := EffectiveExecution(root, ExecutionConfig{
-		PathPrepend: []string{"$HOME/custom-shims"},
-		Env:         map[string]string{"BUNDLE_GEMFILE": "api/Gemfile"},
+		PathPrepend:            []string{"$HOME/custom-shims"},
+		Env:                    map[string]string{"BUNDLE_GEMFILE": "api/Gemfile"},
+		AbsoluteTimeoutSeconds: 600,
+		IdleTimeoutSeconds:     60,
 	}).ProcessEnv()
 	joined := strings.Join(env, "\n")
 	wantPath := "PATH=/tmp/scafld-home/custom-shims" +
@@ -225,6 +230,10 @@ func TestEffectiveExecutionPutsExplicitConfigBeforeDetectedShims(t *testing.T) {
 	}
 	if !strings.Contains(joined, "BUNDLE_GEMFILE=api/Gemfile") {
 		t.Fatalf("explicit env missing in %+v", env)
+	}
+	effective := EffectiveExecution(root, ExecutionConfig{AbsoluteTimeoutSeconds: 600, IdleTimeoutSeconds: 60})
+	if effective.AbsoluteTimeoutSeconds != 600 || effective.IdleTimeoutSeconds != 60 {
+		t.Fatalf("execution timeouts not preserved: %+v", effective)
 	}
 }
 
@@ -242,6 +251,9 @@ func TestConfigDefaultWhenMissing(t *testing.T) {
 	}
 	if cfg.Harden.MaxQuestionsPerRound != 8 {
 		t.Fatalf("default harden config missing = %+v", cfg.Harden)
+	}
+	if cfg.Execution.AbsoluteTimeoutSeconds != 300 {
+		t.Fatalf("default execution timeout missing = %+v", cfg.Execution)
 	}
 	if cfg.Review.Dossier.MaxFindings <= 0 || cfg.Review.Dossier.MinAttackAngles <= 0 || cfg.Review.Dossier.ReviewDepth == "" || cfg.Review.Dossier.RerunPolicy == "" {
 		t.Fatalf("default review dossier config missing = %+v", cfg.Review.Dossier)

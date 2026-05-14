@@ -48,6 +48,8 @@ Required checks:
 
 Each check needs Grounded in, Result, and Evidence. Result must be passed or
 not_applicable before --mark-passed can close the round.
+Grounded in accepts spec_gap:<section>, archive:<task-id>, or a single-line
+code citation such as code:src/file.go:42. Line ranges are rejected.
 
 Questions are optional. Questions: none is valid only after the checks have
 evidence. Any recorded question needs a recommended answer and final answer.

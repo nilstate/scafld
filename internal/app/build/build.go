@@ -20,6 +20,8 @@ var ErrSpecNotBuildable = errors.New("build requires approved, active, blocked, 
 
 const finalPhaseID = "final"
 
+const defaultAcceptanceTimeout = 5 * time.Minute
+
 // SpecStore is the spec persistence port used by build.
 type SpecStore interface {
 	Load(context.Context, string) (spec.Model, string, error)
@@ -47,9 +49,11 @@ type Clock interface{ Now() time.Time }
 
 // Input describes the task and working directory to build.
 type Input struct {
-	TaskID string
-	CWD    string
-	Env    []string
+	TaskID      string
+	CWD         string
+	Env         []string
+	Timeout     time.Duration
+	IdleTimeout time.Duration
 }
 
 // Output summarizes one build lifecycle step.
@@ -91,7 +95,11 @@ func Run(ctx context.Context, specs SpecStore, sessions SessionStore, workspace 
 	if model.Status == spec.StatusApproved {
 		return openBuild(ctx, specs, sessions, model, path, ledger, now)
 	}
-	return continueBuild(ctx, specs, sessions, runner, model, path, ledger, input.CWD, input.Env, now)
+	timeout := input.Timeout
+	if timeout <= 0 {
+		timeout = defaultAcceptanceTimeout
+	}
+	return continueBuild(ctx, specs, sessions, runner, model, path, ledger, input.CWD, input.Env, timeout, input.IdleTimeout, now)
 }
 
 func openBuild(ctx context.Context, specs SpecStore, sessions SessionStore, model spec.Model, path string, ledger session.Session, now string) (Output, error) {
@@ -127,13 +135,13 @@ func openBuild(ctx context.Context, specs SpecStore, sessions SessionStore, mode
 	return Output{TaskID: model.TaskID, Status: model.Status, Phase: phaseID, Next: model.CurrentState.AllowedFollowUp}, nil
 }
 
-func continueBuild(ctx context.Context, specs SpecStore, sessions SessionStore, runner Runner, model spec.Model, path string, ledger session.Session, cwd string, env []string, now string) (Output, error) {
+func continueBuild(ctx context.Context, specs SpecStore, sessions SessionStore, runner Runner, model spec.Model, path string, ledger session.Session, cwd string, env []string, timeout time.Duration, idleTimeout time.Duration, now string) (Output, error) {
 	phaseID := currentPhaseID(model)
 	if phaseID == "" {
 		phaseID = finalPhaseID
 	}
 	if phaseID == finalPhaseID {
-		return runFinalAcceptance(ctx, specs, sessions, runner, model, path, ledger, cwd, env, now, 0, 0)
+		return runFinalAcceptance(ctx, specs, sessions, runner, model, path, ledger, cwd, env, timeout, idleTimeout, now, 0, 0)
 	}
 	phase, ok := phaseByID(model, phaseID)
 	if !ok {
@@ -144,7 +152,7 @@ func continueBuild(ctx context.Context, specs SpecStore, sessions SessionStore, 
 	if err != nil {
 		return Output{}, err
 	}
-	ledger, passed, failed, err := runCriterionList(ctx, sessions, runner, model.TaskID, phase.Acceptance, phaseID, cwd, env, now)
+	ledger, passed, failed, err := runCriterionList(ctx, sessions, runner, model.TaskID, phase.Acceptance, phaseID, cwd, env, timeout, idleTimeout, now)
 	if err != nil {
 		return Output{}, err
 	}
@@ -187,10 +195,10 @@ func continueBuild(ctx context.Context, specs SpecStore, sessions SessionStore, 
 		}
 		return Output{TaskID: model.TaskID, Status: model.Status, Phase: nextPhase, Passed: passed, Failed: failed, Next: model.CurrentState.AllowedFollowUp}, nil
 	}
-	return runFinalAcceptance(ctx, specs, sessions, runner, model, path, ledger, cwd, env, now, passed, failed)
+	return runFinalAcceptance(ctx, specs, sessions, runner, model, path, ledger, cwd, env, timeout, idleTimeout, now, passed, failed)
 }
 
-func runFinalAcceptance(ctx context.Context, specs SpecStore, sessions SessionStore, runner Runner, model spec.Model, path string, ledger session.Session, cwd string, env []string, now string, passed int, failed int) (Output, error) {
+func runFinalAcceptance(ctx context.Context, specs SpecStore, sessions SessionStore, runner Runner, model spec.Model, path string, ledger session.Session, cwd string, env []string, timeout time.Duration, idleTimeout time.Duration, now string, passed int, failed int) (Output, error) {
 	if len(model.Acceptance.Criteria) > 0 {
 		var err error
 		ledger, err = appendBuild(ctx, sessions, model.TaskID, spec.StatusActive, "running final acceptance", now)
@@ -198,7 +206,7 @@ func runFinalAcceptance(ctx context.Context, specs SpecStore, sessions SessionSt
 			return Output{}, err
 		}
 		var finalPassed, finalFailed int
-		ledger, finalPassed, finalFailed, err = runCriterionList(ctx, sessions, runner, model.TaskID, model.Acceptance.Criteria, "", cwd, env, now)
+		ledger, finalPassed, finalFailed, err = runCriterionList(ctx, sessions, runner, model.TaskID, model.Acceptance.Criteria, "", cwd, env, timeout, idleTimeout, now)
 		if err != nil {
 			return Output{}, err
 		}
@@ -267,14 +275,14 @@ func buildable(status spec.Status) bool {
 	}
 }
 
-func runCriterionList(ctx context.Context, sessions SessionStore, runner Runner, taskID string, criteria []spec.Criterion, phaseID string, cwd string, env []string, now string) (session.Session, int, int, error) {
+func runCriterionList(ctx context.Context, sessions SessionStore, runner Runner, taskID string, criteria []spec.Criterion, phaseID string, cwd string, env []string, timeout time.Duration, idleTimeout time.Duration, now string) (session.Session, int, int, error) {
 	var ledger session.Session
 	passed, failed := 0, 0
 	for _, criterion := range criteria {
 		if criterion.PhaseID == "" {
 			criterion.PhaseID = phaseID
 		}
-		entry := criterionEntry(ctx, runner, criterion, cwd, env)
+		entry := criterionEntry(ctx, runner, criterion, cwd, env, timeout, idleTimeout)
 		var err error
 		ledger, err = sessions.Append(ctx, taskID, entry, now)
 		if err != nil {
@@ -296,7 +304,7 @@ func runCriterionList(ctx context.Context, sessions SessionStore, runner Runner,
 	return ledger, passed, failed, nil
 }
 
-func criterionEntry(ctx context.Context, runner Runner, criterion spec.Criterion, cwd string, env []string) session.Entry {
+func criterionEntry(ctx context.Context, runner Runner, criterion spec.Criterion, cwd string, env []string, timeout time.Duration, idleTimeout time.Duration) session.Entry {
 	var result execution.Result
 	var runErr error
 	if strings.TrimSpace(criterion.Command) == "" {
@@ -310,7 +318,7 @@ func criterionEntry(ctx context.Context, runner Runner, criterion spec.Criterion
 		}
 	}
 	if runner != nil {
-		result, runErr = runner.Run(ctx, execution.Request{Command: criterion.Command, CWD: cwd, Env: env, Timeout: 30 * time.Second})
+		result, runErr = runner.Run(ctx, execution.Request{Command: criterion.Command, CWD: cwd, Env: env, Timeout: timeout, IdleTimeout: idleTimeout})
 	} else {
 		runErr = errors.New("missing acceptance runner")
 	}

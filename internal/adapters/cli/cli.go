@@ -294,8 +294,8 @@ func runBuild(ctx context.Context, args []string, stdout io.Writer, stderr io.Wr
 		return failOut(stderr, output.ConfigGateError(fmt.Errorf("load config: %w", err)), ExitGeneric, opts.JSON)
 	}
 	runner := process.Runner{DiagnosticsDir: root + "/.scafld/runs/" + opts.Positionals[0] + "/diagnostics"}
-	executionEnv := configadapter.EffectiveExecution(root, cfg.Execution).ProcessEnv()
-	out, err := build.Run(ctx, store, sessions, git.Adapter{Root: root}, runner, clock.System{}, build.Input{TaskID: opts.Positionals[0], CWD: root, Env: executionEnv})
+	executionConfig := configadapter.EffectiveExecution(root, cfg.Execution)
+	out, err := build.Run(ctx, store, sessions, git.Adapter{Root: root}, runner, clock.System{}, build.Input{TaskID: opts.Positionals[0], CWD: root, Env: executionConfig.ProcessEnv(), Timeout: executionConfig.AbsoluteTimeout(), IdleTimeout: executionConfig.IdleTimeout()})
 	return buildOut(stdout, stderr, out, err, opts.JSON)
 }
 

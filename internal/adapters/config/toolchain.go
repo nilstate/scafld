@@ -46,8 +46,10 @@ func DetectExecution(root string) ExecutionDetection {
 func EffectiveExecution(root string, explicit ExecutionConfig) ExecutionConfig {
 	detected := DetectExecution(root).Execution
 	return ExecutionConfig{
-		PathPrepend: dedupeOrdered(append(append([]string(nil), explicit.PathPrepend...), detected.PathPrepend...)),
-		Env:         overlayStrings(detected.Env, explicit.Env),
+		PathPrepend:            dedupeOrdered(append(append([]string(nil), explicit.PathPrepend...), detected.PathPrepend...)),
+		Env:                    overlayStrings(detected.Env, explicit.Env),
+		AbsoluteTimeoutSeconds: explicit.AbsoluteTimeoutSeconds,
+		IdleTimeoutSeconds:     explicit.IdleTimeoutSeconds,
 	}
 }
 

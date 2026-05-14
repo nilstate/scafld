@@ -34,9 +34,14 @@ For challenger review work:
 
 - run `scafld review`
 - scafld itself spawns the configured challenger provider
-- Codex review runs with scafld's read-only ephemeral subprocess settings
-- Claude review uses restricted tools and a fresh session, but this is weaker
-  isolation than the Codex sandbox in the currently supported CLI surface
+- Codex review runs with scafld's read-only ephemeral subprocess settings; user
+  config and execpolicy rules are disabled for that review subprocess
+- Claude review disables session persistence, slash commands, and browser
+  integration, restricts built-in tools to `Read`, `Grep`, and `Glob`, and
+  accepts the final verdict only through scafld's `submit_review` MCP tool.
+  This is still weaker isolation than the Codex filesystem sandbox in the
+  currently supported CLI surface, so the workspace mutation guard remains a
+  hard fail-closed check
 - Codex review requests `gpt-5.5` by default so review uses the strongest
   available Codex model unless configured otherwise
 - Claude review requests `claude-opus-4-7` by default unless configured

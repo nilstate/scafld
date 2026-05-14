@@ -390,10 +390,15 @@ churn from another task should not make you pay for another review run.
 scafld review add-cache --provider claude
 scafld review add-cache --provider codex
 scafld review add-cache --provider command --provider-command "./reviewer"
+scafld review add-cache --review-depth light --max-findings 4 --min-attack-angles 3
 scafld review add-cache --review-scope api,cli/packages/mcp
 scafld review add-cache --print-context
 scafld review add-cache --human-reviewed --reason "operator reviewed PR 123"
 ```
+
+Use `--review-depth light` with tighter finding and attack-angle budgets for
+small diffs. It is still the same adversarial gate; it tells the reviewer to
+prioritize completion blockers and regression risk instead of advisory churn.
 
 `--print-context` renders the exact deterministic review brief without invoking
 a provider, so agents can debug what the challenger will see before spending a

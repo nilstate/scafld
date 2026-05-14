@@ -52,11 +52,29 @@ scafld review <task-id> --provider codex --model gpt-5
 scafld review <task-id> --human-reviewed --reason "operator reviewed PR 123"
 ```
 
+For small diffs, keep the same gate but tighten the review budget:
+
+```bash
+scafld review <task-id> --review-depth light --max-findings 4 --min-attack-angles 3
+```
+
+`review_depth` is a contract, not just a label:
+
+- `light`: completion blockers and regression risk; avoid advisory churn.
+- `standard`: balanced blocker hunt, regression tracing, and concise useful
+  non-blocking findings.
+- `deep`: broader adversarial pass across callers, invariants, edge cases, and
+  operational risks within the requested budget.
+
 Provider meanings:
 
-- `codex`: read-only ephemeral Codex review using a structured output schema.
-- `claude`: Claude review with restricted read-only tools and stream-json
-  output.
+- `codex`: read-only ephemeral Codex review using a structured output schema;
+  scafld disables Codex user config and execpolicy rules for the review
+  subprocess.
+- `claude`: Claude review with session persistence disabled, slash commands and
+  browser integration disabled, built-in tools restricted to `Read`, `Grep`,
+  and `Glob`, and final dossier submission forced through scafld's
+  `submit_review` MCP tool.
 - `command`: custom reviewer command. It receives the review prompt on stdin and
   must emit a ReviewDossier-compatible response.
 - `local`: deterministic local pass-through provider for development and smoke
@@ -249,7 +267,8 @@ protection. Provider failures and timeouts write diagnostics under:
 
 `status --json` and `handoff` show the accepted blocker summary first. Use
 diagnostics as supporting evidence when paid model output could not be accepted
-as a valid review dossier.
+as a valid review dossier. For Claude, final prose and fenced JSON are ignored:
+the provider must call the `submit_review` tool exactly once.
 
 During a running external review, the terminal shows summary progress only:
 start, periodic running heartbeat, structured provider events when available,

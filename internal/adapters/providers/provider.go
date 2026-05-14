@@ -222,7 +222,7 @@ func (p ClaudeProvider) Invoke(ctx context.Context, req review.Request) (review.
 	}
 	body := strings.TrimSpace(string(data))
 	if body == "" {
-		return review.Dossier{}, providerFailedError(result, errors.New("provider produced no submission"))
+		return review.Dossier{}, providerFailedError(result, errors.New("provider produced no submission; Claude must call submit_review exactly once and final text is ignored"))
 	}
 	dossier, dossierErr := dossierFromProviderResult(result, err, body)
 	if dossierErr != nil {
@@ -315,6 +315,11 @@ func ClaudeArgs(binary string, model string, sessionID string, mcpConfig string)
 		"stream-json",
 		"--verbose",
 		"--include-partial-messages",
+		"--no-session-persistence",
+		"--disable-slash-commands",
+		"--no-chrome",
+		"--tools",
+		"Read,Grep,Glob",
 		"--allowedTools",
 		"Read,Grep,Glob,mcp__scafld__submit_review",
 		"--disallowedTools",
@@ -360,6 +365,7 @@ func CodexArgs(binary string, root string, outputPath string, model string, sche
 		root,
 		"--ephemeral",
 		"--ignore-user-config",
+		"--ignore-rules",
 		"--color",
 		"never",
 		"--output-last-message",

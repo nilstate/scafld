@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -34,8 +35,10 @@ type LLMConfig struct {
 
 // ExecutionConfig controls the deterministic environment for acceptance commands.
 type ExecutionConfig struct {
-	PathPrepend []string          `yaml:"path_prepend"`
-	Env         map[string]string `yaml:"env"`
+	PathPrepend            []string          `yaml:"path_prepend"`
+	Env                    map[string]string `yaml:"env"`
+	AbsoluteTimeoutSeconds int               `yaml:"absolute_timeout_seconds"`
+	IdleTimeoutSeconds     int               `yaml:"idle_timeout_seconds"`
 }
 
 // HardenConfig controls hardening prompt behavior.
@@ -183,9 +186,11 @@ func Default() Config {
 			"public_api_stable":           "Do not change public schemas, migrations, HTTP contracts, or event shapes without explicit approval.",
 			"config_from_env":             "Keep secrets and environment-specific configuration out of source code.",
 		}},
-		LLM:       LLMConfig{ModelProfile: "default"},
-		Execution: ExecutionConfig{},
-		Harden:    HardenConfig{MaxQuestionsPerRound: 8},
+		LLM: LLMConfig{ModelProfile: "default"},
+		Execution: ExecutionConfig{
+			AbsoluteTimeoutSeconds: 300,
+		},
+		Harden: HardenConfig{MaxQuestionsPerRound: 8},
 		Review: ReviewConfig{
 			External: ExternalReviewConfig{
 				Provider:           "auto",
@@ -286,6 +291,12 @@ func overlayExecution(base ExecutionConfig, local ExecutionConfig) ExecutionConf
 		base.PathPrepend = append(append([]string(nil), base.PathPrepend...), local.PathPrepend...)
 	}
 	base.Env = overlayStrings(base.Env, local.Env)
+	if local.AbsoluteTimeoutSeconds > 0 {
+		base.AbsoluteTimeoutSeconds = local.AbsoluteTimeoutSeconds
+	}
+	if local.IdleTimeoutSeconds > 0 {
+		base.IdleTimeoutSeconds = local.IdleTimeoutSeconds
+	}
 	return base
 }
 
@@ -439,6 +450,22 @@ func (cfg ExecutionConfig) ProcessEnv() []string {
 		env = append(env, key+"="+values[key])
 	}
 	return env
+}
+
+// AbsoluteTimeout returns the configured per-acceptance-command wall clock cap.
+func (cfg ExecutionConfig) AbsoluteTimeout() time.Duration {
+	if cfg.AbsoluteTimeoutSeconds <= 0 {
+		return 0
+	}
+	return time.Duration(cfg.AbsoluteTimeoutSeconds) * time.Second
+}
+
+// IdleTimeout returns the configured idle-output watchdog duration.
+func (cfg ExecutionConfig) IdleTimeout() time.Duration {
+	if cfg.IdleTimeoutSeconds <= 0 {
+		return 0
+	}
+	return time.Duration(cfg.IdleTimeoutSeconds) * time.Second
 }
 
 func expandEnvValue(value string) string {

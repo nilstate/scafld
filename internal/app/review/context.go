@@ -154,12 +154,29 @@ func reviewRequestBody(mode review.Mode, maxFindings int, minAttackAngles int, d
 		fmt.Fprintf(&b, "Minimum attack angles: %d\n", minAttackAngles)
 	}
 	if strings.TrimSpace(depth) != "" {
-		fmt.Fprintf(&b, "Review depth: %s\n", strings.TrimSpace(depth))
+		normalizedDepth := strings.ToLower(strings.TrimSpace(depth))
+		fmt.Fprintf(&b, "Review depth: %s\n", normalizedDepth)
+		if contract := reviewDepthContract(normalizedDepth); contract != "" {
+			fmt.Fprintf(&b, "Depth contract: %s\n", contract)
+		}
 	}
 	if strings.TrimSpace(rerunPolicy) != "" {
 		fmt.Fprintf(&b, "Rerun policy: %s\n", strings.TrimSpace(rerunPolicy))
 	}
 	return b.String()
+}
+
+func reviewDepthContract(depth string) string {
+	switch depth {
+	case "light":
+		return "Prioritize completion blockers and regression risk; skip advisory findings unless they explain a blocker."
+	case "standard":
+		return "Balance blocker discovery, regression tracing, and concise non-blocking findings that materially improve the result."
+	case "deep":
+		return "Perform a broader adversarial pass across callers, invariants, edge cases, and operational risks within the requested budget."
+	default:
+		return ""
+	}
 }
 
 func workspaceClassificationBody(baseline []string, taskChanges []coreworkspace.Mutation, scopeDrift []coreworkspace.Mutation) string {

@@ -51,6 +51,8 @@ project-specific overrides in config:
 
 ```yaml
 execution:
+  absolute_timeout_seconds: 300
+  idle_timeout_seconds: 0
   path_prepend:
     - "$HOME/.rbenv/shims"
     - "$HOME/.rbenv/bin"
@@ -62,6 +64,11 @@ This makes validation deterministic. If a command needs rbenv, asdf, pnpm, or
 another shim, the dependency is visible in the workspace contract instead of
 hidden in a developer's interactive shell startup. Explicit config paths are
 placed before auto-detected shims.
+
+Each acceptance command has an absolute timeout. The default is 300 seconds.
+Raise `execution.absolute_timeout_seconds` for legitimate slow project tools
+such as cold typechecks. `execution.idle_timeout_seconds` defaults to `0` and
+only applies when explicitly set.
 
 Approval captures the workspace baseline before task execution starts. Review
 uses that baseline later to separate task changes from unrelated pre-existing

@@ -216,10 +216,14 @@ func verifyHardenChecks(root string, checks []spec.HardenCheck) []string {
 			warnings = append(warnings, fmt.Sprintf("%s: result must be passed or not_applicable before marking hardening passed", label))
 		}
 	}
+	var missing []string
 	for _, required := range requiredHardenChecks {
 		if !seen[required] {
-			warnings = append(warnings, fmt.Sprintf("missing required harden check: %s", required))
+			missing = append(missing, required)
 		}
+	}
+	if len(missing) > 0 {
+		warnings = append(warnings, fmt.Sprintf("missing required harden checks: %s (record each under Checks with Grounded in, Result, and Evidence)", strings.Join(missing, ", ")))
 	}
 	return warnings
 }
@@ -247,7 +251,7 @@ func normalizeCheckName(value string) string {
 func verifyCodeCitation(root string, label string, grounded string) []string {
 	rel, lineNumber, ok := parseCodeGroundedIn(grounded)
 	if !ok {
-		return []string{fmt.Sprintf("%s: invalid code citation %q (expected code:<path>:<line>, for example code:src/file.go:42)", label, grounded)}
+		return []string{fmt.Sprintf("%s: invalid code citation %q (expected code:<path>:<line>, for example code:src/file.go:42; line ranges are not supported)", label, grounded)}
 	}
 	rootAbs, err := filepath.Abs(root)
 	if err != nil {

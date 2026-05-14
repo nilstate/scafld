@@ -23,7 +23,7 @@ Flags:
   --verify                 Alias for --mode verify
   --max-findings N         Bound provider output volume
   --min-attack-angles N    Request at least N attack-log entries
-  --review-depth TEXT      Depth label recorded in the review request
+  --review-depth TEXT      Review depth: light, standard, or deep
   --print-context          Print the exact provider context and exit
   --human-reviewed         Record an audited human review instead of invoking a provider
   --reason TEXT            Required reason for --human-reviewed
@@ -46,6 +46,10 @@ Review scope:
 Context:
   Print the deterministic reviewer brief without spending provider tokens:
     scafld review email-contracts --print-context
+
+Cost control:
+  For small diffs, keep the same gate but request a tighter review budget:
+    scafld review email-contracts --review-depth light --max-findings 4 --min-attack-angles 3
 
 Human review:
   Use --human-reviewed only after operator review; --reason records the audit reason:

@@ -120,7 +120,7 @@ reason: review provider failed
 evidence:
 - .scafld/runs/add-error-codes/diagnostics/command-1.txt
 expected: valid ReviewDossier submitted by an external reviewer
-actual: provider produced no submission
+actual: provider produced no submission; Claude must call submit_review exactly once and final text is ignored
 blockers:
 - review provider failed
 next: scafld handoff add-error-codes
