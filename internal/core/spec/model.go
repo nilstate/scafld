@@ -333,6 +333,12 @@ func validateCriterion(c Criterion, seen map[string]bool) []string {
 	if !acceptance.ValidExpectedKind(c.ExpectedKind) {
 		errs = append(errs, "criterion "+c.ID+" expected_kind is invalid")
 	}
+	if c.Type == "browser" && c.ExpectedKind != acceptance.ExpectedBrowserEvidence {
+		errs = append(errs, "criterion "+c.ID+" browser type requires expected_kind browser_evidence")
+	}
+	if c.ExpectedKind == acceptance.ExpectedBrowserEvidence && c.Type != "browser" {
+		errs = append(errs, "criterion "+c.ID+" browser_evidence expected_kind requires browser type")
+	}
 	return errs
 }
 

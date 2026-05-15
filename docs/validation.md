@@ -31,10 +31,18 @@ Supported expected kinds:
 - `exit_code_zero`: command exits 0.
 - `exit_code_nonzero`: command exits non-zero.
 - `no_matches`: command produces no output or returns a no-match status.
+- `browser_evidence`: browser command exits 0 and emits structured evidence.
 
 Criteria without a known expected kind are rejected before execution. This is
 intentional: free-form `Expected:` prose is documentation, not an executable
 contract.
+
+`browser_evidence` criteria must be typed as `browser`. The command writes one
+JSON evidence object to stdout with `url`, `viewport`, `console_errors`,
+`network_errors`, and at least one screenshot, trace, video, or artifact path.
+Playwright is supported by convention, not dependency: if a Playwright-shaped
+browser command fails because Playwright or browser binaries are missing,
+scafld adds install guidance to the failed criterion reason.
 
 ## Build-Time Evaluation
 

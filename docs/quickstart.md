@@ -51,7 +51,8 @@ the printed prompt to attack the plan before execution:
 - whether scope, migration, and cutover claims are honest
 - whether acceptance criteria run at the right phase
 - whether rollback or repair is realistic
-- whether the design is a bandaid, future bloat, or the wrong abstraction
+- why the plan exists, whether it solves the underlying problem, and whether it
+  is a short-sighted bandaid, future bloat, or the wrong abstraction
 
 When the answers are worked into the spec:
 

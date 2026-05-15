@@ -84,9 +84,14 @@ Supported `Expected kind` values:
 - `exit_code_zero`
 - `exit_code_nonzero`
 - `no_matches`
+- `browser_evidence`
 
 Criteria without a known expected kind are rejected before execution. Free-form
 prose can explain intent, but the matcher is what scafld executes.
+
+Use `browser_evidence` only with criteria typed as `browser`. The command is
+still explicit and project-owned; scafld validates the emitted evidence packet
+instead of assuming one browser framework or one authentication scheme.
 
 ## Execution Environment
 
@@ -322,8 +327,9 @@ The active harden prompt asks the agent to record evidence-backed checks under
 the latest `## Harden Rounds` entry before asking questions. The required
 checks are path audit, command audit, scope/migration audit, acceptance timing
 audit, rollback/repair audit, and design challenge. The design challenge asks
-whether the plan is a bandaid, future bloat, compatibility debt, or the wrong
-abstraction.
+why the plan exists, what deeper product or system problem it solves, whether
+the proposed change is a short-sighted bandaid over an endemic issue, and
+whether a different abstraction would remove the root cause more cleanly.
 
 `harden.max_questions_per_round` is read from config and injected into that
 prompt as a cap, not a target. Questions are optional; `Questions: none` is

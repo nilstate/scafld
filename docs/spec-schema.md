@@ -79,10 +79,13 @@ Supported values:
 - `exit_code_zero`
 - `exit_code_nonzero`
 - `no_matches`
+- `browser_evidence`
 
-The current executable fields are `Command` and `Expected kind`. Additional
-testing detail belongs in the criterion title or surrounding prose until it
-earns a runtime field.
+The current executable fields are `Command` and `Expected kind`. Criteria with
+type `browser` use `browser_evidence`; the command owns the browser runner and
+auth flow, then writes structured browser evidence to stdout. Additional testing
+detail belongs in the criterion title or surrounding prose until it earns a
+runtime field.
 
 ## Hardening
 

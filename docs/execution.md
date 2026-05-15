@@ -113,6 +113,48 @@ For each criterion, scafld records:
 The session ledger is written before the spec projection. That ordering is what
 lets scafld rebuild projected state from evidence if a write fails halfway.
 
+## Browser Evidence
+
+Frontend work can use a typed browser criterion:
+
+```markdown
+Acceptance:
+- [ ] `ui-smoke` browser - Dashboard renders without browser errors
+  - Command: `pnpm run scafld:browser -- dashboard`
+  - Expected kind: `browser_evidence`
+```
+
+scafld does not own the browser runner, dev server, or authentication flow. The
+criterion command owns those project-specific details and writes one JSON
+evidence object to stdout. A project script can wrap Playwright, Cypress, or a
+browserless check and translate its result into this shape:
+
+```json
+{
+  "url": "http://localhost:3000/dashboard",
+  "viewport": "1440x900",
+  "auth": { "mode": "storage_state", "artifact": ".auth/user.json" },
+  "screenshots": [{ "path": ".scafld/runs/task/dashboard.png" }],
+  "console_errors": [],
+  "network_errors": []
+}
+```
+
+The command must exit with code `0`, include `url`, `viewport`,
+`console_errors`, `network_errors`, and at least one screenshot, trace, video,
+or artifact path. Any recorded console or network error fails the criterion.
+
+Auth stays project-owned. Use Playwright storage state, a fixture login command,
+or a test-only account according to the project's rules, and record only the
+redacted mode/artifact in evidence. Do not write tokens, passwords, cookies, or
+headers into the evidence JSON.
+
+If a Playwright-shaped browser criterion exits before producing evidence because
+Playwright or its browser binaries are missing, scafld adds install guidance to
+the criterion failure reason. The fix remains project-owned: install
+dependencies, install browser binaries with the package manager used by the
+repo, then rerun the same criterion command.
+
 ## Handoffs
 
 ```bash

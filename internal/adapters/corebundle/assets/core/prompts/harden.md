@@ -21,7 +21,7 @@ Run these checks before polishing wording:
 - Scope/migration audit: every migration, cutover, compatibility claim, and "no migration needed" statement is backed by repo evidence.
 - Acceptance timing audit: every acceptance criterion can be evaluated after the phase that claims it, not before implementation creates its target.
 - Rollback/repair audit: every risky phase has a realistic repair or rollback path.
-- Design challenge: ask whether the plan is a bandaid, future bloat, compatibility debt, or the wrong abstraction for the product.
+- Design challenge: challenge the plan's reason for existing. Ask what deeper product, system, or workflow problem it solves; whether the proposed change is a short-sighted bandaid over an endemic issue; whether a smaller, larger, or different abstraction would remove the root cause; and whether it creates future bloat, compatibility debt, or product confusion.
 
 Record checks in this exact Markdown shape under the latest harden round:
 
@@ -50,7 +50,7 @@ Checks:
 - Design challenge
   - Grounded in: spec_gap:Summary
   - Result: passed
-  - Evidence: The plan fixes the root cause without adding aliases, fallbacks, or compatibility debt.
+  - Evidence: The plan names the underlying problem, fixes the root cause, and avoids aliases, fallbacks, compatibility debt, and future bloat.
 ```
 
 If any check cannot pass, keep the round open and add a grounded question or
@@ -61,7 +61,10 @@ Check `Result:` must be `passed` or `not_applicable` before the round can pass.
 
 Work these harden questions after the checks expose the real uncertainty:
 
-- What is the real product goal, not just the requested implementation?
+- Why should this plan exist at all?
+- What is the real product/system/workflow problem, not just the requested implementation?
+- Is the plan treating a symptom while leaving an endemic problem in place?
+- Would a different abstraction remove the root cause more cleanly?
 - What is authoritative when two artifacts contain the same fact?
 - What are the ownership boundaries?
 - What fails halfway, and how is it repaired?
