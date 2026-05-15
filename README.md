@@ -113,6 +113,10 @@ checked-in toolchain files such as `.tool-versions`, `mise.toml`,
 `.java-version`, prepends the matching version-manager shims, then applies
 explicit `execution` config.
 
+Frontend specs can use `browser` criteria with `browser_evidence`. The project
+still owns Playwright, auth, and the dev server; scafld validates the evidence
+packet and records it in the same session ledger as command results.
+
 ## What scafld Writes
 
 scafld is not a wrapper around a prompt. It writes artifacts the next agent can

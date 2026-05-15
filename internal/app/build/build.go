@@ -337,10 +337,23 @@ func criterionEntry(ctx context.Context, runner Runner, criterion spec.Criterion
 	} else {
 		runErr = errors.New("missing acceptance runner")
 	}
-	evaluation := acceptance.Evaluate(criterion.ExpectedKind, acceptance.Evidence{ExitCode: result.ExitCode, Output: result.Output})
+	evidenceOutput := result.Output
+	if isBrowserCriterion(criterion) {
+		evidenceOutput = result.Stdout
+	}
+	evaluation := acceptance.Evaluate(criterion.ExpectedKind, acceptance.Evidence{
+		ExitCode:   result.ExitCode,
+		Output:     evidenceOutput,
+		Command:    criterion.Command,
+		Diagnostic: result.Output,
+	})
 	if runErr != nil {
 		evaluation.Status = "fail"
 		evaluation.Reason = runErr.Error()
+	}
+	entryOutput := result.Output
+	if isBrowserCriterion(criterion) && strings.TrimSpace(result.Stdout) != "" {
+		entryOutput = result.Stdout
 	}
 	return session.Entry{
 		Type:        "criterion",
@@ -350,9 +363,13 @@ func criterionEntry(ctx context.Context, runner Runner, criterion spec.Criterion
 		Reason:      evaluation.Reason,
 		Command:     criterion.Command,
 		ExitCode:    result.ExitCode,
-		Output:      snippet(result.Output),
+		Output:      snippet(entryOutput),
 		Path:        result.DiagnosticPath,
 	}
+}
+
+func isBrowserCriterion(criterion spec.Criterion) bool {
+	return criterion.Type == "browser" || criterion.ExpectedKind == acceptance.ExpectedBrowserEvidence
 }
 
 func appendPhase(ctx context.Context, sessions SessionStore, taskID string, phaseID string, status string, reason string, now string) (session.Session, error) {

@@ -37,3 +37,48 @@ func TestCriterionEvidenceValidation(t *testing.T) {
 		t.Fatalf("model should validate: %+v", validation.Errors)
 	}
 }
+
+func TestBrowserCriterionRequiresBrowserEvidenceExpectedKind(t *testing.T) {
+	t.Parallel()
+
+	model := Model{
+		Version: "2.0",
+		TaskID:  "task",
+		Title:   "Task",
+		Status:  StatusDraft,
+		Phases: []Phase{{ID: "phase1", Name: "Phase", Acceptance: []Criterion{{
+			ID:           "ac1",
+			Type:         "browser",
+			Command:      "npm run browser:check",
+			ExpectedKind: acceptance.ExpectedExitCodeZero,
+		}}}},
+	}
+	validation := Validate(model)
+	if validation.Valid {
+		t.Fatal("browser criterion with exit_code_zero accepted")
+	}
+	if !containsValidationError(validation.Errors, "criterion ac1 browser type requires expected_kind browser_evidence") {
+		t.Fatalf("validation errors = %+v", validation.Errors)
+	}
+	model.Phases[0].Acceptance[0].ExpectedKind = acceptance.ExpectedBrowserEvidence
+	if validation := Validate(model); !validation.Valid {
+		t.Fatalf("browser criterion should validate: %+v", validation.Errors)
+	}
+	model.Phases[0].Acceptance[0].Type = "command"
+	validation = Validate(model)
+	if validation.Valid {
+		t.Fatal("browser_evidence with command type accepted")
+	}
+	if !containsValidationError(validation.Errors, "criterion ac1 browser_evidence expected_kind requires browser type") {
+		t.Fatalf("validation errors = %+v", validation.Errors)
+	}
+}
+
+func containsValidationError(errors []string, want string) bool {
+	for _, err := range errors {
+		if err == want {
+			return true
+		}
+	}
+	return false
+}

@@ -43,6 +43,7 @@ func (f *fakeSessions) Load(context.Context, string) (session.Session, error) { 
 type fakeRunner struct {
 	exit         int
 	exitBy       map[string]int
+	outputBy     map[string]execution.Result
 	commands     []string
 	env          []string
 	timeouts     []time.Duration
@@ -57,6 +58,17 @@ func (f *fakeRunner) Run(_ context.Context, req execution.Request) (execution.Re
 	exit := f.exit
 	if f.exitBy != nil {
 		exit = f.exitBy[req.Command]
+	}
+	if f.outputBy != nil {
+		if result, ok := f.outputBy[req.Command]; ok {
+			if result.Output == "" {
+				result.Output = result.Stdout + result.Stderr
+			}
+			if result.ExitCode == 0 && f.exitBy != nil {
+				result.ExitCode = exit
+			}
+			return result, nil
+		}
 	}
 	return execution.Result{ExitCode: exit, Output: "ok"}, nil
 }
@@ -281,6 +293,85 @@ func TestBuildPassesConfiguredTimeoutsToCriteria(t *testing.T) {
 	}
 	if len(runner.timeouts) != 1 || runner.timeouts[0] != 2*time.Minute || runner.idleTimeouts[0] != 30*time.Second {
 		t.Fatalf("timeouts = %+v idle=%+v", runner.timeouts, runner.idleTimeouts)
+	}
+}
+
+func TestBuildEvaluatesBrowserCriteriaFromStdout(t *testing.T) {
+	t.Parallel()
+
+	evidence := `{"url":"http://localhost:3000/dashboard","viewport":"1440x900","screenshots":[{"path":".scafld/runs/task/dashboard.png"}],"console_errors":[],"network_errors":[]}`
+	specs := &fakeSpecs{model: spec.Model{TaskID: "task", Status: spec.StatusApproved, Phases: []spec.Phase{{ID: "phase1", Name: "Phase", Acceptance: []spec.Criterion{{
+		ID:           "browser",
+		Type:         "browser",
+		PhaseID:      "phase1",
+		Command:      "npm run browser:check",
+		ExpectedKind: acceptance.ExpectedBrowserEvidence,
+	}}}}}}
+	runner := &fakeRunner{outputBy: map[string]execution.Result{"npm run browser:check": {
+		ExitCode: 0,
+		Stdout:   evidence,
+		Stderr:   "dev server log line",
+		Output:   "dev server log line\n" + evidence,
+	}}}
+	sessions := &fakeSessions{}
+	if _, err := Run(context.Background(), specs, sessions, nil, runner, fakeBuildClock{}, Input{TaskID: "task"}); err != nil {
+		t.Fatal(err)
+	}
+	out, err := Run(context.Background(), specs, sessions, nil, runner, fakeBuildClock{}, Input{TaskID: "task"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Status != spec.StatusReview || out.Passed != 1 || out.Failed != 0 {
+		t.Fatalf("output = %+v, want browser criterion pass and review", out)
+	}
+	var criterion session.Entry
+	for _, entry := range sessions.ledger.Entries {
+		if entry.CriterionID == "browser" {
+			criterion = entry
+		}
+	}
+	if criterion.Status != "pass" || criterion.Reason != "browser evidence accepted for http://localhost:3000/dashboard at 1440x900" {
+		t.Fatalf("criterion entry = %+v", criterion)
+	}
+	if criterion.Output != evidence {
+		t.Fatalf("criterion output = %q, want stdout evidence", criterion.Output)
+	}
+}
+
+func TestBuildBrowserCriteriaReportsPlaywrightInstallHelp(t *testing.T) {
+	t.Parallel()
+
+	specs := &fakeSpecs{model: spec.Model{TaskID: "task", Status: spec.StatusApproved, Phases: []spec.Phase{{ID: "phase1", Name: "Phase", Acceptance: []spec.Criterion{{
+		ID:           "browser",
+		Type:         "browser",
+		PhaseID:      "phase1",
+		Command:      "npx playwright test",
+		ExpectedKind: acceptance.ExpectedBrowserEvidence,
+	}}}}}}
+	runner := &fakeRunner{outputBy: map[string]execution.Result{"npx playwright test": {
+		ExitCode: 1,
+		Stderr:   "Error: browserType.launch: Executable doesn't exist at /ms-playwright/chromium\nPlease run the following command: npx playwright install",
+		Output:   "Error: browserType.launch: Executable doesn't exist at /ms-playwright/chromium\nPlease run the following command: npx playwright install",
+	}}}
+	sessions := &fakeSessions{}
+	if _, err := Run(context.Background(), specs, sessions, nil, runner, fakeBuildClock{}, Input{TaskID: "task"}); err != nil {
+		t.Fatal(err)
+	}
+	out, err := Run(context.Background(), specs, sessions, nil, runner, fakeBuildClock{}, Input{TaskID: "task"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Status != spec.StatusBlocked || out.Passed != 0 || out.Failed != 1 {
+		t.Fatalf("output = %+v, want blocked browser criterion", out)
+	}
+	var reason string
+	for _, entry := range sessions.ledger.Entries {
+		if entry.CriterionID == "browser" {
+			reason = entry.Reason
+		}
+	}
+	if !strings.Contains(reason, "Playwright appears unavailable") {
+		t.Fatalf("reason = %q, want Playwright install help", reason)
 	}
 }
 

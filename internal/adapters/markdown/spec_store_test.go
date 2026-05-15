@@ -161,6 +161,22 @@ func TestParseOnlyReadsCriteriaFromAcceptanceBlocks(t *testing.T) {
 	}
 }
 
+func TestParseDefaultsBrowserCriteriaToBrowserEvidence(t *testing.T) {
+	t.Parallel()
+
+	input := string(Render(fixtureModel()))
+	input = strings.Replace(input, "- [ ] `ac1` command - runs", "- [ ] `ac1` browser - Browser smoke passes", 1)
+	input = strings.Replace(input, "  - Expected kind: `exit_code_zero`\n", "", 1)
+	parsed, err := Parse([]byte(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := parsed.Phases[0].Acceptance[0]
+	if got.Type != "browser" || got.ExpectedKind != acceptance.ExpectedBrowserEvidence {
+		t.Fatalf("browser criterion = %+v", got)
+	}
+}
+
 func TestParseNormalizesMixedHardenQuestionFormats(t *testing.T) {
 	t.Parallel()
 

@@ -14,12 +14,14 @@ const (
 	ExpectedNoMatches ExpectedKind = "no_matches"
 	// ExpectedManual marks a criterion that requires human evidence.
 	ExpectedManual ExpectedKind = "manual"
+	// ExpectedBrowserEvidence passes when a browser command exits cleanly and emits a valid browser evidence packet.
+	ExpectedBrowserEvidence ExpectedKind = "browser_evidence"
 )
 
 // ValidExpectedKind reports whether kind is supported by the evaluator.
 func ValidExpectedKind(kind ExpectedKind) bool {
 	switch kind {
-	case ExpectedExitCodeZero, ExpectedExitCodeNonzero, ExpectedNoMatches, ExpectedManual:
+	case ExpectedExitCodeZero, ExpectedExitCodeNonzero, ExpectedNoMatches, ExpectedManual, ExpectedBrowserEvidence:
 		return true
 	default:
 		return false
@@ -28,8 +30,10 @@ func ValidExpectedKind(kind ExpectedKind) bool {
 
 // Evidence is the command output used to evaluate an acceptance criterion.
 type Evidence struct {
-	ExitCode int
-	Output   string
+	ExitCode   int
+	Output     string
+	Command    string
+	Diagnostic string
 }
 
 // Result is the normalized pass/fail/pending outcome for criterion evidence.
@@ -58,6 +62,8 @@ func Evaluate(kind ExpectedKind, evidence Evidence) Result {
 		return Result{Status: "fail", Reason: "output was not empty"}
 	case ExpectedManual:
 		return Result{Status: "pending", Reason: "manual criterion requires human evidence"}
+	case ExpectedBrowserEvidence:
+		return evaluateBrowserEvidence(evidence)
 	default:
 		return Result{Status: "invalid", Reason: "unknown expected_kind"}
 	}

@@ -575,7 +575,12 @@ func (p *parser) handleCriterionStart(line string) bool {
 	if match == nil {
 		return false
 	}
-	c := spec.Criterion{ID: match[1], Type: strings.TrimSpace(match[2]), Title: strings.TrimSpace(match[3]), ExpectedKind: acceptance.ExpectedExitCodeZero, Status: "pending"}
+	criterionType := strings.TrimSpace(match[2])
+	expectedKind := acceptance.ExpectedExitCodeZero
+	if criterionType == "browser" {
+		expectedKind = acceptance.ExpectedBrowserEvidence
+	}
+	c := spec.Criterion{ID: match[1], Type: criterionType, Title: strings.TrimSpace(match[3]), ExpectedKind: expectedKind, Status: "pending"}
 	if p.phase != nil {
 		c.PhaseID = p.phase.ID
 		p.phase.Acceptance = append(p.phase.Acceptance, c)

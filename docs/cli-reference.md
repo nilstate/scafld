@@ -147,6 +147,9 @@ Required checks are `Path audit`, `Command audit`, `Scope/migration audit`,
 `Acceptance timing audit`, `Rollback/repair audit`, and `Design challenge`.
 Each check must record `Result: passed` or `Result: not_applicable` plus
 evidence. `Questions: none` is valid only after those checks have evidence.
+The design challenge is not a style preference: it must challenge why the plan
+exists, whether it solves the underlying problem, and whether it is a
+short-sighted bandaid or future bloat.
 
 ## validate
 

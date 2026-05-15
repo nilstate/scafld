@@ -48,6 +48,8 @@ Required checks:
 
 Each check needs Grounded in, Result, and Evidence. Result must be passed or
 not_applicable before --mark-passed can close the round.
+Design challenge must question why the plan exists, whether it solves the
+underlying problem, and whether it is a short-sighted bandaid or future bloat.
 Grounded in accepts spec_gap:<section>, archive:<task-id>, or a single-line
 code citation such as code:src/file.go:42. Line ranges are rejected.
 

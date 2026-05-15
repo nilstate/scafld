@@ -78,7 +78,7 @@ Checks:
 - Design challenge
   - Grounded in: spec_gap:Summary
   - Result: passed
-  - Evidence: The plan removes an escape hatch instead of adding a fallback.
+  - Evidence: The plan names the underlying review failure, removes the escape hatch at the root, and avoids a compatibility fallback.
 
 Questions:
 - none

@@ -1,4 +1,6 @@
-export default {
+import { defineConfig, godoc, markdown } from "sourcey";
+
+export default defineConfig({
   name: "scafld",
   prettyUrls: "strip",
   repo: "https://github.com/nilstate/scafld",
@@ -12,28 +14,40 @@ export default {
       {
         tab: "Documentation",
         slug: "",
-        groups: [
-          {
-            group: "Getting Started",
-            pages: ["introduction", "quickstart", "installation"],
-          },
-          {
-            group: "Workflow",
-            pages: ["lifecycle", "planning", "execution", "review"],
-          },
-          {
-            group: "Reference",
-            pages: ["cli-reference", "spec-schema", "configuration", "artifacts"],
-          },
-          {
-            group: "Advanced",
-            pages: ["validation", "scope-auditing", "invariants", "workspaces"],
-          },
-        ],
+        source: markdown({
+          groups: [
+            {
+              group: "Getting Started",
+              pages: ["introduction", "quickstart", "installation"],
+            },
+            {
+              group: "Workflow",
+              pages: ["lifecycle", "planning", "execution", "review"],
+            },
+            {
+              group: "Reference",
+              pages: [
+                "cli-reference",
+                "spec-schema",
+                "configuration",
+                "artifacts",
+              ],
+            },
+            {
+              group: "Advanced",
+              pages: [
+                "validation",
+                "scope-auditing",
+                "invariants",
+                "workspaces",
+              ],
+            },
+          ],
+        }),
       },
       {
         tab: "Go API",
-        godoc: {
+        source: godoc({
           module: "..",
           packages: [
             "./cmd/scafld",
@@ -47,13 +61,11 @@ export default {
           includeTests: true,
           includeUnexported: false,
           hideUndocumented: false,
-        },
+        }),
       },
     ],
   },
   navbar: {
-    links: [
-      { type: "github", href: "https://github.com/nilstate/scafld" },
-    ],
+    links: [{ type: "github", href: "https://github.com/nilstate/scafld" }],
   },
-};
+});
