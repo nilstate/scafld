@@ -1,6 +1,6 @@
 {
   "name": "scafld",
-  "version": "2.4.2",
+  "version": "2.4.3",
   "description": "Deterministic protocol for multi-phase agent work.",
   "author": "0state",
   "license": "MIT",
