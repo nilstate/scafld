@@ -27,6 +27,10 @@ Templates for Homebrew, Scoop, WinGet, and OCI live under `package/`. Homebrew
 and Scoop render into owned registry repositories; WinGet requires upstream
 review in `microsoft/winget-pkgs`.
 
+The OCI image must be publicly inspectable after release. Verify it with
+`docker manifest inspect ghcr.io/nilstate/scafld:vX.Y.Z`; a `denied` response
+means the GitHub Packages visibility still needs to be made public.
+
 WinGet submissions should be staged with
 `scripts/prepare-winget-submission.sh <version> <winget-pkgs-checkout>`. The
 script downloads the rendered manifests and `checksums.txt` from the GitHub
