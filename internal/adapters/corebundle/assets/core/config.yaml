@@ -40,6 +40,22 @@ execution:
 
 harden:
   max_questions_per_round: 8
+  context_max_bytes: 16384
+  external:
+    # Leave provider empty for manual harden rounds. Set to auto, codex, claude,
+    # local, or command when the draft should be challenged by a separate agent.
+    # provider: "auto"
+    # command: "./harden-reviewer" # only when provider: command
+    # provider_binary: "/path/bin"
+    idle_timeout_seconds: 180
+    absolute_max_seconds: 1800
+    fallback_policy: "warn"
+    codex:
+      model: "gpt-5.5"
+      # binary: "codex"
+    claude:
+      model: "claude-opus-4-7"
+      # binary: "claude"
 
 review:
   external:

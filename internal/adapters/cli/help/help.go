@@ -33,10 +33,16 @@ func PrintCommand(w io.Writer, name string, commands []Command) {
 		fmt.Fprint(w, `scafld harden - Stress-test a draft spec before approval
 
 Usage:
-  scafld harden <task_id> [--mark-passed] [--root PATH] [--json]
+  scafld harden <task_id> [--provider codex|claude|command|local] [--root PATH] [--json]
+  scafld harden <task_id> --mark-passed [--root PATH] [--json]
 
 Without flags, opens a harden round and prints the active prompt. The agent
 attacks the draft contract before build.
+
+With --provider, scafld delegates hardening to a separate read-only provider.
+The provider must submit one HardenDossier through the structured channel.
+pass marks hardening passed; needs_revision records questions, failed checks,
+design objections, and recommended edits in the draft.
 
 Required checks:
   Path audit
@@ -57,9 +63,13 @@ Questions are optional. Questions: none is valid only after the checks have
 evidence. Any recorded question needs a recommended answer and final answer.
 
 Flags:
-  --mark-passed  Verify harden evidence and close the latest round
-  --root PATH    Workspace root
-  --json         Print JSON envelope
+  --provider NAME       Run provider-backed hardening
+  --provider-command C  Command provider executable or shell command
+  --provider-binary P   Selected provider binary override
+  --model NAME          Selected provider model override
+  --mark-passed         Verify manual harden evidence and close the latest round
+  --root PATH           Workspace root
+  --json                Print JSON envelope
 `)
 		return
 	}

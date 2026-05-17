@@ -321,14 +321,23 @@ scafld harden add-cache
 scafld harden add-cache --mark-passed
 ```
 
+For higher-risk specs, delegate hardening to a separate provider:
+
+```bash
+scafld harden add-cache --provider codex
+scafld harden add-cache --provider claude
+```
+
 The first command enters HARDEN MODE, prints the active harden prompt, and
 records a round in the spec. Questions in that round carry `Grounded in`
 citations such as `spec_gap:scope`, `code:internal/app/build/build.go:42`, or
 `archive:previous-cutover`. The second command verifies those citations and
-refuses to close the round when they do not resolve. Approval is still an
-explicit operator decision, but a complete plan spec should be
-hardened when the task is ambiguous, high-risk, cross-cutting, or likely to
-outlive one agent turn.
+refuses to close the round when they do not resolve. Provider-backed hardening
+uses the same read-only provider transport as review, but writes a
+`HardenDossier`: verdict, required checks, questions, design objections, and
+recommended spec edits. Approval is still an explicit operator decision, but a
+complete plan spec should be hardened when the task is ambiguous, high-risk,
+cross-cutting, or likely to outlive one agent turn.
 
 A hardened spec should answer:
 

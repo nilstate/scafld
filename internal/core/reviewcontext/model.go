@@ -39,6 +39,7 @@ type Source struct {
 // Options controls packet rendering.
 type Options struct {
 	MaxBytes int
+	Title    string
 }
 
 // SourceForContent returns stable provenance for source text.
@@ -61,7 +62,11 @@ func RenderMarkdown(packet Packet, opts Options) string {
 	sections := normalizeSections(packet.Sections)
 	rendered := budgetSections(sections, maxBytes)
 	var b strings.Builder
-	fmt.Fprintf(&b, "# Review Context Packet\n\n")
+	title := strings.TrimSpace(opts.Title)
+	if title == "" {
+		title = "Review Context Packet"
+	}
+	fmt.Fprintf(&b, "# %s\n\n", title)
 	fmt.Fprintf(&b, "Task: %s\n", strings.TrimSpace(packet.TaskID))
 	if strings.TrimSpace(packet.Title) != "" {
 		fmt.Fprintf(&b, "Title: %s\n", strings.TrimSpace(packet.Title))

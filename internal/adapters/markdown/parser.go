@@ -57,18 +57,20 @@ func frontMatterEnd(lines []string) (int, error) {
 }
 
 type parser struct {
-	model          spec.Model
-	section        string
-	phase          *spec.Phase
-	criterion      *spec.Criterion
-	reviewFinding  *corereview.Finding
-	hardenRound    *spec.HardenRound
-	hardenCheck    *spec.HardenCheck
-	hardenQuestion *spec.HardenQuestion
-	phaseField     string
-	hardenField    string
-	listTarget     *([]string)
-	phaseIDs       map[string]bool
+	model           spec.Model
+	section         string
+	phase           *spec.Phase
+	criterion       *spec.Criterion
+	reviewFinding   *corereview.Finding
+	hardenRound     *spec.HardenRound
+	hardenCheck     *spec.HardenCheck
+	hardenQuestion  *spec.HardenQuestion
+	hardenObjection *spec.HardenDesignObjection
+	hardenEdit      *spec.HardenRecommendedEdit
+	phaseField      string
+	hardenField     string
+	listTarget      *([]string)
+	phaseIDs        map[string]bool
 }
 
 func newParser(front map[string]string) *parser {
@@ -333,13 +335,54 @@ func (p *parser) handleHardenLine(line string) bool {
 				p.hardenRound.EndedAt = noneToEmpty(value)
 			}
 			return true
+		case "verdict":
+			if p.hardenRound != nil {
+				p.hardenRound.Verdict = value
+			}
+			return true
+		case "provider":
+			if p.hardenRound != nil {
+				p.hardenRound.Provider = value
+			}
+			return true
+		case "model":
+			if p.hardenRound != nil {
+				p.hardenRound.Model = value
+			}
+			return true
+		case "output format":
+			if p.hardenRound != nil {
+				p.hardenRound.OutputFormat = value
+			}
+			return true
+		case "summary":
+			if p.hardenRound != nil {
+				p.hardenRound.Summary = value
+			}
+			return true
 		case "questions":
 			p.hardenField = "questions"
 			p.hardenCheck = nil
+			p.hardenObjection = nil
+			p.hardenEdit = nil
 			return true
 		case "checks":
 			p.hardenField = "checks"
 			p.hardenQuestion = nil
+			p.hardenObjection = nil
+			p.hardenEdit = nil
+			return true
+		case "design objections":
+			p.hardenField = "design_objections"
+			p.hardenCheck = nil
+			p.hardenQuestion = nil
+			p.hardenEdit = nil
+			return true
+		case "recommended edits":
+			p.hardenField = "recommended_edits"
+			p.hardenCheck = nil
+			p.hardenQuestion = nil
+			p.hardenObjection = nil
 			return true
 		}
 	}
@@ -360,6 +403,8 @@ func (p *parser) startHardenRound(id string) {
 	p.hardenRound = &p.model.HardenRounds[len(p.model.HardenRounds)-1]
 	p.hardenCheck = nil
 	p.hardenQuestion = nil
+	p.hardenObjection = nil
+	p.hardenEdit = nil
 	p.hardenField = ""
 }
 
@@ -393,6 +438,14 @@ func (p *parser) handleHardenBullet(value string) bool {
 		p.startHardenCheck(value)
 		return true
 	}
+	if p.hardenField == "design_objections" {
+		p.startHardenObjection(value)
+		return true
+	}
+	if p.hardenField == "recommended_edits" {
+		p.startHardenEdit(value)
+		return true
+	}
 	return true
 }
 
@@ -414,6 +467,8 @@ func (p *parser) startHardenCheck(value string) {
 	p.hardenRound.Checks = append(p.hardenRound.Checks, spec.HardenCheck{Name: value})
 	p.hardenCheck = &p.hardenRound.Checks[len(p.hardenRound.Checks)-1]
 	p.hardenQuestion = nil
+	p.hardenObjection = nil
+	p.hardenEdit = nil
 }
 
 func (p *parser) startHardenQuestion(value string) {
@@ -433,6 +488,54 @@ func (p *parser) startHardenQuestion(value string) {
 	}
 	p.hardenRound.Questions = append(p.hardenRound.Questions, spec.HardenQuestion{Question: value})
 	p.hardenQuestion = &p.hardenRound.Questions[len(p.hardenRound.Questions)-1]
+	p.hardenCheck = nil
+	p.hardenObjection = nil
+	p.hardenEdit = nil
+}
+
+func (p *parser) startHardenObjection(value string) {
+	if p.hardenRound == nil {
+		return
+	}
+	value = cleanSpecValue(value)
+	if value == "" {
+		return
+	}
+	objection := spec.HardenDesignObjection{Summary: value}
+	if strings.HasPrefix(value, "`") {
+		if rest := strings.TrimPrefix(value, "`"); rest != value {
+			if id, tail, ok := strings.Cut(rest, "`"); ok {
+				objection.ID = strings.TrimSpace(id)
+				tail = strings.TrimSpace(tail)
+				if severity, summary, ok := strings.Cut(tail, " - "); ok {
+					objection.Severity = strings.TrimSpace(severity)
+					objection.Summary = strings.TrimSpace(summary)
+				} else if tail != "" {
+					objection.Summary = strings.TrimSpace(tail)
+				}
+			}
+		}
+	}
+	p.hardenRound.DesignObjections = append(p.hardenRound.DesignObjections, objection)
+	p.hardenObjection = &p.hardenRound.DesignObjections[len(p.hardenRound.DesignObjections)-1]
+	p.hardenCheck = nil
+	p.hardenQuestion = nil
+	p.hardenEdit = nil
+}
+
+func (p *parser) startHardenEdit(value string) {
+	if p.hardenRound == nil {
+		return
+	}
+	value = cleanSpecValue(value)
+	if value == "" {
+		return
+	}
+	p.hardenRound.RecommendedEdits = append(p.hardenRound.RecommendedEdits, spec.HardenRecommendedEdit{Section: value})
+	p.hardenEdit = &p.hardenRound.RecommendedEdits[len(p.hardenRound.RecommendedEdits)-1]
+	p.hardenCheck = nil
+	p.hardenQuestion = nil
+	p.hardenObjection = nil
 }
 
 func (p *parser) handleHardenQuestionDetail(value string) bool {
@@ -455,6 +558,32 @@ func (p *parser) handleHardenQuestionDetail(value string) bool {
 			p.hardenCheck.Result = body
 		case "evidence":
 			p.hardenCheck.Evidence = body
+		}
+		return true
+	}
+	if p.hardenField == "design_objections" {
+		if p.hardenObjection == nil {
+			return true
+		}
+		switch normalizeSpecKey(key) {
+		case "grounded in":
+			p.hardenObjection.GroundedIn = body
+		case "evidence":
+			p.hardenObjection.Evidence = body
+		case "recommendation":
+			p.hardenObjection.Recommendation = body
+		}
+		return true
+	}
+	if p.hardenField == "recommended_edits" {
+		if p.hardenEdit == nil {
+			return true
+		}
+		switch normalizeSpecKey(key) {
+		case "grounded in":
+			p.hardenEdit.GroundedIn = body
+		case "recommendation":
+			p.hardenEdit.Recommendation = body
 		}
 		return true
 	}

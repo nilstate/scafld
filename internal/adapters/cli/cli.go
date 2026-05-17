@@ -12,6 +12,7 @@ import (
 
 	configcli "github.com/nilstate/scafld/v2/internal/adapters/cli/config"
 	hardencli "github.com/nilstate/scafld/v2/internal/adapters/cli/harden"
+	hardensubmitcli "github.com/nilstate/scafld/v2/internal/adapters/cli/hardensubmit"
 	clihelp "github.com/nilstate/scafld/v2/internal/adapters/cli/help"
 	initcmd "github.com/nilstate/scafld/v2/internal/adapters/cli/initcmd"
 	"github.com/nilstate/scafld/v2/internal/adapters/cli/output"
@@ -48,22 +49,13 @@ const (
 )
 
 var commands = []command{
-	{"init", "Bootstrap a scafld workspace"},
-	{"config", "Propose evidence-backed workspace configuration"},
-	{"plan", "Create a draft task spec"},
-	{"harden", "Stress-test a draft spec before approval"},
-	{"validate", "Validate a task spec"},
-	{"approve", "Approve a draft spec"},
-	{"build", "Open or advance governed build phases"},
-	{"review", "Run the adversarial review gate"},
-	{"complete", "Complete reviewed work"},
-	{"fail", "Mark work failed"},
-	{"cancel", "Cancel work"},
-	{"status", "Show spec status"},
-	{"list", "List specs"},
-	{"report", "Aggregate spec and run metrics"},
-	{"handoff", "Render model-facing handoff material"},
-	{"update", "Refresh managed scafld core files"},
+	{"init", "Bootstrap a scafld workspace"}, {"config", "Propose evidence-backed workspace configuration"},
+	{"plan", "Create a draft task spec"}, {"harden", "Stress-test a draft spec before approval"},
+	{"validate", "Validate a task spec"}, {"approve", "Approve a draft spec"},
+	{"build", "Open or advance governed build phases"}, {"review", "Run the adversarial review gate"},
+	{"complete", "Complete reviewed work"}, {"fail", "Mark work failed"}, {"cancel", "Cancel work"},
+	{"status", "Show spec status"}, {"list", "List specs"}, {"report", "Aggregate spec and run metrics"},
+	{"handoff", "Render model-facing handoff material"}, {"update", "Refresh managed scafld core files"},
 }
 
 type command struct{ name, summary string }
@@ -87,6 +79,7 @@ var commandHandlers = map[string]commandHandler{
 	"handoff":             runHandoff,
 	"update":              runUpdate,
 	"review-submit-stdio": reviewsubmitcli.Handler(os.Stdin),
+	"harden-submit-stdio": hardensubmitcli.Handler(os.Stdin),
 }
 
 // Run executes the CLI command and returns the process exit code.
@@ -239,26 +232,31 @@ func runHarden(ctx context.Context, args []string, stdout io.Writer, stderr io.W
 		return failOut(stderr, err, code, opts.JSON)
 	}
 	root, _ := commandRoot(ctx, opts, false)
-	out, err := harden.Run(ctx, store, clock.System{}, harden.Input{
-		TaskID:     opts.Positionals[0],
-		MarkPassed: opts.Flags["mark-passed"],
-		Root:       root,
-		Prompt:     hardencli.Prompt(ctx, root),
+	input, err := hardencli.BuildInput(ctx, hardencli.RunOptions{
+		Root:           root,
+		TaskID:         opts.Positionals[0],
+		MarkPassed:     opts.Flags["mark-passed"],
+		Provider:       opts.Values["provider"],
+		Command:        opts.Values["provider-command"],
+		ProviderBinary: opts.Values["provider-binary"],
+		Model:          opts.Values["model"],
+		Progress:       stderr,
 	})
+	if err != nil {
+		return failOut(stderr, err, ExitReview, opts.JSON)
+	}
+	out, err := harden.Run(ctx, store, clock.System{}, input)
 	if err != nil {
 		return failOut(stderr, err, ExitValidation, opts.JSON)
 	}
 	if opts.JSON {
 		return okOut(stdout, "harden", out, "", true)
 	}
-	if out.MarkedPassed {
-		for _, warning := range out.Warnings {
-			fmt.Fprintf(stderr, "warn: %s\n", warning)
-		}
-		return okOut(stdout, "harden", out, fmt.Sprintf("harden passed: %s\nnext: %s\n", out.TaskID, out.NextCommand), false)
+	text, envelope := hardencli.ResultText(stderr, out)
+	if envelope {
+		return okOut(stdout, "harden", out, text, false)
 	}
-	fmt.Fprint(stdout, out.Prompt)
-	fmt.Fprintf(stdout, "\n---\nspec: %s\nround: %s\nwhen done, mark the round passed: %s\n", out.Path, out.RoundID, out.NextCommand)
+	fmt.Fprint(stdout, text)
 	return ExitSuccess
 }
 

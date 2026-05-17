@@ -206,12 +206,19 @@ type Origin struct {
 
 // HardenRound records one pre-approval hardening pass.
 type HardenRound struct {
-	ID        string           `json:"id"`
-	Status    string           `json:"status"`
-	StartedAt string           `json:"started_at"`
-	EndedAt   string           `json:"ended_at"`
-	Checks    []HardenCheck    `json:"checks"`
-	Questions []HardenQuestion `json:"questions"`
+	ID               string                  `json:"id"`
+	Status           string                  `json:"status"`
+	StartedAt        string                  `json:"started_at"`
+	EndedAt          string                  `json:"ended_at"`
+	Verdict          string                  `json:"verdict,omitempty"`
+	Summary          string                  `json:"summary,omitempty"`
+	Provider         string                  `json:"provider,omitempty"`
+	Model            string                  `json:"model,omitempty"`
+	OutputFormat     string                  `json:"output_format,omitempty"`
+	Checks           []HardenCheck           `json:"checks"`
+	Questions        []HardenQuestion        `json:"questions"`
+	DesignObjections []HardenDesignObjection `json:"design_objections,omitempty"`
+	RecommendedEdits []HardenRecommendedEdit `json:"recommended_edits,omitempty"`
 }
 
 // HardenCheck records one evidence-backed audit pass from a hardening round.
@@ -229,6 +236,23 @@ type HardenQuestion struct {
 	RecommendedAnswer string `json:"recommended_answer"`
 	IfUnanswered      string `json:"if_unanswered"`
 	AnsweredWith      string `json:"answered_with"`
+}
+
+// HardenDesignObjection records a grounded challenge to the draft design.
+type HardenDesignObjection struct {
+	ID             string `json:"id"`
+	Severity       string `json:"severity"`
+	GroundedIn     string `json:"grounded_in"`
+	Summary        string `json:"summary"`
+	Evidence       string `json:"evidence"`
+	Recommendation string `json:"recommendation"`
+}
+
+// HardenRecommendedEdit records a concrete pre-approval spec edit.
+type HardenRecommendedEdit struct {
+	Section        string `json:"section"`
+	GroundedIn     string `json:"grounded_in"`
+	Recommendation string `json:"recommendation"`
 }
 
 // PlanningEvent records a timestamped planning log entry.

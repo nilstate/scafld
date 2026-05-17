@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/nilstate/scafld/v2/internal/core/gate"
+	coreharden "github.com/nilstate/scafld/v2/internal/core/harden"
 	"github.com/nilstate/scafld/v2/internal/core/spec"
 )
 
@@ -213,6 +214,128 @@ func TestRunMarkPassedAllowsNotApplicableChecks(t *testing.T) {
 	}
 }
 
+func TestRunProviderHardenRecordsPassingDossier(t *testing.T) {
+	t.Parallel()
+
+	store := newMemorySpecStore(fixtureModel())
+	out, err := Run(context.Background(), store, fixedClock{}, Input{
+		TaskID:   "fixture-task",
+		Prompt:   "prompt",
+		Provider: fakeHardenProvider{dossier: passingHardenDossier()},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.HardenStatus != spec.HardenPassed || out.Verdict != coreharden.VerdictPass || out.NextCommand != "scafld approve fixture-task" {
+		t.Fatalf("output = %+v", out)
+	}
+	round := store.model.HardenRounds[0]
+	if round.Status != string(spec.HardenPassed) || round.Provider != "codex" || round.Model != "gpt-test" || round.Summary == "" || len(round.Checks) != 6 {
+		t.Fatalf("round = %+v", round)
+	}
+}
+
+func TestRunProviderHardenRecordsNeedsRevision(t *testing.T) {
+	t.Parallel()
+
+	dossier := passingHardenDossier()
+	dossier.Verdict = coreharden.VerdictNeedsRevision
+	dossier.Checks[5].Result = "failed"
+	dossier.Questions = []coreharden.Question{{
+		Question:          "Why add this abstraction?",
+		GroundedIn:        "spec_gap:Summary",
+		RecommendedAnswer: "Do not add it until duplicated complexity is proven.",
+	}}
+	dossier.DesignObjections = []coreharden.DesignObjection{{
+		ID:             "objection-1",
+		Severity:       "high",
+		GroundedIn:     "spec_gap:Summary",
+		Summary:        "The plan may be future bloat.",
+		Evidence:       "The spec does not cite repeated use.",
+		Recommendation: "Reduce scope or cite the repeated need.",
+	}}
+	store := newMemorySpecStore(fixtureModel())
+	out, err := Run(context.Background(), store, fixedClock{}, Input{
+		TaskID:   "fixture-task",
+		Provider: fakeHardenProvider{dossier: dossier},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.HardenStatus != spec.HardenFailed || out.Verdict != coreharden.VerdictNeedsRevision {
+		t.Fatalf("output = %+v", out)
+	}
+	round := store.model.HardenRounds[0]
+	if round.Status != string(spec.HardenFailed) || len(round.Questions) != 1 || len(round.DesignObjections) != 1 {
+		t.Fatalf("round = %+v", round)
+	}
+	if !strings.Contains(store.model.CurrentState.Blockers, "failed check") || !strings.Contains(store.model.CurrentState.AllowedFollowUp, "--provider <provider>") {
+		t.Fatalf("current state = %+v", store.model.CurrentState)
+	}
+}
+
+func TestRunProviderHardenClosesRoundOnProviderError(t *testing.T) {
+	t.Parallel()
+
+	store := newMemorySpecStore(fixtureModel())
+	_, err := Run(context.Background(), store, fixedClock{}, Input{
+		TaskID:   "fixture-task",
+		Provider: fakeHardenProvider{err: errors.New("provider unavailable")},
+	})
+	if err == nil {
+		t.Fatal("expected provider error")
+	}
+	if store.model.HardenStatus != spec.HardenFailed {
+		t.Fatalf("harden status = %s", store.model.HardenStatus)
+	}
+	round := store.model.HardenRounds[0]
+	if round.Status != string(spec.HardenFailed) || round.EndedAt == "" || !strings.Contains(round.Summary, "provider unavailable") {
+		t.Fatalf("round = %+v", round)
+	}
+	if !strings.Contains(store.model.CurrentState.AllowedFollowUp, "--provider <provider>") {
+		t.Fatalf("current state = %+v", store.model.CurrentState)
+	}
+}
+
+func TestRunProviderHardenClosesRoundOnInvalidDossier(t *testing.T) {
+	t.Parallel()
+
+	store := newMemorySpecStore(fixtureModel())
+	_, err := Run(context.Background(), store, fixedClock{}, Input{
+		TaskID:   "fixture-task",
+		Provider: fakeHardenProvider{dossier: coreharden.Dossier{Verdict: coreharden.VerdictPass}},
+	})
+	if err == nil {
+		t.Fatal("expected invalid dossier error")
+	}
+	if store.model.HardenStatus != spec.HardenFailed {
+		t.Fatalf("harden status = %s", store.model.HardenStatus)
+	}
+	round := store.model.HardenRounds[0]
+	if round.Status != string(spec.HardenFailed) || round.EndedAt == "" || !strings.Contains(round.Summary, "invalid provider dossier") {
+		t.Fatalf("round = %+v", round)
+	}
+}
+
+func TestRunProviderHardenReportsFailureRecordingError(t *testing.T) {
+	t.Parallel()
+
+	store := newMemorySpecStore(fixtureModel())
+	store.failSaveAt = 2
+	store.saveErr = errors.New("disk full")
+	_, err := Run(context.Background(), store, fixedClock{}, Input{
+		TaskID:   "fixture-task",
+		Provider: fakeHardenProvider{err: errors.New("provider unavailable")},
+	})
+	if err == nil {
+		t.Fatal("expected joined error")
+	}
+	text := err.Error()
+	if !strings.Contains(text, "provider unavailable") || !strings.Contains(text, "record provider harden failure") || !strings.Contains(text, "disk full") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
 func passedChecks() []spec.HardenCheck {
 	return []spec.HardenCheck{
 		{Name: "Path audit", GroundedIn: "spec_gap:Scope", Result: "passed", Evidence: "Paths checked."},
@@ -227,6 +350,10 @@ func passedChecks() []spec.HardenCheck {
 type memorySpecStore struct {
 	model spec.Model
 	path  string
+	saves int
+
+	failSaveAt int
+	saveErr    error
 }
 
 func newMemorySpecStore(model spec.Model) *memorySpecStore {
@@ -238,6 +365,10 @@ func (s *memorySpecStore) Load(context.Context, string) (spec.Model, string, err
 }
 
 func (s *memorySpecStore) Save(_ context.Context, path string, model spec.Model) error {
+	s.saves++
+	if s.failSaveAt > 0 && s.saves == s.failSaveAt {
+		return s.saveErr
+	}
 	s.path = path
 	s.model = model
 	return nil
@@ -247,6 +378,43 @@ type fixedClock struct{}
 
 func (fixedClock) Now() time.Time {
 	return time.Date(2026, 5, 4, 10, 0, 0, 0, time.UTC)
+}
+
+type fakeHardenProvider struct {
+	dossier coreharden.Dossier
+	err     error
+}
+
+func (p fakeHardenProvider) Invoke(_ context.Context, req coreharden.Request) (coreharden.Dossier, error) {
+	if !strings.Contains(req.Prompt, "Harden Context Packet") && !strings.Contains(req.Prompt, "Review Context Packet") {
+		return coreharden.Dossier{}, errors.New("missing harden context")
+	}
+	if p.err != nil {
+		return coreharden.Dossier{}, p.err
+	}
+	return p.dossier, nil
+}
+
+func passingHardenDossier() coreharden.Dossier {
+	checks := passedChecks()
+	out := coreharden.Dossier{
+		Verdict:      coreharden.VerdictPass,
+		Summary:      "The draft is scoped and ready for approval.",
+		Provider:     "codex",
+		Model:        "gpt-test",
+		OutputFormat: "codex.output_file",
+		Checks:       make([]coreharden.Check, 0, len(checks)),
+		AttackLog:    []coreharden.AttackLogEntry{{Target: "draft", Attack: "challenge core design", Result: "clean"}},
+	}
+	for _, check := range checks {
+		out.Checks = append(out.Checks, coreharden.Check{
+			Name:       strings.ToLower(check.Name),
+			GroundedIn: check.GroundedIn,
+			Result:     check.Result,
+			Evidence:   check.Evidence,
+		})
+	}
+	return out
 }
 
 func fixtureModel() spec.Model {
