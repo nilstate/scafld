@@ -22,6 +22,11 @@ Stages:
    `manifest.json`, then create the GitHub release.
 3. **publish-pypi** -- build and publish the PyPI launcher wrapper.
 4. **publish-npm** -- publish the npm launcher wrapper.
+5. **package-managers** -- render Homebrew, Scoop, WinGet, and OCI manifests
+   from the published release checksums and attach them to the release.
+6. **publish-homebrew** and **publish-scoop** -- publish owned registry
+   manifests when repository credentials are configured.
+7. **publish-oci** -- publish the CI runner image to GHCR.
 
 The order is intentional: npm and PyPI wrappers download and verify GitHub
 release assets, so the GitHub release must exist before either wrapper package
@@ -73,6 +78,8 @@ Watch the Actions tab. Verify:
 - `npm install -g scafld@X.Y.Z` works.
 - `pipx install scafld==X.Y.Z` works.
 - `go install github.com/nilstate/scafld/v2/cmd/scafld@vX.Y.Z` works.
+- `docker manifest inspect ghcr.io/nilstate/scafld:vX.Y.Z` works without
+  authenticated package access.
 
 ## External Registry Follow-Up
 
@@ -82,6 +89,10 @@ the release checksums:
 - Homebrew: update `nilstate/homebrew-tap` with `Formula/scafld.rb`.
 - Scoop: update `nilstate/scoop-bucket` with `bucket/scafld.json`.
 - WinGet: submit `0state.scafld` manifests to `microsoft/winget-pkgs`.
+- GHCR: confirm the published image is publicly inspectable. If anonymous
+  `docker manifest inspect ghcr.io/nilstate/scafld:vX.Y.Z` returns `denied`,
+  make the `nilstate/scafld` container package public in GitHub Packages and
+  rerun the metadata audit.
 
 For WinGet, do not copy from a local `.stage/` directory. Stage the upstream
 submission from the uploaded release artifact so the manifest hashes are checked
