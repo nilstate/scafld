@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/nilstate/scafld/v2/internal/core/execution"
+	coreharden "github.com/nilstate/scafld/v2/internal/core/harden"
 	"github.com/nilstate/scafld/v2/internal/core/review"
 )
 
@@ -23,6 +24,22 @@ func TestProviderContract(t *testing.T) {
 		t.Fatal(err)
 	}
 	if dossier.Verdict != "fail" || dossier.Provider != "local" || len(dossier.Findings) != 1 {
+		t.Fatalf("dossier = %+v", dossier)
+	}
+}
+
+func TestHardenProviderContract(t *testing.T) {
+	t.Parallel()
+
+	provider, err := SelectHarden(Selection{Provider: "local"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dossier, err := provider.Invoke(context.Background(), coreharden.Request{TaskID: "task"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dossier.Verdict != coreharden.VerdictPass || dossier.Provider != "local" || len(dossier.Checks) != len(coreharden.RequiredCheckNames) {
 		t.Fatalf("dossier = %+v", dossier)
 	}
 }
@@ -321,6 +338,23 @@ func TestReviewDossierSchemaMatchesManagedCoreAsset(t *testing.T) {
 	}
 	if normalizeJSON(t, string(asset)) != normalizeJSON(t, review.DossierSchemaJSON()) {
 		t.Fatal("managed review_dossier.json drifted from core schema generator")
+	}
+}
+
+func TestHardenDossierSchemaMatchesManagedCoreAsset(t *testing.T) {
+	t.Parallel()
+
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("locate provider test file")
+	}
+	root := filepath.Clean(filepath.Join(filepath.Dir(file), "..", "..", ".."))
+	asset, err := os.ReadFile(filepath.Join(root, ".scafld", "core", "schemas", "harden_dossier.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if normalizeJSON(t, string(asset)) != normalizeJSON(t, coreharden.DossierSchemaJSON()) {
+		t.Fatal("managed harden_dossier.json drifted from core schema generator")
 	}
 }
 

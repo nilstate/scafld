@@ -53,6 +53,11 @@ are the evidence that the plan survived hardening.
 Status: passed
 Started: 2026-05-13T00:10:00Z
 Ended: 2026-05-13T00:18:00Z
+Verdict: pass
+Provider: codex
+Model: gpt-5.5
+Output format: codex.output_file
+Summary: The draft contract survived path, command, timing, rollback, and design challenge checks.
 
 Checks:
 - Path audit
@@ -85,7 +90,8 @@ Questions:
 ```
 
 `Questions: none` is valid when the checks have evidence and no unresolved
-operator decision remains.
+operator decision remains. Provider-backed hardening may also render design
+objections and recommended edits when the verdict is `needs_revision`.
 
 ## Status JSON
 

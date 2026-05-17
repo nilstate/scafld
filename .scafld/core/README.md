@@ -37,7 +37,7 @@ plan -> harden -> approve -> build -> review -> complete
     archive/YYYY-MM/
   core/
     prompts/
-    schemas/
+    schemas/              # spec, review dossier, and harden dossier schemas
     scripts/
 ```
 

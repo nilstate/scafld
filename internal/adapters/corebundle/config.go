@@ -29,6 +29,11 @@ func installProjectConfig(ctx context.Context, root string, result *Result) erro
 #   path_prepend:
 #     - "$HOME/.rbenv/shims"
 #     - "$HOME/.rbenv/bin"
+# harden:
+#   external:
+#     provider: "codex"
+#     codex:
+#       model: "gpt-5.5"
 # review:
 #   external:
 #     provider: "codex"

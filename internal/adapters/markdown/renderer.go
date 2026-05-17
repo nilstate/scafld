@@ -206,7 +206,23 @@ func renderHardenRound(b *strings.Builder, round spec.HardenRound) {
 	fmt.Fprintf(b, "### %s\n\n", fallback(round.ID, "round"))
 	fmt.Fprintf(b, "Status: %s\n", fallback(round.Status, "in_progress"))
 	fmt.Fprintf(b, "Started: %s\n", fallback(round.StartedAt, "none"))
-	fmt.Fprintf(b, "Ended: %s\n\n", fallback(round.EndedAt, "none"))
+	fmt.Fprintf(b, "Ended: %s\n", fallback(round.EndedAt, "none"))
+	if round.Verdict != "" {
+		fmt.Fprintf(b, "Verdict: %s\n", round.Verdict)
+	}
+	if round.Provider != "" {
+		fmt.Fprintf(b, "Provider: %s\n", round.Provider)
+	}
+	if round.Model != "" {
+		fmt.Fprintf(b, "Model: %s\n", round.Model)
+	}
+	if round.OutputFormat != "" {
+		fmt.Fprintf(b, "Output format: %s\n", round.OutputFormat)
+	}
+	if round.Summary != "" {
+		fmt.Fprintf(b, "Summary: %s\n", round.Summary)
+	}
+	fmt.Fprintf(b, "\n")
 	fmt.Fprintf(b, "Checks:\n")
 	if len(round.Checks) == 0 {
 		fmt.Fprintf(b, "- none\n\n")
@@ -228,24 +244,53 @@ func renderHardenRound(b *strings.Builder, round spec.HardenRound) {
 	fmt.Fprintf(b, "Questions:\n")
 	if len(round.Questions) == 0 {
 		fmt.Fprintf(b, "- none\n\n")
-		return
+	} else {
+		for _, question := range round.Questions {
+			fmt.Fprintf(b, "- %s\n", fallback(question.Question, "Question not recorded."))
+			if question.GroundedIn != "" {
+				fmt.Fprintf(b, "  - Grounded in: %s\n", question.GroundedIn)
+			}
+			if question.RecommendedAnswer != "" {
+				fmt.Fprintf(b, "  - Recommended answer: %s\n", question.RecommendedAnswer)
+			}
+			if question.IfUnanswered != "" {
+				fmt.Fprintf(b, "  - If unanswered: %s\n", question.IfUnanswered)
+			}
+			if question.AnsweredWith != "" {
+				fmt.Fprintf(b, "  - Answered with: %s\n", question.AnsweredWith)
+			}
+		}
+		fmt.Fprintf(b, "\n")
 	}
-	for _, question := range round.Questions {
-		fmt.Fprintf(b, "- %s\n", fallback(question.Question, "Question not recorded."))
-		if question.GroundedIn != "" {
-			fmt.Fprintf(b, "  - Grounded in: %s\n", question.GroundedIn)
+	if len(round.DesignObjections) > 0 {
+		fmt.Fprintf(b, "Design objections:\n")
+		for _, objection := range round.DesignObjections {
+			fmt.Fprintf(b, "- `%s` %s - %s\n", fallback(objection.ID, "objection"), fallback(objection.Severity, "medium"), fallback(objection.Summary, "Design objection not recorded."))
+			if objection.GroundedIn != "" {
+				fmt.Fprintf(b, "  - Grounded in: %s\n", objection.GroundedIn)
+			}
+			if objection.Evidence != "" {
+				fmt.Fprintf(b, "  - Evidence: %s\n", objection.Evidence)
+			}
+			if objection.Recommendation != "" {
+				fmt.Fprintf(b, "  - Recommendation: %s\n", objection.Recommendation)
+			}
 		}
-		if question.RecommendedAnswer != "" {
-			fmt.Fprintf(b, "  - Recommended answer: %s\n", question.RecommendedAnswer)
-		}
-		if question.IfUnanswered != "" {
-			fmt.Fprintf(b, "  - If unanswered: %s\n", question.IfUnanswered)
-		}
-		if question.AnsweredWith != "" {
-			fmt.Fprintf(b, "  - Answered with: %s\n", question.AnsweredWith)
-		}
+		fmt.Fprintf(b, "\n")
 	}
-	fmt.Fprintf(b, "\n")
+	if len(round.RecommendedEdits) > 0 {
+		fmt.Fprintf(b, "Recommended edits:\n")
+		for _, edit := range round.RecommendedEdits {
+			fmt.Fprintf(b, "- %s\n", fallback(edit.Section, "Section not recorded."))
+			if edit.GroundedIn != "" {
+				fmt.Fprintf(b, "  - Grounded in: %s\n", edit.GroundedIn)
+			}
+			if edit.Recommendation != "" {
+				fmt.Fprintf(b, "  - Recommendation: %s\n", edit.Recommendation)
+			}
+		}
+		fmt.Fprintf(b, "\n")
+	}
 }
 
 func renderBullets(b *strings.Builder, items []string) {

@@ -12,7 +12,9 @@ import (
 	"time"
 
 	"github.com/nilstate/scafld/v2/internal/core/gate"
+	coreharden "github.com/nilstate/scafld/v2/internal/core/harden"
 	coreprompts "github.com/nilstate/scafld/v2/internal/core/prompts"
+	"github.com/nilstate/scafld/v2/internal/core/reviewcontext"
 	"github.com/nilstate/scafld/v2/internal/core/spec"
 )
 
@@ -29,14 +31,7 @@ var (
 
 const groundedInShape = `expected "Grounded in: spec_gap:<field>", "Grounded in: code:<path>:<line>", or "Grounded in: archive:<task-id>"`
 
-var requiredHardenChecks = []string{
-	"path audit",
-	"command audit",
-	"scope/migration audit",
-	"acceptance timing audit",
-	"rollback/repair audit",
-	"design challenge",
-}
+var requiredHardenChecks = append([]string(nil), coreharden.RequiredCheckNames...)
 
 // SpecStore is the spec persistence port used by hardening.
 type SpecStore interface {
@@ -49,12 +44,19 @@ type Clock interface {
 	Now() time.Time
 }
 
+// Provider is the external hardening provider port.
+type Provider interface {
+	Invoke(context.Context, coreharden.Request) (coreharden.Dossier, error)
+}
+
 // Input describes a hardening operation.
 type Input struct {
-	TaskID     string
-	MarkPassed bool
-	Root       string
-	Prompt     string
+	TaskID          string
+	MarkPassed      bool
+	Root            string
+	Prompt          string
+	Provider        Provider
+	ContextMaxBytes int
 }
 
 // Output describes the opened or completed hardening round.
@@ -66,6 +68,10 @@ type Output struct {
 	MarkedPassed bool              `json:"marked_passed"`
 	NextCommand  string            `json:"next_command"`
 	Prompt       string            `json:"prompt"`
+	Verdict      string            `json:"verdict,omitempty"`
+	Summary      string            `json:"summary,omitempty"`
+	Provider     string            `json:"provider,omitempty"`
+	Model        string            `json:"model,omitempty"`
 	Warnings     []string          `json:"warnings"`
 }
 
@@ -88,7 +94,103 @@ func Run(ctx context.Context, store SpecStore, clock Clock, input Input) (Output
 	if input.MarkPassed {
 		return markPassed(ctx, store, path, model, now, input.Root)
 	}
+	if input.Provider != nil {
+		return runProviderHarden(ctx, store, input.Provider, path, model, now, fallback(input.Prompt, coreprompts.Harden), input.ContextMaxBytes)
+	}
 	return openRound(ctx, store, path, model, now, fallback(input.Prompt, coreprompts.Harden))
+}
+
+func runProviderHarden(ctx context.Context, store SpecStore, provider Provider, path string, model spec.Model, now string, prompt string, contextMaxBytes int) (Output, error) {
+	roundID := nextRoundID(model.HardenRounds)
+	model.HardenStatus = spec.HardenInProgress
+	model.HardenRounds = append(model.HardenRounds, spec.HardenRound{
+		ID:        roundID,
+		Status:    string(spec.HardenInProgress),
+		StartedAt: now,
+	})
+	model.Updated = now
+	model.CurrentState.Next = "harden"
+	model.CurrentState.Reason = "external hardening provider running"
+	model.CurrentState.Blockers = "provider hardening not yet recorded"
+	model.CurrentState.AllowedFollowUp = "scafld harden " + model.TaskID + " --provider <provider>"
+	if err := store.Save(ctx, path, model); err != nil {
+		return Output{}, fmt.Errorf("save harden round: %w", err)
+	}
+	packet := hardenContextPacket(model, path, prompt)
+	rendered := reviewcontext.RenderMarkdown(packet, reviewcontext.Options{MaxBytes: contextMaxBytes, Title: "Harden Context Packet"})
+	dossier, err := provider.Invoke(ctx, coreharden.Request{TaskID: model.TaskID, Prompt: rendered, Context: packet})
+	if err != nil {
+		if closeErr := closeProviderHardenFailure(ctx, store, model.TaskID, roundID, now, "provider failed: "+err.Error()); closeErr != nil {
+			return Output{}, errors.Join(err, fmt.Errorf("record provider harden failure: %w", closeErr))
+		}
+		return Output{}, err
+	}
+	if err := coreharden.ValidateDossier(dossier); err != nil {
+		if closeErr := closeProviderHardenFailure(ctx, store, model.TaskID, roundID, now, "invalid provider dossier: "+err.Error()); closeErr != nil {
+			return Output{}, errors.Join(err, fmt.Errorf("record provider harden failure: %w", closeErr))
+		}
+		return Output{}, err
+	}
+	model, _, err = store.Load(ctx, model.TaskID)
+	if err != nil {
+		return Output{}, err
+	}
+	if len(model.HardenRounds) == 0 || model.HardenRounds[len(model.HardenRounds)-1].ID != roundID {
+		return Output{}, fmt.Errorf("harden round changed while provider was running")
+	}
+	latest := len(model.HardenRounds) - 1
+	model.HardenRounds[latest] = roundFromDossier(model.HardenRounds[latest], dossier, now)
+	model.Updated = now
+	if dossier.Verdict == coreharden.VerdictPass {
+		model.HardenStatus = spec.HardenPassed
+		model.HardenRounds[latest].Status = string(spec.HardenPassed)
+		model.CurrentState.Next = "approve"
+		model.CurrentState.Reason = "hardening passed"
+		model.CurrentState.Blockers = "none"
+		model.CurrentState.AllowedFollowUp = "scafld approve " + model.TaskID
+	} else {
+		model.HardenStatus = spec.HardenFailed
+		model.HardenRounds[latest].Status = string(spec.HardenFailed)
+		model.CurrentState.Next = "harden"
+		model.CurrentState.Reason = "hardening found draft contract issues"
+		model.CurrentState.Blockers = hardenBlockers(dossier)
+		model.CurrentState.AllowedFollowUp = "edit the draft, then run scafld harden " + model.TaskID + " --provider <provider>"
+	}
+	if err := store.Save(ctx, path, model); err != nil {
+		return Output{}, fmt.Errorf("save harden dossier: %w", err)
+	}
+	return Output{
+		TaskID:       model.TaskID,
+		Path:         path,
+		HardenStatus: model.HardenStatus,
+		RoundID:      roundID,
+		NextCommand:  model.CurrentState.AllowedFollowUp,
+		Verdict:      dossier.Verdict,
+		Summary:      dossier.Summary,
+		Provider:     dossier.Provider,
+		Model:        dossier.Model,
+	}, nil
+}
+
+func closeProviderHardenFailure(ctx context.Context, store SpecStore, taskID string, roundID string, now string, reason string) error {
+	model, path, err := store.Load(ctx, taskID)
+	if err != nil {
+		return err
+	}
+	if len(model.HardenRounds) == 0 || model.HardenRounds[len(model.HardenRounds)-1].ID != roundID {
+		return fmt.Errorf("harden round changed while provider was running")
+	}
+	latest := len(model.HardenRounds) - 1
+	model.HardenRounds[latest].Status = string(spec.HardenFailed)
+	model.HardenRounds[latest].EndedAt = now
+	model.HardenRounds[latest].Summary = reason
+	model.HardenStatus = spec.HardenFailed
+	model.Updated = now
+	model.CurrentState.Next = "harden"
+	model.CurrentState.Reason = "external hardening provider failed"
+	model.CurrentState.Blockers = reason
+	model.CurrentState.AllowedFollowUp = "fix provider availability/output, then run scafld harden " + model.TaskID + " --provider <provider>"
+	return store.Save(ctx, path, model)
 }
 
 func openRound(ctx context.Context, store SpecStore, path string, model spec.Model, now string, prompt string) (Output, error) {
@@ -156,6 +258,75 @@ func markPassed(ctx context.Context, store SpecStore, path string, model spec.Mo
 		NextCommand:  model.CurrentState.AllowedFollowUp,
 		Warnings:     warnings,
 	}, nil
+}
+
+func roundFromDossier(round spec.HardenRound, dossier coreharden.Dossier, now string) spec.HardenRound {
+	round.EndedAt = now
+	round.Verdict = dossier.Verdict
+	round.Summary = dossier.Summary
+	round.Provider = dossier.Provider
+	round.Model = dossier.Model
+	round.OutputFormat = dossier.OutputFormat
+	round.Checks = make([]spec.HardenCheck, 0, len(dossier.Checks))
+	for _, check := range dossier.Checks {
+		round.Checks = append(round.Checks, spec.HardenCheck{
+			Name:       check.Name,
+			GroundedIn: check.GroundedIn,
+			Result:     check.Result,
+			Evidence:   check.Evidence,
+		})
+	}
+	round.Questions = make([]spec.HardenQuestion, 0, len(dossier.Questions))
+	for _, question := range dossier.Questions {
+		round.Questions = append(round.Questions, spec.HardenQuestion{
+			Question:          question.Question,
+			GroundedIn:        question.GroundedIn,
+			RecommendedAnswer: question.RecommendedAnswer,
+			IfUnanswered:      question.IfUnanswered,
+		})
+	}
+	round.DesignObjections = make([]spec.HardenDesignObjection, 0, len(dossier.DesignObjections))
+	for _, objection := range dossier.DesignObjections {
+		round.DesignObjections = append(round.DesignObjections, spec.HardenDesignObjection{
+			ID:             objection.ID,
+			Severity:       objection.Severity,
+			GroundedIn:     objection.GroundedIn,
+			Summary:        objection.Summary,
+			Evidence:       objection.Evidence,
+			Recommendation: objection.Recommendation,
+		})
+	}
+	round.RecommendedEdits = make([]spec.HardenRecommendedEdit, 0, len(dossier.RecommendedEdits))
+	for _, edit := range dossier.RecommendedEdits {
+		round.RecommendedEdits = append(round.RecommendedEdits, spec.HardenRecommendedEdit{
+			Section:        edit.Section,
+			GroundedIn:     edit.GroundedIn,
+			Recommendation: edit.Recommendation,
+		})
+	}
+	return round
+}
+
+func hardenBlockers(dossier coreharden.Dossier) string {
+	var blockers []string
+	for _, check := range dossier.Checks {
+		if strings.TrimSpace(strings.ToLower(check.Result)) == "failed" {
+			blockers = append(blockers, "failed check: "+check.Name)
+		}
+	}
+	if len(dossier.Questions) > 0 {
+		blockers = append(blockers, fmt.Sprintf("%d question(s)", len(dossier.Questions)))
+	}
+	if len(dossier.DesignObjections) > 0 {
+		blockers = append(blockers, fmt.Sprintf("%d design objection(s)", len(dossier.DesignObjections)))
+	}
+	if len(dossier.RecommendedEdits) > 0 {
+		blockers = append(blockers, fmt.Sprintf("%d recommended edit(s)", len(dossier.RecommendedEdits)))
+	}
+	if len(blockers) == 0 {
+		return "harden verdict needs_revision"
+	}
+	return strings.Join(blockers, "; ")
 }
 
 func nextRoundID(rounds []spec.HardenRound) string {

@@ -120,7 +120,8 @@ executable acceptance criterion. Existing drafts are not overwritten.
 ## harden
 
 ```bash
-scafld harden <task-id> [--mark-passed] [--json]
+scafld harden <task-id> [--provider codex|claude|command|local] [--json]
+scafld harden <task-id> --mark-passed [--json]
 ```
 
 Hardening is the pre-build adversarial pass. It attacks the draft before
@@ -136,6 +137,12 @@ With `--mark-passed`, it verifies the latest round's harden checks and
 `Grounded in` citations, closes the round, and sets `harden_status: passed`.
 Missing checks, failed checks, unresolved questions, and unresolved citations
 fail closed and leave the round in progress.
+
+With `--provider`, scafld delegates the harden round to a separate read-only
+provider. The provider must submit one strict `HardenDossier` through the
+structured submit channel. A `pass` verdict closes hardening; `needs_revision`
+records failed checks, questions, design objections, and recommended edits in
+the draft for the implementation agent to resolve before approval.
 
 Accepted citation shapes are `Grounded in: spec_gap:<field>`,
 `Grounded in: code:<path>:<line>`, and `Grounded in: archive:<task-id>`.

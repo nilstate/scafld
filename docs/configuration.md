@@ -336,3 +336,12 @@ prompt as a cap, not a target. Questions are optional; `Questions: none` is
 valid only after checks have evidence. `--mark-passed` verifies check evidence,
 resolved questions, and cited code or archive references before closing the
 round.
+
+Provider-backed hardening uses `harden.external`. Leave
+`harden.external.provider` empty for manual rounds, or set it to `auto`,
+`codex`, `claude`, `command`, or `local` when the draft should be challenged by
+a separate agent. The provider receives a bounded harden context packet and
+must submit a strict `HardenDossier`: verdict, summary, required checks,
+questions, design objections, recommended edits, and attack log. `pass` marks
+the draft hardened. `needs_revision` leaves the spec in draft state with the
+provider's objections rendered into `## Harden Rounds`.

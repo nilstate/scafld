@@ -521,6 +521,31 @@ func TestRunHardenLifecycle(t *testing.T) {
 	}
 }
 
+func TestRunHardenProviderLocalMarksPassed(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	runCLI(t, []string{"init", "--root", root})
+	runCLI(t, []string{"plan", "--root", root, "provider-harden-task", "--command", "go version"})
+
+	stdout := runCLI(t, []string{"harden", "--root", root, "provider-harden-task", "--provider", "local"})
+	if !strings.Contains(stdout, "harden pass: provider-harden-task") || !strings.Contains(stdout, "next: scafld approve provider-harden-task") {
+		t.Fatalf("provider harden stdout %q", stdout)
+	}
+	specPath := filepath.Join(root, ".scafld", "specs", "drafts", "provider-harden-task.md")
+	data, err := os.ReadFile(specPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if !strings.Contains(text, "harden_status: passed") ||
+		!strings.Contains(text, "Verdict: pass") ||
+		!strings.Contains(text, "Provider: local") ||
+		!strings.Contains(text, "design challenge") {
+		t.Fatalf("provider harden was not recorded:\n%s", text)
+	}
+}
+
 func TestRunLifecycleMovesSpecsByState(t *testing.T) {
 	t.Parallel()
 

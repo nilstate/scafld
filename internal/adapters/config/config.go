@@ -43,7 +43,9 @@ type ExecutionConfig struct {
 
 // HardenConfig controls hardening prompt behavior.
 type HardenConfig struct {
-	MaxQuestionsPerRound int `yaml:"max_questions_per_round"`
+	MaxQuestionsPerRound int                  `yaml:"max_questions_per_round"`
+	ContextMaxBytes      int                  `yaml:"context_max_bytes"`
+	External             ExternalReviewConfig `yaml:"external"`
 }
 
 // ReviewConfig controls automated and adversarial review behavior.
@@ -190,7 +192,17 @@ func Default() Config {
 		Execution: ExecutionConfig{
 			AbsoluteTimeoutSeconds: 300,
 		},
-		Harden: HardenConfig{MaxQuestionsPerRound: 8},
+		Harden: HardenConfig{
+			MaxQuestionsPerRound: 8,
+			ContextMaxBytes:      16384,
+			External: ExternalReviewConfig{
+				IdleTimeoutSeconds: 180,
+				AbsoluteMaxSeconds: 1800,
+				FallbackPolicy:     "warn",
+				Codex:              ProviderConfig{Model: "gpt-5.5"},
+				Claude:             ProviderConfig{Model: "claude-opus-4-7"},
+			},
+		},
 		Review: ReviewConfig{
 			External: ExternalReviewConfig{
 				Provider:           "auto",
@@ -244,6 +256,10 @@ func overlay(base Config, local Config) Config {
 	if local.Harden.MaxQuestionsPerRound > 0 {
 		base.Harden.MaxQuestionsPerRound = local.Harden.MaxQuestionsPerRound
 	}
+	if local.Harden.ContextMaxBytes > 0 {
+		base.Harden.ContextMaxBytes = local.Harden.ContextMaxBytes
+	}
+	base.Harden.External = overlayExternal(base.Harden.External, local.Harden.External)
 	base.Review.External = overlayExternal(base.Review.External, local.Review.External)
 	base.Review.Context = overlayReviewContext(base.Review.Context, local.Review.Context)
 	base.Review.Dossier = overlayReviewDossier(base.Review.Dossier, local.Review.Dossier)
@@ -391,6 +407,10 @@ func withDefaults(cfg Config) Config {
 	if cfg.Harden.MaxQuestionsPerRound <= 0 {
 		cfg.Harden.MaxQuestionsPerRound = defaults.Harden.MaxQuestionsPerRound
 	}
+	if cfg.Harden.ContextMaxBytes <= 0 {
+		cfg.Harden.ContextMaxBytes = defaults.Harden.ContextMaxBytes
+	}
+	cfg.Harden.External = overlayExternal(defaults.Harden.External, cfg.Harden.External)
 	if cfg.Review.External.Provider == "" {
 		cfg.Review.External.Provider = defaults.Review.External.Provider
 	}

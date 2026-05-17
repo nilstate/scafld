@@ -102,6 +102,11 @@ runtime field.
 Status: in_progress
 Started: 2026-05-04T00:00:00Z
 Ended: none
+Verdict: needs_revision
+Provider: codex
+Model: gpt-5.5
+Output format: codex.output_file
+Summary: The draft needs one ownership decision before approval.
 
 Checks:
 - Path audit
@@ -135,6 +140,17 @@ Questions:
   - Recommended answer: Use the existing cleanupSession owner.
   - If unanswered: Default to the existing cleanup path.
   - Answered with: Use cleanupSession.
+
+Design objections:
+- `objection-1` high - The draft may add a second session cleanup path.
+  - Grounded in: code:src/auth/session.ts:84
+  - Evidence: cleanupSession already owns this lifecycle.
+  - Recommendation: Reuse the existing owner or explicitly justify the split.
+
+Recommended edits:
+- Scope
+  - Grounded in: spec_gap:Scope
+  - Recommendation: Declare cleanupSession as the owner before approval.
 ````
 
 Each check and question should carry one `Grounded in` value matching
@@ -143,6 +159,11 @@ Each check and question should carry one `Grounded in` value matching
 and `not_applicable` can close a round. Questions are optional, but any
 recorded question must have a recommended answer and final answer before
 `scafld harden <task-id> --mark-passed` closes the round.
+
+Provider-backed hardening fills `Verdict`, `Provider`, `Model`,
+`Output format`, `Summary`, `Design objections`, and `Recommended edits`
+from a strict `HardenDossier`. Manual hardening may omit those provenance
+fields, but should still record the required checks.
 
 ## Reconcile Contract
 
