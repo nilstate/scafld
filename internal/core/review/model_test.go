@@ -101,7 +101,7 @@ func TestValidateDossierRejectsVerdictThatContradictsOpenBlockers(t *testing.T) 
 func TestValidCompletionProviderAllowlist(t *testing.T) {
 	t.Parallel()
 
-	for _, provider := range []string{"codex", "claude", "command", "human", " codex "} {
+	for _, provider := range []string{"codex", "claude", "gemini", "command", "human", " codex "} {
 		if !ValidCompletionProvider(provider) {
 			t.Fatalf("provider %q should satisfy completion", provider)
 		}
@@ -113,7 +113,7 @@ func TestValidCompletionProviderAllowlist(t *testing.T) {
 	}
 }
 
-func TestParseTextAcceptsDossierAndRejectsLegacyPacket(t *testing.T) {
+func TestParseTextAcceptsDossierAndRejectsIncompletePacket(t *testing.T) {
 	t.Parallel()
 
 	dossier, err := ParseText(`{"verdict":"fail","mode":"discover","summary":"bug found","findings":[{"id":"bug","severity":"high","blocks_completion":true,"location":{"path":"file.go","line":12},"evidence":"file.go:12","impact":"breaks behavior","validation":"go test ./...","summary":"bug"}],"attack_log":[{"target":"diff","attack":"regression scan","result":"finding"}],"budget":{"actual_findings":1,"actual_attack_angles":1,"depth":"test"}}`)
@@ -125,7 +125,7 @@ func TestParseTextAcceptsDossierAndRejectsLegacyPacket(t *testing.T) {
 	}
 	_, err = ParseText(`{"verdict":"pass","findings":[]}`)
 	if !errors.Is(err, ErrInvalidDossier) {
-		t.Fatalf("legacy packet err = %v", err)
+		t.Fatalf("incomplete packet err = %v", err)
 	}
 	_, err = ParseText(`{"verdict":"pass","mode":"discover","summary":"clean","findings":[],"attack_log":[{"target":"diff","attack":"scan","result":"ok"}],"budget":{"actual_attack_angles":1}}`)
 	if !errors.Is(err, ErrInvalidDossier) {
@@ -145,7 +145,7 @@ func TestParseTextAcceptsDossierAndRejectsLegacyPacket(t *testing.T) {
 	}
 }
 
-func TestParseNDJSONAcceptsDossierFrameAndRejectsLegacyFrames(t *testing.T) {
+func TestParseNDJSONAcceptsDossierFrameAndRejectsUnsupportedFrames(t *testing.T) {
 	t.Parallel()
 
 	_, err := ParseNDJSON(`{"type":"dossier","dossier":{"verdict":"pass","mode":"discover","summary":"clean","findings":[],"attack_log":[{"target":"diff","attack":"scan","result":"clean"}],"budget":{"actual_attack_angles":1}}}` + "\n")

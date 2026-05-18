@@ -7,14 +7,8 @@ import (
 	corereview "github.com/nilstate/scafld/v2/internal/core/review"
 )
 
-// ModeFromFlags resolves CLI mode flags into the provider review mode.
-func ModeFromFlags(mode string, verify bool, full bool) corereview.Mode {
-	if verify {
-		return corereview.ModeVerify
-	}
-	if full {
-		return corereview.ModeDiscover
-	}
+// ModeFromValue resolves the CLI mode value into the provider review mode.
+func ModeFromValue(mode string) corereview.Mode {
 	if strings.TrimSpace(mode) == string(corereview.ModeVerify) {
 		return corereview.ModeVerify
 	}

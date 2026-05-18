@@ -78,12 +78,102 @@ func TestSelectAutoFailsClosedWhenNoExternalProviderExists(t *testing.T) {
 	t.Setenv("PATH", "")
 
 	_, err := Select(context.Background(), Options{Root: t.TempDir(), TaskID: "task"})
-	if err == nil || !strings.Contains(err.Error(), "no external review provider found") {
+	if err == nil || !strings.Contains(err.Error(), "no external provider found") {
 		t.Fatalf("auto provider err = %v", err)
 	}
 	selected, err := Select(context.Background(), Options{Root: t.TempDir(), TaskID: "task", Provider: "local"})
 	if err != nil || selected.Provider == nil {
 		t.Fatalf("local provider should remain explicit escape hatch: provider=%T err=%v", selected.Provider, err)
+	}
+}
+
+func TestSelectAutoPrefersOppositeHostAgent(t *testing.T) {
+	t.Setenv("SCAFLD_HOST_AGENT", "codex")
+
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".scafld"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".scafld", "config.yaml"), []byte(`
+review:
+  external:
+    provider: "auto"
+    codex:
+      model: "gpt-config"
+      binary: "codex-config"
+    claude:
+      model: "claude-config"
+      binary: "claude-config"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var progress bytes.Buffer
+	selected, err := Select(context.Background(), Options{Root: root, TaskID: "task", Progress: &progress})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claude, ok := selected.Provider.(providers.ClaudeProvider)
+	if !ok {
+		t.Fatalf("provider = %T, want claude opposite Codex host", selected.Provider)
+	}
+	if claude.Binary != "claude-config" || claude.Model != "claude-config" {
+		t.Fatalf("claude provider did not use config: %+v", claude)
+	}
+	runner, ok := claude.Runner.(process.Runner)
+	if !ok {
+		t.Fatalf("runner = %T, want process.Runner", claude.Runner)
+	}
+	if runner.ProgressLabel != "review[claude:claude-config]" {
+		t.Fatalf("progress label = %q", runner.ProgressLabel)
+	}
+}
+
+func TestSelectUsesGeminiProviderFromConfig(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".scafld"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".scafld", "config.yaml"), []byte(`
+review:
+  external:
+    provider: "gemini"
+    idle_timeout_seconds: 13
+    absolute_max_seconds: 37
+    gemini:
+      model: "gemini-config"
+      binary: "gemini-config-bin"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var progress bytes.Buffer
+	selected, err := Select(context.Background(), Options{Root: root, TaskID: "task", Progress: &progress})
+	if err != nil {
+		t.Fatal(err)
+	}
+	gemini, ok := selected.Provider.(providers.GeminiProvider)
+	if !ok {
+		t.Fatalf("provider = %T, want GeminiProvider", selected.Provider)
+	}
+	if gemini.Binary != "gemini-config-bin" || gemini.Model != "gemini-config" || gemini.Timeout.String() != "37s" || gemini.IdleTimeout.String() != "13s" {
+		t.Fatalf("gemini provider did not use config: %+v", gemini)
+	}
+	runner, ok := gemini.Runner.(process.Runner)
+	if !ok {
+		t.Fatalf("runner = %T, want process.Runner", gemini.Runner)
+	}
+	if runner.Progress != &progress || runner.ProgressLabel != "review[gemini:gemini-config]" {
+		t.Fatalf("review runner did not carry Gemini progress label: %+v", runner)
+	}
+
+	selected, err = Select(context.Background(), Options{Root: root, TaskID: "task", Model: "gemini-flag"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	gemini = selected.Provider.(providers.GeminiProvider)
+	if gemini.Model != "gemini-flag" {
+		t.Fatalf("flag model should override Gemini config: %+v", gemini)
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"time"
 
@@ -108,13 +109,16 @@ func Select(ctx context.Context, opts Options) (Selection, error) {
 		Model:          opts.Model,
 		CodexModel:     external.Codex.Model,
 		ClaudeModel:    external.Claude.Model,
+		GeminiModel:    external.Gemini.Model,
 		CodexBinary:    external.Codex.Binary,
 		ClaudeBinary:   external.Claude.Binary,
+		GeminiBinary:   external.Gemini.Binary,
 		CWD:            opts.Root,
 		Runner:         process.Runner{DiagnosticsDir: diagnosticsPath, Progress: opts.Progress, ProgressLabel: progressLabel(opts, external)},
 		Timeout:        time.Duration(external.AbsoluteMaxSeconds) * time.Second,
 		Idle:           time.Duration(external.IdleTimeoutSeconds) * time.Second,
 		FallbackPolicy: external.FallbackPolicy,
+		HostAgent:      providers.DetectHostAgent(os.Environ()),
 	})
 	if err != nil {
 		return Selection{}, output.ReviewProviderGateError(err)
@@ -142,6 +146,25 @@ func progressLabel(opts Options, external configadapter.ExternalReviewConfig) st
 		model = first(model, external.Claude.Model)
 	case "codex":
 		model = first(model, external.Codex.Model)
+	case "gemini":
+		model = first(model, external.Gemini.Model)
+	default:
+		selected, err := providers.AutoProviderInfo(providers.Selection{
+			Binary:         opts.ProviderBinary,
+			Model:          opts.Model,
+			CodexModel:     external.Codex.Model,
+			ClaudeModel:    external.Claude.Model,
+			GeminiModel:    external.Gemini.Model,
+			CodexBinary:    external.Codex.Binary,
+			ClaudeBinary:   external.Claude.Binary,
+			GeminiBinary:   external.Gemini.Binary,
+			FallbackPolicy: external.FallbackPolicy,
+			HostAgent:      providers.DetectHostAgent(os.Environ()),
+		})
+		if err == nil {
+			provider = selected.Provider
+			model = selected.Model
+		}
 	}
 	if strings.TrimSpace(model) == "" {
 		return "harden[" + provider + "]"

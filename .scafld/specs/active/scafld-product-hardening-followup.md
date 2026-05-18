@@ -2,8 +2,8 @@
 spec_version: '2.0'
 task_id: scafld-product-hardening-followup
 created: '2026-05-04T12:04:38Z'
-updated: '2026-05-04T12:13:55Z'
-status: draft
+updated: '2026-05-18T09:30:18Z'
+status: blocked
 harden_status: passed
 size: large
 risk_level: high
@@ -13,13 +13,13 @@ risk_level: high
 
 ## Current State
 
-Status: draft
-Current phase: none
-Next: approve
-Reason: hardening passed
-Blockers: none
-Allowed follow-up command: `scafld approve scafld-product-hardening-followup`
-Latest runner update: none
+Status: blocked
+Current phase: phase3
+Next: repair
+Reason: phase phase3 acceptance failed
+Blockers: phase phase3 acceptance failed
+Allowed follow-up command: `scafld handoff scafld-product-hardening-followup`
+Latest runner update: 2026-05-18T09:30:18Z
 Review gate: not_started
 
 ## Summary
@@ -128,7 +128,7 @@ Validation:
 
 ## Phase 1: Markdown grammar, config truth, and no-loss persistence
 
-Status: pending
+Status: completed
 Dependencies: none
 
 Objective: Make the living spec safe to mutate and make config an honest operator surface. scafld must preserve documented Markdown sections when it opens harden/build/review/complete rounds, and runtime-read config keys must be typed, tested, documented, and clearly separated from guidance-only policy.
@@ -146,40 +146,40 @@ Changes:
 - `docs/configuration.md` - Document config precedence, runtime-read fields, local overrides, guidance-only sections, and examples.
 
 Acceptance:
-- [ ] `ac1_1` test - Markdown, config, harden, review selection, and CLI tests pass.
+- [x] `ac1_1` test - Markdown, config, harden, review selection, and CLI tests pass.
   - Command: `go test ./internal/adapters/markdown ./internal/testkit/golden ./test/parity ./internal/adapters/config ./internal/adapters/cli/harden ./internal/adapters/cli/review ./internal/adapters/cli`
   - Expected kind: `exit_code_zero`
-  - Status: pending
-  - Evidence: none
-  - Source event: none
-- [ ] `ac1_2` boundary - Hardening this spec does not drop documented sections.
+  - Status: pass
+  - Evidence: exit code was 0
+  - Source event: entry-6
+- [x] `ac1_2` boundary - Hardening this spec does not drop documented sections.
   - Command: `go run ./cmd/scafld validate scafld-product-hardening-followup && go test ./internal/adapters/markdown -run 'RoundTrip|Golden|Examples'`
   - Expected kind: `exit_code_zero`
-  - Status: pending
-  - Evidence: none
-  - Source event: none
-- [ ] `ac1_3` boundary - Dead review runner config is absent.
+  - Status: pass
+  - Evidence: exit code was 0
+  - Source event: entry-7
+- [x] `ac1_3` boundary - Dead review runner config is absent.
   - Command: `rg -n 'review\\.runner|runner:' .scafld/config.yaml .scafld/core/config.yaml internal/adapters/corebundle/assets/core/config.yaml docs README.md internal`
   - Expected kind: `no_matches`
-  - Status: pending
-  - Evidence: none
-  - Source event: none
-- [ ] `ac1_4` smoke - Init installs base config, local config template, core config, and project prompt overrides.
+  - Status: pass
+  - Evidence: output was empty
+  - Source event: entry-8
+- [x] `ac1_4` smoke - Init installs base config, local config template, core config, and project prompt overrides.
   - Command: `go test ./test/e2e -run TestInit`
   - Expected kind: `exit_code_zero`
-  - Status: pending
-  - Evidence: none
-  - Source event: none
-- [ ] `ac1_5` boundary - CLI adapter stays thin after config composition.
+  - Status: pass
+  - Evidence: exit code was 0
+  - Source event: entry-9
+- [x] `ac1_5` boundary - CLI adapter stays thin after config composition.
   - Command: `go test ./internal/arch -run TestCLIIsThin`
   - Expected kind: `exit_code_zero`
-  - Status: pending
-  - Evidence: none
-  - Source event: none
+  - Status: pass
+  - Evidence: exit code was 0
+  - Source event: entry-10
 
 ## Phase 2: Runtime validation pipeline
 
-Status: pending
+Status: completed
 Dependencies: phase1
 
 Objective: Decide and implement the validation contract. If validation profiles remain in config, scafld must execute them predictably; if they are agent guidance, they must be moved or labeled so users do not confuse them with enforced gates.
@@ -194,32 +194,34 @@ Changes:
 - `test/e2e/**` - Add lifecycle smoke coverage for profile resolution and validation command failure behavior if profiles are runtime-enforced.
 
 Acceptance:
-- [ ] `ac2_1` test - Acceptance expected-kind semantics are covered.
+- [x] `ac2_1` test - Acceptance expected-kind semantics are covered.
   - Command: `go test ./internal/core/acceptance ./internal/app/build`
   - Expected kind: `exit_code_zero`
-  - Status: pending
-  - Evidence: none
-  - Source event: none
-- [ ] `ac2_2` test - Validation docs and runtime tests agree on whether config profiles are enforced.
+  - Status: pass
+  - Evidence: exit code was 0
+  - Source event: entry-22
+- [x] `ac2_2` test - Validation docs and runtime tests agree on whether config profiles are enforced.
   - Command: `go test ./internal/adapters/config ./test/e2e`
   - Expected kind: `exit_code_zero`
-  - Status: pending
-  - Evidence: none
-  - Source event: none
-- [ ] `ac2_3` boundary - Docs do not claim validation config is runtime-enforced unless tests prove it.
+  - Status: pass
+  - Evidence: exit code was 0
+  - Source event: entry-23
+- [x] `ac2_3` boundary - Docs do not claim validation config is runtime-enforced unless tests prove it.
   - Command: `rg -n 'runtime-enforced validation|validation profiles are enforced|complete runs pre_commit|build runs per_phase' docs .scafld/core/prompts .scafld/config.yaml .scafld/core/config.yaml`
   - Expected kind: `no_matches`
-  - Status: pending
-  - Evidence: none
-  - Source event: none
-- [ ] `ac2_4` manual - Product decision is recorded in docs: validation profiles are either executable runtime policy or explicit agent guidance.
-  - Expected kind: `manual`
-  - Status: pending
-  - Evidence: none
+  - Status: pass
+  - Evidence: output was empty
+  - Source event: entry-24
+- [x] `ac2_4` boundary - Product decision is recorded in docs: validation profiles are explicit agent guidance, not hidden runtime policy.
+  - Command: `rg -n 'Validation profiles are agent guidance, not hidden runtime gates' docs/validation.md`
+  - Expected kind: `exit_code_zero`
+  - Status: pass
+  - Evidence: exit code was 0
+  - Source event: entry-25
 
 ## Phase 3: Review evidence, provenance, and complete gate sealing
 
-Status: pending
+Status: blocked
 Dependencies: phase1
 
 Objective: Make a review verdict auditable and fresh. A passing review must be tied to the provider output, validated packet, reviewed git state, session entry, and spec projection that complete relies on.
@@ -235,30 +237,30 @@ Changes:
 - `docs/run-artifacts.md` - Document review packet, hash, provenance, and complete-gate artifacts.
 
 Acceptance:
-- [ ] `ac3_1` test - Review packet validation, persistence, and provenance tests pass.
+- [x] `ac3_1` test - Review packet validation, persistence, and provenance tests pass.
   - Command: `go test ./internal/core/review ./internal/app/review ./internal/adapters/providers`
   - Expected kind: `exit_code_zero`
-  - Status: pending
-  - Evidence: none
-  - Source event: none
-- [ ] `ac3_2` test - Complete rejects stale or tampered review evidence.
+  - Status: pass
+  - Evidence: exit code was 0
+  - Source event: entry-30
+- [x] `ac3_2` test - Complete rejects stale or tampered review evidence.
   - Command: `go test ./internal/app/complete ./test/e2e -run 'Review|Complete'`
   - Expected kind: `exit_code_zero`
-  - Status: pending
-  - Evidence: none
-  - Source event: none
+  - Status: pass
+  - Evidence: exit code was 0
+  - Source event: entry-31
 - [ ] `ac3_3` boundary - Review sealing fields are present in code or schema.
   - Command: `rg -n 'canonical_response_sha256|reviewed_head|reviewed_dirty|reviewed_diff|provider_model|provider_session|review_packet' internal .scafld/core/schemas docs`
   - Expected kind: `exit_code_zero`
-  - Status: pending
-  - Evidence: none
-  - Source event: none
+  - Status: fail
+  - Evidence: exit code was 1
+  - Source event: entry-32
 - [ ] `ac3_4` boundary - Complete cannot rely only on spec text for review success.
   - Command: `rg -n 'Review\\.Verdict ==|Review\\.Status ==' internal/app/complete internal/app/review internal/core/session`
   - Expected kind: `exit_code_zero`
-  - Status: pending
-  - Evidence: none
-  - Source event: none
+  - Status: fail
+  - Evidence: exit code was 1
+  - Source event: entry-33
 
 ## Phase 4: Provider transport and failure diagnostics
 

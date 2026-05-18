@@ -238,22 +238,7 @@ func recordReviewDossier(ctx context.Context, specs SpecStore, sessions SessionS
 	if err := review.ValidateDossier(dossier); err != nil {
 		return Output{}, err
 	}
-	model.Status = spec.StatusReview
-	model.Review.Status = "completed"
-	model.Review.Verdict = dossier.Verdict
-	model.Review.Mode = dossier.Mode
-	model.Review.Summary = dossier.Summary
-	model.Review.Findings = dossier.Findings
-	model.Review.AttackLog = dossier.AttackLog
-	model.Review.Budget = dossier.Budget
-	model.Review.Provider = dossier.Provider
-	model.Review.Model = dossier.Model
-	model.Review.OutputFormat = dossier.OutputFormat
-	model.Review.Normalizations = dossier.Normalizations
-	model.CurrentState.ReviewGate = dossier.Verdict
 	next, command := nextForVerdict(model.TaskID, dossier.Verdict)
-	model.CurrentState.Next = next
-	model.CurrentState.AllowedFollowUp = command
 	ledger, err := sessions.Append(ctx, model.TaskID, session.Entry{
 		Type:     "review",
 		Status:   dossier.Verdict,
@@ -268,18 +253,6 @@ func recordReviewDossier(ctx context.Context, specs SpecStore, sessions SessionS
 		ledger = loaded
 	}
 	model = reconcile.FromSession(model, ledger)
-	model.Status = spec.StatusReview
-	model.Review.Status = "completed"
-	model.Review.Verdict = dossier.Verdict
-	model.Review.Mode = dossier.Mode
-	model.Review.Summary = dossier.Summary
-	model.Review.Findings = dossier.Findings
-	model.Review.AttackLog = dossier.AttackLog
-	model.Review.Budget = dossier.Budget
-	model.Review.Provider = dossier.Provider
-	model.Review.Model = dossier.Model
-	model.Review.OutputFormat = dossier.OutputFormat
-	model.Review.Normalizations = dossier.Normalizations
 	model.CurrentState.ReviewGate = dossier.Verdict
 	model.CurrentState.Next = next
 	model.CurrentState.AllowedFollowUp = command

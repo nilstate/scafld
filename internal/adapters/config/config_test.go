@@ -29,7 +29,15 @@ invariants:
   canonical:
     tenant_isolation: "Do not leak data across tenants."
 harden:
-  max_questions_per_round: 5
+  max_issues_per_round: 5
+  context_max_bytes: 2048
+  external:
+    provider: "gemini"
+    idle_timeout_seconds: 21
+    absolute_max_seconds: 43
+    gemini:
+      model: "gemini-harden"
+      binary: "gemini-harden-bin"
 review:
   external:
     provider: "codex"
@@ -39,6 +47,9 @@ review:
       model: "gpt-config"
     claude:
       model: "claude-config"
+    gemini:
+      model: "gemini-config"
+      binary: "gemini-bin"
   context:
     max_bytes: 4096
     files:
@@ -68,8 +79,11 @@ review:
 	if cfg.Version != "1.0" || cfg.LLM.ModelProfile != "team-default" {
 		t.Fatalf("config = %+v", cfg)
 	}
-	if cfg.Harden.MaxQuestionsPerRound != 5 {
+	if cfg.Harden.MaxIssuesPerRound != 5 {
 		t.Fatalf("harden config = %+v", cfg.Harden)
+	}
+	if cfg.Harden.ContextMaxBytes != 2048 || cfg.Harden.External.Provider != "gemini" || cfg.Harden.External.Gemini.Model != "gemini-harden" || cfg.Harden.External.Gemini.Binary != "gemini-harden-bin" || cfg.Harden.External.IdleTimeoutSeconds != 21 || cfg.Harden.External.AbsoluteMaxSeconds != 43 {
+		t.Fatalf("harden external config = %+v", cfg.Harden.External)
 	}
 	if len(cfg.Execution.PathPrepend) != 1 || cfg.Execution.PathPrepend[0] != "$HOME/.rbenv/shims" || cfg.Execution.Env["BUNDLE_GEMFILE"] != "api/Gemfile" || cfg.Execution.AbsoluteTimeoutSeconds != 600 || cfg.Execution.IdleTimeoutSeconds != 90 {
 		t.Fatalf("execution config = %+v", cfg.Execution)
@@ -77,7 +91,7 @@ review:
 	if cfg.Invariants.Canonical["tenant_isolation"] != "Do not leak data across tenants." {
 		t.Fatalf("invariants = %+v", cfg.Invariants.Canonical)
 	}
-	if cfg.Review.External.Provider != "codex" || cfg.Review.External.Codex.Model != "gpt-config" || cfg.Review.External.Claude.Model != "claude-config" {
+	if cfg.Review.External.Provider != "codex" || cfg.Review.External.Codex.Model != "gpt-config" || cfg.Review.External.Claude.Model != "claude-config" || cfg.Review.External.Gemini.Model != "gemini-config" || cfg.Review.External.Gemini.Binary != "gemini-bin" {
 		t.Fatalf("review config = %+v", cfg.Review.External)
 	}
 	if cfg.Review.External.IdleTimeoutSeconds != 12 || cfg.Review.External.AbsoluteMaxSeconds != 34 {
@@ -110,6 +124,11 @@ review:
       model: "gpt-config"
     claude:
       model: "claude-config"
+harden:
+  external:
+    provider: "codex"
+    codex:
+      model: "gpt-harden-config"
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -131,6 +150,12 @@ review:
   adversarial_passes:
     regression_hunt:
       description: "Local override"
+harden:
+  external:
+    provider: "gemini"
+    gemini:
+      model: "gemini-harden-local"
+      binary: "gemini-local-bin"
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -144,8 +169,8 @@ review:
 	if cfg.Review.External.Codex.Model != "gpt-config" || cfg.Review.External.AbsoluteMaxSeconds != 34 {
 		t.Fatalf("base values were not preserved: %+v", cfg.Review.External)
 	}
-	if cfg.Harden.MaxQuestionsPerRound != 8 {
-		t.Fatalf("default harden config not applied: %+v", cfg.Harden)
+	if cfg.Harden.MaxIssuesPerRound != 8 || cfg.Harden.External.Provider != "gemini" || cfg.Harden.External.Codex.Model != "gpt-harden-config" || cfg.Harden.External.Gemini.Model != "gemini-harden-local" || cfg.Harden.External.Gemini.Binary != "gemini-local-bin" {
+		t.Fatalf("harden overlay/defaults not applied: %+v", cfg.Harden)
 	}
 	if !contains(cfg.Review.Context.Files, "MEMORY.md") || !contains(cfg.Review.Context.Files, "AGENTS.md") {
 		t.Fatalf("review context overlay did not apply: %+v", cfg.Review.Context)
@@ -249,7 +274,7 @@ func TestConfigDefaultWhenMissing(t *testing.T) {
 	if len(cfg.Review.AdversarialPasses) == 0 || len(cfg.Review.AutomatedPasses) == 0 {
 		t.Fatalf("default review passes missing = %+v", cfg.Review)
 	}
-	if cfg.Harden.MaxQuestionsPerRound != 8 {
+	if cfg.Harden.MaxIssuesPerRound != 8 {
 		t.Fatalf("default harden config missing = %+v", cfg.Harden)
 	}
 	if cfg.Execution.AbsoluteTimeoutSeconds != 300 {
@@ -271,7 +296,7 @@ func writeFile(t *testing.T, root string, rel string, text string) {
 	}
 }
 
-func TestConfigRejectsInvariantListWithUpdateHint(t *testing.T) {
+func TestConfigRejectsInvariantList(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
@@ -292,7 +317,10 @@ invariants:
 		t.Fatal("Load succeeded, want strict config shape error")
 	}
 	text := err.Error()
-	for _, want := range []string{"invariants.canonical must be a mapping", "scafld update"} {
+	if strings.Contains(text, "scafld update") {
+		t.Fatalf("error %q should not advertise an update-time repair", text)
+	}
+	for _, want := range []string{"invariants.canonical must be a mapping", "not a list"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("error %q missing %q", text, want)
 		}

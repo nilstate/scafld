@@ -62,12 +62,19 @@ func TestRoundTripPreservesLiterateSpecFields(t *testing.T) {
 			Result:     "passed",
 			Evidence:   "Scope paths checked.",
 		}},
-		Questions: []spec.HardenQuestion{{
-			Question:          "What owns the parser contract?",
-			GroundedIn:        "code:internal/adapters/markdown/spec_store.go:1",
-			RecommendedAnswer: "The markdown adapter owns the grammar.",
-			IfUnanswered:      "Keep grammar changes in the adapter.",
-			AnsweredWith:      "Adapter-owned.",
+		Issues: []spec.HardenIssue{{
+			ID:                "harden-1",
+			Kind:              "question",
+			Severity:          "low",
+			BlocksApproval:    false,
+			Status:            "open",
+			GroundedIn:        "spec_gap:Rollback",
+			Summary:           "Rollback could name a recovery command.",
+			Evidence:          "Rollback exists but is terse.",
+			Recommendation:    "Name the command if already known.",
+			Question:          "What recovery command should a human run?",
+			RecommendedAnswer: "Use the existing repair command.",
+			IfUnanswered:      "Keep rollback as-is.",
 		}},
 	}}
 	model.Review = spec.ReviewState{Status: "completed", Verdict: corereview.VerdictFail, Mode: corereview.ModeDiscover, Provider: "claude", Model: "claude-test", OutputFormat: "claude.mcp_submit_review", Summary: "Review found an open blocker.", Findings: []corereview.Finding{{ID: "f1", Severity: corereview.SeverityHigh, BlocksCompletion: true, Location: &corereview.Location{Path: "file.go"}, Evidence: "bug", Impact: "test impact", Validation: "rerun test", Summary: "bug"}}}
@@ -98,8 +105,8 @@ func TestRoundTripPreservesLiterateSpecFields(t *testing.T) {
 	if got := parsed.HardenRounds[0].Checks[0]; got.Name != "Path audit" || got.Result != "passed" || got.Evidence == "" {
 		t.Fatalf("harden check lost: %+v", got)
 	}
-	if got := parsed.HardenRounds[0].Questions[0]; got.GroundedIn == "" || got.AnsweredWith != "Adapter-owned." {
-		t.Fatalf("harden question lost: %+v", got)
+	if got := parsed.HardenRounds[0].Issues[0]; got.ID != "harden-1" || got.BlocksApproval || got.RecommendedAnswer == "" {
+		t.Fatalf("harden issue lost: %+v", got)
 	}
 	if got := parsed.Phases[0].Acceptance[0]; got.Evidence != "exit code was 0" || got.SourceEvent != "entry-1" {
 		t.Fatalf("criterion evidence lost: %+v", got)
@@ -177,7 +184,7 @@ func TestParseDefaultsBrowserCriteriaToBrowserEvidence(t *testing.T) {
 	}
 }
 
-func TestParseNormalizesMixedHardenQuestionFormats(t *testing.T) {
+func TestParseRoundTripsHardenIssues(t *testing.T) {
 	t.Parallel()
 
 	input := string(Render(fixtureModel()))
@@ -195,15 +202,20 @@ Checks:
   - Result: passed
   - Evidence: Scope paths checked.
 
-Questions:
-- question: "Should the implementation hard-block compose tool calls unless the client proves it read ` + "`" + `nitro://email-design` + "`" + `?"
-  grounded_in: "spec_gap:Scope"
-  recommended_answer: "No. Additive MCP resource reads are not statefully tied to later tool calls."
-  resolution: "Accepted in scope/out-of-scope and risks."
-- Should the implementation hard-block compose tool calls unless the client proves it read ` + "`" + `nitro://email-design` + "`" + `?
-  - Grounded in: spec_gap:Scope
-  - Recommended answer: No. Additive MCP resource reads are not statefully tied to later tool calls.
-  - Answered with: Accepted in scope/out-of-scope and risks.
+Issues:
+- [high/blocks approval] ` + "`" + `harden-1` + "`" + ` design_challenge - The plan is a bandaid.
+  - Status: open
+  - Grounded in: spec_gap:Summary
+  - Evidence: The summary names the patch but not the root cause.
+  - Recommendation: Fix the root cause or narrow the plan.
+- [low/advisory] ` + "`" + `harden-2` + "`" + ` question - The rollback could name a recovery command.
+  - Status: open
+  - Grounded in: spec_gap:Rollback
+  - Evidence: Rollback exists but is terse.
+  - Recommendation: Name the recovery command if known.
+  - Question: What should a human run if the cutover fails?
+  - Recommended answer: Use the existing repair command.
+  - If unanswered: Keep rollback as-is.
 
 ## Planning Log`
 	input = strings.Replace(input, "## Harden Rounds\n\n- none\n\n## Planning Log", harden, 1)
@@ -212,27 +224,20 @@ Questions:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(parsed.HardenRounds) != 1 {
-		t.Fatalf("harden rounds = %+v", parsed.HardenRounds)
+	issues := parsed.HardenRounds[0].Issues
+	if len(issues) != 2 {
+		t.Fatalf("issues = %+v", issues)
 	}
-	questions := parsed.HardenRounds[0].Questions
-	if len(parsed.HardenRounds[0].Checks) != 1 || parsed.HardenRounds[0].Checks[0].Name != "Path audit" {
-		t.Fatalf("checks = %+v", parsed.HardenRounds[0].Checks)
+	if !issues[0].BlocksApproval || issues[0].Kind != "design_challenge" || issues[0].Status != "open" {
+		t.Fatalf("blocking issue = %+v", issues[0])
 	}
-	if len(questions) != 1 {
-		t.Fatalf("questions = %+v", questions)
+	if issues[1].BlocksApproval || issues[1].Question == "" || issues[1].RecommendedAnswer == "" {
+		t.Fatalf("advisory issue = %+v", issues[1])
 	}
-	got := questions[0]
-	if got.GroundedIn != "spec_gap:Scope" || got.RecommendedAnswer == "" || got.AnsweredWith != "Accepted in scope/out-of-scope and risks." {
-		t.Fatalf("question fields = %+v", got)
-	}
-
 	rendered := string(Render(parsed))
-	if strings.Contains(rendered, "- question:") || strings.Contains(rendered, "grounded_in:") || strings.Contains(rendered, "resolution:") {
-		t.Fatalf("render kept noncanonical harden fields:\n%s", rendered)
-	}
-	if count := strings.Count(rendered, "Should the implementation hard-block compose tool calls"); count != 1 {
-		t.Fatalf("rendered duplicate harden questions (%d):\n%s", count, rendered)
+	if !strings.Contains(rendered, "Issues:\n- [high/blocks approval] `harden-1` design_challenge") ||
+		!strings.Contains(rendered, "- [low/advisory] `harden-2` question") {
+		t.Fatalf("rendered issues missing:\n%s", rendered)
 	}
 }
 

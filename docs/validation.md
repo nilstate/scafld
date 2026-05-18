@@ -51,6 +51,10 @@ criteria and evaluates the result against `Expected kind`. The full command
 output is captured in the session/diagnostic surface; the spec keeps only
 concise projected evidence.
 
+Validation profiles are agent guidance, not hidden runtime gates. Runtime
+success is proven by explicit acceptance criteria in the spec, review dossier
+validation, and the complete gate's review authority checks.
+
 ## Manual Evidence
 
 Manual work belongs in prose, harden rounds, review findings, or session notes

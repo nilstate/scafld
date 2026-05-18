@@ -13,14 +13,12 @@ Usage:
   scafld review <task_id> [flags]
 
 Flags:
-  --provider NAME          Review provider: auto, codex, claude, command, or local
+  --provider NAME          Review provider: auto, codex, claude, gemini, command, or local
   --model MODEL            Provider model override
   --provider-binary PATH   Provider binary override
   --provider-command CMD   Command provider shell command
   --review-scope PATHS     Comma-separated paths that override derived task scope
   --mode MODE              Review mode: discover or verify
-  --full                   Alias for --mode discover
-  --verify                 Alias for --mode verify
   --max-findings N         Bound provider output volume
   --min-attack-angles N    Request at least N attack-log entries
   --review-depth TEXT      Review depth: light, standard, or deep
@@ -42,6 +40,13 @@ Review scope:
   The approval baseline is recorded before task execution. Outside-scope drift
   is included as ambient workspace context, not blocked before provider spend.
   Task-relevant changes during review still fail closed.
+
+Provider auto:
+  auto prefers the other installed agent when scafld can infer the current
+  host agent, can use Gemini as an additional external challenger, then falls
+  back if needed. Set
+  SCAFLD_HOST_AGENT=codex or SCAFLD_HOST_AGENT=claude when a wrapper does not
+  expose a recognizable host marker.
 
 Context:
   Print the deterministic reviewer brief without spending provider tokens:

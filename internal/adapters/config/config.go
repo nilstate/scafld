@@ -43,9 +43,9 @@ type ExecutionConfig struct {
 
 // HardenConfig controls hardening prompt behavior.
 type HardenConfig struct {
-	MaxQuestionsPerRound int                  `yaml:"max_questions_per_round"`
-	ContextMaxBytes      int                  `yaml:"context_max_bytes"`
-	External             ExternalReviewConfig `yaml:"external"`
+	MaxIssuesPerRound int                  `yaml:"max_issues_per_round"`
+	ContextMaxBytes   int                  `yaml:"context_max_bytes"`
+	External          ExternalReviewConfig `yaml:"external"`
 }
 
 // ReviewConfig controls automated and adversarial review behavior.
@@ -81,6 +81,7 @@ type ExternalReviewConfig struct {
 	FallbackPolicy     string         `yaml:"fallback_policy"`
 	Codex              ProviderConfig `yaml:"codex"`
 	Claude             ProviderConfig `yaml:"claude"`
+	Gemini             ProviderConfig `yaml:"gemini"`
 }
 
 // ProviderConfig configures a named external provider implementation.
@@ -147,7 +148,7 @@ func validateConfigShape(path string, data []byte) error {
 		return nil
 	}
 	if canonical.Kind == yaml.SequenceNode {
-		return fmt.Errorf("parse config %s: invariants.canonical must be a mapping of id to description, not a list; run scafld update to normalize generated config shape", path)
+		return fmt.Errorf("parse config %s: invariants.canonical must be a mapping of id to description, not a list", path)
 	}
 	if canonical.Kind != yaml.MappingNode {
 		return fmt.Errorf("parse config %s: invariants.canonical must be a mapping of id to description", path)
@@ -193,14 +194,15 @@ func Default() Config {
 			AbsoluteTimeoutSeconds: 300,
 		},
 		Harden: HardenConfig{
-			MaxQuestionsPerRound: 8,
-			ContextMaxBytes:      16384,
+			MaxIssuesPerRound: 8,
+			ContextMaxBytes:   16384,
 			External: ExternalReviewConfig{
 				IdleTimeoutSeconds: 180,
 				AbsoluteMaxSeconds: 1800,
 				FallbackPolicy:     "warn",
 				Codex:              ProviderConfig{Model: "gpt-5.5"},
 				Claude:             ProviderConfig{Model: "claude-opus-4-7"},
+				Gemini:             ProviderConfig{},
 			},
 		},
 		Review: ReviewConfig{
@@ -211,6 +213,7 @@ func Default() Config {
 				FallbackPolicy:     "warn",
 				Codex:              ProviderConfig{Model: "gpt-5.5"},
 				Claude:             ProviderConfig{Model: "claude-opus-4-7"},
+				Gemini:             ProviderConfig{},
 			},
 			Context: ReviewContextConfig{
 				MaxBytes: 16384,
@@ -253,8 +256,8 @@ func overlay(base Config, local Config) Config {
 		base.LLM.ModelProfile = local.LLM.ModelProfile
 	}
 	base.Execution = overlayExecution(base.Execution, local.Execution)
-	if local.Harden.MaxQuestionsPerRound > 0 {
-		base.Harden.MaxQuestionsPerRound = local.Harden.MaxQuestionsPerRound
+	if local.Harden.MaxIssuesPerRound > 0 {
+		base.Harden.MaxIssuesPerRound = local.Harden.MaxIssuesPerRound
 	}
 	if local.Harden.ContextMaxBytes > 0 {
 		base.Harden.ContextMaxBytes = local.Harden.ContextMaxBytes
@@ -289,6 +292,7 @@ func overlayExternal(base ExternalReviewConfig, local ExternalReviewConfig) Exte
 	}
 	base.Codex = overlayProvider(base.Codex, local.Codex)
 	base.Claude = overlayProvider(base.Claude, local.Claude)
+	base.Gemini = overlayProvider(base.Gemini, local.Gemini)
 	return base
 }
 
@@ -404,8 +408,8 @@ func withDefaults(cfg Config) Config {
 		cfg.LLM.ModelProfile = defaults.LLM.ModelProfile
 	}
 	cfg.Execution = overlayExecution(defaults.Execution, cfg.Execution)
-	if cfg.Harden.MaxQuestionsPerRound <= 0 {
-		cfg.Harden.MaxQuestionsPerRound = defaults.Harden.MaxQuestionsPerRound
+	if cfg.Harden.MaxIssuesPerRound <= 0 {
+		cfg.Harden.MaxIssuesPerRound = defaults.Harden.MaxIssuesPerRound
 	}
 	if cfg.Harden.ContextMaxBytes <= 0 {
 		cfg.Harden.ContextMaxBytes = defaults.Harden.ContextMaxBytes

@@ -68,14 +68,31 @@ type Selection struct {
 	Model          string
 	CodexModel     string
 	ClaudeModel    string
+	GeminiModel    string
 	CodexBinary    string
 	ClaudeBinary   string
+	GeminiBinary   string
 	CWD            string
 	Runner         Runner
 	Timeout        time.Duration
 	Idle           time.Duration
 	FallbackPolicy string
+	HostAgent      string
+	CommandExists  func(string) bool
 }
+
+// AutoProvider describes the concrete provider selected for provider:auto.
+type AutoProvider struct {
+	Provider string
+	Model    string
+}
+
+const (
+	// HostAgentCodex identifies Codex as the agent currently driving scafld.
+	HostAgentCodex = "codex"
+	// HostAgentClaude identifies Claude as the agent currently driving scafld.
+	HostAgentClaude = "claude"
+)
 
 // Select returns the configured review provider implementation.
 func Select(opts Selection) (interface {
@@ -101,6 +118,8 @@ func Select(opts Selection) (interface {
 		return ClaudeProvider{Binary: first(opts.Binary, opts.ClaudeBinary), Model: first(opts.Model, opts.ClaudeModel), CWD: opts.CWD, Runner: opts.Runner, Timeout: opts.Timeout, IdleTimeout: opts.Idle}, nil
 	case "codex":
 		return CodexProvider{Binary: first(opts.Binary, opts.CodexBinary), Model: first(opts.Model, opts.CodexModel), CWD: opts.CWD, Runner: opts.Runner, Timeout: opts.Timeout, IdleTimeout: opts.Idle}, nil
+	case "gemini":
+		return GeminiProvider{Binary: first(opts.Binary, opts.GeminiBinary), Model: first(opts.Model, opts.GeminiModel), CWD: opts.CWD, Runner: opts.Runner, Timeout: opts.Timeout, IdleTimeout: opts.Idle}, nil
 	default:
 		return nil, fmt.Errorf("unknown review provider %q", opts.Provider)
 	}
@@ -128,6 +147,8 @@ func SelectAgent(opts Selection) (Agent, error) {
 		return ClaudeProvider{Binary: first(opts.Binary, opts.ClaudeBinary), Model: first(opts.Model, opts.ClaudeModel), CWD: opts.CWD, Runner: opts.Runner, Timeout: opts.Timeout, IdleTimeout: opts.Idle}, nil
 	case "codex":
 		return CodexProvider{Binary: first(opts.Binary, opts.CodexBinary), Model: first(opts.Model, opts.CodexModel), CWD: opts.CWD, Runner: opts.Runner, Timeout: opts.Timeout, IdleTimeout: opts.Idle}, nil
+	case "gemini":
+		return GeminiProvider{Binary: first(opts.Binary, opts.GeminiBinary), Model: first(opts.Model, opts.GeminiModel), CWD: opts.CWD, Runner: opts.Runner, Timeout: opts.Timeout, IdleTimeout: opts.Idle}, nil
 	default:
 		return nil, fmt.Errorf("unknown provider %q", opts.Provider)
 	}
@@ -136,35 +157,160 @@ func SelectAgent(opts Selection) (Agent, error) {
 func selectAuto(opts Selection) (interface {
 	Invoke(context.Context, review.Request) (review.Dossier, error)
 }, error) {
-	if opts.Binary != "" {
-		return CodexProvider{Binary: opts.Binary, Model: opts.Model, CWD: opts.CWD, Runner: opts.Runner, Timeout: opts.Timeout, IdleTimeout: opts.Idle}, nil
+	selected, err := AutoProviderInfo(opts)
+	if err != nil {
+		return nil, err
 	}
-	if _, err := osexec.LookPath("codex"); err == nil {
-		return CodexProvider{Binary: opts.CodexBinary, Model: first(opts.Model, opts.CodexModel), CWD: opts.CWD, Runner: opts.Runner, Timeout: opts.Timeout, IdleTimeout: opts.Idle}, nil
-	}
-	if opts.FallbackPolicy == "disable" {
-		return nil, errors.New("codex review provider not found and review.external.fallback_policy is disable")
-	}
-	if _, err := osexec.LookPath("claude"); err == nil {
-		return ClaudeProvider{Binary: opts.ClaudeBinary, Model: first(opts.Model, opts.ClaudeModel), CWD: opts.CWD, Runner: opts.Runner, Timeout: opts.Timeout, IdleTimeout: opts.Idle}, nil
-	}
-	return nil, errors.New("no external review provider found; install codex or claude, use --provider command --provider-command <cmd>, or use --provider local for development smoke tests")
+	return reviewProviderFor(selected.Provider, opts), nil
 }
 
 func selectAutoAgent(opts Selection) (Agent, error) {
-	if opts.Binary != "" {
-		return CodexProvider{Binary: opts.Binary, Model: opts.Model, CWD: opts.CWD, Runner: opts.Runner, Timeout: opts.Timeout, IdleTimeout: opts.Idle}, nil
+	selected, err := AutoProviderInfo(opts)
+	if err != nil {
+		return nil, err
 	}
-	if _, err := osexec.LookPath("codex"); err == nil {
-		return CodexProvider{Binary: opts.CodexBinary, Model: first(opts.Model, opts.CodexModel), CWD: opts.CWD, Runner: opts.Runner, Timeout: opts.Timeout, IdleTimeout: opts.Idle}, nil
+	return agentProviderFor(selected.Provider, opts), nil
+}
+
+// AutoProviderInfo returns the concrete external provider selected by auto.
+//
+// When scafld can tell which agent is currently driving the task, auto prefers
+// the other installed provider for independent review/hardening. If that other
+// provider is unavailable, auto falls back to the current agent unless fallback
+// is explicitly disabled.
+func AutoProviderInfo(opts Selection) (AutoProvider, error) {
+	hostAgent := normalizeHostAgent(opts.HostAgent)
+	order := autoProviderOrder(opts.HostAgent)
+	for _, provider := range order {
+		if opts.FallbackPolicy == "disable" && hostAgent != "" && provider == hostAgent {
+			continue
+		}
+		if autoProviderAvailable(provider, opts) {
+			return AutoProvider{Provider: provider, Model: autoProviderModel(provider, opts)}, nil
+		}
 	}
-	if opts.FallbackPolicy == "disable" {
-		return nil, errors.New("codex provider not found and fallback_policy is disable")
+	if opts.FallbackPolicy == "disable" && hostAgent != "" {
+		return AutoProvider{}, errors.New("no independent auto provider found; fallback_policy is disable and only the host provider is available")
 	}
-	if _, err := osexec.LookPath("claude"); err == nil {
-		return ClaudeProvider{Binary: opts.ClaudeBinary, Model: first(opts.Model, opts.ClaudeModel), CWD: opts.CWD, Runner: opts.Runner, Timeout: opts.Timeout, IdleTimeout: opts.Idle}, nil
+	return AutoProvider{}, errors.New("no external provider found; install codex, claude, or gemini, use --provider command --provider-command <cmd>, or use --provider local for development smoke tests")
+}
+
+func reviewProviderFor(provider string, opts Selection) interface {
+	Invoke(context.Context, review.Request) (review.Dossier, error)
+} {
+	switch provider {
+	case "claude":
+		return ClaudeProvider{Binary: first(opts.Binary, opts.ClaudeBinary), Model: first(opts.Model, opts.ClaudeModel), CWD: opts.CWD, Runner: opts.Runner, Timeout: opts.Timeout, IdleTimeout: opts.Idle}
+	case "gemini":
+		return GeminiProvider{Binary: first(opts.Binary, opts.GeminiBinary), Model: first(opts.Model, opts.GeminiModel), CWD: opts.CWD, Runner: opts.Runner, Timeout: opts.Timeout, IdleTimeout: opts.Idle}
+	default:
+		return CodexProvider{Binary: first(opts.Binary, opts.CodexBinary), Model: first(opts.Model, opts.CodexModel), CWD: opts.CWD, Runner: opts.Runner, Timeout: opts.Timeout, IdleTimeout: opts.Idle}
 	}
-	return nil, errors.New("no external provider found; install codex or claude, use --provider command --provider-command <cmd>, or use --provider local for development smoke tests")
+}
+
+func agentProviderFor(provider string, opts Selection) Agent {
+	switch provider {
+	case "claude":
+		return ClaudeProvider{Binary: first(opts.Binary, opts.ClaudeBinary), Model: first(opts.Model, opts.ClaudeModel), CWD: opts.CWD, Runner: opts.Runner, Timeout: opts.Timeout, IdleTimeout: opts.Idle}
+	case "gemini":
+		return GeminiProvider{Binary: first(opts.Binary, opts.GeminiBinary), Model: first(opts.Model, opts.GeminiModel), CWD: opts.CWD, Runner: opts.Runner, Timeout: opts.Timeout, IdleTimeout: opts.Idle}
+	default:
+		return CodexProvider{Binary: first(opts.Binary, opts.CodexBinary), Model: first(opts.Model, opts.CodexModel), CWD: opts.CWD, Runner: opts.Runner, Timeout: opts.Timeout, IdleTimeout: opts.Idle}
+	}
+}
+
+func autoProviderOrder(hostAgent string) []string {
+	switch normalizeHostAgent(hostAgent) {
+	case HostAgentCodex:
+		return []string{"claude", "gemini", "codex"}
+	case HostAgentClaude:
+		return []string{"codex", "gemini", "claude"}
+	default:
+		return []string{"codex", "claude", "gemini"}
+	}
+}
+
+func autoProviderAvailable(provider string, opts Selection) bool {
+	switch provider {
+	case "codex":
+		return strings.TrimSpace(opts.Binary) != "" || strings.TrimSpace(opts.CodexBinary) != "" || commandExists(opts, "codex")
+	case "claude":
+		return strings.TrimSpace(opts.Binary) != "" || strings.TrimSpace(opts.ClaudeBinary) != "" || commandExists(opts, "claude")
+	case "gemini":
+		return strings.TrimSpace(opts.Binary) != "" || strings.TrimSpace(opts.GeminiBinary) != "" || commandExists(opts, "gemini")
+	default:
+		return false
+	}
+}
+
+func autoProviderModel(provider string, opts Selection) string {
+	switch provider {
+	case "claude":
+		return first(opts.Model, opts.ClaudeModel)
+	case "gemini":
+		return first(opts.Model, opts.GeminiModel)
+	default:
+		return first(opts.Model, opts.CodexModel)
+	}
+}
+
+func commandExists(opts Selection, name string) bool {
+	if opts.CommandExists != nil {
+		return opts.CommandExists(name)
+	}
+	_, err := osexec.LookPath(name)
+	return err == nil
+}
+
+// DetectHostAgent infers whether scafld is being driven by Codex or Claude.
+// SCAFLD_HOST_AGENT can be set to codex or claude when the host does not expose
+// a recognizable environment marker.
+func DetectHostAgent(environ []string) string {
+	for _, entry := range environ {
+		key, value, ok := strings.Cut(entry, "=")
+		if !ok {
+			continue
+		}
+		if strings.EqualFold(key, "SCAFLD_HOST_AGENT") {
+			return normalizeHostAgent(value)
+		}
+	}
+	for _, entry := range environ {
+		key, _, _ := strings.Cut(entry, "=")
+		upper := strings.ToUpper(strings.TrimSpace(key))
+		switch {
+		case upper == "CODEX" || strings.HasPrefix(upper, "CODEX_"):
+			return HostAgentCodex
+		case claudeHostEnvKey(upper):
+			return HostAgentClaude
+		}
+	}
+	return ""
+}
+
+func claudeHostEnvKey(key string) bool {
+	switch {
+	case key == "CLAUDECODE" || strings.HasPrefix(key, "CLAUDECODE_"):
+		return true
+	case key == "CLAUDE_CODE" || strings.HasPrefix(key, "CLAUDE_CODE_"):
+		return true
+	case key == "CLAUDE_SESSION_ID" || strings.HasPrefix(key, "CLAUDE_SESSION_"):
+		return true
+	default:
+		return false
+	}
+}
+
+func normalizeHostAgent(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	switch {
+	case strings.Contains(value, "codex"):
+		return HostAgentCodex
+	case strings.Contains(value, "claude"):
+		return HostAgentClaude
+	default:
+		return ""
+	}
 }
 
 func first(values ...string) string {
@@ -401,6 +547,109 @@ func (p CodexProvider) Invoke(ctx context.Context, req review.Request) (review.D
 	return invokeReviewAgent(ctx, p, req)
 }
 
+// GeminiProvider invokes Gemini CLI in read-only plan mode with a scafld-owned
+// MCP submit tool for the final dossier.
+type GeminiProvider struct {
+	Binary         string
+	Model          string
+	ScafldBinary   string
+	SubmissionPath string
+	SettingsPath   string
+	PolicyPath     string
+	CWD            string
+	Env            []string
+	Runner         Runner
+	Timeout        time.Duration
+	IdleTimeout    time.Duration
+}
+
+// InvokeAgent sends the prompt to Gemini and reads the scafld MCP submission.
+func (p GeminiProvider) InvokeAgent(ctx context.Context, req AgentRequest) (AgentResponse, error) {
+	if p.Runner == nil {
+		return AgentResponse{}, fmt.Errorf("%w: runner is required", ErrProviderFailed)
+	}
+	submissionPath := p.SubmissionPath
+	cleanupSubmission := func() {}
+	if submissionPath == "" {
+		file, err := os.CreateTemp("", "scafld-gemini-"+safeSchemaName(req.SchemaName)+"-*.json")
+		if err != nil {
+			return AgentResponse{}, fmt.Errorf("%w: create submission file: %v", ErrProviderFailed, err)
+		}
+		submissionPath = file.Name()
+		_ = file.Close()
+		cleanupSubmission = func() { _ = os.Remove(submissionPath) }
+	}
+	defer cleanupSubmission()
+	tool := req.SubmitTool
+	if strings.TrimSpace(tool.Name) == "" {
+		tool = reviewSubmitTool()
+	}
+	settingsPath := p.SettingsPath
+	cleanupSettings := func() {}
+	if settingsPath == "" {
+		file, err := os.CreateTemp("", "scafld-gemini-settings-*.json")
+		if err != nil {
+			return AgentResponse{}, fmt.Errorf("%w: create Gemini settings file: %v", ErrProviderFailed, err)
+		}
+		settingsPath = file.Name()
+		_ = file.Close()
+		cleanupSettings = func() { _ = os.Remove(settingsPath) }
+	}
+	defer cleanupSettings()
+	if err := os.WriteFile(filepath.Clean(settingsPath), []byte(GeminiSettingsJSON(scafldBinaryOrDefault(p.ScafldBinary), submissionPath, tool)), 0o600); err != nil {
+		return AgentResponse{}, fmt.Errorf("%w: write Gemini settings file: %v", ErrProviderFailed, err)
+	}
+	policyPath := p.PolicyPath
+	cleanupPolicy := func() {}
+	if policyPath == "" {
+		file, err := os.CreateTemp("", "scafld-gemini-policy-*.toml")
+		if err != nil {
+			return AgentResponse{}, fmt.Errorf("%w: create Gemini policy file: %v", ErrProviderFailed, err)
+		}
+		policyPath = file.Name()
+		_ = file.Close()
+		cleanupPolicy = func() { _ = os.Remove(policyPath) }
+	}
+	defer cleanupPolicy()
+	if err := os.WriteFile(filepath.Clean(policyPath), []byte(GeminiPolicyTOML(tool)), 0o600); err != nil {
+		return AgentResponse{}, fmt.Errorf("%w: write Gemini policy file: %v", ErrProviderFailed, err)
+	}
+	env := append([]string(nil), p.Env...)
+	env = append(env, "GEMINI_CLI_SYSTEM_SETTINGS_PATH="+settingsPath)
+	result, err := p.Runner.Run(ctx, execution.Request{
+		Args:                   GeminiArgs(binaryOrDefault(p.Binary, "gemini"), p.Model, tool, policyPath),
+		Input:                  GeminiPrompt(req.Prompt, tool),
+		CWD:                    p.CWD,
+		Env:                    env,
+		Timeout:                p.Timeout,
+		IdleTimeout:            p.IdleTimeout,
+		SuppressProgressStderr: true,
+		StdoutEventInspector:   GeminiEventName,
+	})
+	data, readErr := os.ReadFile(filepath.Clean(submissionPath))
+	if readErr != nil && !os.IsNotExist(readErr) {
+		return AgentResponse{}, fmt.Errorf("%w: read submission: %v", ErrProviderFailed, readErr)
+	}
+	body := strings.TrimSpace(string(data))
+	if body == "" {
+		return AgentResponse{}, providerFailedError(result, fmt.Errorf("provider produced no submission; Gemini must call mcp_scafld_%s exactly once and final text is ignored", tool.Name))
+	}
+	return AgentResponse{
+		Text:         body,
+		Provider:     "gemini",
+		Model:        extractGeminiModel(result.Stdout),
+		OutputFormat: "gemini.mcp_" + tool.Name,
+		EventSummary: eventSummary(result.StdoutEvents, nil),
+		Result:       result,
+		RunErr:       err,
+	}, nil
+}
+
+// Invoke sends the review prompt to Gemini and parses the resulting dossier.
+func (p GeminiProvider) Invoke(ctx context.Context, req review.Request) (review.Dossier, error) {
+	return invokeReviewAgent(ctx, p, req)
+}
+
 // ClaudeArgs builds the argv for restricted Claude execution.
 func ClaudeArgs(binary string, model string, sessionID string, mcpConfig string, tool SubmitTool) []string {
 	toolName := strings.TrimSpace(tool.Name)
@@ -454,6 +703,94 @@ func ClaudeMCPConfig(scafldBinary string, submissionPath string, tool SubmitTool
 		return `{"mcpServers":{}}`
 	}
 	return string(data)
+}
+
+// GeminiArgs builds the argv for restricted Gemini execution.
+func GeminiArgs(binary string, model string, tool SubmitTool, policyPath string) []string {
+	toolName := strings.TrimSpace(tool.Name)
+	if toolName == "" {
+		toolName = "submit_review"
+	}
+	args := []string{
+		binary,
+		"--skip-trust",
+		"--approval-mode",
+		"plan",
+		"--output-format",
+		"stream-json",
+		"--allowed-mcp-server-names",
+		"scafld",
+		"--policy",
+		policyPath,
+		"--prompt",
+		"",
+	}
+	if model != "" {
+		args = append(args, "--model", model)
+	}
+	return args
+}
+
+// GeminiPolicyTOML allows exactly the scafld submit tool in Gemini plan mode.
+func GeminiPolicyTOML(tool SubmitTool) string {
+	toolName := strings.TrimSpace(tool.Name)
+	if toolName == "" {
+		toolName = "submit_review"
+	}
+	return `[[rule]]
+mcpName = "scafld"
+toolName = "` + toolName + `"
+decision = "allow"
+priority = 900
+modes = ["plan"]
+interactive = false
+`
+}
+
+// GeminiSettingsJSON returns an isolated single-server MCP configuration for
+// Gemini CLI. It is passed through GEMINI_CLI_SYSTEM_SETTINGS_PATH so scafld does
+// not mutate project or user Gemini settings during review.
+func GeminiSettingsJSON(scafldBinary string, submissionPath string, tool SubmitTool) string {
+	command := strings.TrimSpace(tool.Command)
+	if command == "" {
+		command = "review-submit-stdio"
+	}
+	config := map[string]any{
+		"general": map[string]any{
+			"defaultApprovalMode": "plan",
+		},
+		"mcp": map[string]any{
+			"allowed": []string{"scafld"},
+		},
+		"mcpServers": map[string]any{
+			"scafld": map[string]any{
+				"command":      scafldBinary,
+				"args":         []string{command, "--out", submissionPath},
+				"includeTools": []string{tool.Name},
+				"trust":        true,
+				"timeout":      30000,
+			},
+		},
+		"security": map[string]any{
+			"disableYoloMode":    true,
+			"disableAlwaysAllow": true,
+		},
+	}
+	data, err := json.Marshal(config)
+	if err != nil {
+		return `{"mcpServers":{}}`
+	}
+	return string(data)
+}
+
+// GeminiPrompt adds the provider-specific MCP tool name Gemini exposes for the
+// scafld submit channel.
+func GeminiPrompt(prompt string, tool SubmitTool) string {
+	toolName := strings.TrimSpace(tool.Name)
+	if toolName == "" {
+		toolName = "submit_review"
+	}
+	return strings.TrimSpace(prompt) + "\n\nProvider submit channel: Gemini exposes the scafld submit tool as `mcp_scafld_" + toolName + "`. Call that tool exactly once with the final dossier. Do not emit final prose or JSON text."
 }
 
 // CodexArgs builds the argv for read-only Codex review execution.
@@ -692,6 +1029,46 @@ func ClaudeEventName(line string) string {
 	return eventType
 }
 
+// GeminiEventName extracts a liveness event name from one Gemini stream frame.
+func GeminiEventName(line string) string {
+	var event map[string]any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(line)), &event); err != nil {
+		return ""
+	}
+	eventType := stringField(event, "type", "event", "kind")
+	if eventType == "" {
+		return ""
+	}
+	return eventType
+}
+
+func extractGeminiModel(stdout string) string {
+	for _, raw := range strings.Split(stdout, "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" {
+			continue
+		}
+		var event map[string]any
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			continue
+		}
+		if model := stringField(event, "model", "model_id", "modelId"); model != "" {
+			return model
+		}
+		if nested, ok := event["result"].(map[string]any); ok {
+			if model := stringField(nested, "model", "model_id", "modelId"); model != "" {
+				return model
+			}
+		}
+		if nested, ok := event["response"].(map[string]any); ok {
+			if model := stringField(nested, "model", "model_id", "modelId"); model != "" {
+				return model
+			}
+		}
+	}
+	return ""
+}
+
 func stringField(values map[string]any, keys ...string) string {
 	for _, key := range keys {
 		if value, ok := values[key].(string); ok {
@@ -742,7 +1119,7 @@ func hardenSubmitTool() SubmitTool {
 }
 
 func localHardenDossier() string {
-	return `{"verdict":"pass","summary":"Local provider smoke hardening passed.","checks":[{"name":"path audit","grounded_in":"spec_gap:Context","result":"passed","evidence":"Local smoke provider records required harden checks."},{"name":"command audit","grounded_in":"spec_gap:Acceptance","result":"passed","evidence":"Local smoke provider records required harden checks."},{"name":"scope/migration audit","grounded_in":"spec_gap:Scope","result":"passed","evidence":"Local smoke provider records required harden checks."},{"name":"acceptance timing audit","grounded_in":"spec_gap:Acceptance","result":"passed","evidence":"Local smoke provider records required harden checks."},{"name":"rollback/repair audit","grounded_in":"spec_gap:Rollback","result":"passed","evidence":"Local smoke provider records required harden checks."},{"name":"design challenge","grounded_in":"spec_gap:Summary","result":"passed","evidence":"Local smoke provider records required harden checks."}],"questions":[],"design_objections":[],"recommended_edits":[],"attack_log":[{"target":"local provider","attack":"deterministic smoke hardening","result":"clean"}]}`
+	return `{"verdict":"pass","summary":"Local provider smoke hardening passed.","checks":[{"name":"path audit","grounded_in":"spec_gap:Context","result":"passed","evidence":"Local smoke provider records required harden checks."},{"name":"command audit","grounded_in":"spec_gap:Acceptance","result":"passed","evidence":"Local smoke provider records required harden checks."},{"name":"scope/migration audit","grounded_in":"spec_gap:Scope","result":"passed","evidence":"Local smoke provider records required harden checks."},{"name":"acceptance timing audit","grounded_in":"spec_gap:Acceptance","result":"passed","evidence":"Local smoke provider records required harden checks."},{"name":"rollback/repair audit","grounded_in":"spec_gap:Rollback","result":"passed","evidence":"Local smoke provider records required harden checks."},{"name":"design challenge","grounded_in":"spec_gap:Summary","result":"passed","evidence":"Local smoke provider records required harden checks."}],"issues":[],"attack_log":[{"target":"local provider","attack":"deterministic smoke hardening","result":"clean"}]}`
 }
 
 func safeSchemaName(value string) string {

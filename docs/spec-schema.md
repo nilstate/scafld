@@ -90,7 +90,7 @@ runtime field.
 ## Hardening
 
 `harden_status` is separate from lifecycle `status`. Values are `not_run`,
-`in_progress`, `passed`, and `failed`.
+`in_progress`, `passed`, `needs_revision`, and `error`.
 
 `scafld harden <task-id>` appends a round under `## Harden Rounds`:
 
@@ -134,36 +134,30 @@ Checks:
   - Result: passed
   - Evidence: The plan fixes the root cause without adding aliases or fallback behavior.
 
-Questions:
-- Which module owns session cleanup?
-  - Grounded in: code:src/auth/session.ts:84
-  - Recommended answer: Use the existing cleanupSession owner.
-  - If unanswered: Default to the existing cleanup path.
-  - Answered with: Use cleanupSession.
-
-Design objections:
-- `objection-1` high - The draft may add a second session cleanup path.
+Issues:
+- [high/blocks approval] `harden-1` design_challenge - The draft may add a second session cleanup path.
+  - Status: open
   - Grounded in: code:src/auth/session.ts:84
   - Evidence: cleanupSession already owns this lifecycle.
   - Recommendation: Reuse the existing owner or explicitly justify the split.
-
-Recommended edits:
-- Scope
+- [low/advisory] `harden-2` recommended_edit - Scope could name cleanupSession explicitly.
+  - Status: open
   - Grounded in: spec_gap:Scope
-  - Recommendation: Declare cleanupSession as the owner before approval.
+  - Evidence: Scope is understandable, but the owner is only implicit.
+  - Recommendation: Declare cleanupSession as the owner if the spec is edited again.
 ````
 
-Each check and question should carry one `Grounded in` value matching
+Each check and issue should carry one `Grounded in` value matching
 `spec_gap:<field>`, `code:<file>:<line>`, or `archive:<task_id>`. Checks use
 `Result: passed`, `Result: failed`, or `Result: not_applicable`; only `passed`
-and `not_applicable` can close a round. Questions are optional, but any
-recorded question must have a recommended answer and final answer before
-`scafld harden <task-id> --mark-passed` closes the round.
+and `not_applicable` can close a round. Open issues with `blocks_approval: true`
+must be fixed, accepted as risk, or superseded before `scafld harden <task-id>
+--mark-passed` closes the round. Advisory issues may remain open.
 
 Provider-backed hardening fills `Verdict`, `Provider`, `Model`,
-`Output format`, `Summary`, `Design objections`, and `Recommended edits`
-from a strict `HardenDossier`. Manual hardening may omit those provenance
-fields, but should still record the required checks.
+`Output format`, `Summary`, and `Issues` from a strict `HardenDossier`. Manual
+hardening may omit those provenance fields, but should still record the required
+checks and any blocker/advisory issues it found.
 
 ## Reconcile Contract
 

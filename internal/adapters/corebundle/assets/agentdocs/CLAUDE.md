@@ -23,7 +23,7 @@ scafld handoff <task-id>
 - Use `scafld status --json` for automation.
 - Use `scafld handoff` for compact model context without moving state.
 
-For real review, use `--provider claude` or `--provider codex`.
+For real review, use `--provider claude`, `--provider codex`, or `--provider gemini`.
 `--provider local` is smoke-test only and cannot satisfy `complete`.
 
 Inside the scafld repo, use `./bin/scafld` or `go run ./cmd/scafld`; do not use

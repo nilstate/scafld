@@ -24,13 +24,13 @@ Review gate: pass
 
 ## Summary
 
-When an external harden provider fails after scafld opens a round, close that round as failed with a rerun path instead of leaving draft state in progress.
+When an external harden provider errors after scafld opens a round, close that round with error status and a rerun path instead of leaving draft state in progress.
 
 ## Objectives
 
-- Preserve deterministic harden state when provider-backed hardening fails after
+- Preserve deterministic harden state when provider-backed hardening errors after
   opening a round.
-- Record provider invocation or dossier-validation failure as a failed harden
+- Record provider invocation or dossier-validation failure as an error harden
   round with an ended timestamp and explicit rerun path.
 - Preserve both errors if scafld cannot record the provider failure state.
 - Cover the failure path with a focused app-layer test.
@@ -54,7 +54,7 @@ When an external harden provider fails after scafld opens a round, close that ro
 
 - A provider failure is different from a `needs_revision` dossier, but both must
   leave the draft in a deterministic state.
-- The failed provider round should remain evidence; scafld should not delete it
+- The provider-error round should remain evidence; scafld should not delete it
   or silently retry.
 - The operator can repair provider availability/output and rerun harden to append
   a new round.
@@ -66,12 +66,12 @@ When an external harden provider fails after scafld opens a round, close that ro
 
 ## Risks
 
-- Masking the original provider error or the failed-round save error; mitigate by
+- Masking the original provider error or the error-round save error; mitigate by
   returning both with `errors.Join`.
 - Writing misleading state if another harden round appears while the provider is
   running; mitigate by checking the latest round ID before closing failure state.
 - Treating provider failure as harden pass; mitigate by setting
-  `harden_status: failed` and preserving a rerun command.
+  `harden_status: error` and preserving a rerun command.
 
 ## Acceptance
 
@@ -93,10 +93,10 @@ Dependencies: none
 Objective: Complete the requested change.
 
 Changes:
-- Add a small helper that reloads the draft, verifies the latest harden round ID, marks that round failed, stores the provider failure reason, and updates current state to a rerun path.
+- Add a small helper that reloads the draft, verifies the latest harden round ID, marks that round as error, stores the provider failure reason, and updates current state to a rerun path.
 - Call the helper when provider invocation fails or when the returned dossier fails strict validation.
-- Return a joined error if the helper cannot save the failed-round state.
-- Add focused tests proving provider invocation errors and invalid dossiers close the round and leave `harden_status: failed`.
+- Return a joined error if the helper cannot save the error-round state.
+- Add focused tests proving provider invocation errors and invalid dossiers close the round and leave `harden_status: error`.
 - Add a focused test proving the original provider error and failure-recording error are both surfaced.
 
 Acceptance:
@@ -149,7 +149,7 @@ Source: plan
 
 ### round-1
 
-Status: failed
+Status: needs_revision
 Started: 2026-05-17T13:31:11Z
 Ended: 2026-05-17T13:31:11Z
 Verdict: needs_revision
@@ -170,7 +170,7 @@ Checks:
 - scope/migration audit
   - Grounded in: spec_gap:Scope
   - Result: passed
-  - Evidence: Spec scopes In to harden.go and harden_test.go and explicitly excludes timeout policy, transport flags, and the manual flow. Helper writes new CurrentState.Reason 'external hardening provider failed' and AllowedFollowUp 'fix provider availability/output...' (harden.go:186,188) which are user-visible CLI/JSON strings, but no archived contract pins those exact strings, so no migration is required.
+  - Evidence: Spec scopes In to harden.go and harden_test.go and explicitly excludes timeout policy, transport flags, and the manual flow. Helper writes new CurrentState.Reason 'external hardening provider error' and AllowedFollowUp 'fix provider availability/output...' (harden.go:186,188) which are user-visible CLI/JSON strings, but no archived contract pins those exact strings, so no migration is required.
 - acceptance timing audit
   - Grounded in: spec_gap:Acceptance
   - Result: failed
@@ -182,18 +182,18 @@ Checks:
 - design challenge
   - Grounded in: spec_gap:Phase 1
   - Result: failed
-  - Evidence: Phase 1 commits to covering 'provider invocation or dossier-validation failure', but the planned test only covers provider invocation (fakeHardenProvider{err: ...} at harden_test.go:283). The dossier-validation branch at harden.go:126-129 has no focused test, so the failed-round-close behavior on an invalid dossier is asserted only by inspection. This leaves half the stated objective unverified.
+  - Evidence: Phase 1 commits to covering 'provider invocation or dossier-validation failure', but the planned test only covers provider invocation (fakeHardenProvider{err: ...} at harden_test.go:283). The dossier-validation branch at harden.go:126-129 has no focused test, so the error-round-close behavior on an invalid dossier is asserted only by inspection. This leaves half the stated objective unverified.
 
 Questions:
 - Should the acceptance test be a new named test (e.g. TestRunProviderHardenClosesRoundOnInvalidDossier) that exercises the dossier-validation failure path, in addition to the existing provider-invocation test?
   - Grounded in: code:internal/app/harden/harden.go:126
-  - Recommended answer: Yes. Add a second focused test in harden_test.go that returns a dossier failing coreharden.ValidateDossier and asserts the round closes with Status: failed, EndedAt set, and Summary containing 'invalid provider dossier'. Without it the spec's stated objective ('Record provider invocation or dossier-validation failure as a failed harden round') is not actually verified.
+  - Recommended answer: Yes. Add a second focused test in harden_test.go that returns a dossier failing coreharden.ValidateDossier and asserts the round closes with Status: error, EndedAt set, and Summary containing 'invalid provider dossier'. Without it the spec's stated objective ('Record provider invocation or dossier-validation failure as an error harden round') is not actually verified.
   - If unanswered: Default to narrowing the spec objective to provider-invocation failure only and remove the dossier-validation claim from Objectives and Phase 1.
 - How should closeProviderHardenFailure's own Save error be surfaced when it itself fails after a provider error?
   - Grounded in: code:internal/app/harden/harden.go:123
   - Recommended answer: Replace `_ = closeProviderHardenFailure(...)` with a path that joins the close-failure into the returned error (e.g. errors.Join) and logs/returns enough context for the operator to see both. Silently dropping the close error leaves harden_status: in_progress on disk while Run reports only the provider error — exactly the inconsistent state this spec is supposed to remove.
   - If unanswered: Explicitly document in Risks and Rollback that a Save failure inside the helper leaves the round in_progress and that the operator must manually edit the spec or rerun harden to recover.
-- Because the implementation is already present as uncommitted modifications, should the acceptance criterion be strengthened to assert the new behaviors (round Status=failed, EndedAt set, CurrentState.AllowedFollowUp contains '--provider <provider>') rather than just `go test ./internal/app/harden`?
+- Because the implementation is already present as uncommitted modifications, should the acceptance criterion be strengthened to assert the new behaviors (round Status=error, EndedAt set, CurrentState.AllowedFollowUp contains '--provider <provider>') rather than just `go test ./internal/app/harden`?
   - Grounded in: spec_gap:Acceptance
   - Recommended answer: Yes. The current criterion already passes on the working tree, so it does not prove the spec's intent. Either name the specific failing test that must turn green (e.g. -run TestRunProviderHardenClosesRoundOnProviderError) or describe the exact post-conditions the test must assert, so reviewers can distinguish a real build from a no-op.
   - If unanswered: Default to naming the specific test functions in the acceptance command so the criterion fails before the work exists and passes only after the named tests are added.
@@ -201,8 +201,8 @@ Questions:
 Design objections:
 - `objection-1` high - Dossier-validation failure branch is in scope per Objectives but has no planned test.
   - Grounded in: code:internal/app/harden/harden.go:126
-  - Evidence: Objectives line 'Record provider invocation or dossier-validation failure as a failed harden round' and Phase 1 'Call the helper when provider invocation fails or when the returned dossier fails strict validation' cover both branches at harden.go:122-124 and :126-129. Phase 1's test bullet only mentions 'provider invocation errors', and harden_test.go's only failure test uses fakeHardenProvider{err: ...} (line 283). The strict-validation branch is unverified.
-  - Recommendation: Add an explicit Phase 1 change item and acceptance assertion for a dossier-validation failure test that returns an invalid dossier from the fake provider and verifies Status=failed, EndedAt set, and Summary containing 'invalid provider dossier'.
+  - Evidence: Objectives line 'Record provider invocation or dossier-validation failure as an error harden round' and Phase 1 'Call the helper when provider invocation fails or when the returned dossier fails strict validation' cover both branches at harden.go:122-124 and :126-129. Phase 1's test bullet only mentions 'provider invocation errors', and harden_test.go's only failure test uses fakeHardenProvider{err: ...} (line 283). The strict-validation branch is unverified.
+  - Recommendation: Add an explicit Phase 1 change item and acceptance assertion for a dossier-validation failure test that returns an invalid dossier from the fake provider and verifies Status=error, EndedAt set, and Summary containing 'invalid provider dossier'.
 - `objection-2` high - Failure-on-failure is silently swallowed, undermining the spec's deterministic-state objective.
   - Grounded in: code:internal/app/harden/harden.go:123
   - Evidence: harden.go:123 and :127 call `_ = closeProviderHardenFailure(...)`. If the helper's Save fails (e.g. fs error after the in-progress round was written), the round remains Status: in_progress and harden_status: in_progress while Run returns only the upstream provider error. That is the exact state the spec exists to eliminate.
@@ -213,7 +213,7 @@ Design objections:
   - Recommendation: Narrow the acceptance command to the specific test names the spec promises to add (for example `go test ./internal/app/harden -run 'TestRunProviderHardenClosesRoundOn(ProviderError|InvalidDossier)'`) or state the explicit post-conditions the test(s) must assert.
 - `objection-4` low - User-visible CurrentState.Reason and AllowedFollowUp strings are not pinned anywhere the spec acknowledges.
   - Grounded in: code:internal/app/harden/harden.go:188
-  - Evidence: Helper writes 'external hardening provider failed' and 'fix provider availability/output, then run scafld harden <id> --provider <provider>'. These flow into CLI output and `scafld status --json`. The spec's Scope and Risks do not mention CLI/JSON surface, so a future renamer could break operator muscle memory without tripping any test.
+  - Evidence: Helper writes 'external hardening provider error' and 'fix provider availability/output, then run scafld harden <id> --provider <provider>'. These flow into CLI output and `scafld status --json`. The spec's Scope and Risks do not mention CLI/JSON surface, so a future renamer could break operator muscle memory without tripping any test.
   - Recommendation: Either add a focused assertion on the AllowedFollowUp prefix in the new test (the existing test already does substring '--provider <provider>'), or note in Scope that these CLI strings are part of the contract this spec sets.
 
 Recommended edits:
@@ -225,7 +225,7 @@ Recommended edits:
   - Recommendation: Document the failure-on-failure case: if closeProviderHardenFailure's Save fails, the round remains in_progress. Either propagate the error via errors.Join (preferred — it preserves both signals) or describe the manual recovery path.
 - Acceptance
   - Grounded in: spec_gap:Acceptance
-  - Recommendation: Replace `go test ./internal/app/harden` with a command that names the specific new tests, or add explicit post-condition assertions (Status=failed, EndedAt set, harden_status=failed, AllowedFollowUp contains '--provider <provider>'), so the criterion fails before the build and passes only after the spec's work is in place.
+  - Recommendation: Replace `go test ./internal/app/harden` with a command that names the specific new tests, or add explicit post-condition assertions (Status=error, EndedAt set, harden_status=error, AllowedFollowUp contains '--provider <provider>'), so the criterion fails before the build and passes only after the spec's work is in place.
 - Scope
   - Grounded in: code:internal/app/harden/harden.go:186
   - Recommendation: Acknowledge that the helper introduces a new CurrentState.Reason and AllowedFollowUp wording that surfaces in CLI/JSON output, or assert these strings in the new test so they cannot be silently renamed.
@@ -239,7 +239,7 @@ Verdict: pass
 Provider: claude
 Model: claude-opus-4-7
 Output format: claude.mcp_submit_harden
-Summary: Round-2 confirms the revised draft closes every gap raised in round-1. The Objectives and Phase 1 now commit to both provider-invocation and dossier-validation failure paths, and both branches at harden.go:122-133 use errors.Join so a Save failure inside the helper surfaces with the original provider error. The acceptance command names three specific tests (TestRunProviderHardenClosesRoundOnProviderError|ClosesRoundOnInvalidDossier|ReportsFailureRecordingError) that exist at harden_test.go:277,300,320 and assert Status=failed, EndedAt set, Summary contents, and the rerun '--provider <provider>' wording. Scope, risks, rollback, and assumptions remain coherent; no failed checks, questions, design objections, or recommended edits remain.
+Summary: Round-2 confirms the revised draft closes every gap raised in round-1. The Objectives and Phase 1 now commit to both provider-invocation and dossier-validation failure paths, and both branches at harden.go:122-133 use errors.Join so a Save failure inside the helper surfaces with the original provider error. The acceptance command names three specific tests (TestRunProviderHardenClosesRoundOnProviderError|ClosesRoundOnInvalidDossier|ReportsFailureRecordingError) that exist at harden_test.go:277,300,320 and assert Status=error, EndedAt set, Summary contents, and the rerun '--provider <provider>' wording. Scope, risks, rollback, and assumptions remain coherent; no failed checks, questions, design objections, or recommended edits remain.
 
 Checks:
 - path audit
@@ -253,11 +253,11 @@ Checks:
 - scope/migration audit
   - Grounded in: code:internal/app/harden/harden.go:190
   - Result: passed
-  - Evidence: Scope is bound to harden.go and harden_test.go; the helper introduces new CurrentState.Reason ('external hardening provider failed') and AllowedFollowUp ('fix provider availability/output, then run scafld harden <id> --provider <provider>') at harden.go:190,192. These flow into CLI/JSON output but are not pinned by any archived contract, so no public-API migration is required; the new substring assertion in TestRunProviderHardenClosesRoundOnProviderError (harden_test.go:295) locks the rerun wording so silent renames will trip the test.
+  - Evidence: Scope is bound to harden.go and harden_test.go; the helper introduces new CurrentState.Reason ('external hardening provider error') and AllowedFollowUp ('fix provider availability/output, then run scafld harden <id> --provider <provider>') at harden.go:190,192. These flow into CLI/JSON output but are not pinned by any archived contract, so no public-API migration is required; the new substring assertion in TestRunProviderHardenClosesRoundOnProviderError (harden_test.go:295) locks the rerun wording so silent renames will trip the test.
 - acceptance timing audit
   - Grounded in: code:internal/app/harden/harden_test.go:320
   - Result: passed
-  - Evidence: The acceptance criterion names three tests that must pass after Phase 1 — TestRunProviderHardenClosesRoundOnProviderError, ClosesRoundOnInvalidDossier, ReportsFailureRecordingError. Each asserts the spec's deterministic-state intent: round Status=failed, EndedAt populated, Summary contains 'provider unavailable' or 'invalid provider dossier', CurrentState contains '--provider <provider>', and the joined error includes both 'provider unavailable' and 'record provider harden failure: disk full'. The criterion fails before the helper/tests exist and passes only after they are in place.
+  - Evidence: The acceptance criterion names three tests that must pass after Phase 1 — TestRunProviderHardenClosesRoundOnProviderError, ClosesRoundOnInvalidDossier, ReportsFailureRecordingError. Each asserts the spec's deterministic-state intent: round Status=error, EndedAt populated, Summary contains 'provider unavailable' or 'invalid provider dossier', CurrentState contains '--provider <provider>', and the joined error includes both 'provider unavailable' and 'record provider harden failure: disk full'. The criterion fails before the helper/tests exist and passes only after they are in place.
 - rollback/repair audit
   - Grounded in: spec_gap:Rollback
   - Result: passed

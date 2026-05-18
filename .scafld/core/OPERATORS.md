@@ -50,6 +50,7 @@ Real review should use an external challenger:
 ```bash
 scafld review my-task --provider codex
 scafld review my-task --provider claude
+scafld review my-task --provider gemini
 scafld review my-task --provider command --provider-command "./reviewer"
 ```
 

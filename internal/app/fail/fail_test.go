@@ -41,4 +41,7 @@ func TestFailLifecycleCommandUpdatesSessionAndSpec(t *testing.T) {
 	if model.Status != spec.StatusFailed || sessions.entry.Status != "failed" {
 		t.Fatalf("model=%+v entry=%+v", model, sessions.entry)
 	}
+	if model.CurrentState.Next != "inspect failure" || model.CurrentState.AllowedFollowUp != "scafld handoff task" || model.CurrentState.Blockers != "broken" {
+		t.Fatalf("current state = %+v", model.CurrentState)
+	}
 }

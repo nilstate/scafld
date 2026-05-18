@@ -82,7 +82,7 @@ func reviewGateError(model spec.Model, reason string, actual string) error {
 		Status:   string(model.Status),
 		Reason:   reason,
 		Evidence: []string{"session review entries", "projected spec review state"},
-		Expected: "latest accepted review verdict pass from codex, claude, command, or audited human provider",
+		Expected: "latest accepted review verdict pass from codex, claude, gemini, command, or audited human provider",
 		Actual:   actual,
 		Blockers: []string{reason},
 		Next:     next,

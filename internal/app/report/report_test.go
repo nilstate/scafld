@@ -169,10 +169,10 @@ func TestRunReportsReviewDossierQualityMetrics(t *testing.T) {
 	ledger := session.New("dossier-quality", "now")
 	ledger = ledger.WithEntry(session.Entry{Type: "review", Status: "fail", Provider: "codex", Output: corereview.EncodeDossier(discover)})
 	ledger = ledger.WithEntry(session.Entry{Type: "review", Status: "pass", Provider: "claude", Output: corereview.EncodeDossier(verify)})
-	legacy := session.New("legacy-review", "now")
-	legacy = legacy.WithEntry(session.Entry{Type: "review", Status: "fail", Provider: "codex", Output: `{"verdict":"fail"}`})
+	raw := session.New("raw-review", "now")
+	raw = raw.WithEntry(session.Entry{Type: "review", Status: "fail", Provider: "codex", Output: `{"verdict":"fail"}`})
 
-	out, err := Run(context.Background(), fakeSpecStore{}, fakeSessionStore{ledgers: []session.Session{ledger, legacy}})
+	out, err := Run(context.Background(), fakeSpecStore{}, fakeSessionStore{ledgers: []session.Session{ledger, raw}})
 	if err != nil {
 		t.Fatal(err)
 	}

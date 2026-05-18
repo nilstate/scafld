@@ -120,7 +120,7 @@ executable acceptance criterion. Existing drafts are not overwritten.
 ## harden
 
 ```bash
-scafld harden <task-id> [--provider codex|claude|command|local] [--json]
+scafld harden <task-id> [--provider auto|codex|claude|gemini|command|local] [--json]
 scafld harden <task-id> --mark-passed [--json]
 ```
 
@@ -135,14 +135,17 @@ prints the active prompt from `.scafld/prompts/harden.md`, falling back to
 
 With `--mark-passed`, it verifies the latest round's harden checks and
 `Grounded in` citations, closes the round, and sets `harden_status: passed`.
-Missing checks, failed checks, unresolved questions, and unresolved citations
-fail closed and leave the round in progress.
+Missing checks, checks that did not pass, open approval-blocking issues, and
+unresolved citations keep the round open. Advisory issues stay recorded but do
+not block approval.
 
 With `--provider`, scafld delegates the harden round to a separate read-only
 provider. The provider must submit one strict `HardenDossier` through the
 structured submit channel. A `pass` verdict closes hardening; `needs_revision`
-records failed checks, questions, design objections, and recommended edits in
-the draft for the implementation agent to resolve before approval.
+records checks that did not pass and open approval-blocking issues in the draft
+for the implementation agent to resolve before approval. Non-blocking advisory
+issues remain in the harden round as evidence, not as forced rework. Provider
+transport or invalid dossier problems are recorded as `harden_status: error`.
 
 Accepted citation shapes are `Grounded in: spec_gap:<field>`,
 `Grounded in: code:<path>:<line>`, and `Grounded in: archive:<task-id>`.
@@ -153,7 +156,7 @@ evidence.
 Required checks are `Path audit`, `Command audit`, `Scope/migration audit`,
 `Acceptance timing audit`, `Rollback/repair audit`, and `Design challenge`.
 Each check must record `Result: passed` or `Result: not_applicable` plus
-evidence. `Questions: none` is valid only after those checks have evidence.
+evidence. `Issues: none` is valid only after those checks have evidence.
 The design challenge is not a style preference: it must challenge why the plan
 exists, whether it solves the underlying problem, and whether it is a
 short-sighted bandaid or future bloat.
@@ -210,16 +213,18 @@ status.
 ## review
 
 ```bash
-scafld review <task-id> [--provider auto|codex|claude|command|local] [--provider-command CMD] [--provider-binary PATH] [--model MODEL] [--review-scope PATH[,PATH...]] [--print-context] [--human-reviewed --reason TEXT] [--json]
+scafld review <task-id> [--provider auto|codex|claude|gemini|command|local] [--provider-command CMD] [--provider-binary PATH] [--model MODEL] [--review-scope PATH[,PATH...]] [--print-context] [--human-reviewed --reason TEXT] [--json]
 ```
 
 `review` is the adversarial completion gate. Defaults come from
 `.scafld/config.yaml` under `review.external`. Fresh workspaces use
-`provider: auto`, which selects an installed external challenger (`codex`, then
-`claude`). If neither is available, the command fails and tells the operator to
-install a provider, use `--provider command`, or explicitly choose
-`--provider local` for development smoke tests. Local verdicts cannot satisfy
-`complete`.
+`provider: auto`, which prefers the other installed agent when the current host
+is detected, can use Gemini as another external challenger, then falls back if
+needed. Without a detected host, the default order is `codex`, then `claude`,
+then `gemini`. If no external provider is available, the
+command fails and tells the operator to install a provider, use
+`--provider command`, or explicitly choose `--provider local` for development
+smoke tests. Local verdicts cannot satisfy `complete`.
 
 Provider modes:
 
@@ -230,6 +235,9 @@ Provider modes:
   integration disabled; built-in tools are restricted to `Read`, `Grep`, and
   `Glob`, and the verdict must be submitted through the `submit_review` MCP
   tool.
+- `gemini`: run Gemini CLI in plan/read-only mode with a temporary scafld MCP
+  settings file; the verdict must be submitted through the `submit_review` MCP
+  tool and final text is ignored.
 - `command`: run a custom reviewer command; requires `--provider-command`.
 - `local`: deterministic pass-through provider for development and tests only;
   its verdict cannot satisfy `complete`.
@@ -237,9 +245,9 @@ Provider modes:
   provider. `--reason` is required and is stored in the session ledger.
 
 Provider-specific model defaults come from
-`review.external.codex.model` and `review.external.claude.model`. `--provider`,
-`--provider-command`, `--provider-binary`, and `--model` override config for one
-invocation.
+`review.external.codex.model`, `review.external.claude.model`, and
+`review.external.gemini.model`. `--provider`, `--provider-command`,
+`--provider-binary`, and `--model` override config for one invocation.
 
 `--review-depth`, `--max-findings`, and `--min-attack-angles` override the
 review dossier budget for one run. For small diffs, keep the same gate but
@@ -286,7 +294,8 @@ scafld complete <task-id> [--json]
 ```
 
 Archives completed work only after the latest session review event has a
-`pass` verdict from `codex`, `claude`, `command`, or an audited human review.
+`pass` verdict from `codex`, `claude`, `gemini`, `command`, or an audited human
+review.
 
 ## fail
 
@@ -334,8 +343,8 @@ Aggregates workspace spec counts and session-derived product metrics:
 - `recovery_convergence_rate`: blocked first attempts that later recovered to
   review.
 - `challenge_override_rate`: challenged tasks completed without a later
-  passing review from `codex`, `claude`, or `command`. This should normally stay
-  at `0`.
+  passing review from `codex`, `claude`, `gemini`, or `command`. This should
+  normally stay at `0`.
 - `review_pass_rate`: accepted review verdicts over all review verdicts.
 - `review_dossier_coverage`: review events that stored a valid ReviewDossier.
 - `review_findings_total`: findings accepted across all valid dossiers.

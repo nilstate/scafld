@@ -40,29 +40,21 @@ type Check struct {
 	Evidence   string `json:"evidence"`
 }
 
-// Question records one grounded question the implementation agent must resolve.
-type Question struct {
-	Question          string `json:"question"`
+// Issue records one harden finding. Only open issues with BlocksApproval block
+// approval; advisory issues stay recorded without forcing another harden loop.
+type Issue struct {
+	ID                string `json:"id"`
+	Kind              string `json:"kind"`
+	Severity          string `json:"severity"`
+	BlocksApproval    bool   `json:"blocks_approval"`
+	Status            string `json:"status"`
 	GroundedIn        string `json:"grounded_in"`
-	RecommendedAnswer string `json:"recommended_answer"`
+	Summary           string `json:"summary"`
+	Evidence          string `json:"evidence"`
+	Recommendation    string `json:"recommendation"`
+	Question          string `json:"question,omitempty"`
+	RecommendedAnswer string `json:"recommended_answer,omitempty"`
 	IfUnanswered      string `json:"if_unanswered,omitempty"`
-}
-
-// DesignObjection challenges whether the draft is the right work at all.
-type DesignObjection struct {
-	ID             string `json:"id"`
-	Severity       string `json:"severity"`
-	GroundedIn     string `json:"grounded_in"`
-	Summary        string `json:"summary"`
-	Evidence       string `json:"evidence"`
-	Recommendation string `json:"recommendation"`
-}
-
-// RecommendedEdit names a concrete spec edit needed before approval.
-type RecommendedEdit struct {
-	Section        string `json:"section"`
-	GroundedIn     string `json:"grounded_in"`
-	Recommendation string `json:"recommendation"`
 }
 
 // AttackLogEntry records one bounded attack angle used during hardening.
@@ -75,19 +67,17 @@ type AttackLogEntry struct {
 
 // Dossier is the normalized harden-provider payload consumed by scafld.
 type Dossier struct {
-	Verdict          string            `json:"verdict"`
-	Summary          string            `json:"summary"`
-	Checks           []Check           `json:"checks"`
-	Questions        []Question        `json:"questions"`
-	DesignObjections []DesignObjection `json:"design_objections"`
-	RecommendedEdits []RecommendedEdit `json:"recommended_edits"`
-	AttackLog        []AttackLogEntry  `json:"attack_log"`
-	Provider         string            `json:"provider,omitempty"`
-	Model            string            `json:"model,omitempty"`
-	SessionID        string            `json:"session_id,omitempty"`
-	OutputFormat     string            `json:"output_format,omitempty"`
-	EventSummary     map[string]int    `json:"event_summary,omitempty"`
-	Raw              string            `json:"-"`
+	Verdict      string           `json:"verdict"`
+	Summary      string           `json:"summary"`
+	Checks       []Check          `json:"checks"`
+	Issues       []Issue          `json:"issues"`
+	AttackLog    []AttackLogEntry `json:"attack_log"`
+	Provider     string           `json:"provider,omitempty"`
+	Model        string           `json:"model,omitempty"`
+	SessionID    string           `json:"session_id,omitempty"`
+	OutputFormat string           `json:"output_format,omitempty"`
+	EventSummary map[string]int   `json:"event_summary,omitempty"`
+	Raw          string           `json:"-"`
 }
 
 // Request is the provider-facing hardening prompt request.
@@ -145,9 +135,12 @@ func decodeDossierStrict(data []byte, raw string) (Dossier, error) {
 
 // NormalizeDossier fills derived defaults without hiding invalid provider shape.
 func NormalizeDossier(dossier Dossier) Dossier {
-	for i := range dossier.DesignObjections {
-		if strings.TrimSpace(dossier.DesignObjections[i].ID) == "" {
-			dossier.DesignObjections[i].ID = fmt.Sprintf("objection-%d", i+1)
+	for i := range dossier.Issues {
+		if strings.TrimSpace(dossier.Issues[i].ID) == "" {
+			dossier.Issues[i].ID = fmt.Sprintf("harden-%d", i+1)
+		}
+		if strings.TrimSpace(dossier.Issues[i].Status) == "" {
+			dossier.Issues[i].Status = "open"
 		}
 	}
 	if strings.TrimSpace(dossier.Verdict) == "" {
@@ -178,22 +171,18 @@ func ValidateDossier(dossier Dossier) error {
 	if err := validateChecks(dossier.Checks); err != nil {
 		return err
 	}
-	for _, question := range dossier.Questions {
-		if strings.TrimSpace(question.Question) == "" || strings.TrimSpace(question.GroundedIn) == "" || strings.TrimSpace(question.RecommendedAnswer) == "" {
-			return fmt.Errorf("%w: questions require question, grounded_in, and recommended_answer", ErrInvalidDossier)
+	for _, issue := range dossier.Issues {
+		if strings.TrimSpace(issue.ID) == "" || strings.TrimSpace(issue.Kind) == "" || strings.TrimSpace(issue.Summary) == "" || strings.TrimSpace(issue.GroundedIn) == "" || strings.TrimSpace(issue.Evidence) == "" || strings.TrimSpace(issue.Recommendation) == "" {
+			return fmt.Errorf("%w: issues require id, kind, grounded_in, summary, evidence, and recommendation", ErrInvalidDossier)
 		}
-	}
-	for _, objection := range dossier.DesignObjections {
-		if strings.TrimSpace(objection.ID) == "" || strings.TrimSpace(objection.Summary) == "" || strings.TrimSpace(objection.GroundedIn) == "" || strings.TrimSpace(objection.Evidence) == "" || strings.TrimSpace(objection.Recommendation) == "" {
-			return fmt.Errorf("%w: design objections require id, summary, grounded_in, evidence, and recommendation", ErrInvalidDossier)
+		if !validSeverity(issue.Severity) {
+			return fmt.Errorf("%w: invalid issue severity %q", ErrInvalidDossier, issue.Severity)
 		}
-		if !validSeverity(objection.Severity) {
-			return fmt.Errorf("%w: invalid design objection severity %q", ErrInvalidDossier, objection.Severity)
+		if !validIssueStatus(issue.Status) {
+			return fmt.Errorf("%w: invalid issue status %q", ErrInvalidDossier, issue.Status)
 		}
-	}
-	for _, edit := range dossier.RecommendedEdits {
-		if strings.TrimSpace(edit.Section) == "" || strings.TrimSpace(edit.GroundedIn) == "" || strings.TrimSpace(edit.Recommendation) == "" {
-			return fmt.Errorf("%w: recommended edits require section, grounded_in, and recommendation", ErrInvalidDossier)
+		if strings.TrimSpace(issue.Question) != "" && strings.TrimSpace(issue.RecommendedAnswer) == "" {
+			return fmt.Errorf("%w: question issues require recommended_answer", ErrInvalidDossier)
 		}
 	}
 	if dossier.Verdict != VerdictFromDossier(dossier) {
@@ -229,15 +218,18 @@ func validateChecks(checks []Check) error {
 	return nil
 }
 
-// VerdictFromDossier derives harden verdict from unresolved questions and failed checks.
+// VerdictFromDossier derives harden verdict from checks that did not pass and open
+// approval-blocking issues. Non-blocking advisories never force another round.
 func VerdictFromDossier(dossier Dossier) string {
 	for _, check := range dossier.Checks {
 		if strings.TrimSpace(strings.ToLower(check.Result)) == "failed" {
 			return VerdictNeedsRevision
 		}
 	}
-	if len(dossier.Questions) > 0 || len(dossier.DesignObjections) > 0 || len(dossier.RecommendedEdits) > 0 {
-		return VerdictNeedsRevision
+	for _, issue := range dossier.Issues {
+		if issueBlocksApproval(issue) {
+			return VerdictNeedsRevision
+		}
 	}
 	return VerdictPass
 }
@@ -276,6 +268,29 @@ func validSeverity(value string) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+func validIssueStatus(value string) bool {
+	switch strings.TrimSpace(strings.ToLower(value)) {
+	case "open", "fixed", "accepted_risk", "superseded":
+		return true
+	default:
+		return false
+	}
+}
+
+func issueBlocksApproval(issue Issue) bool {
+	if !issue.BlocksApproval {
+		return false
+	}
+	switch strings.TrimSpace(strings.ToLower(issue.Status)) {
+	case "", "open":
+		return true
+	case "fixed", "accepted_risk", "superseded":
+		return false
+	default:
+		return true
 	}
 }
 
