@@ -42,8 +42,10 @@ const (
 	HardenInProgress HardenStatus = "in_progress"
 	// HardenPassed means hardening completed successfully.
 	HardenPassed HardenStatus = "passed"
-	// HardenFailed means hardening identified unresolved blockers.
-	HardenFailed HardenStatus = "failed"
+	// HardenNeedsRevision means hardening identified draft contract work before approval.
+	HardenNeedsRevision HardenStatus = "needs_revision"
+	// HardenError means the hardening provider or recorded harden evidence could not be accepted.
+	HardenError HardenStatus = "error"
 )
 
 // Size estimates implementation effort.
@@ -206,19 +208,17 @@ type Origin struct {
 
 // HardenRound records one pre-approval hardening pass.
 type HardenRound struct {
-	ID               string                  `json:"id"`
-	Status           string                  `json:"status"`
-	StartedAt        string                  `json:"started_at"`
-	EndedAt          string                  `json:"ended_at"`
-	Verdict          string                  `json:"verdict,omitempty"`
-	Summary          string                  `json:"summary,omitempty"`
-	Provider         string                  `json:"provider,omitempty"`
-	Model            string                  `json:"model,omitempty"`
-	OutputFormat     string                  `json:"output_format,omitempty"`
-	Checks           []HardenCheck           `json:"checks"`
-	Questions        []HardenQuestion        `json:"questions"`
-	DesignObjections []HardenDesignObjection `json:"design_objections,omitempty"`
-	RecommendedEdits []HardenRecommendedEdit `json:"recommended_edits,omitempty"`
+	ID           string        `json:"id"`
+	Status       string        `json:"status"`
+	StartedAt    string        `json:"started_at"`
+	EndedAt      string        `json:"ended_at"`
+	Verdict      string        `json:"verdict,omitempty"`
+	Summary      string        `json:"summary,omitempty"`
+	Provider     string        `json:"provider,omitempty"`
+	Model        string        `json:"model,omitempty"`
+	OutputFormat string        `json:"output_format,omitempty"`
+	Checks       []HardenCheck `json:"checks"`
+	Issues       []HardenIssue `json:"issues,omitempty"`
 }
 
 // HardenCheck records one evidence-backed audit pass from a hardening round.
@@ -229,30 +229,20 @@ type HardenCheck struct {
 	Evidence   string `json:"evidence"`
 }
 
-// HardenQuestion is one grounded question from a hardening round.
-type HardenQuestion struct {
-	Question          string `json:"question"`
+// HardenIssue records one approval blocker or non-blocking harden advisory.
+type HardenIssue struct {
+	ID                string `json:"id"`
+	Kind              string `json:"kind"`
+	Severity          string `json:"severity"`
+	BlocksApproval    bool   `json:"blocks_approval"`
+	Status            string `json:"status"`
 	GroundedIn        string `json:"grounded_in"`
-	RecommendedAnswer string `json:"recommended_answer"`
-	IfUnanswered      string `json:"if_unanswered"`
-	AnsweredWith      string `json:"answered_with"`
-}
-
-// HardenDesignObjection records a grounded challenge to the draft design.
-type HardenDesignObjection struct {
-	ID             string `json:"id"`
-	Severity       string `json:"severity"`
-	GroundedIn     string `json:"grounded_in"`
-	Summary        string `json:"summary"`
-	Evidence       string `json:"evidence"`
-	Recommendation string `json:"recommendation"`
-}
-
-// HardenRecommendedEdit records a concrete pre-approval spec edit.
-type HardenRecommendedEdit struct {
-	Section        string `json:"section"`
-	GroundedIn     string `json:"grounded_in"`
-	Recommendation string `json:"recommendation"`
+	Summary           string `json:"summary"`
+	Evidence          string `json:"evidence"`
+	Recommendation    string `json:"recommendation"`
+	Question          string `json:"question,omitempty"`
+	RecommendedAnswer string `json:"recommended_answer,omitempty"`
+	IfUnanswered      string `json:"if_unanswered,omitempty"`
 }
 
 // PlanningEvent records a timestamped planning log entry.
@@ -379,7 +369,7 @@ func ValidStatus(status Status) bool {
 // ValidHardenStatus reports whether status is a supported hardening status.
 func ValidHardenStatus(status HardenStatus) bool {
 	switch status {
-	case "", HardenNotRun, HardenInProgress, HardenPassed, HardenFailed:
+	case "", HardenNotRun, HardenInProgress, HardenPassed, HardenNeedsRevision, HardenError:
 		return true
 	default:
 		return false

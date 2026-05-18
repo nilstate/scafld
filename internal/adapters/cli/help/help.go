@@ -33,7 +33,7 @@ func PrintCommand(w io.Writer, name string, commands []Command) {
 		fmt.Fprint(w, `scafld harden - Stress-test a draft spec before approval
 
 Usage:
-  scafld harden <task_id> [--provider codex|claude|command|local] [--root PATH] [--json]
+  scafld harden <task_id> [--provider auto|codex|claude|gemini|command|local] [--root PATH] [--json]
   scafld harden <task_id> --mark-passed [--root PATH] [--json]
 
 Without flags, opens a harden round and prints the active prompt. The agent
@@ -41,8 +41,12 @@ attacks the draft contract before build.
 
 With --provider, scafld delegates hardening to a separate read-only provider.
 The provider must submit one HardenDossier through the structured channel.
-pass marks hardening passed; needs_revision records questions, failed checks,
-design objections, and recommended edits in the draft.
+pass marks hardening passed; needs_revision records checks that need revision
+plus approval-blocking issues in the draft. Provider
+transport or invalid dossier problems are recorded as harden_status error.
+Advisory issues remain recorded.
+Provider auto prefers the other installed agent when the host is detected, can
+use Gemini as an additional external challenger, then falls back if needed.
 
 Required checks:
   Path audit
@@ -59,8 +63,9 @@ underlying problem, and whether it is a short-sighted bandaid or future bloat.
 Grounded in accepts spec_gap:<section>, archive:<task-id>, or a single-line
 code citation such as code:src/file.go:42. Line ranges are rejected.
 
-Questions are optional. Questions: none is valid only after the checks have
-evidence. Any recorded question needs a recommended answer and final answer.
+Issues are optional. Issues: none is valid only after the checks have evidence.
+Open issues with blocks_approval=true block --mark-passed until fixed,
+accepted_risk, or superseded. Advisory issues keep full detail but do not block.
 
 Flags:
   --provider NAME       Run provider-backed hardening
@@ -80,9 +85,9 @@ Usage:
   scafld update [--root PATH] [--json]
 
 Refreshes .scafld/core, default project prompt copies, root agent docs, and
-renders generated project config into the current strict runtime shape.
+managed core assets. Project config is left untouched.
 
-Use this after upgrading scafld or when config parsing tells you to run update.
+Use this after upgrading scafld.
 `)
 		return
 	}

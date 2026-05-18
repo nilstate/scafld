@@ -148,11 +148,14 @@ Status: in_progress
 Started: 2026-05-07T09:15:00Z
 Ended: none
 
-Questions:
-- Which invariant makes cache invalidation safe across tenants?
+Issues:
+- [high/blocks approval] `harden-1` question - Cache invalidation lacks a tenant safety invariant.
+  - Status: fixed
   - Grounded in: spec_gap:Context
+  - Evidence: Context did not name a tenant isolation invariant.
+  - Recommendation: Add `tenant_isolation` to the task invariants and test it with a cross-tenant fixture.
+  - Question: Which invariant makes cache invalidation safe across tenants?
   - Recommended answer: Add `tenant_isolation` to the task invariants and test it with a cross-tenant fixture.
-  - Answered with: Accepted; phase 2 now owns the fixture and assertion.
 ```
 
 Status exposes the same state without scraping Markdown:
@@ -379,14 +382,17 @@ Prompt ownership is deliberate:
 
 `scafld update` refreshes default project prompt copies when they are still
 known defaults. Customized project prompts are skipped. It also refreshes root
-agent docs and renders generated `.scafld/config.yaml` into the current strict
-runtime shape.
+agent docs and managed core assets. Project config is left untouched.
 
 ## Adversarial Review
 
 `scafld review` defaults to the provider configured in `.scafld/config.yaml`.
 Fresh workspaces use `provider: auto`, selecting an installed external
-challenger. It also supports explicit command, Claude, Codex, and local paths.
+challenger. When scafld can infer the current host agent, `auto` prefers the
+other agent for independent review, then falls back to the same agent if the
+other is unavailable. Gemini can also be used as an additional external
+challenger. It also supports explicit command, Claude, Codex, Gemini, and local
+paths.
 External providers receive a review brief, inspect the work, and return a
 structured verdict. Provider adapters run read-only by default. scafld checks
 the task-relevant review surface before and after provider execution, then
@@ -402,6 +408,7 @@ churn from another task should not make you pay for another review run.
 ```bash
 scafld review add-cache --provider claude
 scafld review add-cache --provider codex
+scafld review add-cache --provider gemini
 scafld review add-cache --provider command --provider-command "./reviewer"
 scafld review add-cache --review-depth light --max-findings 4 --min-attack-angles 3
 scafld review add-cache --review-scope api,cli/packages/mcp
@@ -422,6 +429,10 @@ review run.
 event in the session ledger. Use it only when a human has actually reviewed the
 diff, spec, acceptance evidence, and scope.
 
+Gemini review requires an authenticated Gemini CLI. scafld provides the
+read-only plan-mode wrapper and strict MCP submit channel; it does not provide
+Google credentials.
+
 Model defaults are configurable per provider:
 
 ```yaml
@@ -432,6 +443,8 @@ review:
       model: "gpt-5.5"
     claude:
       model: "claude-opus-4-7"
+    gemini:
+      # model: "" # empty uses Gemini CLI's configured default
   context:
     # Aggregate rendered section-body budget for the provider brief.
     max_bytes: 16384

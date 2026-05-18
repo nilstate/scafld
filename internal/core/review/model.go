@@ -208,7 +208,7 @@ func BlocksCompletion(finding Finding) bool {
 // the completion gate for real work.
 func ValidCompletionProvider(provider string) bool {
 	switch strings.TrimSpace(provider) {
-	case "codex", "claude", "command", "human":
+	case "codex", "claude", "gemini", "command", "human":
 		return true
 	default:
 		return false
@@ -265,7 +265,7 @@ func ParseNDJSON(text string) (Dossier, error) {
 			found = true
 		case "tick", "partial":
 		case "verdict", "finding", "workspace_mutation", "done":
-			return Dossier{}, fmt.Errorf("%w: legacy review frame %q is no longer supported; emit one review dossier", ErrInvalidDossier, frame.Type)
+			return Dossier{}, fmt.Errorf("%w: unsupported review frame %q; emit one review dossier", ErrInvalidDossier, frame.Type)
 		default:
 			return Dossier{}, fmt.Errorf("%w: unknown frame type %q", ErrInvalidDossier, frame.Type)
 		}

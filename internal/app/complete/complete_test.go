@@ -130,7 +130,7 @@ func TestCompleteRejectsMissingOrUnknownReviewProvider(t *testing.T) {
 func TestCompleteAcceptsKnownExternalReviewProviders(t *testing.T) {
 	t.Parallel()
 
-	for _, provider := range []string{"codex", "claude", "command"} {
+	for _, provider := range []string{"codex", "claude", "gemini", "command"} {
 		specs := &fakeSpecs{model: spec.Model{TaskID: "task", Status: spec.StatusReview, Review: spec.ReviewState{Status: "completed", Verdict: "pass"}}}
 		ledger := session.New("task", "now").WithEntry(session.Entry{Type: "review", Status: corereview.VerdictPass, Provider: provider})
 		_, err := Run(context.Background(), specs, &fakeSessions{ledger: ledger}, fakeClock{}, "task")

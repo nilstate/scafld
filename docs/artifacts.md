@@ -42,8 +42,10 @@ The spec is readable state. The session ledger is the evidence source.
 
 ## Harden Round
 
-A harden round records the pre-build challenge. Questions are optional; checks
-are the evidence that the plan survived hardening.
+A harden round records the pre-build challenge. Checks are the evidence that the
+plan was attacked. Issues carry the findings. Only open issues with
+`blocks_approval` block approval; advisories keep their full detail without
+forcing another harden loop.
 
 ```markdown
 ## Harden Rounds
@@ -85,13 +87,21 @@ Checks:
   - Result: passed
   - Evidence: The plan names the underlying review failure, removes the escape hatch at the root, and avoids a compatibility fallback.
 
-Questions:
-- none
+Issues:
+- [low/advisory] `harden-1` question - The rollback could name a recovery command.
+  - Status: open
+  - Grounded in: spec_gap:Rollback
+  - Evidence: Rollback is credible but terse.
+  - Recommendation: Name the recovery command if already known.
+  - Question: What should a human run if the cutover fails?
+  - Recommended answer: Use the package's existing repair command.
+  - If unanswered: Keep rollback as-is; do not block approval.
 ```
 
-`Questions: none` is valid when the checks have evidence and no unresolved
-operator decision remains. Provider-backed hardening may also render design
-objections and recommended edits when the verdict is `needs_revision`.
+`Issues: none` is valid when the checks have evidence and no blocker or advisory
+was found. Provider-backed hardening records one strict `HardenDossier` with
+checks, issues, and an attack log. Manual hardening can still be conversational,
+but its durable output should use the same issue shape.
 
 ## Status JSON
 

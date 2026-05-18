@@ -83,14 +83,16 @@ Use an external challenger for real work:
 ```bash
 scafld review add-auth --provider codex
 scafld review add-auth --provider claude
+scafld review add-auth --provider gemini
 scafld review add-auth --provider command --provider-command "./reviewer"
 scafld review add-auth --print-context
 ```
 
-With no provider flag, scafld uses `--provider auto` and selects an installed
-external challenger. If none is installed, review fails closed. Use
-`--provider local` only for development smoke tests; local verdicts cannot
-satisfy `complete`.
+With no provider flag, scafld uses `--provider auto`. If scafld can infer the
+current host agent, it prefers the other installed challenger, can use Gemini as
+another external challenger, and falls back if needed. If no external challenger is installed, review fails
+closed. Use `--provider local` only for development smoke tests; local verdicts
+cannot satisfy `complete`.
 
 `--print-context` shows the exact deterministic brief before you spend a review
 run.
@@ -101,8 +103,8 @@ run.
 scafld complete add-auth
 ```
 
-`complete` archives only work with a passing `codex`, `claude`, `command`, or
-audited human review in the session. If review returns a blocking finding,
+`complete` archives only work with a passing `codex`, `claude`, `gemini`,
+`command`, or audited human review in the session. If review returns a blocking finding,
 repair the work, rerun `build` as needed, then rerun `review`.
 
 ## Inspect State

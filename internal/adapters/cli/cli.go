@@ -336,8 +336,8 @@ func runReview(ctx context.Context, args []string, stdout io.Writer, stderr io.W
 	}
 	out, err := review.RunWithInput(ctx, store, sessions, git.Adapter{Root: root}, selected.Provider, clock.System{}, review.Input{
 		TaskID:          opts.Positionals[0],
-		Mode:            reviewcli.ModeFromFlags(opts.Values["mode"], opts.Flags["verify"], opts.Flags["full"]),
-		ForceMode:       opts.Flags["verify"] || opts.Flags["full"] || strings.TrimSpace(opts.Values["mode"]) != "",
+		Mode:            reviewcli.ModeFromValue(opts.Values["mode"]),
+		ForceMode:       strings.TrimSpace(opts.Values["mode"]) != "",
 		Passes:          selected.Passes,
 		Invariants:      selected.Invariants,
 		ReviewScope:     reviewcli.SplitScope(opts.Values["review-scope"]),

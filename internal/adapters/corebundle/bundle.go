@@ -71,11 +71,6 @@ func Install(ctx context.Context, root string, opts Options) (Result, error) {
 			return Result{}, err
 		}
 	}
-	if opts.OverwriteCore {
-		if err := normalizeProjectConfig(ctx, root, &result); err != nil {
-			return Result{}, err
-		}
-	}
 	return result, nil
 }
 

@@ -241,52 +241,36 @@ func renderHardenRound(b *strings.Builder, round spec.HardenRound) {
 		}
 		fmt.Fprintf(b, "\n")
 	}
-	fmt.Fprintf(b, "Questions:\n")
-	if len(round.Questions) == 0 {
+	fmt.Fprintf(b, "Issues:\n")
+	if len(round.Issues) == 0 {
 		fmt.Fprintf(b, "- none\n\n")
 	} else {
-		for _, question := range round.Questions {
-			fmt.Fprintf(b, "- %s\n", fallback(question.Question, "Question not recorded."))
-			if question.GroundedIn != "" {
-				fmt.Fprintf(b, "  - Grounded in: %s\n", question.GroundedIn)
+		for _, issue := range round.Issues {
+			gate := "advisory"
+			if issue.BlocksApproval {
+				gate = "blocks approval"
 			}
-			if question.RecommendedAnswer != "" {
-				fmt.Fprintf(b, "  - Recommended answer: %s\n", question.RecommendedAnswer)
+			fmt.Fprintf(b, "- [%s/%s] `%s` %s - %s\n", fallback(issue.Severity, "medium"), gate, fallback(issue.ID, "harden-issue"), fallback(issue.Kind, "issue"), fallback(issue.Summary, "Harden issue not recorded."))
+			if issue.Status != "" {
+				fmt.Fprintf(b, "  - Status: %s\n", issue.Status)
 			}
-			if question.IfUnanswered != "" {
-				fmt.Fprintf(b, "  - If unanswered: %s\n", question.IfUnanswered)
+			if issue.GroundedIn != "" {
+				fmt.Fprintf(b, "  - Grounded in: %s\n", issue.GroundedIn)
 			}
-			if question.AnsweredWith != "" {
-				fmt.Fprintf(b, "  - Answered with: %s\n", question.AnsweredWith)
+			if issue.Evidence != "" {
+				fmt.Fprintf(b, "  - Evidence: %s\n", issue.Evidence)
 			}
-		}
-		fmt.Fprintf(b, "\n")
-	}
-	if len(round.DesignObjections) > 0 {
-		fmt.Fprintf(b, "Design objections:\n")
-		for _, objection := range round.DesignObjections {
-			fmt.Fprintf(b, "- `%s` %s - %s\n", fallback(objection.ID, "objection"), fallback(objection.Severity, "medium"), fallback(objection.Summary, "Design objection not recorded."))
-			if objection.GroundedIn != "" {
-				fmt.Fprintf(b, "  - Grounded in: %s\n", objection.GroundedIn)
+			if issue.Recommendation != "" {
+				fmt.Fprintf(b, "  - Recommendation: %s\n", issue.Recommendation)
 			}
-			if objection.Evidence != "" {
-				fmt.Fprintf(b, "  - Evidence: %s\n", objection.Evidence)
+			if issue.Question != "" {
+				fmt.Fprintf(b, "  - Question: %s\n", issue.Question)
 			}
-			if objection.Recommendation != "" {
-				fmt.Fprintf(b, "  - Recommendation: %s\n", objection.Recommendation)
+			if issue.RecommendedAnswer != "" {
+				fmt.Fprintf(b, "  - Recommended answer: %s\n", issue.RecommendedAnswer)
 			}
-		}
-		fmt.Fprintf(b, "\n")
-	}
-	if len(round.RecommendedEdits) > 0 {
-		fmt.Fprintf(b, "Recommended edits:\n")
-		for _, edit := range round.RecommendedEdits {
-			fmt.Fprintf(b, "- %s\n", fallback(edit.Section, "Section not recorded."))
-			if edit.GroundedIn != "" {
-				fmt.Fprintf(b, "  - Grounded in: %s\n", edit.GroundedIn)
-			}
-			if edit.Recommendation != "" {
-				fmt.Fprintf(b, "  - Recommendation: %s\n", edit.Recommendation)
+			if issue.IfUnanswered != "" {
+				fmt.Fprintf(b, "  - If unanswered: %s\n", issue.IfUnanswered)
 			}
 		}
 		fmt.Fprintf(b, "\n")

@@ -41,4 +41,7 @@ func TestCancelLifecycleCommandUpdatesSessionAndSpec(t *testing.T) {
 	if model.Status != spec.StatusCancelled || sessions.entry.Status != "cancelled" {
 		t.Fatalf("model=%+v entry=%+v", model, sessions.entry)
 	}
+	if model.CurrentState.Next != "done" || model.CurrentState.AllowedFollowUp != "none" || model.CurrentState.Blockers != "none" {
+		t.Fatalf("current state = %+v", model.CurrentState)
+	}
 }

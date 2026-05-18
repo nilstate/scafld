@@ -27,14 +27,12 @@ func StrictDossierSchemaJSON() string {
 
 func dossierSchema(strict bool) schema {
 	root := strictObject(schema{
-		"verdict":           stringEnum(VerdictPass, VerdictNeedsRevision),
-		"summary":           schema{"type": "string", "minLength": 1},
-		"checks":            schema{"type": "array", "minItems": len(RequiredCheckNames), "items": checkSchema(strict)},
-		"questions":         schema{"type": "array", "items": questionSchema(strict)},
-		"design_objections": schema{"type": "array", "items": designObjectionSchema(strict)},
-		"recommended_edits": schema{"type": "array", "items": recommendedEditSchema(strict)},
-		"attack_log":        schema{"type": "array", "minItems": 1, "items": attackLogSchema(strict)},
-	}, []string{"verdict", "summary", "checks", "questions", "design_objections", "recommended_edits", "attack_log"}, strict)
+		"verdict":    stringEnum(VerdictPass, VerdictNeedsRevision),
+		"summary":    schema{"type": "string", "minLength": 1},
+		"checks":     schema{"type": "array", "minItems": len(RequiredCheckNames), "items": checkSchema(strict)},
+		"issues":     schema{"type": "array", "items": issueSchema(strict)},
+		"attack_log": schema{"type": "array", "minItems": 1, "items": attackLogSchema(strict)},
+	}, []string{"verdict", "summary", "checks", "issues", "attack_log"}, strict)
 	root["$schema"] = "https://json-schema.org/draft/2020-12/schema"
 	root["title"] = "scafld HardenDossier provider response"
 	return root
@@ -49,32 +47,21 @@ func checkSchema(strict bool) schema {
 	}, []string{"name", "grounded_in", "result", "evidence"}, strict)
 }
 
-func questionSchema(strict bool) schema {
+func issueSchema(strict bool) schema {
 	return strictObject(schema{
-		"question":           schema{"type": "string", "minLength": 1},
+		"id":                 nullableString(),
+		"kind":               schema{"type": "string", "minLength": 1},
+		"severity":           stringEnum("critical", "high", "medium", "low"),
+		"blocks_approval":    schema{"type": "boolean"},
+		"status":             stringEnum("open", "fixed", "accepted_risk", "superseded"),
 		"grounded_in":        schema{"type": "string", "minLength": 1},
-		"recommended_answer": schema{"type": "string", "minLength": 1},
+		"summary":            schema{"type": "string", "minLength": 1},
+		"evidence":           schema{"type": "string", "minLength": 1},
+		"recommendation":     schema{"type": "string", "minLength": 1},
+		"question":           nullableString(),
+		"recommended_answer": nullableString(),
 		"if_unanswered":      nullableString(),
-	}, []string{"question", "grounded_in", "recommended_answer"}, strict)
-}
-
-func designObjectionSchema(strict bool) schema {
-	return strictObject(schema{
-		"id":             nullableString(),
-		"severity":       stringEnum("critical", "high", "medium", "low"),
-		"grounded_in":    schema{"type": "string", "minLength": 1},
-		"summary":        schema{"type": "string", "minLength": 1},
-		"evidence":       schema{"type": "string", "minLength": 1},
-		"recommendation": schema{"type": "string", "minLength": 1},
-	}, []string{"severity", "grounded_in", "summary", "evidence", "recommendation"}, strict)
-}
-
-func recommendedEditSchema(strict bool) schema {
-	return strictObject(schema{
-		"section":        schema{"type": "string", "minLength": 1},
-		"grounded_in":    schema{"type": "string", "minLength": 1},
-		"recommendation": schema{"type": "string", "minLength": 1},
-	}, []string{"section", "grounded_in", "recommendation"}, strict)
+	}, []string{"kind", "severity", "blocks_approval", "status", "grounded_in", "summary", "evidence", "recommendation"}, strict)
 }
 
 func attackLogSchema(strict bool) schema {

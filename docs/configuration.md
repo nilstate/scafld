@@ -41,9 +41,9 @@ Managed by scafld:
 
 `scafld update` refreshes `.scafld/core/` and safely refreshes project prompt
 copies that are still known defaults. Customized project prompts are skipped.
-It also refreshes root agent docs and renders generated `.scafld/config.yaml`
-into the current strict runtime shape. Specs, sessions, reviews, and local
-config are never overwritten.
+It also refreshes root agent docs. Project config is left untouched; invalid
+config shapes fail at lifecycle or config-load time. Specs, sessions, reviews,
+and local config are never overwritten.
 
 `.scafld/config.yaml` is intentionally sparse. Runtime defaults live in the
 binary, and the full example shape lives in `.scafld/core/config.yaml`. Put only
@@ -61,7 +61,7 @@ Prompt lookup uses project files first:
 ```text
 .scafld/prompts/harden.md
 .scafld/core/prompts/harden.md
-built-in fallback
+built-in default
 ```
 
 Use project prompts for local voice and policy. Keep core prompts as the reset
@@ -198,7 +198,7 @@ The command scans recognizable project surfaces, writes
 agent. The proposal is evidence-backed: every suggested command or invariant
 cites the file that implied it. It also contains `agent_instructions`, so the
 agent knows what to update, what must stay out of runtime config, and which
-questions need a human or a deeper repo read. If an existing config contains
+open items need a human or a deeper repo read. If an existing config contains
 old keys the Go runtime does not read, the proposal includes an
 `ignored_config_keys` warning so cleanup is explicit rather than silent.
 
@@ -244,18 +244,21 @@ Review defaults come from `.scafld/config.yaml`:
 ```yaml
 review:
   external:
-    provider: "auto"              # auto | codex | claude | command | local
+    provider: "auto"              # auto | codex | claude | gemini | command | local
     command: "./reviewer"         # only when provider: command
     provider_binary: "/path/bin"  # optional selected-provider binary override
     idle_timeout_seconds: 180
     absolute_max_seconds: 1800
-    fallback_policy: "warn"       # disable makes auto require codex
+    fallback_policy: "warn"       # disable prevents auto fallback
     codex:
       model: "gpt-5.5"
       binary: "codex"
     claude:
       model: "claude-opus-4-7"
       binary: "claude"
+    gemini:
+      # model: ""                 # empty uses Gemini CLI's configured default
+      binary: "gemini"
   context:
     # Aggregate rendered section-body budget for the provider brief.
     max_bytes: 16384
@@ -296,15 +299,24 @@ CLI flags override config for a single invocation:
 scafld review task --provider auto
 scafld review task --provider codex
 scafld review task --provider claude
+scafld review task --provider gemini
 scafld review task --provider command --provider-command "./reviewer"
 scafld review task --provider local
 scafld review task --provider codex --model gpt-5
 ```
 
-`auto` chooses an installed external provider. It prefers Codex, then falls back
-to Claude unless `fallback_policy: "disable"` is set. Provider-specific model
-defaults come from `review.external.codex.model` and
-`review.external.claude.model`; `--model` overrides either.
+`auto` chooses an installed external provider. When scafld can infer the current
+host agent, it prefers the other agent first: Claude for Codex-driven work,
+Codex for Claude-driven work. Gemini is available as an additional external
+challenger. If the preferred provider is unavailable, auto falls back unless
+`fallback_policy: "disable"` is set. Without a detected host, the default order
+is Codex, then Claude, then Gemini. Provider-specific model defaults come from
+`review.external.codex.model`, `review.external.claude.model`, and
+`review.external.gemini.model`; `--model` overrides them.
+
+If the host agent cannot be inferred from the environment, set
+`SCAFLD_HOST_AGENT=codex` or `SCAFLD_HOST_AGENT=claude` before invoking scafld.
+This affects only `provider: auto` ordering.
 
 `local` exists for tests and smoke runs; it is not a substitute for adversarial
 review and cannot satisfy `scafld complete`.
@@ -324,24 +336,25 @@ Hardening is operator-driven. `scafld approve` does not force
 hardened before approval.
 
 The active harden prompt asks the agent to record evidence-backed checks under
-the latest `## Harden Rounds` entry before asking questions. The required
+the latest `## Harden Rounds` entry before recording issues. The required
 checks are path audit, command audit, scope/migration audit, acceptance timing
 audit, rollback/repair audit, and design challenge. The design challenge asks
 why the plan exists, what deeper product or system problem it solves, whether
 the proposed change is a short-sighted bandaid over an endemic issue, and
 whether a different abstraction would remove the root cause more cleanly.
 
-`harden.max_questions_per_round` is read from config and injected into that
-prompt as a cap, not a target. Questions are optional; `Questions: none` is
-valid only after checks have evidence. `--mark-passed` verifies check evidence,
-resolved questions, and cited code or archive references before closing the
-round.
+`harden.max_issues_per_round` is read from config and injected into that
+prompt as a cap, not a target. Issues are optional; `Issues: none` is valid only
+after checks have evidence. `--mark-passed` verifies check evidence, open
+approval blockers, and cited code or archive references before closing the
+round. Advisory issues remain recorded without blocking approval.
 
 Provider-backed hardening uses `harden.external`. Leave
 `harden.external.provider` empty for manual rounds, or set it to `auto`,
-`codex`, `claude`, `command`, or `local` when the draft should be challenged by
-a separate agent. The provider receives a bounded harden context packet and
+`codex`, `claude`, `gemini`, `command`, or `local` when the draft should be
+challenged by a separate agent. The provider receives a bounded harden context packet and
 must submit a strict `HardenDossier`: verdict, summary, required checks,
-questions, design objections, recommended edits, and attack log. `pass` marks
-the draft hardened. `needs_revision` leaves the spec in draft state with the
-provider's objections rendered into `## Harden Rounds`.
+issues, and attack log. `pass` marks the draft hardened. `needs_revision`
+leaves the spec in draft state with approval-blocking issues rendered into
+`## Harden Rounds`; non-blocking advisories are rendered there too, but do not
+force another harden cycle.

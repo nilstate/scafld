@@ -17,7 +17,7 @@ func TestPromptIncludesConfiguredHardenCap(t *testing.T) {
 	}
 	if err := os.WriteFile(filepath.Join(root, ".scafld", "config.yaml"), []byte(`
 harden:
-  max_questions_per_round: 3
+  max_issues_per_round: 3
 invariants:
   canonical:
     tenant_isolation: "Do not leak data across tenants."
@@ -25,7 +25,7 @@ invariants:
 		t.Fatal(err)
 	}
 	prompt := Prompt(context.Background(), root)
-	if !strings.Contains(prompt, "Configured max_questions_per_round: 3") {
+	if !strings.Contains(prompt, "Configured max_issues_per_round: 3") {
 		t.Fatalf("prompt missing config cap:\n%s", prompt)
 	}
 	if !strings.Contains(prompt, "tenant_isolation: Do not leak data across tenants.") {

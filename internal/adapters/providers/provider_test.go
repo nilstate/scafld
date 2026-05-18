@@ -44,6 +44,170 @@ func TestHardenProviderContract(t *testing.T) {
 	}
 }
 
+func TestAutoProviderPrefersOppositeHostAgent(t *testing.T) {
+	t.Parallel()
+
+	selected, err := AutoProviderInfo(Selection{
+		Provider:     "auto",
+		HostAgent:    HostAgentCodex,
+		CodexBinary:  "/opt/bin/codex",
+		ClaudeBinary: "/opt/bin/claude",
+		CodexModel:   "gpt-review",
+		ClaudeModel:  "opus-review",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selected.Provider != "claude" || selected.Model != "opus-review" {
+		t.Fatalf("selected = %+v, want claude opposite Codex host", selected)
+	}
+
+	selected, err = AutoProviderInfo(Selection{
+		Provider:     "auto",
+		HostAgent:    HostAgentClaude,
+		CodexBinary:  "/opt/bin/codex",
+		ClaudeBinary: "/opt/bin/claude",
+		CodexModel:   "gpt-review",
+		ClaudeModel:  "opus-review",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selected.Provider != "codex" || selected.Model != "gpt-review" {
+		t.Fatalf("selected = %+v, want codex opposite Claude host", selected)
+	}
+}
+
+func TestAutoProviderFallsBackToSameHostAgent(t *testing.T) {
+	t.Parallel()
+
+	selected, err := AutoProviderInfo(Selection{
+		Provider:      "auto",
+		HostAgent:     HostAgentCodex,
+		CodexBinary:   "/opt/bin/codex",
+		CodexModel:    "gpt-review",
+		CommandExists: func(string) bool { return false },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selected.Provider != "codex" || selected.Model != "gpt-review" {
+		t.Fatalf("selected = %+v, want codex fallback when Claude is unavailable", selected)
+	}
+}
+
+func TestAutoProviderIncludesGeminiAsSecondaryExternalChallenger(t *testing.T) {
+	t.Parallel()
+
+	selected, err := AutoProviderInfo(Selection{
+		Provider:      "auto",
+		HostAgent:     HostAgentCodex,
+		GeminiBinary:  "/opt/bin/gemini",
+		GeminiModel:   "gemini-review",
+		CommandExists: func(string) bool { return false },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selected.Provider != "gemini" || selected.Model != "gemini-review" {
+		t.Fatalf("selected = %+v, want gemini after missing Claude opposite Codex host", selected)
+	}
+}
+
+func TestAutoProviderFallbackPolicyDisableStillAllowsGeminiChallenger(t *testing.T) {
+	t.Parallel()
+
+	selected, err := AutoProviderInfo(Selection{
+		Provider:       "auto",
+		HostAgent:      HostAgentCodex,
+		CodexBinary:    "/opt/bin/codex",
+		GeminiBinary:   "/opt/bin/gemini",
+		FallbackPolicy: "disable",
+		CommandExists:  func(string) bool { return false },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selected.Provider != "gemini" {
+		t.Fatalf("selected = %+v, want Gemini independent challenger", selected)
+	}
+}
+
+func TestAutoProviderBinaryDoesNotOverrideOppositeAgentPreference(t *testing.T) {
+	t.Parallel()
+
+	selected, err := AutoProviderInfo(Selection{
+		Provider:      "auto",
+		HostAgent:     HostAgentCodex,
+		Binary:        "/custom/bin/reviewer",
+		CodexModel:    "gpt-review",
+		ClaudeModel:   "opus-review",
+		CommandExists: func(string) bool { return false },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selected.Provider != "claude" || selected.Model != "opus-review" {
+		t.Fatalf("selected = %+v, want generic binary applied after opposite-agent selection", selected)
+	}
+
+	provider, err := Select(Selection{
+		Provider:      "auto",
+		HostAgent:     HostAgentCodex,
+		Binary:        "/custom/bin/reviewer",
+		CommandExists: func(string) bool { return false },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claude, ok := provider.(ClaudeProvider)
+	if !ok {
+		t.Fatalf("provider = %T, want ClaudeProvider", provider)
+	}
+	if claude.Binary != "/custom/bin/reviewer" {
+		t.Fatalf("claude binary = %q, want generic override", claude.Binary)
+	}
+}
+
+func TestAutoProviderFallbackPolicyDisableBlocksMissingOppositeAgent(t *testing.T) {
+	t.Parallel()
+
+	_, err := AutoProviderInfo(Selection{
+		Provider:       "auto",
+		HostAgent:      HostAgentCodex,
+		CodexBinary:    "/opt/bin/codex",
+		FallbackPolicy: "disable",
+		CommandExists:  func(string) bool { return false },
+	})
+	if err == nil || !strings.Contains(err.Error(), "no independent auto provider found") {
+		t.Fatalf("err = %v, want missing opposite provider failure", err)
+	}
+}
+
+func TestDetectHostAgent(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range []struct {
+		name    string
+		environ []string
+		want    string
+	}{
+		{name: "explicit codex", environ: []string{"SCAFLD_HOST_AGENT=codex"}, want: HostAgentCodex},
+		{name: "explicit claude", environ: []string{"SCAFLD_HOST_AGENT=claude"}, want: HostAgentClaude},
+		{name: "codex env", environ: []string{"CODEX_THREAD_ID=abc"}, want: HostAgentCodex},
+		{name: "claude env", environ: []string{"CLAUDE_CODE_SESSION=abc"}, want: HostAgentClaude},
+		{name: "claude api key is not host signal", environ: []string{"CLAUDE_API_KEY=secret"}, want: ""},
+		{name: "unknown", environ: []string{"VSCODE_PID=1"}, want: ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := DetectHostAgent(tt.environ); got != tt.want {
+				t.Fatalf("DetectHostAgent() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func dossierJSON(verdict string) string {
 	if verdict == review.VerdictFail {
 		return `{"verdict":"fail","mode":"discover","summary":"bug found","findings":[{"id":"bug","severity":"high","blocks_completion":true,"location":{"path":"file.go"},"evidence":"bug","impact":"breaks behavior","validation":"rerun tests","summary":"bug"}],"attack_log":[{"target":"diff","attack":"scan","result":"finding"}],"budget":{"actual_findings":1,"actual_attack_angles":1,"depth":"test"}}`
@@ -114,6 +278,48 @@ func claudeSubmissionCommand(t *testing.T, req execution.Request) (string, strin
 	}
 	t.Fatalf("missing --out in mcp args: %+v", server.Args)
 	return "", ""
+}
+
+func writeGeminiSubmission(t *testing.T, req execution.Request, body string) {
+	t.Helper()
+	settings := geminiSettingsPath(t, req)
+	data, err := os.ReadFile(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg struct {
+		MCPServers map[string]struct {
+			Args []string `json:"args"`
+		} `json:"mcpServers"`
+	}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("gemini settings: %v\n%s", err, data)
+	}
+	server, ok := cfg.MCPServers["scafld"]
+	if !ok {
+		t.Fatalf("missing scafld MCP server: %+v", cfg)
+	}
+	for i, arg := range server.Args {
+		if arg == "--out" && i+1 < len(server.Args) {
+			if err := os.WriteFile(server.Args[i+1], []byte(body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			return
+		}
+	}
+	t.Fatalf("missing --out in gemini settings: %s", data)
+}
+
+func geminiSettingsPath(t *testing.T, req execution.Request) string {
+	t.Helper()
+	for _, entry := range req.Env {
+		key, value, ok := strings.Cut(entry, "=")
+		if ok && key == "GEMINI_CLI_SYSTEM_SETTINGS_PATH" {
+			return value
+		}
+	}
+	t.Fatalf("missing GEMINI_CLI_SYSTEM_SETTINGS_PATH env: %+v", req.Env)
+	return ""
 }
 
 func TestCommandProviderParsesStdoutOnlyAndPassesTimeouts(t *testing.T) {
@@ -311,6 +517,70 @@ func TestCodexProviderWritesDefaultSchema(t *testing.T) {
 	_, err := (CodexProvider{OutputPath: outputPath, Runner: runner}).Invoke(context.Background(), review.Request{TaskID: "task"})
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestGeminiProviderBuildsPlanModeMCPArgsAndRequiresSubmission(t *testing.T) {
+	t.Parallel()
+
+	settingsPath := filepath.Join(t.TempDir(), "gemini-settings.json")
+	policyPath := filepath.Join(t.TempDir(), "gemini-policy.toml")
+	runner := &fakeRunner{
+		result: execution.Result{Stdout: `{"type":"message","model":"gemini-test"}` + "\n"},
+		onRun: func(req execution.Request) {
+			writeGeminiSubmission(t, req, dossierJSON(review.VerdictPass))
+		},
+	}
+	dossier, err := (GeminiProvider{
+		Binary:       "gemini-bin",
+		Model:        "gemini-model",
+		ScafldBinary: "scafld-bin",
+		SettingsPath: settingsPath,
+		PolicyPath:   policyPath,
+		CWD:          "/tmp/work",
+		Runner:       runner,
+	}).Invoke(context.Background(), review.Request{TaskID: "task", Prompt: "prompt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dossier.Verdict != review.VerdictPass || dossier.Provider != "gemini" || dossier.Model != "gemini-test" || dossier.OutputFormat != "gemini.mcp_submit_review" {
+		t.Fatalf("dossier = %+v", dossier)
+	}
+	wantPrefix := []string{
+		"gemini-bin", "--skip-trust", "--approval-mode", "plan", "--output-format", "stream-json",
+		"--allowed-mcp-server-names", "scafld", "--policy", policyPath,
+		"--prompt", "",
+	}
+	if len(runner.req.Args) < len(wantPrefix) || !reflect.DeepEqual(runner.req.Args[:len(wantPrefix)], wantPrefix) || runner.req.CWD != "/tmp/work" {
+		t.Fatalf("request = %+v", runner.req)
+	}
+	if !strings.Contains(runner.req.Input, "mcp_scafld_submit_review") {
+		t.Fatalf("prompt missing Gemini submit tool name: %q", runner.req.Input)
+	}
+	settings := geminiSettingsPath(t, runner.req)
+	data, err := os.ReadFile(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"defaultApprovalMode":"plan"`) || !strings.Contains(string(data), `"includeTools":["submit_review"]`) || !strings.Contains(string(data), `"command":"scafld-bin"`) {
+		t.Fatalf("settings = %s", data)
+	}
+	policy, err := os.ReadFile(policyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(policy), `mcpName = "scafld"`) || !strings.Contains(string(policy), `toolName = "submit_review"`) || !strings.Contains(string(policy), `decision = "allow"`) {
+		t.Fatalf("policy = %s", policy)
+	}
+}
+
+func TestGeminiProviderFailsWhenToolSubmissionIsMissing(t *testing.T) {
+	t.Parallel()
+
+	runner := &fakeRunner{result: execution.Result{Stdout: `{"type":"message","text":"done"}` + "\n"}}
+	_, err := (GeminiProvider{Runner: runner}).Invoke(context.Background(), review.Request{TaskID: "task"})
+	if !errors.Is(err, ErrProviderFailed) || !strings.Contains(err.Error(), "provider produced no submission") || !strings.Contains(err.Error(), "mcp_scafld_submit_review") {
+		t.Fatalf("err = %v", err)
 	}
 }
 

@@ -57,20 +57,18 @@ func frontMatterEnd(lines []string) (int, error) {
 }
 
 type parser struct {
-	model           spec.Model
-	section         string
-	phase           *spec.Phase
-	criterion       *spec.Criterion
-	reviewFinding   *corereview.Finding
-	hardenRound     *spec.HardenRound
-	hardenCheck     *spec.HardenCheck
-	hardenQuestion  *spec.HardenQuestion
-	hardenObjection *spec.HardenDesignObjection
-	hardenEdit      *spec.HardenRecommendedEdit
-	phaseField      string
-	hardenField     string
-	listTarget      *([]string)
-	phaseIDs        map[string]bool
+	model         spec.Model
+	section       string
+	phase         *spec.Phase
+	criterion     *spec.Criterion
+	reviewFinding *corereview.Finding
+	hardenRound   *spec.HardenRound
+	hardenCheck   *spec.HardenCheck
+	hardenIssue   *spec.HardenIssue
+	phaseField    string
+	hardenField   string
+	listTarget    *([]string)
+	phaseIDs      map[string]bool
 }
 
 func newParser(front map[string]string) *parser {
@@ -143,7 +141,6 @@ func (p *parser) startPhase(match []string) error {
 	p.reviewFinding = nil
 	p.hardenRound = nil
 	p.hardenCheck = nil
-	p.hardenQuestion = nil
 	p.phaseField = ""
 	p.hardenField = ""
 	p.listTarget = nil
@@ -157,7 +154,6 @@ func (p *parser) startSection(section string) {
 	p.reviewFinding = nil
 	p.hardenRound = nil
 	p.hardenCheck = nil
-	p.hardenQuestion = nil
 	p.phaseField = ""
 	p.hardenField = ""
 	p.listTarget = listForSection(&p.model, section)
@@ -318,6 +314,12 @@ func (p *parser) handleHardenLine(line string) bool {
 		p.startHardenRound(strings.TrimSpace(strings.TrimPrefix(line, "### ")))
 		return true
 	}
+	if strings.HasPrefix(line, "  - ") {
+		return p.handleHardenDetail(strings.TrimSpace(strings.TrimPrefix(line, "  - ")))
+	}
+	if strings.HasPrefix(line, "  ") {
+		return p.handleHardenDetail(strings.TrimSpace(line))
+	}
 	if key, value, ok := parseSpecKeyValue(line); ok {
 		switch normalizeSpecKey(key) {
 		case "status":
@@ -360,40 +362,18 @@ func (p *parser) handleHardenLine(line string) bool {
 				p.hardenRound.Summary = value
 			}
 			return true
-		case "questions":
-			p.hardenField = "questions"
-			p.hardenCheck = nil
-			p.hardenObjection = nil
-			p.hardenEdit = nil
-			return true
 		case "checks":
 			p.hardenField = "checks"
-			p.hardenQuestion = nil
-			p.hardenObjection = nil
-			p.hardenEdit = nil
+			p.hardenIssue = nil
 			return true
-		case "design objections":
-			p.hardenField = "design_objections"
+		case "issues":
+			p.hardenField = "issues"
 			p.hardenCheck = nil
-			p.hardenQuestion = nil
-			p.hardenEdit = nil
-			return true
-		case "recommended edits":
-			p.hardenField = "recommended_edits"
-			p.hardenCheck = nil
-			p.hardenQuestion = nil
-			p.hardenObjection = nil
 			return true
 		}
 	}
 	if strings.HasPrefix(line, "- ") {
 		return p.handleHardenBullet(strings.TrimSpace(strings.TrimPrefix(line, "- ")))
-	}
-	if strings.HasPrefix(line, "  - ") {
-		return p.handleHardenQuestionDetail(strings.TrimSpace(strings.TrimPrefix(line, "  - ")))
-	}
-	if strings.HasPrefix(line, "  ") {
-		return p.handleHardenQuestionDetail(strings.TrimSpace(line))
 	}
 	return true
 }
@@ -402,9 +382,7 @@ func (p *parser) startHardenRound(id string) {
 	p.model.HardenRounds = append(p.model.HardenRounds, spec.HardenRound{ID: id})
 	p.hardenRound = &p.model.HardenRounds[len(p.model.HardenRounds)-1]
 	p.hardenCheck = nil
-	p.hardenQuestion = nil
-	p.hardenObjection = nil
-	p.hardenEdit = nil
+	p.hardenIssue = nil
 	p.hardenField = ""
 }
 
@@ -422,14 +400,6 @@ func (p *parser) handleHardenBullet(value string) bool {
 		}
 		return true
 	}
-	if p.hardenField == "questions" {
-		if key, body, ok := parseSpecKeyValue(value); ok && normalizeSpecKey(key) == "question" {
-			p.startHardenQuestion(body)
-			return true
-		}
-		p.startHardenQuestion(value)
-		return true
-	}
 	if p.hardenField == "checks" {
 		if key, body, ok := parseSpecKeyValue(value); ok && normalizeSpecKey(key) == "check" {
 			p.startHardenCheck(body)
@@ -438,12 +408,8 @@ func (p *parser) handleHardenBullet(value string) bool {
 		p.startHardenCheck(value)
 		return true
 	}
-	if p.hardenField == "design_objections" {
-		p.startHardenObjection(value)
-		return true
-	}
-	if p.hardenField == "recommended_edits" {
-		p.startHardenEdit(value)
+	if p.hardenField == "issues" {
+		p.startHardenIssue(value)
 		return true
 	}
 	return true
@@ -457,21 +423,19 @@ func (p *parser) startHardenCheck(value string) {
 	if value == "" {
 		return
 	}
-	normalized := normalizeHardenQuestion(value)
+	normalized := normalizeHardenName(value)
 	for i := range p.hardenRound.Checks {
-		if normalizeHardenQuestion(p.hardenRound.Checks[i].Name) == normalized {
+		if normalizeHardenName(p.hardenRound.Checks[i].Name) == normalized {
 			p.hardenCheck = &p.hardenRound.Checks[i]
 			return
 		}
 	}
 	p.hardenRound.Checks = append(p.hardenRound.Checks, spec.HardenCheck{Name: value})
 	p.hardenCheck = &p.hardenRound.Checks[len(p.hardenRound.Checks)-1]
-	p.hardenQuestion = nil
-	p.hardenObjection = nil
-	p.hardenEdit = nil
+	p.hardenIssue = nil
 }
 
-func (p *parser) startHardenQuestion(value string) {
+func (p *parser) startHardenIssue(value string) {
 	if p.hardenRound == nil {
 		return
 	}
@@ -479,66 +443,40 @@ func (p *parser) startHardenQuestion(value string) {
 	if value == "" {
 		return
 	}
-	normalized := normalizeHardenQuestion(value)
-	for i := range p.hardenRound.Questions {
-		if normalizeHardenQuestion(p.hardenRound.Questions[i].Question) == normalized {
-			p.hardenQuestion = &p.hardenRound.Questions[i]
-			return
+	issue := spec.HardenIssue{Summary: value, Status: "open"}
+	if strings.HasPrefix(value, "[") {
+		if head, tail, ok := strings.Cut(value, "]"); ok {
+			parts := strings.Split(strings.TrimPrefix(head, "["), "/")
+			if len(parts) > 0 {
+				issue.Severity = strings.TrimSpace(parts[0])
+			}
+			if len(parts) > 1 {
+				gate := strings.TrimSpace(parts[1])
+				issue.BlocksApproval = gate == "blocks approval" || gate == "blocker" || gate == "blocking"
+			}
+			value = strings.TrimSpace(tail)
 		}
 	}
-	p.hardenRound.Questions = append(p.hardenRound.Questions, spec.HardenQuestion{Question: value})
-	p.hardenQuestion = &p.hardenRound.Questions[len(p.hardenRound.Questions)-1]
-	p.hardenCheck = nil
-	p.hardenObjection = nil
-	p.hardenEdit = nil
-}
-
-func (p *parser) startHardenObjection(value string) {
-	if p.hardenRound == nil {
-		return
-	}
-	value = cleanSpecValue(value)
-	if value == "" {
-		return
-	}
-	objection := spec.HardenDesignObjection{Summary: value}
 	if strings.HasPrefix(value, "`") {
 		if rest := strings.TrimPrefix(value, "`"); rest != value {
 			if id, tail, ok := strings.Cut(rest, "`"); ok {
-				objection.ID = strings.TrimSpace(id)
+				issue.ID = strings.TrimSpace(id)
 				tail = strings.TrimSpace(tail)
-				if severity, summary, ok := strings.Cut(tail, " - "); ok {
-					objection.Severity = strings.TrimSpace(severity)
-					objection.Summary = strings.TrimSpace(summary)
+				if kind, summary, ok := strings.Cut(tail, " - "); ok {
+					issue.Kind = strings.TrimSpace(kind)
+					issue.Summary = strings.TrimSpace(summary)
 				} else if tail != "" {
-					objection.Summary = strings.TrimSpace(tail)
+					issue.Summary = strings.TrimSpace(tail)
 				}
 			}
 		}
 	}
-	p.hardenRound.DesignObjections = append(p.hardenRound.DesignObjections, objection)
-	p.hardenObjection = &p.hardenRound.DesignObjections[len(p.hardenRound.DesignObjections)-1]
+	p.hardenRound.Issues = append(p.hardenRound.Issues, issue)
+	p.hardenIssue = &p.hardenRound.Issues[len(p.hardenRound.Issues)-1]
 	p.hardenCheck = nil
-	p.hardenQuestion = nil
-	p.hardenEdit = nil
 }
 
-func (p *parser) startHardenEdit(value string) {
-	if p.hardenRound == nil {
-		return
-	}
-	value = cleanSpecValue(value)
-	if value == "" {
-		return
-	}
-	p.hardenRound.RecommendedEdits = append(p.hardenRound.RecommendedEdits, spec.HardenRecommendedEdit{Section: value})
-	p.hardenEdit = &p.hardenRound.RecommendedEdits[len(p.hardenRound.RecommendedEdits)-1]
-	p.hardenCheck = nil
-	p.hardenQuestion = nil
-	p.hardenObjection = nil
-}
-
-func (p *parser) handleHardenQuestionDetail(value string) bool {
+func (p *parser) handleHardenDetail(value string) bool {
 	key, body, ok := parseSpecKeyValue(value)
 	if !ok {
 		return true
@@ -561,53 +499,40 @@ func (p *parser) handleHardenQuestionDetail(value string) bool {
 		}
 		return true
 	}
-	if p.hardenField == "design_objections" {
-		if p.hardenObjection == nil {
+	if p.hardenField == "issues" {
+		if p.hardenIssue == nil {
 			return true
 		}
 		switch normalizeSpecKey(key) {
+		case "kind":
+			p.hardenIssue.Kind = body
+		case "severity":
+			p.hardenIssue.Severity = body
+		case "blocks approval":
+			p.hardenIssue.BlocksApproval = strings.EqualFold(body, "true") || strings.EqualFold(body, "yes")
+		case "status":
+			p.hardenIssue.Status = body
 		case "grounded in":
-			p.hardenObjection.GroundedIn = body
+			p.hardenIssue.GroundedIn = body
+		case "summary":
+			p.hardenIssue.Summary = body
 		case "evidence":
-			p.hardenObjection.Evidence = body
+			p.hardenIssue.Evidence = body
 		case "recommendation":
-			p.hardenObjection.Recommendation = body
+			p.hardenIssue.Recommendation = body
+		case "question":
+			p.hardenIssue.Question = body
+		case "recommended answer":
+			p.hardenIssue.RecommendedAnswer = body
+		case "if unanswered":
+			p.hardenIssue.IfUnanswered = body
 		}
 		return true
-	}
-	if p.hardenField == "recommended_edits" {
-		if p.hardenEdit == nil {
-			return true
-		}
-		switch normalizeSpecKey(key) {
-		case "grounded in":
-			p.hardenEdit.GroundedIn = body
-		case "recommendation":
-			p.hardenEdit.Recommendation = body
-		}
-		return true
-	}
-	if normalizeSpecKey(key) == "question" {
-		p.startHardenQuestion(body)
-		return true
-	}
-	if p.hardenQuestion == nil {
-		return true
-	}
-	switch normalizeSpecKey(key) {
-	case "grounded in":
-		p.hardenQuestion.GroundedIn = body
-	case "recommended answer":
-		p.hardenQuestion.RecommendedAnswer = body
-	case "if unanswered":
-		p.hardenQuestion.IfUnanswered = body
-	case "answered with", "resolution":
-		p.hardenQuestion.AnsweredWith = body
 	}
 	return true
 }
 
-func normalizeHardenQuestion(value string) string {
+func normalizeHardenName(value string) string {
 	return strings.Join(strings.Fields(strings.ToLower(strings.TrimSpace(value))), " ")
 }
 

@@ -1,6 +1,6 @@
 ---
 title: Integrations
-description: Thin first-party adapter paths for Codex and Claude Code
+description: Thin provider adapter paths for Codex, Claude Code, and Gemini CLI
 ---
 
 # Integrations
@@ -39,16 +39,18 @@ For challenger review work:
 - Claude review disables session persistence, slash commands, and browser
   integration, restricts built-in tools to `Read`, `Grep`, and `Glob`, and
   accepts the final verdict only through scafld's `submit_review` MCP tool.
-  This is still weaker isolation than the Codex filesystem sandbox in the
-  currently supported CLI surface, so the workspace mutation guard remains a
-  hard fail-closed check
+- Gemini review runs in plan mode with a temporary scafld-owned settings file
+  that exposes only the `submit_review` MCP tool for the final verdict
 - Codex review requests `gpt-5.5` by default so review uses the strongest
   available Codex model unless configured otherwise
 - Claude review requests `claude-opus-4-7` by default unless configured
   otherwise
+- Gemini review uses Gemini CLI's configured default model unless
+  `review.external.gemini.model` is set. It runs in plan mode with a temporary
+  scafld MCP settings file and must submit through `submit_review`
 - `review.external.fallback_policy: "disable"` prevents `provider: auto` from
-  using Claude when Codex is unavailable; `warn` and `allow` both allow the
-  fallback
+  falling back from the preferred independent challenger to the current host
+  agent; `warn` and `allow` both allow the fallback
 
 For blocked review findings, the wrapper can pass the latest challenger handoff
 back into the runtime so the executor has the exact review context in front of

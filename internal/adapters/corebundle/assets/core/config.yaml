@@ -39,11 +39,12 @@ execution:
   #   BUNDLE_GEMFILE: "api/Gemfile"
 
 harden:
-  max_questions_per_round: 8
+  max_issues_per_round: 8
   context_max_bytes: 16384
   external:
     # Leave provider empty for manual harden rounds. Set to auto, codex, claude,
-    # local, or command when the draft should be challenged by a separate agent.
+    # gemini, local, or command when challenged by a separate agent.
+    # auto prefers the other detected host agent, then falls back if needed.
     # provider: "auto"
     # command: "./harden-reviewer" # only when provider: command
     # provider_binary: "/path/bin"
@@ -56,10 +57,14 @@ harden:
     claude:
       model: "claude-opus-4-7"
       # binary: "claude"
+    gemini:
+      # model: ""
+      # binary: "gemini"
 
 review:
   external:
     provider: "auto"
+    # auto prefers the other detected host agent, then falls back if needed.
     # command: "./reviewer"        # only when provider: command
     # provider_binary: "/path/bin" # optional selected-provider binary override
     idle_timeout_seconds: 180
@@ -71,6 +76,9 @@ review:
     claude:
       model: "claude-opus-4-7"
       # binary: "claude"
+    gemini:
+      # model: ""
+      # binary: "gemini"
 
   context:
     # Bounded, deterministic project files included in the provider prompt.

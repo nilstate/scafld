@@ -36,6 +36,8 @@ func Run(ctx context.Context, specs SpecStore, sessions SessionStore, clock Cloc
 	model.Updated = now
 	model.CurrentState.Reason = reason
 	model.CurrentState.Next = "inspect failure"
+	model.CurrentState.Blockers = reason
+	model.CurrentState.AllowedFollowUp = "scafld handoff " + model.TaskID
 	if err := specs.Save(ctx, path, model); err != nil {
 		return spec.Model{}, err
 	}

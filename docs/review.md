@@ -17,10 +17,15 @@ scafld review <task-id>
 ```
 
 By default, review uses the provider configured in `.scafld/config.yaml` at
-`review.external.provider`. Fresh workspaces use `auto`: scafld looks for an
-installed external challenger and chooses `codex` first, then `claude`. If
-neither is available, review fails closed. That is intentional; a missing
-challenger should not silently become a clean review.
+`review.external.provider`. Fresh workspaces use `auto`: when scafld can infer
+the current host agent, it prefers the other installed challenger (`claude` for
+Codex-driven work, `codex` for Claude-driven work), can use Gemini as another
+external challenger, then falls back if needed. Without a detected host, it uses
+the default order `codex`, then `claude`, then `gemini`. If no external provider
+is available, review fails closed. That is intentional; a missing challenger
+should not silently become a clean review. Set `SCAFLD_HOST_AGENT=codex` or
+`SCAFLD_HOST_AGENT=claude` when a wrapper does not expose a recognizable
+host-agent environment marker.
 
 Provider-specific model defaults also come from config:
 
@@ -32,6 +37,8 @@ review:
       model: "gpt-5.5"
     claude:
       model: "claude-opus-4-7"
+    gemini:
+      # model: "" # leave empty to use Gemini CLI's configured default
   dossier:
     max_findings: 12
     min_attack_angles: 6
@@ -46,6 +53,7 @@ Explicit providers:
 ```bash
 scafld review <task-id> --provider codex
 scafld review <task-id> --provider claude
+scafld review <task-id> --provider gemini
 scafld review <task-id> --provider command --provider-command "./reviewer"
 scafld review <task-id> --provider local
 scafld review <task-id> --provider codex --model gpt-5
@@ -75,6 +83,11 @@ Provider meanings:
   browser integration disabled, built-in tools restricted to `Read`, `Grep`,
   and `Glob`, and final dossier submission forced through scafld's
   `submit_review` MCP tool.
+- `gemini`: Gemini CLI review in plan/read-only mode. scafld writes a temporary
+  Gemini settings file that exposes only its `submit_review` MCP tool for the
+  final dossier; final text is ignored. Gemini CLI must already be
+  authenticated locally, through its settings or supported Google credential
+  environment variables.
 - `command`: custom reviewer command. It receives the review prompt on stdin and
   must emit a ReviewDossier-compatible response.
 - `local`: deterministic local pass-through provider for development and smoke
@@ -169,13 +182,13 @@ The dossier is the provider content contract:
 ```
 
 Provider adapters must deliver this one dossier shape before core validation.
-Codex writes a schema-constrained output file. Claude must call scafld's
-`submit_review` MCP tool exactly once; scafld reads the tool payload from that
-submission channel and ignores final prose or fenced JSON. Accepted reviews
-record `output_format` so operators can see whether scafld consumed
-`claude.mcp_submit_review`, `codex.output_file`, or another explicit provider
-path. Provider text that does not arrive through the configured submit channel
-does not satisfy the gate.
+Codex writes a schema-constrained output file. Claude and Gemini must call
+scafld's `submit_review` MCP tool exactly once; scafld reads the tool payload
+from that submission channel and ignores final prose or fenced JSON. Accepted
+reviews record `output_format` so operators can see whether scafld consumed
+`claude.mcp_submit_review`, `gemini.mcp_submit_review`, `codex.output_file`, or
+another explicit provider path. Provider text that does not arrive through the
+configured submit channel does not satisfy the gate.
 
 Findings require:
 
@@ -233,8 +246,8 @@ scafld complete <task-id>
 
 - the latest session review event exists
 - the latest review verdict is `pass`
-- the latest review provider is `codex`, `claude`, `command`, or an audited
-  `human` review override
+- the latest review provider is `codex`, `claude`, `gemini`, `command`, or an
+  audited `human` review override
 
 If review fails, repair the work, rerun acceptance as needed, rerun review, then
 complete only after the challenger clears the gate.
@@ -267,8 +280,8 @@ protection. Provider failures and timeouts write diagnostics under:
 
 `status --json` and `handoff` show the accepted blocker summary first. Use
 diagnostics as supporting evidence when paid model output could not be accepted
-as a valid review dossier. For Claude, final prose and fenced JSON are ignored:
-the provider must call the `submit_review` tool exactly once.
+as a valid review dossier. For Claude and Gemini, final prose and fenced JSON
+are ignored: the provider must call the `submit_review` tool exactly once.
 
 During a running external review, the terminal shows summary progress only:
 start, periodic running heartbeat, structured provider events when available,

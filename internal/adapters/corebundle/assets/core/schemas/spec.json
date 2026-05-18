@@ -18,7 +18,7 @@
     },
     "harden_status": {
       "type": "string",
-      "enum": ["not_run", "in_progress", "passed", "failed"]
+      "enum": ["not_run", "in_progress", "passed", "needs_revision", "error"]
     },
     "size": {"type": "string", "enum": ["small", "medium", "large"]},
     "risk_level": {"type": "string", "enum": ["low", "medium", "high"]},
@@ -196,16 +196,16 @@
       "required": ["id", "status"],
       "properties": {
         "id": {"type": "string", "pattern": "^round-[0-9]+$"},
-        "status": {"type": "string", "enum": ["in_progress", "passed", "failed"]},
+        "status": {"type": "string", "enum": ["in_progress", "passed", "needs_revision", "error"]},
         "started_at": {"type": "string"},
         "ended_at": {"type": "string"},
         "checks": {
           "type": "array",
           "items": {"$ref": "#/definitions/harden_check"}
         },
-        "questions": {
+        "issues": {
           "type": "array",
-          "items": {"$ref": "#/definitions/harden_question"}
+          "items": {"$ref": "#/definitions/harden_issue"}
         }
       }
     },
@@ -219,15 +219,22 @@
         "evidence": {"type": "string"}
       }
     },
-    "harden_question": {
+    "harden_issue": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "question": {"type": "string"},
+        "id": {"type": "string"},
+        "kind": {"type": "string"},
+        "severity": {"type": "string", "enum": ["critical", "high", "medium", "low"]},
+        "blocks_approval": {"type": "boolean"},
+        "status": {"type": "string", "enum": ["open", "fixed", "accepted_risk", "superseded"]},
         "grounded_in": {"type": "string", "pattern": "^(spec_gap:|code:|archive:).+"},
+        "summary": {"type": "string"},
+        "evidence": {"type": "string"},
+        "recommendation": {"type": "string"},
+        "question": {"type": "string"},
         "recommended_answer": {"type": "string"},
-        "if_unanswered": {"type": "string"},
-        "answered_with": {"type": "string"}
+        "if_unanswered": {"type": "string"}
       }
     },
     "planning_event": {

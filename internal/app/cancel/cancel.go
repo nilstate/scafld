@@ -36,6 +36,8 @@ func Run(ctx context.Context, specs SpecStore, sessions SessionStore, clock Cloc
 	model.Updated = now
 	model.CurrentState.Reason = reason
 	model.CurrentState.Next = "done"
+	model.CurrentState.Blockers = "none"
+	model.CurrentState.AllowedFollowUp = "none"
 	if err := specs.Save(ctx, path, model); err != nil {
 		return spec.Model{}, err
 	}

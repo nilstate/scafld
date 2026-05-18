@@ -158,7 +158,7 @@ Source: plan
 
 ### round-1
 
-Status: failed
+Status: needs_revision
 Started: 2026-05-17T13:23:24Z
 Ended: 2026-05-17T13:23:24Z
 Verdict: needs_revision

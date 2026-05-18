@@ -1,18 +1,19 @@
 # HARDEN MODE TEMPLATE
 
-This file is the project-owned harden prompt. It keeps the draft spec
-human-readable while forcing the questions that make a spec executable.
+This file is the managed harden prompt. Workspace-owned copies may override it
+at `.scafld/prompts/harden.md`.
 
 **Status:** ACTIVE
 **Mode:** HARDEN
-**Output:** Add grounded questions under the latest `## Harden Rounds` entry in the spec; keep `harden_status: "in_progress"` until the operator runs `--mark-passed`.
+**Output:** Add grounded checks and issues under the latest `## Harden Rounds` entry in the spec; keep `harden_status: "in_progress"` until the operator runs `--mark-passed`.
 **Do NOT:** Modify code outside the spec file while hardening.
 
 ---
 
 Interrogate the draft spec until it is executable without invention. Hardening is
-not a formatting pass and "Questions: none" is not valid until the audit checks
-below are recorded with evidence.
+not a formatting pass and "Issues: none" is not valid until the audit checks
+below are recorded with evidence. Preserve full detail, but separate approval
+blockers from advisories so harden does not loop forever on non-blocking polish.
 
 Run these checks before polishing wording:
 
@@ -53,13 +54,14 @@ Checks:
   - Evidence: The plan names the underlying problem, fixes the root cause, and avoids aliases, fallbacks, compatibility debt, and future bloat.
 ```
 
-If any check cannot pass, keep the round open and add a grounded question or
-rewrite the spec so the check can pass.
+If any check cannot pass, keep the round open and add a grounded approval-blocking
+issue or rewrite the spec so the check can pass.
 
 Check `Result:` must be `passed` or `not_applicable` before the round can pass.
 `not_applicable` still requires evidence.
 
-Work these harden questions after the checks expose the real uncertainty:
+Work these harden challenge points after the checks expose the real uncertainty.
+Record the result as an issue:
 
 - Why should this plan exist at all?
 - What is the real product/system/workflow problem, not just the requested implementation?
@@ -77,41 +79,57 @@ Work these harden questions after the checks expose the real uncertainty:
 
 Walk the design tree upstream first, so downstream questions are not wasted on premises that may still move.
 
-Ask one question at a time. For each question, provide your recommended answer.
+Ask one operator question at a time when manual hardening needs input. Record
+each one as a `question` issue with your recommended answer.
 
-If a question can be answered by exploring the codebase, explore the codebase instead of asking. Bring back the verified finding and use it to sharpen the next question.
+If an issue can be resolved by exploring the codebase, explore the codebase instead of asking. Bring back the verified finding and use it to sharpen the next issue.
 
 Record why each question exists with a single `Grounded in:` value:
 
 - `spec_gap:<field>` for a missing, vague, or contradictory spec field
-- `code:<file>:<line>` for code you actually verified in this session
+- `code:<file>:<line>` for code you actually verified in this session; cite a
+  single anchor line, not a line range
 - `archive:<task_id>` for a relevant archived spec precedent
 
 Use `Grounded in:` as audit trail, not ceremony. Do not invent citations. Do not cite code you have not read. Do not ask about behavior the spec already settles.
 
 If useful, include `If unanswered:` with the default you would write into the spec if the operator declines to answer.
 
-If the checks pass and you cannot form a genuine grounded question, record:
+Record harden findings in one issue list. Use `blocks approval` only when the
+draft is unsafe, incoherent, non-executable, or likely to create a bad
+architectural commitment. Use `advisory` when the detail is useful but approval
+can proceed.
 
 ```markdown
-Questions:
+Issues:
+- [high/blocks approval] `harden-1` design_challenge - The plan treats a symptom and leaves the root cause in place.
+  - Status: open
+  - Grounded in: spec_gap:Summary
+  - Evidence: The summary names the patch but not the underlying workflow or product problem.
+  - Recommendation: Rewrite the summary/objectives to address the root cause, or shrink the plan to the honest local fix.
+- [low/advisory] `harden-2` question - The spec could name the operator-facing recovery command.
+  - Status: open
+  - Grounded in: spec_gap:Rollback
+  - Evidence: Rollback is technically enough, but the next human would benefit from a named recovery command.
+  - Recommendation: Add the recovery command if it is already known.
+  - Question: What command should a human run if the cutover fails halfway?
+  - Recommended answer: Use the existing repair command documented by the affected package.
+  - If unanswered: Leave rollback as-is; do not block approval.
+```
+
+If the checks pass and you cannot form a genuine grounded issue, record:
+
+```markdown
+Issues:
 - none
 ```
 
-Do not pad the round.
+Do not pad the round. `max_issues_per_round` from `.scafld/config.yaml` is a
+cap, not a target.
 
-`max_questions_per_round` from `.scafld/config.yaml` is a cap, not a target.
-
-Record each question in this exact Markdown shape under the latest harden round.
-Do not use YAML object keys such as `question:`, `grounded_in:`, `recommended_answer:`, or `resolution:`.
-
-```markdown
-Questions:
-- Which module owns session cleanup?
-  - Grounded in: code:src/auth/session.ts:84
-  - Recommended answer: Use the existing cleanupSession owner.
-  - If unanswered: Default to the existing cleanup path.
-  - Answered with: Use cleanupSession.
-```
+Approval-blocking issues must be fixed, marked `fixed`, marked
+`accepted_risk`, or superseded before the round can pass. Advisory issues may
+remain open. Do not use YAML object keys such as `question:`, `grounded_in:`,
+`recommended_answer:`, or `resolution:`.
 
 The operator can end the loop by saying `done` or `stop`. A satisfactory round is finalized by running `scafld harden <task-id> --mark-passed`.
