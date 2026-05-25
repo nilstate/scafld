@@ -12,9 +12,9 @@ cd your-project
 scafld init
 ```
 
-`init` creates `.scafld/`, installs the managed core bundle under
-`.scafld/core/`, and creates project-owned prompt files under
-`.scafld/prompts/`.
+`init` creates `.scafld/` and installs the managed core bundle under
+`.scafld/core/`. Project prompt overrides are optional; add files under
+`.scafld/prompts/` only when you need to customize the built-in prompts.
 
 For a new repository, generate a grounded config proposal before the first
 serious spec:
@@ -90,9 +90,10 @@ scafld review add-auth --print-context
 
 With no provider flag, scafld uses `--provider auto`. If scafld can infer the
 current host agent, it prefers the other installed challenger, can use Gemini as
-another external challenger, and falls back if needed. If no external challenger is installed, review fails
-closed. Use `--provider local` only for development smoke tests; local verdicts
-cannot satisfy `complete`.
+another external challenger, and fails closed when only the host provider is
+available. If no external challenger is installed, review fails closed. Use
+`--provider local` only for development smoke tests; local verdicts cannot
+satisfy `complete`.
 
 `--print-context` shows the exact deterministic brief before you spend a review
 run.

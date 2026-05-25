@@ -20,12 +20,7 @@ plan -> harden -> approve -> build -> review -> complete
 .scafld/
   config.yaml
   config.local.yaml
-  prompts/
-    plan.md
-    build.md
-    recovery.md
-    review.md
-    harden.md
+  prompts/                 # optional project-owned overrides
   runs/
     {task-id}/
       diagnostics/
@@ -49,8 +44,8 @@ Prompt ownership:
 `scafld config` writes `.scafld/config.proposed.yaml` with evidence-backed
 config suggestions. It does not mutate `.scafld/config.yaml`.
 
-`scafld update` refreshes default project prompt copies when they are still
-known defaults. Customized project prompts are skipped. It also refreshes root
+`scafld update` refreshes managed core assets and existing manifest-backed
+prompt copies. Customized project prompts are skipped. It also refreshes root
 agent docs and renders generated `.scafld/config.yaml` into the current strict
 runtime shape.
 
@@ -69,9 +64,10 @@ When the workspace includes them, prefer:
 - `.scafld/core/scripts/scafld-claude-build.sh <task-id>`
 - `.scafld/core/scripts/scafld-claude-review.sh <task-id>`
 
-They resolve the current scafld handoff first, then pass it to the external
-agent runtime. That keeps phase handoff consumption as the default path instead
-of a manual convention.
+They call `scafld adapter codex|claude|gemini <mode> <task-id>` to render
+current status, next-action fields, and handoff text as a provider-facing
+packet. They do not execute an external agent runtime or advance lifecycle
+state.
 
 ## Adversarial Review
 

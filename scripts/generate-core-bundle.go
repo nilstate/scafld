@@ -9,7 +9,7 @@ import (
 
 func main() {
 	check := flag.Bool("check", false, "verify the source bundle exists")
-	source := flag.String("source", ".scafld/core", "core bundle source")
+	source := flag.String("source", "internal/adapters/corebundle/assets/core", "core bundle source")
 	flag.Parse()
 	if !*check {
 		fmt.Println("bundle generation is explicit; pass --check to verify")

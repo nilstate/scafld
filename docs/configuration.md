@@ -11,8 +11,8 @@ scafld installs a small project-owned control plane:
 .scafld/
   config.yaml
   config.local.yaml
-  prompts/
-  core/
+  prompts/   # optional overrides
+  core/      # generated reset copy
 ```
 
 The current Go runtime treats the spec and session as the hard behavioral
@@ -26,24 +26,21 @@ and lifecycle commands.
 Project-owned:
 
 - `.scafld/config.yaml`
-- `.scafld/config.local.yaml`
 - `.scafld/prompts/*`
 - `.scafld/specs/**`
+
+Local/generated:
+
+- `.scafld/config.local.yaml`
+- `.scafld/core/**`
 - `.scafld/runs/**`
 
-Managed by scafld:
-
-- `.scafld/core/config.yaml`
-- `.scafld/core/prompts/*`
-- `.scafld/core/schemas/*`
-- `.scafld/core/scripts/*`
-- `.scafld/core/specs/examples/*`
-
 `scafld update` refreshes `.scafld/core/` and safely refreshes project prompt
-copies that are still known defaults. Customized project prompts are skipped.
-It also refreshes root agent docs. Project config is left untouched; invalid
-config shapes fail at lifecycle or config-load time. Specs, sessions, reviews,
-and local config are never overwritten.
+copies only when the prompt manifest proves they are unmodified defaults.
+Customized project prompts are skipped. It also refreshes root agent docs.
+Project config is left untouched; invalid config shapes fail at lifecycle or
+config-load time. Specs, sessions, reviews, and local config are never
+overwritten.
 
 `.scafld/config.yaml` is intentionally sparse. Runtime defaults live in the
 binary, and the full example shape lives in `.scafld/core/config.yaml`. Put only
@@ -64,9 +61,9 @@ Prompt lookup uses project files first:
 built-in default
 ```
 
-Use project prompts for local voice and policy. Keep core prompts as the reset
-copy that package upgrades can refresh. If you have not customized a project
-prompt, `scafld update` keeps it aligned with the bundled prompt contract.
+Use project prompts for local voice and policy. Keep core prompts as generated
+reset copies. If you have not customized a project prompt, do not add a copy;
+scafld will fall back to the generated core prompt and then the built-in prompt.
 
 ## Acceptance Strictness
 
@@ -249,7 +246,7 @@ review:
     provider_binary: "/path/bin"  # optional selected-provider binary override
     idle_timeout_seconds: 180
     absolute_max_seconds: 1800
-    fallback_policy: "warn"       # disable prevents auto fallback
+    fallback_policy: "disable"    # fail closed instead of using the host agent
     codex:
       model: "gpt-5.5"
       binary: "codex"
@@ -308,9 +305,10 @@ scafld review task --provider codex --model gpt-5
 `auto` chooses an installed external provider. When scafld can infer the current
 host agent, it prefers the other agent first: Claude for Codex-driven work,
 Codex for Claude-driven work. Gemini is available as an additional external
-challenger. If the preferred provider is unavailable, auto falls back unless
-`fallback_policy: "disable"` is set. Without a detected host, the default order
-is Codex, then Claude, then Gemini. Provider-specific model defaults come from
+challenger. With `fallback_policy: "disable"`, auto refuses to use the current
+host as its own challenger; set `warn` or `allow` only when that fallback is an
+intentional local tradeoff. Without a detected host, the default order is Codex,
+then Claude, then Gemini. Provider-specific model defaults come from
 `review.external.codex.model`, `review.external.claude.model`, and
 `review.external.gemini.model`; `--model` overrides them.
 

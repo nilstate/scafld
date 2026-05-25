@@ -23,6 +23,7 @@ scafld status <task-id>
 scafld list
 scafld report
 scafld handoff <task-id>
+scafld adapter codex|claude|gemini build|review <task-id>
 scafld update
 ```
 
@@ -74,9 +75,9 @@ Exit codes:
 scafld init [--root PATH] [--json]
 ```
 
-Bootstraps `.scafld/` in the workspace. It installs project-owned config and
-prompt files, creates spec/run directories, and installs managed core assets
-under `.scafld/core/`.
+Bootstraps `.scafld/` in the workspace. It installs project-owned config,
+creates spec/run directories, and installs managed core assets under
+`.scafld/core/`. Project prompt overrides are optional.
 
 `init` is deterministic. It does not ask an agent to infer project policy.
 
@@ -103,10 +104,11 @@ scafld update [--root PATH] [--json]
 ```
 
 Refreshes managed `.scafld/core/` files from the bundled runtime. It also
-refreshes `.scafld/prompts/*` copies that are still known defaults, while
-skipping customized project prompts. It refreshes root agent docs and renders
-generated `.scafld/config.yaml` into the current strict runtime shape. Specs,
-runs, reviews, and local config are preserved.
+refreshes existing `.scafld/prompts/*` copies only when the prompt manifest
+proves they are unmodified defaults. Customized project prompts are skipped. It
+refreshes root agent docs and renders generated `.scafld/config.yaml` into the
+current strict runtime shape. Specs, runs, reviews, and local config are
+preserved.
 
 ## plan
 
@@ -219,9 +221,10 @@ scafld review <task-id> [--provider auto|codex|claude|gemini|command|local] [--p
 `review` is the adversarial completion gate. Defaults come from
 `.scafld/config.yaml` under `review.external`. Fresh workspaces use
 `provider: auto`, which prefers the other installed agent when the current host
-is detected, can use Gemini as another external challenger, then falls back if
-needed. Without a detected host, the default order is `codex`, then `claude`,
-then `gemini`. If no external provider is available, the
+is detected, can use Gemini as another external challenger, and fails closed
+when only the host provider is available. Without a detected host, the default
+order is `codex`, then `claude`, then `gemini`. If no external provider is
+available, the
 command fails and tells the operator to install a provider, use
 `--provider command`, or explicitly choose `--provider local` for development
 smoke tests. Local verdicts cannot satisfy `complete`.
@@ -384,3 +387,14 @@ scafld handoff <task-id>
 Renders model-facing context from the current spec and session state. Handoffs
 include failed or pending acceptance criteria while a task is blocked, and
 latest review findings when present. They are transport, not source of truth.
+
+## adapter
+
+```bash
+scafld adapter codex build <task-id>
+scafld adapter claude review <task-id>
+```
+
+Renders a provider-facing trigger packet for thin wrapper scripts. The packet
+includes current status, deterministic `next_action` fields, and the current
+handoff text. It does not execute an agent runtime and does not advance state.

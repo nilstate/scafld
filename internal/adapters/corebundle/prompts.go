@@ -20,14 +20,14 @@ type promptManifest struct {
 func installProjectPrompts(ctx context.Context, root string, refresh bool, result *Result) error {
 	manifest := loadPromptManifest(root)
 	changedManifest := false
-	err := fs.WalkDir(assets, "assets/prompts", func(path string, entry fs.DirEntry, err error) error {
+	err := fs.WalkDir(assets, "assets/core/prompts", func(path string, entry fs.DirEntry, err error) error {
 		if err != nil || entry.IsDir() {
 			return err
 		}
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		rel, err := filepath.Rel("assets/prompts", path)
+		rel, err := filepath.Rel("assets/core/prompts", path)
 		if err != nil {
 			return err
 		}
@@ -63,6 +63,9 @@ func writeProjectPrompt(path string, targetRel string, rel string, data []byte, 
 	if err != nil {
 		if !os.IsNotExist(err) {
 			return false, fmt.Errorf("read %s: %w", targetRel, err)
+		}
+		if refresh {
+			return false, nil
 		}
 		if err := writeManagedFile(path, targetRel, data, false, result); err != nil {
 			return false, err

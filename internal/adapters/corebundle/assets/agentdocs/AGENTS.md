@@ -32,11 +32,6 @@ For real review: `scafld review <task-id> --provider {codex|claude|gemini|comman
 `--provider local` is smoke-test only and cannot satisfy `complete`.
 Only an operator may use `scafld review <task-id> --human-reviewed --reason ...`.
 
-## Source Checkout
-
-Inside the scafld repo, use `./bin/scafld` or `go run ./cmd/scafld`. Do not use
-a copied compiled binary; stale binaries can report old lifecycle state.
-
 ## Lifecycle
 
 ```text

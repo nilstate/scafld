@@ -14,16 +14,16 @@ import (
 const gitignorePath = ".gitignore"
 
 var scafldGitignoreBlock = []byte(`# scafld runtime state
-# Keep project-owned specs/config/prompts/core in git; ignore local runtime state.
+# Keep project-owned specs/config/prompts in git; ignore generated core and local runtime state.
 !.scafld/
 !.scafld/config.yaml
-!.scafld/core/
-!.scafld/core/**
 !.scafld/prompts/
 !.scafld/prompts/**
 !.scafld/specs/
 !.scafld/specs/**
 .scafld/config.local.yaml
+.scafld/core/
+.scafld/prompts/.manifest.json
 .scafld/runs/
 `)
 

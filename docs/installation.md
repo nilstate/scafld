@@ -91,11 +91,8 @@ This creates the `.scafld/` workspace structure:
 .scafld/
   config.yaml
   config.local.yaml
-  core/                 # managed reset copy: schemas, prompts, scripts, agent docs
-    agentdocs/
-      AGENTS.md
-      CLAUDE.md
-  prompts/             # project-owned prompt overrides
+  core/                 # generated reset copy: schemas, prompts, scripts
+  prompts/             # optional project-owned prompt overrides
   runs/                # local runtime evidence and diagnostics
   specs/               # committed living specs
 AGENTS.md
@@ -108,12 +105,11 @@ agents read before doing work. scafld owns only the top-level scafld section and
 preserves project-owned headings below it.
 
 Use `scafld init --no-agent-docs` only when you will wire the agent contract
-yourself. The CLI still installs `.scafld/core/agentdocs/` so the canonical
-contract remains inspectable.
+yourself.
 
-Commit `.scafld/config.yaml`, `.scafld/core/`, `.scafld/prompts/`,
-`.scafld/specs/`, `AGENTS.md`, and `CLAUDE.md` when they describe shared
-project behavior. Keep `.scafld/config.local.yaml` and `.scafld/runs/` local.
+Commit `.scafld/config.yaml`, `.scafld/specs/`, custom `.scafld/prompts/`,
+`AGENTS.md`, and `CLAUDE.md` when they describe shared project behavior. Keep
+`.scafld/core/`, `.scafld/config.local.yaml`, and `.scafld/runs/` local.
 The committed `.scafld/config.yaml` is sparse by design. Runtime defaults live
 in the binary, and the full example shape lives in `.scafld/core/config.yaml`.
 Use `.scafld/config.local.yaml` only for personal machine overrides such as

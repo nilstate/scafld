@@ -28,8 +28,12 @@ Thumbs.db
 
 # scafld runtime state
 .scafld/config.local.yaml
+.scafld/core/
+.scafld/prompts/
 .scafld/runs/
 .scafld/reviews/
+.scafld/specs/archive/
+.scafld/specs/examples/
 docs/node_modules/
 plans/
 .runx
