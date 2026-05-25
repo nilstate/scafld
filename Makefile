@@ -1,6 +1,6 @@
 GOFILES := $(shell find . -path './.tools' -prune -o -name '*.go' -print)
 
-.PHONY: fmt vet test race arch package-check package-manager-check release-snapshot check
+.PHONY: fmt vet test race arch package-check package-manager-check release-snapshot release-size-check release-install-smoke check
 
 fmt:
 	@test -z "$$(gofmt -l $(GOFILES))"
@@ -25,12 +25,18 @@ package-check:
 	@node --check package/npm/lib/platform.js
 	@cd package/npm && npm pack --dry-run --ignore-scripts >/dev/null
 	@python3 -m compileall -q package/pypi/src
-	@bash -n scripts/render-package-managers.sh scripts/publish-homebrew.sh scripts/publish-scoop.sh scripts/prepare-winget-submission.sh scripts/audit-scafld-metadata.sh
+	@bash -n scripts/render-package-managers.sh scripts/publish-homebrew.sh scripts/publish-scoop.sh scripts/prepare-winget-submission.sh scripts/audit-scafld-metadata.sh scripts/check-release-size.sh scripts/smoke-release-installers.sh
 
 package-manager-check:
 	@tmp="$$(mktemp -d)"; trap 'rm -rf "$$tmp"' EXIT; CHECKSUMS_FILE=package/testdata/checksums.txt OUT_DIR="$$tmp" scripts/render-package-managers.sh 0.0.0 >/dev/null
 
 release-snapshot:
 	@scripts/build-release-artifacts.sh 0.0.0-snapshot
+
+release-size-check:
+	@scripts/check-release-size.sh
+
+release-install-smoke:
+	@scripts/smoke-release-installers.sh 0.0.0-snapshot
 
 check: fmt vet arch package-check package-manager-check test race

@@ -83,6 +83,66 @@ func TestReleaseWorkflowPublishesRegistryPackages(t *testing.T) {
 	}
 }
 
+func TestReleaseScriptBuildsOptimizedRawBinaries(t *testing.T) {
+	t.Parallel()
+	data, err := os.ReadFile(filepath.Join("..", "..", "scripts", "build-release-artifacts.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, want := range []string{
+		"CGO_ENABLED=0",
+		"-mod=readonly",
+		"-trimpath",
+		"-buildvcs=false",
+		"-gcflags=all=-l",
+		"-s -w -buildid=",
+		"-X github.com/nilstate/scafld/v2/internal/adapters/cli.version=",
+		"scripts/check-release-size.sh",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("release build script missing %q", want)
+		}
+	}
+	if strings.Contains(strings.ToLower(text), "upx") {
+		t.Fatal("release build must not depend on executable packers")
+	}
+}
+
+func TestReleaseInstallerSmokeUsesLocalDist(t *testing.T) {
+	t.Parallel()
+	data, err := os.ReadFile(filepath.Join("..", "..", "scripts", "smoke-release-installers.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, want := range []string{
+		"SCAFLD_INSTALL_BASE_URL",
+		"Path(os.environ[\"DIST\"]).resolve().as_uri()",
+		"node \"$tmp/npm/lib/install.js\"",
+		"node \"$tmp/npm/bin/scafld.js\" --version",
+		"from scafld_launcher.cli import main",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("installer smoke missing %q", want)
+		}
+	}
+}
+
+func TestNpmInstallerSupportsLocalReleaseAssets(t *testing.T) {
+	t.Parallel()
+	data, err := os.ReadFile(filepath.Join("..", "..", "package", "npm", "lib", "install.js"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, want := range []string{`require("node:http")`, "fileURLToPath", `parsed.protocol === "file:"`} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("npm installer missing local asset support %q", want)
+		}
+	}
+}
+
 func TestPackageLaunchersVerifyChecksums(t *testing.T) {
 	t.Parallel()
 	files := []string{

@@ -46,7 +46,21 @@ Before a release, run:
 ```bash
 make check
 scripts/build-release-artifacts.sh X.Y.Z
+scripts/smoke-release-installers.sh X.Y.Z
 ```
+
+The release script publishes raw executable assets for package-manager
+compatibility. Those binaries are built with static CGO-disabled targets,
+trimmed paths, no embedded VCS metadata, stripped symbols/DWARF data, an empty
+Go build id, and disabled inlining to keep the downloadable artifacts small
+without adding an executable packer. `scripts/check-release-size.sh` runs at
+the end of artifact generation and fails if any raw binary exceeds the generous
+release budget.
+
+`scripts/smoke-release-installers.sh` exercises the npm and PyPI launchers
+against the local `dist/` directory through `SCAFLD_INSTALL_BASE_URL=file://...`.
+It verifies download, checksum matching, executable permissions, launcher
+handoff, and `--version`.
 
 Do not commit generated wrapper version changes. `.github/workflows/release.yml`
 runs `scripts/set-release-version.sh "${GITHUB_REF_NAME#v}"` inside the release
