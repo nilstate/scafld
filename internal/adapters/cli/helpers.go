@@ -237,6 +237,12 @@ func statusCommand(ctx context.Context, args []string, stdout io.Writer, stderr 
 	return okOut(stdout, command, result, fmt.Sprintf("%s: %s\n", command, opts.Positionals[0]), opts.JSON)
 }
 
+func statusHandler(command string) commandHandler {
+	return func(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer) int {
+		return statusCommand(ctx, args, stdout, stderr, command)
+	}
+}
+
 func coalesce(err error, fallback error) error {
 	if err != nil {
 		return err

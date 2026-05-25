@@ -27,6 +27,7 @@ type Output struct {
 	Status          spec.Status     `json:"status"`
 	Title           string          `json:"title"`
 	Next            string          `json:"next"`
+	NextAction      NextAction      `json:"next_action,omitempty"`
 	Gate            string          `json:"gate,omitempty"`
 	TrustedState    string          `json:"trusted_state,omitempty"`
 	AllowedFollowUp string          `json:"allowed_follow_up,omitempty"`
@@ -34,6 +35,17 @@ type Output struct {
 	Repair          *gate.Failure   `json:"repair,omitempty"`
 	Review          ReviewInfo      `json:"review,omitempty"`
 	Completion      *CompletionInfo `json:"completion_authority,omitempty"`
+}
+
+// NextAction gives wrappers and trigger agents the next deterministic role and
+// command without requiring them to interpret prose handoffs.
+type NextAction struct {
+	Role         string `json:"role,omitempty"`
+	Action       string `json:"action,omitempty"`
+	Command      string `json:"command,omitempty"`
+	Reason       string `json:"reason,omitempty"`
+	AfterCommand string `json:"after_command,omitempty"`
+	ThenCommand  string `json:"then_command,omitempty"`
 }
 
 // ReviewInfo is the latest review evidence visible from status.
@@ -106,7 +118,50 @@ func Run(ctx context.Context, specs SpecStore, sessions SessionStore, taskID str
 			}
 		}
 	}
+	out.NextAction = nextAction(model, out.Repair, out.Review, out.Next)
 	return out, nil
+}
+
+func nextAction(model spec.Model, repair *gate.Failure, review ReviewInfo, command string) NextAction {
+	taskCommand := func(name string) string {
+		if model.TaskID == "" {
+			return "scafld " + name
+		}
+		return "scafld " + name + " " + model.TaskID
+	}
+	if command == "" {
+		command = model.CurrentState.AllowedFollowUp
+	}
+	switch model.Status {
+	case spec.StatusDraft:
+		if model.HardenStatus == spec.HardenInProgress {
+			return NextAction{Role: "planner", Action: "finish_hardening", Command: command, Reason: fallback(model.CurrentState.Reason, "draft hardening is in progress")}
+		}
+		return NextAction{Role: "operator", Action: "approve_contract", Command: command, Reason: "draft needs explicit approval before build"}
+	case spec.StatusApproved:
+		return NextAction{Role: "executor", Action: "open_build", Command: command, Reason: "approved contract is ready for phase execution"}
+	case spec.StatusActive:
+		return NextAction{Role: "executor", Action: "read_handoff", Command: command, Reason: fallback(model.CurrentState.Reason, "phase is open"), AfterCommand: taskCommand("build")}
+	case spec.StatusBlocked:
+		return NextAction{Role: "executor", Action: "repair_acceptance", Command: command, Reason: fallback(model.CurrentState.Reason, "acceptance is blocked"), AfterCommand: taskCommand("build")}
+	case spec.StatusReview:
+		if repair != nil && repair.Gate == "review" {
+			if review.Verdict == corereview.VerdictFail {
+				return NextAction{Role: "executor", Action: "repair_review_findings", Command: command, Reason: "review found completion blockers", AfterCommand: taskCommand("build"), ThenCommand: taskCommand("review")}
+			}
+			return NextAction{Role: "operator", Action: "repair_review_provider", Command: command, Reason: fallback(repair.Reason, "latest review attempt failed"), ThenCommand: taskCommand("review")}
+		}
+		if review.Verdict == corereview.VerdictPass {
+			return NextAction{Role: "operator", Action: "complete", Command: command, Reason: "latest review gate passed"}
+		}
+		return NextAction{Role: "reviewer", Action: "run_review", Command: command, Reason: fallback(model.CurrentState.Reason, "build completed; ready for review")}
+	case spec.StatusCompleted:
+		return NextAction{Role: "none", Action: "done", Command: "none", Reason: "task is completed"}
+	case spec.StatusFailed, spec.StatusCancelled:
+		return NextAction{Role: "none", Action: "terminal", Command: "none", Reason: "task is terminal"}
+	default:
+		return NextAction{Role: "operator", Action: string(model.Status), Command: command, Reason: fallback(model.CurrentState.Reason, "inspect status")}
+	}
 }
 
 func completionInfo(authority corecompletion.Authority) *CompletionInfo {

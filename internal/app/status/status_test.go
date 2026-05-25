@@ -124,6 +124,9 @@ func TestStatusReviewAttemptFailureCreatesRepairContract(t *testing.T) {
 	if out.Repair == nil || out.Repair.Gate != "review" || out.Repair.Next != "scafld handoff task" {
 		t.Fatalf("repair contract = %+v", out.Repair)
 	}
+	if out.NextAction.Role != "operator" || out.NextAction.Action != "repair_review_provider" || out.NextAction.ThenCommand != "scafld review task" {
+		t.Fatalf("next action = %+v", out.NextAction)
+	}
 	if len(out.Repair.Evidence) != 1 || out.Repair.Evidence[0] != "/tmp/review-diagnostic.txt" {
 		t.Fatalf("repair evidence = %+v", out.Repair.Evidence)
 	}
@@ -158,8 +161,34 @@ func TestStatusIncludesBlockedRepairContract(t *testing.T) {
 	if out.Gate != "build" || out.TrustedState == "" || out.AllowedFollowUp != "scafld handoff task" {
 		t.Fatalf("status repair surface missing: %+v", out)
 	}
+	if out.NextAction.Role != "executor" || out.NextAction.Action != "repair_acceptance" || out.NextAction.AfterCommand != "scafld build task" {
+		t.Fatalf("next action = %+v", out.NextAction)
+	}
 	if out.Repair == nil || out.Repair.Expected != "all acceptance criteria pass" || len(out.Repair.Blockers) != 1 || len(out.Repair.Evidence) != 1 {
 		t.Fatalf("repair contract = %+v", out.Repair)
+	}
+}
+
+func TestStatusReviewFailureNextActionRefreshesBuildBeforeReview(t *testing.T) {
+	t.Parallel()
+
+	ledger := session.New("task", "2026-05-05T00:00:00Z")
+	ledger = ledger.WithEntry(session.Entry{Type: "review", Status: corereview.VerdictFail, Output: corereview.EncodeDossier(reviewDossier("f1", "bug"))})
+	out, err := Run(context.Background(), fakeSpecStore{model: spec.Model{
+		TaskID: "task",
+		Status: spec.StatusReview,
+		CurrentState: spec.CurrentState{
+			AllowedFollowUp: "scafld handoff task",
+		},
+	}}, fakeSessionStore{ledger: ledger}, "task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.NextAction.Role != "executor" || out.NextAction.Action != "repair_review_findings" {
+		t.Fatalf("next action = %+v", out.NextAction)
+	}
+	if out.NextAction.Command != "scafld handoff task" || out.NextAction.AfterCommand != "scafld build task" || out.NextAction.ThenCommand != "scafld review task" {
+		t.Fatalf("next action commands = %+v", out.NextAction)
 	}
 }
 
@@ -218,6 +247,7 @@ func TestStatusCompletedShowsTerminalCompletionAuthority(t *testing.T) {
 
 	ledger := session.New("task", "2026-05-05T00:00:00Z")
 	ledger = ledger.WithEntry(session.Entry{ID: "review-old", Type: "review", Status: corereview.VerdictFail, Provider: "codex", Output: corereview.EncodeDossier(reviewDossier("old", "old blocker"))})
+	ledger = ledger.WithEntry(session.Entry{ID: "build-repair", Type: "build", Status: string(spec.StatusReview), Reason: "review repair evidence refreshed"})
 	ledger = ledger.WithEntry(session.Entry{ID: "review-pass", Type: "review", Status: corereview.VerdictPass, Provider: "codex", Output: corereview.EncodeDossier(passingReviewDossier("codex"))})
 	ledger = ledger.WithEntry(session.Entry{ID: "complete-1", Type: "complete", Status: "completed"})
 	out, err := Run(context.Background(), fakeSpecStore{model: spec.Model{

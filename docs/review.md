@@ -20,12 +20,12 @@ By default, review uses the provider configured in `.scafld/config.yaml` at
 `review.external.provider`. Fresh workspaces use `auto`: when scafld can infer
 the current host agent, it prefers the other installed challenger (`claude` for
 Codex-driven work, `codex` for Claude-driven work), can use Gemini as another
-external challenger, then falls back if needed. Without a detected host, it uses
-the default order `codex`, then `claude`, then `gemini`. If no external provider
-is available, review fails closed. That is intentional; a missing challenger
-should not silently become a clean review. Set `SCAFLD_HOST_AGENT=codex` or
-`SCAFLD_HOST_AGENT=claude` when a wrapper does not expose a recognizable
-host-agent environment marker.
+external challenger, and fails closed when only the host provider is available.
+Without a detected host, it uses the default order `codex`, then `claude`, then
+`gemini`. If no independent external provider is available, review fails closed.
+That is intentional; a missing challenger should not silently become a clean
+review. Set `SCAFLD_HOST_AGENT=codex` or `SCAFLD_HOST_AGENT=claude` when a
+wrapper does not expose a recognizable host-agent environment marker.
 
 Provider-specific model defaults also come from config:
 
@@ -33,6 +33,7 @@ Provider-specific model defaults also come from config:
 review:
   external:
     provider: "auto"
+    fallback_policy: "disable"
     codex:
       model: "gpt-5.5"
     claude:

@@ -26,6 +26,7 @@ func TestTerminalAuthorityUsesLatestPassingReviewBeforeCompletion(t *testing.T) 
 
 	ledger := session.New("task", "now")
 	ledger = ledger.WithEntry(session.Entry{ID: "review-1", Type: "review", Status: corereview.VerdictFail, Provider: "codex"})
+	ledger = ledger.WithEntry(session.Entry{ID: "build-1", Type: "build", Status: "review", Reason: "review repair evidence refreshed"})
 	ledger = ledger.WithEntry(session.Entry{ID: "review-2", Type: "review", Status: corereview.VerdictPass, Provider: "codex", Output: corereview.EncodeDossier(cleanDossier("codex"))})
 	ledger = ledger.WithEntry(session.Entry{ID: "complete-1", Type: "complete", Status: "completed"})
 
@@ -35,6 +36,36 @@ func TestTerminalAuthorityUsesLatestPassingReviewBeforeCompletion(t *testing.T) 
 	}
 	if authority.ReviewEntry.ID != "review-2" || authority.CompleteEntry.ID != "complete-1" {
 		t.Fatalf("authority events = review %q complete %q", authority.ReviewEntry.ID, authority.CompleteEntry.ID)
+	}
+}
+
+func TestCurrentReviewGateRequiresBuildEvidenceAfterBlockingReview(t *testing.T) {
+	t.Parallel()
+
+	ledger := session.New("task", "now")
+	ledger = ledger.WithEntry(session.Entry{ID: "review-1", Type: "review", Status: corereview.VerdictFail, Provider: "codex"})
+	ledger = ledger.WithEntry(session.Entry{ID: "review-2", Type: "review", Status: corereview.VerdictPass, Provider: "codex", Output: corereview.EncodeDossier(cleanDossier("codex"))})
+
+	authority := CurrentReviewGate(ledger)
+	if authority.Valid || authority.Reason != "passing review is missing refreshed build evidence after a blocking review" {
+		t.Fatalf("authority = %+v", authority)
+	}
+	if authority.Actual != "latest passing review follows review-1 without intervening build evidence" {
+		t.Fatalf("actual = %q", authority.Actual)
+	}
+}
+
+func TestCurrentReviewGateAcceptsReviewRepairAfterBuildEvidence(t *testing.T) {
+	t.Parallel()
+
+	ledger := session.New("task", "now")
+	ledger = ledger.WithEntry(session.Entry{ID: "review-1", Type: "review", Status: corereview.VerdictFail, Provider: "codex"})
+	ledger = ledger.WithEntry(session.Entry{ID: "build-1", Type: "build", Status: "review", Reason: "review repair evidence refreshed"})
+	ledger = ledger.WithEntry(session.Entry{ID: "review-2", Type: "review", Status: corereview.VerdictPass, Provider: "codex", Output: corereview.EncodeDossier(cleanDossier("codex"))})
+
+	authority := CurrentReviewGate(ledger)
+	if !authority.Valid || authority.ReviewEntry.ID != "review-2" {
+		t.Fatalf("authority = %+v", authority)
 	}
 }
 

@@ -1,7 +1,7 @@
 # PLANNING HANDOFF TEMPLATE
 
-This file is the project-owned template source for planning. If a managed reset
-copy exists under `.scafld/core/prompts/`, this file still wins.
+This file is the generated core template source for planning. A workspace-owned
+`.scafld/prompts/plan.md` may override it.
 
 You are planning governed work for scafld.
 

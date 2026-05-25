@@ -1,7 +1,8 @@
 # BUILD HANDOFF TEMPLATE
 
-This file is the project-owned template source for the `build × phase`
-handoff. Follow the generated handoff, not this template alone.
+This file is the generated core template source for the `build × phase`
+handoff. A workspace-owned `.scafld/prompts/build.md` may override it. Follow
+the generated handoff, not this template alone.
 
 ## Mission
 

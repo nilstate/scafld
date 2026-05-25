@@ -175,21 +175,23 @@ func selectAutoAgent(opts Selection) (Agent, error) {
 // AutoProviderInfo returns the concrete external provider selected by auto.
 //
 // When scafld can tell which agent is currently driving the task, auto prefers
-// the other installed provider for independent review/hardening. If that other
-// provider is unavailable, auto falls back to the current agent unless fallback
-// is explicitly disabled.
+// the other installed provider for independent review/hardening. With the
+// default disabled fallback policy, auto refuses to use the host provider as
+// its own challenger.
 func AutoProviderInfo(opts Selection) (AutoProvider, error) {
 	hostAgent := normalizeHostAgent(opts.HostAgent)
 	order := autoProviderOrder(opts.HostAgent)
+	hostProviderAvailable := false
 	for _, provider := range order {
 		if opts.FallbackPolicy == "disable" && hostAgent != "" && provider == hostAgent {
+			hostProviderAvailable = autoProviderAvailable(provider, opts)
 			continue
 		}
 		if autoProviderAvailable(provider, opts) {
 			return AutoProvider{Provider: provider, Model: autoProviderModel(provider, opts)}, nil
 		}
 	}
-	if opts.FallbackPolicy == "disable" && hostAgent != "" {
+	if opts.FallbackPolicy == "disable" && hostAgent != "" && hostProviderAvailable {
 		return AutoProvider{}, errors.New("no independent auto provider found; fallback_policy is disable and only the host provider is available")
 	}
 	return AutoProvider{}, errors.New("no external provider found; install codex, claude, or gemini, use --provider command --provider-command <cmd>, or use --provider local for development smoke tests")
@@ -857,10 +859,10 @@ func (p HardenProvider) Invoke(ctx context.Context, req coreharden.Request) (cor
 	if dossierErr != nil {
 		return coreharden.Dossier{}, dossierErr
 	}
-	dossier.Provider = first(dossier.Provider, resp.Provider)
-	dossier.Model = first(dossier.Model, resp.Model)
-	dossier.SessionID = first(dossier.SessionID, resp.SessionID)
-	dossier.OutputFormat = first(dossier.OutputFormat, resp.OutputFormat)
+	dossier.Provider = first(resp.Provider, dossier.Provider)
+	dossier.Model = first(resp.Model, dossier.Model)
+	dossier.SessionID = first(resp.SessionID, dossier.SessionID)
+	dossier.OutputFormat = first(resp.OutputFormat, dossier.OutputFormat)
 	dossier.EventSummary = mergeEventSummary(dossier.EventSummary, resp.EventSummary)
 	return dossier, nil
 }
@@ -881,10 +883,10 @@ func invokeReviewAgent(ctx context.Context, agent Agent, req review.Request) (re
 	if dossierErr != nil {
 		return review.Dossier{}, dossierErr
 	}
-	dossier.Provider = first(dossier.Provider, resp.Provider)
-	dossier.Model = first(dossier.Model, resp.Model)
-	dossier.SessionID = first(dossier.SessionID, resp.SessionID)
-	dossier.OutputFormat = first(dossier.OutputFormat, resp.OutputFormat)
+	dossier.Provider = first(resp.Provider, dossier.Provider)
+	dossier.Model = first(resp.Model, dossier.Model)
+	dossier.SessionID = first(resp.SessionID, dossier.SessionID)
+	dossier.OutputFormat = first(resp.OutputFormat, dossier.OutputFormat)
 	dossier.EventSummary = mergeEventSummary(dossier.EventSummary, resp.EventSummary)
 	return dossier, nil
 }

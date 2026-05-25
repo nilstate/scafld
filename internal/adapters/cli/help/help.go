@@ -46,7 +46,9 @@ plus approval-blocking issues in the draft. Provider
 transport or invalid dossier problems are recorded as harden_status error.
 Advisory issues remain recorded.
 Provider auto prefers the other installed agent when the host is detected, can
-use Gemini as an additional external challenger, then falls back if needed.
+use Gemini as an additional external challenger, and fails closed when only the
+host provider is available unless fallback_policy is relaxed or a provider is
+selected explicitly.
 
 Required checks:
   Path audit
@@ -84,10 +86,23 @@ Flags:
 Usage:
   scafld update [--root PATH] [--json]
 
-Refreshes .scafld/core, default project prompt copies, root agent docs, and
-managed core assets. Project config is left untouched.
+Refreshes .scafld/core, existing manifest-backed prompt copies, root agent docs,
+and managed core assets. Project config is left untouched.
 
 Use this after upgrading scafld.
+`)
+		return
+	}
+	if name == "adapter" {
+		fmt.Fprint(w, `scafld adapter - Render provider-facing trigger packet
+
+Usage:
+  scafld adapter codex build <task_id> [--root PATH] [--json]
+  scafld adapter claude review <task_id> [--root PATH] [--json]
+
+The adapter command renders current status, deterministic next-action fields,
+and the scafld handoff for external trigger wrappers. It does not execute an
+agent runtime and does not advance lifecycle state.
 `)
 		return
 	}

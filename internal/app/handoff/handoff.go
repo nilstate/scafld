@@ -316,7 +316,9 @@ func writeReviewGate(b *strings.Builder, model spec.Model, ledger session.Sessio
 	if next != "" {
 		fmt.Fprintf(b, "Allowed command: `%s`\n", next)
 	}
+	failedAttempt := false
 	if attempt, ok := latestReviewAttemptFailed(ledger); ok {
+		failedAttempt = true
 		fmt.Fprintf(b, "Latest review attempt: failed\n")
 		if attempt.Reason != "" {
 			fmt.Fprintf(b, "Attempt reason: %s\n", attempt.Reason)
@@ -327,6 +329,21 @@ func writeReviewGate(b *strings.Builder, model spec.Model, ledger session.Sessio
 	}
 	if baseline, ok := session.FirstWorkspaceBaseline(ledger); ok {
 		fmt.Fprintf(b, "Workspace baseline: `%s`\n", baseline.ID)
+	}
+	if failedAttempt {
+		b.WriteString("\nProvider repair focus:\n")
+		b.WriteString("- Fix provider availability, permissions, timeout, or dossier output shape.\n")
+		fmt.Fprintf(b, "- Then run `%s` for a new accepted review attempt.\n", "scafld review "+model.TaskID)
+		b.WriteString("- Do not complete from an older passing review after a later failed attempt.\n")
+		return
+	}
+	if _, dossier, ok := latestAcceptedReviewDossier(ledger); ok && dossier.Verdict == corereview.VerdictFail {
+		b.WriteString("\nRepair focus:\n")
+		b.WriteString("- Repair the completion-blocking findings in the Review Dossier below.\n")
+		fmt.Fprintf(b, "- After repair, run `%s` to refresh acceptance evidence.\n", "scafld build "+model.TaskID)
+		fmt.Fprintf(b, "- Then run `%s` for a new adversarial verdict.\n", "scafld review "+model.TaskID)
+		b.WriteString("- Do not run `scafld complete` until a later review passes after refreshed evidence.\n")
+		return
 	}
 	b.WriteString("\nReviewer focus:\n")
 	b.WriteString("- Attack the diff against the approved contract and recorded baseline.\n")
@@ -382,44 +399,52 @@ func latestReviewAttemptFailed(ledger session.Session) (session.Entry, bool) {
 }
 
 func writeLatestReviewFindings(b *strings.Builder, ledger session.Session) {
+	entry, dossier, ok := latestAcceptedReviewDossier(ledger)
+	if !ok || len(dossier.Findings) == 0 {
+		return
+	}
+	fmt.Fprintf(b, "\n## Review Dossier\n\nVerdict: %s\nMode: %s\n", entry.Status, dossier.Mode)
+	if dossier.Summary != "" {
+		fmt.Fprintf(b, "Summary: %s\n", dossier.Summary)
+	}
+	fmt.Fprintf(b, "\nFindings:\n")
+	for _, finding := range dossier.Findings {
+		blocking := "non-blocking"
+		if corereview.BlocksCompletion(finding) {
+			blocking = "blocks completion"
+		}
+		fmt.Fprintf(b, "- [%s/%s] %s: %s\n", finding.Severity, blocking, finding.ID, finding.Summary)
+		if finding.Location != nil && finding.Location.Path != "" {
+			if finding.Location.Line > 0 {
+				fmt.Fprintf(b, "  - Location: `%s:%d`\n", finding.Location.Path, finding.Location.Line)
+			} else {
+				fmt.Fprintf(b, "  - Location: `%s`\n", finding.Location.Path)
+			}
+		}
+		if finding.Evidence != "" {
+			fmt.Fprintf(b, "  - Evidence: %s\n", finding.Evidence)
+		}
+		if finding.Validation != "" {
+			fmt.Fprintf(b, "  - Validate: %s\n", finding.Validation)
+		}
+	}
+}
+
+func latestAcceptedReviewDossier(ledger session.Session) (session.Entry, corereview.Dossier, bool) {
 	for i := len(ledger.Entries) - 1; i >= 0; i-- {
 		entry := ledger.Entries[i]
 		switch entry.Type {
 		case "review":
 		case "build", "criterion", "phase", "approval", session.EntryWorkspaceBaseline, "fail", "cancel":
-			return
+			return session.Entry{}, corereview.Dossier{}, false
 		default:
 			continue
 		}
 		dossier, ok := corereview.DecodeDossier(entry.Output)
-		if !ok || len(dossier.Findings) == 0 {
-			return
+		if !ok {
+			return session.Entry{}, corereview.Dossier{}, false
 		}
-		fmt.Fprintf(b, "\n## Review Dossier\n\nVerdict: %s\nMode: %s\n", entry.Status, dossier.Mode)
-		if dossier.Summary != "" {
-			fmt.Fprintf(b, "Summary: %s\n", dossier.Summary)
-		}
-		fmt.Fprintf(b, "\nFindings:\n")
-		for _, finding := range dossier.Findings {
-			blocking := "non-blocking"
-			if corereview.BlocksCompletion(finding) {
-				blocking = "blocks completion"
-			}
-			fmt.Fprintf(b, "- [%s/%s] %s: %s\n", finding.Severity, blocking, finding.ID, finding.Summary)
-			if finding.Location != nil && finding.Location.Path != "" {
-				if finding.Location.Line > 0 {
-					fmt.Fprintf(b, "  - Location: `%s:%d`\n", finding.Location.Path, finding.Location.Line)
-				} else {
-					fmt.Fprintf(b, "  - Location: `%s`\n", finding.Location.Path)
-				}
-			}
-			if finding.Evidence != "" {
-				fmt.Fprintf(b, "  - Evidence: %s\n", finding.Evidence)
-			}
-			if finding.Validation != "" {
-				fmt.Fprintf(b, "  - Validate: %s\n", finding.Validation)
-			}
-		}
-		return
+		return entry, dossier, true
 	}
+	return session.Entry{}, corereview.Dossier{}, false
 }

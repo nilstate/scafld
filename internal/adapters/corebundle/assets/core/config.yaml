@@ -44,13 +44,14 @@ harden:
   external:
     # Leave provider empty for manual harden rounds. Set to auto, codex, claude,
     # gemini, local, or command when challenged by a separate agent.
-    # auto prefers the other detected host agent, then falls back if needed.
+    # auto prefers the other detected host agent and fails closed when only
+    # the host provider is available.
     # provider: "auto"
     # command: "./harden-reviewer" # only when provider: command
     # provider_binary: "/path/bin"
     idle_timeout_seconds: 180
     absolute_max_seconds: 1800
-    fallback_policy: "warn"
+    fallback_policy: "disable"
     codex:
       model: "gpt-5.5"
       # binary: "codex"
@@ -64,12 +65,13 @@ harden:
 review:
   external:
     provider: "auto"
-    # auto prefers the other detected host agent, then falls back if needed.
+    # auto prefers the other detected host agent and fails closed when only
+    # the host provider is available.
     # command: "./reviewer"        # only when provider: command
     # provider_binary: "/path/bin" # optional selected-provider binary override
     idle_timeout_seconds: 180
     absolute_max_seconds: 1800
-    fallback_policy: "warn"
+    fallback_policy: "disable"
     codex:
       model: "gpt-5.5"
       # binary: "codex"

@@ -58,6 +58,14 @@ func TestHandoffIncludesLatestReviewFindings(t *testing.T) {
 	if !strings.Contains(out, "## Review Dossier") || !strings.Contains(out, "bug") {
 		t.Fatalf("handoff missing review findings:\n%s", out)
 	}
+	for _, want := range []string{"Repair focus:", "After repair, run `scafld build task`", "Then run `scafld review task`"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("handoff missing repair instruction %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "Reviewer focus:") {
+		t.Fatalf("failed review handoff should not ask for another review first:\n%s", out)
+	}
 }
 
 func TestHandoffDoesNotSurfaceReviewAfterLaterBuildEvidence(t *testing.T) {
@@ -107,10 +115,13 @@ func TestHandoffUsesRepairNextAfterFailedReviewAttempt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"Next: scafld handoff task", "Allowed command: `scafld handoff task`", "Latest review attempt: failed", "Attempt reason: review provider failed", "Attempt diagnostic: `/tmp/scafld-review.txt`"} {
+	for _, want := range []string{"Next: scafld handoff task", "Allowed command: `scafld handoff task`", "Latest review attempt: failed", "Attempt reason: review provider failed", "Attempt diagnostic: `/tmp/scafld-review.txt`", "Provider repair focus:", "Then run `scafld review task`"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("handoff missing %q:\n%s", want, out)
 		}
+	}
+	if strings.Contains(out, "Reviewer focus:") {
+		t.Fatalf("failed attempt handoff should not ask for reviewer focus:\n%s", out)
 	}
 	if strings.Contains(out, "Allowed command: `scafld complete task`") {
 		t.Fatalf("handoff points back to complete:\n%s", out)
@@ -293,6 +304,7 @@ func TestHandoffCompletedShowsCompletionAuthorityNotHistoricalFailedReview(t *te
 
 	ledger := session.New("task", "2026-05-05T00:00:00Z")
 	ledger = ledger.WithEntry(session.Entry{ID: "review-old", Type: "review", Status: corereview.VerdictFail, Provider: "codex", Output: corereview.EncodeDossier(reviewDossier())})
+	ledger = ledger.WithEntry(session.Entry{ID: "build-repair", Type: "build", Status: string(spec.StatusReview), Reason: "review repair evidence refreshed"})
 	ledger = ledger.WithEntry(session.Entry{ID: "review-pass", Type: "review", Status: corereview.VerdictPass, Provider: "codex", Output: corereview.EncodeDossier(corereview.Dossier{
 		Verdict:  corereview.VerdictPass,
 		Mode:     corereview.ModeVerify,

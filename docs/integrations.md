@@ -16,9 +16,9 @@ The first-party integration layer is intentionally thin:
 
 Each wrapper:
 
-1. reads `scafld status --json`
-2. resolves the current scafld handoff for the selected mode
-3. pipes that handoff to the external agent runtime before the model acts
+1. calls `scafld adapter codex|claude|gemini <mode> <task-id>`
+2. renders current `status --json` next-action fields
+3. includes the current scafld handoff in a provider-facing packet
 
 That is the whole point of the wrapper layer: expose provider-specific handoff
 adapters without turning wrapper behavior into the core lifecycle contract.
@@ -27,13 +27,18 @@ adapters without turning wrapper behavior into the core lifecycle contract.
 
 For build work:
 
-- approved task -> resolve the current `build × phase` handoff
-- recovery state -> resolve the current `build × recovery` handoff
+- active task -> render the current `build × phase` handoff
+- blocked task -> render the current repair handoff and the required next
+  `scafld build`
+- failed review -> render the review findings, then require repair, `build`,
+  and a fresh `review`
 
 For challenger review work:
 
-- run `scafld review`
-- scafld itself spawns the configured challenger provider
+- render the current review handoff and exact next action
+- when the task is ready for review, point at
+  `scafld review <task-id> --provider <provider>`
+- scafld itself records the accepted dossier when `review` runs
 - Codex review runs with scafld's read-only ephemeral subprocess settings; user
   config and execpolicy rules are disabled for that review subprocess
 - Claude review disables session persistence, slash commands, and browser
@@ -59,6 +64,7 @@ it.
 ## What They Do Not Do
 
 - they do not embed provider logic inside scafld core
+- they do not execute an external agent runtime
 - they do not replace `build`, `review`, or `complete`
 - they do not introduce a second runtime state model
 

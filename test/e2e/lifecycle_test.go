@@ -96,6 +96,62 @@ func TestReviewCommandProviderBlockingFindingExitsReviewFailure(t *testing.T) {
 	}
 }
 
+func TestFailedReviewRequiresRepairBuildBeforeCompletion(t *testing.T) {
+	t.Parallel()
+
+	bin := testBinary(t)
+	root := t.TempDir()
+	run(t, bin, "init", "--root", root)
+	initGitWorkspace(t, root)
+	run(t, bin, "plan", "--root", root, "repair-loop", "--title", "Repair Loop", "--command", "true")
+	run(t, bin, "approve", "--root", root, "repair-loop")
+	run(t, bin, "build", "--root", root, "repair-loop")
+	run(t, bin, "build", "--root", root, "repair-loop")
+
+	failedReview := runExpectExit(t, 4, bin,
+		"review",
+		"--root", root,
+		"--provider-command",
+		`printf '{"type":"dossier","dossier":{"verdict":"fail","mode":"discover","summary":"repair required","findings":[{"id":"loop-bug","severity":"high","blocks_completion":true,"location":{"path":"fixed.txt"},"evidence":"missing repair","impact":"completion would ship the bug","validation":"rerun acceptance","summary":"repair required"}],"attack_log":[{"target":"diff","attack":"scan","result":"finding"}],"budget":{"actual_findings":1,"actual_attack_angles":1}}}\n'`,
+		"repair-loop",
+	)
+	for _, want := range []string{"review verdict: fail", "repair required", "next: scafld handoff repair-loop"} {
+		if !strings.Contains(failedReview.Stdout, want) {
+			t.Fatalf("failed review missing %q:\nstdout:\n%s\nstderr:\n%s", want, failedReview.Stdout, failedReview.Stderr)
+		}
+	}
+
+	blockedComplete := runExpectFailure(t, bin, "complete", "--root", root, "repair-loop")
+	if !strings.Contains(blockedComplete.Stderr, "review gate has not passed") {
+		t.Fatalf("premature complete did not explain review gate:\nstdout:\n%s\nstderr:\n%s", blockedComplete.Stdout, blockedComplete.Stderr)
+	}
+	status := string(run(t, bin, "status", "--root", root, "repair-loop"))
+	if !strings.Contains(status, "next: scafld handoff repair-loop") || !strings.Contains(status, "review: fail") {
+		t.Fatalf("status did not point back to repair:\n%s", status)
+	}
+	handoff := string(run(t, bin, "handoff", "--root", root, "repair-loop"))
+	for _, want := range []string{"Repair focus:", "After repair, run `scafld build repair-loop`", "Then run `scafld review repair-loop`"} {
+		if !strings.Contains(handoff, want) {
+			t.Fatalf("handoff missing %q:\n%s", want, handoff)
+		}
+	}
+
+	run(t, bin, "build", "--root", root, "repair-loop")
+	run(t, bin,
+		"review",
+		"--root", root,
+		"--mode", "verify",
+		"--provider-command",
+		`printf '{"type":"dossier","dossier":{"verdict":"pass","mode":"verify","summary":"repair verified","findings":[],"attack_log":[{"target":"repair","attack":"verify blocker fixed","result":"clean"}],"budget":{"actual_attack_angles":1}}}\n'`,
+		"repair-loop",
+	)
+	run(t, bin, "complete", "--root", root, "repair-loop")
+	finalStatus := string(run(t, bin, "status", "--root", root, "repair-loop"))
+	if !strings.Contains(finalStatus, "repair-loop: completed") {
+		t.Fatalf("task did not complete after repair loop:\n%s", finalStatus)
+	}
+}
+
 func TestReviewProviderMutationGuardFailsReview(t *testing.T) {
 	t.Parallel()
 
@@ -292,6 +348,42 @@ func run(t *testing.T, bin string, args ...string) []byte {
 		t.Fatalf("%s %s failed: %v\nstdout:\n%s\nstderr:\n%s", bin, strings.Join(args, " "), err, out.String(), errOut.String())
 	}
 	return out.Bytes()
+}
+
+type commandResult struct {
+	Stdout string
+	Stderr string
+}
+
+func runExpectExit(t *testing.T, wantExit int, bin string, args ...string) commandResult {
+	t.Helper()
+	cmd := exec.Command(bin, args...)
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errOut
+	err := cmd.Run()
+	if err == nil {
+		t.Fatalf("%s %s succeeded, want exit %d\nstdout:\n%s\nstderr:\n%s", bin, strings.Join(args, " "), wantExit, out.String(), errOut.String())
+	}
+	exit, ok := err.(*exec.ExitError)
+	if !ok || exit.ExitCode() != wantExit {
+		t.Fatalf("%s %s exit = %v, want %d\nstdout:\n%s\nstderr:\n%s", bin, strings.Join(args, " "), err, wantExit, out.String(), errOut.String())
+	}
+	return commandResult{Stdout: out.String(), Stderr: errOut.String()}
+}
+
+func runExpectFailure(t *testing.T, bin string, args ...string) commandResult {
+	t.Helper()
+	cmd := exec.Command(bin, args...)
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errOut
+	if err := cmd.Run(); err == nil {
+		t.Fatalf("%s %s succeeded, want failure\nstdout:\n%s\nstderr:\n%s", bin, strings.Join(args, " "), out.String(), errOut.String())
+	}
+	return commandResult{Stdout: out.String(), Stderr: errOut.String()}
 }
 
 func assertSnakeEnvelope(t *testing.T, data []byte, requiredResultKey string) {
