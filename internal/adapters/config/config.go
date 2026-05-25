@@ -199,7 +199,7 @@ func Default() Config {
 			External: ExternalReviewConfig{
 				IdleTimeoutSeconds: 180,
 				AbsoluteMaxSeconds: 1800,
-				FallbackPolicy:     "warn",
+				FallbackPolicy:     "disable",
 				Codex:              ProviderConfig{Model: "gpt-5.5"},
 				Claude:             ProviderConfig{Model: "claude-opus-4-7"},
 				Gemini:             ProviderConfig{},
@@ -210,7 +210,7 @@ func Default() Config {
 				Provider:           "auto",
 				IdleTimeoutSeconds: 180,
 				AbsoluteMaxSeconds: 1800,
-				FallbackPolicy:     "warn",
+				FallbackPolicy:     "disable",
 				Codex:              ProviderConfig{Model: "gpt-5.5"},
 				Claude:             ProviderConfig{Model: "claude-opus-4-7"},
 				Gemini:             ProviderConfig{},

@@ -280,12 +280,9 @@ func TestRunInit(t *testing.T) {
 	for _, rel := range []string{
 		".gitignore",
 		".scafld/core/config.yaml",
-		".scafld/core/agentdocs/AGENTS.md",
-		".scafld/core/agentdocs/CLAUDE.md",
 		".scafld/core/prompts/harden.md",
 		".scafld/core/schemas/spec.json",
 		".scafld/core/scripts/scafld-codex-build.sh",
-		".scafld/prompts/harden.md",
 		".scafld/config.local.yaml",
 		"AGENTS.md",
 		"CLAUDE.md",
@@ -398,12 +395,11 @@ func TestRunUpdateRefreshesCoreButPreservesProjectPrompts(t *testing.T) {
 	root := t.TempDir()
 	runCLI(t, []string{"init", "--root", root})
 	corePrompt := filepath.Join(root, ".scafld", "core", "prompts", "harden.md")
-	coreAgentDoc := filepath.Join(root, ".scafld", "core", "agentdocs", "AGENTS.md")
 	projectPrompt := filepath.Join(root, ".scafld", "prompts", "harden.md")
 	if err := os.WriteFile(corePrompt, []byte("obsolete core\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(coreAgentDoc, []byte("obsolete agent doc\n"), 0o644); err != nil {
+	if err := os.MkdirAll(filepath.Dir(projectPrompt), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(projectPrompt, []byte("custom project prompt\n"), 0o644); err != nil {
@@ -423,13 +419,6 @@ func TestRunUpdateRefreshesCoreButPreservesProjectPrompts(t *testing.T) {
 	}
 	if !strings.Contains(string(coreData), "HARDEN MODE TEMPLATE") {
 		t.Fatalf("core prompt was not refreshed:\n%s", coreData)
-	}
-	coreAgentData, err := os.ReadFile(coreAgentDoc)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(coreAgentData), "scafld Agent Contract") || strings.Contains(string(coreAgentData), "obsolete agent doc") {
-		t.Fatalf("core agent doc reset copy was not refreshed:\n%s", coreAgentData)
 	}
 	if string(projectData) != "custom project prompt\n" {
 		t.Fatalf("project prompt was overwritten:\n%s", projectData)
@@ -593,6 +582,34 @@ func TestRunLifecycleMovesSpecsByState(t *testing.T) {
 	matches, err := filepath.Glob(filepath.Join(root, ".scafld", "specs", "archive", "*", "lifecycle-task.md"))
 	if err != nil || len(matches) != 1 {
 		t.Fatalf("archive match = %v err=%v, want one archived spec", matches, err)
+	}
+}
+
+func TestRunAdapterRendersTriggerPacket(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	initGitWorkspace(t, root)
+	runCLI(t, []string{"init", "--root", root, "--no-agent-docs"})
+	runCLI(t, []string{"plan", "--root", root, "adapter-task", "--command", "true"})
+	runCLI(t, []string{"approve", "--root", root, "adapter-task"})
+	runCLI(t, []string{"build", "--root", root, "adapter-task"})
+
+	stdout := runCLI(t, []string{"adapter", "--root", root, "codex", "build", "adapter-task"})
+	for _, want := range []string{
+		"# scafld Adapter Packet",
+		"Provider: codex",
+		"Mode: build",
+		"Task: adapter-task",
+		"Next action: read_handoff",
+		"Command: scafld handoff adapter-task",
+		"After command: scafld build adapter-task",
+		"## Handoff",
+		"## Build Step",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("adapter output missing %q:\n%s", want, stdout)
+		}
 	}
 }
 

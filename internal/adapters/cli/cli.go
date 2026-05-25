@@ -10,6 +10,7 @@ import (
 	"runtime/debug"
 	"strings"
 
+	adaptercli "github.com/nilstate/scafld/v2/internal/adapters/cli/adapter"
 	configcli "github.com/nilstate/scafld/v2/internal/adapters/cli/config"
 	hardencli "github.com/nilstate/scafld/v2/internal/adapters/cli/harden"
 	hardensubmitcli "github.com/nilstate/scafld/v2/internal/adapters/cli/hardensubmit"
@@ -55,7 +56,8 @@ var commands = []command{
 	{"build", "Open or advance governed build phases"}, {"review", "Run the adversarial review gate"},
 	{"complete", "Complete reviewed work"}, {"fail", "Mark work failed"}, {"cancel", "Cancel work"},
 	{"status", "Show spec status"}, {"list", "List specs"}, {"report", "Aggregate spec and run metrics"},
-	{"handoff", "Render model-facing handoff material"}, {"update", "Refresh managed scafld core files"},
+	{"handoff", "Render model-facing handoff material"}, {"adapter", "Render provider trigger packet"},
+	{"update", "Refresh managed scafld core files"},
 }
 
 type command struct{ name, summary string }
@@ -70,13 +72,14 @@ var commandHandlers = map[string]commandHandler{
 	"approve":             runApprove,
 	"build":               runBuild,
 	"review":              runReview,
-	"complete":            runComplete,
-	"fail":                runFail,
-	"cancel":              runCancel,
+	"complete":            statusHandler("complete"),
+	"fail":                statusHandler("fail"),
+	"cancel":              statusHandler("cancel"),
 	"status":              runStatus,
 	"list":                runList,
 	"report":              runReport,
 	"handoff":             runHandoff,
+	"adapter":             adaptercli.Handler(ExitInvalid, ExitWorkspace, ExitGeneric),
 	"update":              runUpdate,
 	"review-submit-stdio": reviewsubmitcli.Handler(os.Stdin),
 	"harden-submit-stdio": hardensubmitcli.Handler(os.Stdin),
@@ -366,18 +369,6 @@ func runReview(ctx context.Context, args []string, stdout io.Writer, stderr io.W
 		exit = ExitReview
 	}
 	return okOut(stdout, "review", out, output.Review(out), opts.JSON, exit)
-}
-
-func runComplete(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer) int {
-	return statusCommand(ctx, args, stdout, stderr, "complete")
-}
-
-func runFail(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer) int {
-	return statusCommand(ctx, args, stdout, stderr, "fail")
-}
-
-func runCancel(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer) int {
-	return statusCommand(ctx, args, stdout, stderr, "cancel")
 }
 
 func runStatus(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer) int {

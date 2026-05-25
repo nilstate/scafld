@@ -43,8 +43,9 @@ Review scope:
 
 Provider auto:
   auto prefers the other installed agent when scafld can infer the current
-  host agent, can use Gemini as an additional external challenger, then falls
-  back if needed. Set
+  host agent, can use Gemini as an additional external challenger, and fails
+  closed when only the host provider is available unless fallback_policy is
+  relaxed or a provider is selected explicitly. Set
   SCAFLD_HOST_AGENT=codex or SCAFLD_HOST_AGENT=claude when a wrapper does not
   expose a recognizable host marker.
 

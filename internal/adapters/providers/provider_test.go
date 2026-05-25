@@ -349,6 +349,25 @@ func TestCommandProviderParsesStdoutOnlyAndPassesTimeouts(t *testing.T) {
 	}
 }
 
+func TestProviderTransportStampsAuthoritativeProvider(t *testing.T) {
+	t.Parallel()
+
+	text := `{"type":"dossier","dossier":{"verdict":"pass","mode":"discover","summary":"clean","provider":"codex","model":"model-from-payload","output_format":"payload","findings":[],"attack_log":[{"target":"diff","attack":"scan","result":"clean"}],"budget":{"actual_attack_angles":1}}}` + "\n"
+	dossier, err := (CommandProvider{
+		Command: "reviewer",
+		Runner:  &fakeRunner{result: execution.Result{ExitCode: 0, Stdout: text}},
+	}).Invoke(context.Background(), review.Request{TaskID: "task", Prompt: "prompt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dossier.Provider != "command" || dossier.OutputFormat != "command.stdout" {
+		t.Fatalf("transport provenance was not authoritative: %+v", dossier)
+	}
+	if dossier.Model != "model-from-payload" {
+		t.Fatalf("command provider may preserve self-reported model, got %+v", dossier)
+	}
+}
+
 func TestCommandProviderFailsClosedOnMissingRunnerInvalidOutputAndCleanPacketNonzeroExit(t *testing.T) {
 	t.Parallel()
 
@@ -602,12 +621,12 @@ func TestReviewDossierSchemaMatchesManagedCoreAsset(t *testing.T) {
 		t.Fatal("locate provider test file")
 	}
 	root := filepath.Clean(filepath.Join(filepath.Dir(file), "..", "..", ".."))
-	asset, err := os.ReadFile(filepath.Join(root, ".scafld", "core", "schemas", "review_dossier.json"))
+	asset, err := os.ReadFile(filepath.Join(root, "internal", "adapters", "corebundle", "assets", "core", "schemas", "review_dossier.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if normalizeJSON(t, string(asset)) != normalizeJSON(t, review.DossierSchemaJSON()) {
-		t.Fatal("managed review_dossier.json drifted from core schema generator")
+		t.Fatal("bundled review_dossier.json drifted from core schema generator")
 	}
 }
 
@@ -619,12 +638,12 @@ func TestHardenDossierSchemaMatchesManagedCoreAsset(t *testing.T) {
 		t.Fatal("locate provider test file")
 	}
 	root := filepath.Clean(filepath.Join(filepath.Dir(file), "..", "..", ".."))
-	asset, err := os.ReadFile(filepath.Join(root, ".scafld", "core", "schemas", "harden_dossier.json"))
+	asset, err := os.ReadFile(filepath.Join(root, "internal", "adapters", "corebundle", "assets", "core", "schemas", "harden_dossier.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if normalizeJSON(t, string(asset)) != normalizeJSON(t, coreharden.DossierSchemaJSON()) {
-		t.Fatal("managed harden_dossier.json drifted from core schema generator")
+		t.Fatal("bundled harden_dossier.json drifted from core schema generator")
 	}
 }
 

@@ -144,6 +144,14 @@ func validateReviewEntry(ledger session.Session, idx int, entry session.Entry, c
 		auth.Actual = "latest review verdict " + entry.Status
 		return auth
 	}
+	if entry.Provider != "human" {
+		if stale := priorBlockingReviewWithoutBuild(ledger, idx); stale != "" {
+			auth.Reason = "passing review is missing refreshed build evidence after a blocking review"
+			auth.Actual = "latest passing review follows " + stale + " without intervening build evidence"
+			auth.Evidence = append(auth.Evidence, stale)
+			return auth
+		}
+	}
 	if !corereview.ValidCompletionProvider(entry.Provider) {
 		auth.Reason = "passing review came from an unsupported provider"
 		auth.Actual = fmt.Sprintf("provider %q", entry.Provider)
@@ -176,6 +184,23 @@ func validateReviewEntry(ledger session.Session, idx int, entry session.Entry, c
 	auth.Reason = "completion authorized by " + auth.Kind()
 	auth.Actual = "review verdict pass"
 	return auth
+}
+
+func priorBlockingReviewWithoutBuild(ledger session.Session, reviewIdx int) string {
+	for i := reviewIdx - 1; i >= 0; i-- {
+		entry := ledger.Entries[i]
+		switch entry.Type {
+		case "build", "criterion", "phase":
+			return ""
+		case "review":
+			if entry.Status == corereview.VerdictFail {
+				return entryReference(entry)
+			}
+		case "approval", session.EntryWorkspaceBaseline, "fail", "cancel", "complete":
+			return ""
+		}
+	}
+	return ""
 }
 
 func hasAuditedHumanOverride(ledger session.Session, reviewIdx int) bool {

@@ -190,3 +190,20 @@ func TestCompleteRejectsStaleReviewAfterLaterReviewAttempt(t *testing.T) {
 		t.Fatalf("error = %v, want %v", err, ErrReviewGate)
 	}
 }
+
+func TestCompleteRejectsPassingReviewAfterBlockingReviewWithoutBuildEvidence(t *testing.T) {
+	t.Parallel()
+
+	specs := &fakeSpecs{model: spec.Model{TaskID: "task", Status: spec.StatusReview, Review: spec.ReviewState{Status: "completed", Verdict: "pass"}}}
+	ledger := session.New("task", "now").
+		WithEntry(session.Entry{ID: "review-fail", Type: "review", Status: corereview.VerdictFail, Provider: "codex"}).
+		WithEntry(session.Entry{ID: "review-pass", Type: "review", Status: corereview.VerdictPass, Provider: "codex"})
+	_, err := Run(context.Background(), specs, &fakeSessions{ledger: ledger}, fakeClock{}, "task")
+	if !errors.Is(err, ErrReviewGate) {
+		t.Fatalf("error = %v, want %v", err, ErrReviewGate)
+	}
+	var gateErr gate.Error
+	if !errors.As(err, &gateErr) || gateErr.Failure.Actual != "latest passing review follows review-fail without intervening build evidence" {
+		t.Fatalf("gate error = %#v, ok=%v", gateErr, errors.As(err, &gateErr))
+	}
+}
