@@ -86,6 +86,8 @@ cleanup_windows_resources
 trap cleanup_windows_resources EXIT
 generate_windows_resources
 
+release_ldflags="-s -w -buildid= -X github.com/nilstate/scafld/v2/internal/adapters/cli.version=${version}"
+
 targets=(
   "darwin amd64"
   "darwin arm64"
@@ -104,8 +106,11 @@ for target in "${targets[@]}"; do
   asset="scafld_${version}_${goos}_${goarch}${ext}"
   echo "building $asset"
   GOOS="$goos" GOARCH="$goarch" CGO_ENABLED=0 go build \
+    -mod=readonly \
     -trimpath \
-    -ldflags "-s -w -X github.com/nilstate/scafld/v2/internal/adapters/cli.version=${version}" \
+    -buildvcs=false \
+    -gcflags=all=-l \
+    -ldflags "$release_ldflags" \
     -o "$dist/$asset" \
     "$root/cmd/scafld"
 done
@@ -136,3 +141,5 @@ done
   printf '\n  ]\n'
   printf '}\n'
 } > "$dist/manifest.json"
+
+"$root/scripts/check-release-size.sh" "$version"

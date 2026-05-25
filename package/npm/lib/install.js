@@ -2,8 +2,10 @@
 
 const fs = require("node:fs");
 const crypto = require("node:crypto");
+const http = require("node:http");
 const https = require("node:https");
 const path = require("node:path");
+const { fileURLToPath } = require("node:url");
 const { assetName, binaryPath, checksumsURL, downloadURL, releaseVersion } = require("./platform");
 
 if (process.env.SCAFLD_SKIP_DOWNLOAD === "1") {
@@ -55,10 +57,14 @@ function download(url, destination, redirects) {
   if (redirects > 5) {
     return Promise.reject(new Error("too many redirects"));
   }
+  const parsed = new URL(url);
+  if (parsed.protocol === "file:") {
+    return copyFileURL(parsed, destination);
+  }
 
   return new Promise((resolve, reject) => {
     const tmp = `${destination}.tmp-${process.pid}`;
-    const request = https.get(url, (response) => {
+    const request = clientFor(parsed).get(url, (response) => {
       if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
         response.resume();
         resolve(download(response.headers.location, destination, redirects + 1));
@@ -85,9 +91,15 @@ function download(url, destination, redirects) {
           resolve();
         });
       });
-      file.on("error", reject);
+      file.on("error", (err) => {
+        fs.rmSync(tmp, { force: true });
+        reject(err);
+      });
     });
-    request.on("error", reject);
+    request.on("error", (err) => {
+      fs.rmSync(tmp, { force: true });
+      reject(err);
+    });
   });
 }
 
@@ -95,9 +107,13 @@ function fetchText(url, redirects) {
   if (redirects > 5) {
     return Promise.reject(new Error("too many redirects"));
   }
+  const parsed = new URL(url);
+  if (parsed.protocol === "file:") {
+    return fs.promises.readFile(fileURLToPath(parsed), "utf8");
+  }
 
   return new Promise((resolve, reject) => {
-    const request = https.get(url, (response) => {
+    const request = clientFor(parsed).get(url, (response) => {
       if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
         response.resume();
         resolve(fetchText(response.headers.location, redirects + 1));
@@ -117,4 +133,27 @@ function fetchText(url, redirects) {
     });
     request.on("error", reject);
   });
+}
+
+async function copyFileURL(parsed, destination) {
+  const tmp = `${destination}.tmp-${process.pid}`;
+  try {
+    await fs.promises.copyFile(fileURLToPath(parsed), tmp);
+    await fs.promises.chmod(tmp, 0o755);
+    await fs.promises.rename(tmp, destination);
+    console.log(`scafld: installed native binary ${destination}`);
+  } catch (err) {
+    fs.rmSync(tmp, { force: true });
+    throw err;
+  }
+}
+
+function clientFor(parsed) {
+  if (parsed.protocol === "https:") {
+    return https;
+  }
+  if (parsed.protocol === "http:") {
+    return http;
+  }
+  throw new Error(`unsupported URL protocol: ${parsed.protocol}`);
 }
