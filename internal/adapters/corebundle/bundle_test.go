@@ -11,17 +11,18 @@ import (
 	"testing"
 )
 
-type assetFile struct {
-	data []byte
-	exec bool
-}
-
-func TestEmbeddedAssetsDoNotDriftFromWorkspaceAssets(t *testing.T) {
+func TestRepositoryDoesNotTrackGeneratedWorkspaceCopies(t *testing.T) {
 	t.Parallel()
 
-	root := repoRoot(t)
-	assertAssetTreeMatches(t, filepath.Join(root, ".scafld", "core"), filepath.Join(root, "internal", "adapters", "corebundle", "assets", "core"), ".scafld/core")
-	assertAssetTreeMatches(t, filepath.Join(root, ".scafld", "prompts"), filepath.Join(root, "internal", "adapters", "corebundle", "assets", "prompts"), ".scafld/prompts")
+	for _, path := range []string{".scafld/core", ".scafld/prompts", ".scafld/specs/archive", ".scafld/specs/examples"} {
+		out, err := exec.Command("git", "-C", repoRoot(t), "ls-files", "--", path).CombinedOutput()
+		if err != nil {
+			t.Fatalf("git ls-files %s: %v\n%s", path, err, out)
+		}
+		if strings.TrimSpace(string(out)) != "" {
+			t.Fatalf("generated workspace files are tracked under %s:\n%s", path, out)
+		}
+	}
 }
 
 func TestUpdateRefreshesUnmodifiedProjectPromptsFromManifest(t *testing.T) {
@@ -32,6 +33,9 @@ func TestUpdateRefreshesUnmodifiedProjectPromptsFromManifest(t *testing.T) {
 		t.Fatal(err)
 	}
 	promptPath := filepath.Join(root, ".scafld", "prompts", "review.md")
+	if err := os.MkdirAll(filepath.Dir(promptPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	oldPrompt := []byte("# old default review prompt\n")
 	if err := os.WriteFile(promptPath, oldPrompt, 0o644); err != nil {
 		t.Fatal(err)
@@ -49,7 +53,7 @@ func TestUpdateRefreshesUnmodifiedProjectPromptsFromManifest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want, err := assets.ReadFile("assets/prompts/review.md")
+	want, err := assets.ReadFile("assets/core/prompts/review.md")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,6 +145,9 @@ func TestUpdateSkipsCustomizedProjectPrompt(t *testing.T) {
 		t.Fatal(err)
 	}
 	promptPath := filepath.Join(root, ".scafld", "prompts", "review.md")
+	if err := os.MkdirAll(filepath.Dir(promptPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	custom := []byte("# custom review prompt\n")
 	if err := os.WriteFile(promptPath, custom, 0o644); err != nil {
 		t.Fatal(err)
@@ -182,6 +189,8 @@ func TestInitGitignoreCreatesScafldRules(t *testing.T) {
 		"# scafld runtime state",
 		"!.scafld/specs/**",
 		".scafld/config.local.yaml",
+		".scafld/core/",
+		".scafld/prompts/.manifest.json",
 		".scafld/runs/",
 	} {
 		if !strings.Contains(text, want) {
@@ -255,7 +264,10 @@ func TestInitGitignoreIsIdempotentAndOverridesBroadScafldIgnore(t *testing.T) {
 		t.Fatalf("git init: %v", err)
 	}
 	assertGitIgnore(t, root, ".scafld/runs/task/session.json", true)
+	assertGitIgnore(t, root, ".scafld/core/config.yaml", true)
+	assertGitIgnore(t, root, ".scafld/prompts/.manifest.json", true)
 	assertGitIgnore(t, root, ".scafld/config.local.yaml", true)
+	assertGitIgnore(t, root, ".scafld/prompts/harden.md", false)
 	assertGitIgnore(t, root, ".scafld/specs/drafts/task.md", false)
 	assertGitIgnore(t, root, ".scafld/config.yaml", false)
 }
@@ -269,71 +281,6 @@ func assertGitIgnore(t *testing.T, root string, rel string, wantIgnored bool) {
 	if gotIgnored != wantIgnored {
 		t.Fatalf("git ignore for %s = %v, want %v", rel, gotIgnored, wantIgnored)
 	}
-}
-
-func assertAssetTreeMatches(t *testing.T, canonicalRoot string, embeddedRoot string, label string) {
-	t.Helper()
-
-	canonical := collectAssetTree(t, canonicalRoot)
-	embedded := collectAssetTree(t, embeddedRoot)
-
-	for rel, want := range canonical {
-		got, ok := embedded[rel]
-		if !ok {
-			t.Fatalf("%s drift: embedded bundle is missing %s; sync %s into %s", label, rel, canonicalRoot, embeddedRoot)
-		}
-		if !bytes.Equal(got.data, want.data) {
-			t.Fatalf("%s drift: %s differs between %s and %s", label, rel, canonicalRoot, embeddedRoot)
-		}
-		if got.exec != want.exec {
-			t.Fatalf("%s drift: %s executable bit differs between %s and %s", label, rel, canonicalRoot, embeddedRoot)
-		}
-	}
-
-	for rel := range embedded {
-		if _, ok := canonical[rel]; !ok {
-			t.Fatalf("%s drift: embedded bundle has extra file %s; remove it or add the canonical file under %s", label, rel, canonicalRoot)
-		}
-	}
-}
-
-func collectAssetTree(t *testing.T, root string) map[string]assetFile {
-	t.Helper()
-
-	files := make(map[string]assetFile)
-	if _, err := os.Stat(root); err != nil {
-		t.Fatalf("stat asset root %s: %v", root, err)
-	}
-	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
-		if err != nil || entry.IsDir() {
-			return err
-		}
-		info, err := entry.Info()
-		if err != nil {
-			return err
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		rel, err := filepath.Rel(root, path)
-		if err != nil {
-			return err
-		}
-		rel = filepath.ToSlash(rel)
-		if rel == ".manifest.json" {
-			return nil
-		}
-		files[rel] = assetFile{
-			data: data,
-			exec: info.Mode()&0o111 != 0,
-		}
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("walk asset root %s: %v", root, err)
-	}
-	return files
 }
 
 func repoRoot(t *testing.T) string {

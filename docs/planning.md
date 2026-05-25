@@ -21,7 +21,9 @@ If any of these are vague, the spec isn't ready.
 
 ## The planning loop
 
-In planning mode, the agent reads the project-owned `.scafld/prompts/plan.md` template and runs a structured exploration cycle:
+In planning mode, the agent follows the bundled planning contract unless the
+project has added its own `.scafld/prompts/plan.md` override. It then runs a
+structured exploration cycle:
 
 1. **THOUGHT** -- interpret the request in repo terms, identify unknowns
 2. **ACTION** -- search the codebase, read files, check diffs

@@ -38,8 +38,8 @@ Prompt ownership:
 - `.scafld/prompts/*` is the active template layer
 - `.scafld/core/prompts/*` is the managed reset copy
 
-`scafld update` refreshes default project prompt copies when they are still
-known defaults. Customized project prompts are skipped. It also refreshes root
+`scafld update` refreshes managed core assets and existing manifest-backed
+prompt copies. Customized project prompts are skipped. It also refreshes root
 agent docs and renders generated `.scafld/config.yaml` into the current strict
 runtime shape.
 

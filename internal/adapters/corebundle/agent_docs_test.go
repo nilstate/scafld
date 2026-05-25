@@ -30,39 +30,24 @@ func TestInitAgentDocsCreatesRootDocs(t *testing.T) {
 	}
 }
 
-func TestAgentDocResetCopiesMatchRootTemplates(t *testing.T) {
-	t.Parallel()
-
-	for _, name := range agentDocFiles {
-		rootTemplate, err := assets.ReadFile("assets/agentdocs/" + name)
-		if err != nil {
-			t.Fatal(err)
-		}
-		coreTemplate, err := assets.ReadFile("assets/core/agentdocs/" + name)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if string(rootTemplate) != string(coreTemplate) {
-			t.Fatalf("%s root template and core reset copy drifted", name)
-		}
-	}
-}
-
-func TestRepositoryAgentDocsMatchBundledTemplates(t *testing.T) {
+func TestBundledAgentDocsStayProjectGeneric(t *testing.T) {
 	t.Parallel()
 
 	repoRoot := filepath.Clean(filepath.Join("..", "..", ".."))
+	rootAgents, err := os.ReadFile(filepath.Join(repoRoot, "AGENTS.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(rootAgents), "Source Checkout") {
+		t.Fatalf("source AGENTS.md should keep source-checkout guidance")
+	}
 	for _, name := range agentDocFiles {
-		rootDoc, err := os.ReadFile(filepath.Join(repoRoot, name))
-		if err != nil {
-			t.Fatal(err)
-		}
 		template, err := assets.ReadFile("assets/agentdocs/" + name)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if string(rootDoc) != string(template) {
-			t.Fatalf("%s drifted from bundled agentdoc template", name)
+		if strings.Contains(string(template), "Inside the scafld repo") || strings.Contains(string(template), "./bin/scafld") {
+			t.Fatalf("%s bundled template contains source-repo-specific guidance", name)
 		}
 	}
 }

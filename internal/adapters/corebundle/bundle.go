@@ -36,13 +36,12 @@ type Result struct {
 // Init installs managed core assets for a newly bootstrapped workspace.
 func Init(ctx context.Context, root string) (Result, error) {
 	return Install(ctx, root, Options{
-		OverwriteCore:        false,
-		CreateProjectPrompts: true,
-		CreateProjectConfig:  true,
+		OverwriteCore:       false,
+		CreateProjectConfig: true,
 	})
 }
 
-// Update refreshes managed assets and default project prompt copies.
+// Update refreshes managed assets and existing manifest-backed prompt copies.
 func Update(ctx context.Context, root string) (Result, error) {
 	return Install(ctx, root, Options{OverwriteCore: true, RefreshProjectPrompts: true})
 }

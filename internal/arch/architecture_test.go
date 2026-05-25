@@ -144,6 +144,47 @@ func TestCLIIsThin(t *testing.T) {
 	}
 }
 
+func TestRepositoryHasNoTrackedGeneratedOrBinaryArtifacts(t *testing.T) {
+	root := repoRoot(t)
+	for _, path := range []string{".scafld/core", ".scafld/prompts", ".scafld/specs/archive", ".scafld/specs/examples", "dist", "docs/node_modules", ".venv"} {
+		out, err := exec.Command("git", "-C", root, "ls-files", "--", path).CombinedOutput()
+		if err != nil {
+			t.Fatalf("git ls-files %s: %v\n%s", path, err, out)
+		}
+		if strings.TrimSpace(string(out)) != "" {
+			t.Fatalf("generated or release artifact is tracked under %s:\n%s", path, out)
+		}
+	}
+	launcher := filepath.Join(root, "bin", "scafld")
+	data, err := os.ReadFile(launcher)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data) > 4096 {
+		t.Fatalf("bin/scafld is %d bytes; keep it as a small source launcher, not a compiled binary", len(data))
+	}
+	if !bytes.HasPrefix(data, []byte("#!")) || bytes.Contains(data, []byte{0}) {
+		t.Fatalf("bin/scafld should be a text launcher script")
+	}
+	const maxTrackedBytes = 1 << 20
+	out, err := exec.Command("git", "-C", root, "ls-files", "-z").Output()
+	if err != nil {
+		t.Fatalf("git ls-files: %v", err)
+	}
+	for _, rel := range strings.Split(string(out), "\x00") {
+		if rel == "" {
+			continue
+		}
+		info, err := os.Stat(filepath.Join(root, filepath.FromSlash(rel)))
+		if err != nil {
+			continue
+		}
+		if info.Size() > maxTrackedBytes {
+			t.Fatalf("tracked file %s is %d bytes; release/source artifacts must stay below %d bytes", rel, info.Size(), maxTrackedBytes)
+		}
+	}
+}
+
 func checkPackageImports(t *testing.T, pkg goPackage) {
 	t.Helper()
 	path := pkg.ImportPath
