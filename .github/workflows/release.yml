@@ -49,6 +49,9 @@ jobs:
       - name: Build release snapshot
         run: scripts/build-release-artifacts.sh "${GITHUB_REF_NAME#v}"
 
+      - name: Smoke package launchers against release snapshot
+        run: scripts/smoke-release-installers.sh "${GITHUB_REF_NAME#v}"
+
   github-release:
     needs: validate
     runs-on: ubuntu-24.04

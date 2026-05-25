@@ -43,9 +43,11 @@ into the WinGet checkout.
 2. CI runs `make check`.
 3. `scripts/build-release-artifacts.sh X.Y.Z` builds raw native binaries for
    Linux, macOS, and Windows on amd64/arm64.
-4. GitHub release assets are published before npm/PyPI because those wrappers
+4. `scripts/smoke-release-installers.sh X.Y.Z` verifies npm and PyPI launchers
+   against the local release snapshot before publication.
+5. GitHub release assets are published before npm/PyPI because those wrappers
    download and verify binaries from the release by version.
-5. npm and PyPI publish the wrapper packages at the same product version.
+6. npm and PyPI publish the wrapper packages at the same product version.
 
 Package wrappers must never reimplement scafld behavior. They may only locate,
 download, verify, cache, install, and execute the native binary.

@@ -76,6 +76,7 @@ func TestReleaseWorkflowPublishesRegistryPackages(t *testing.T) {
 		"npm publish --access public",
 		"pypa/gh-action-pypi-publish",
 		"scripts/build-release-artifacts.sh",
+		"scripts/smoke-release-installers.sh",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("release workflow missing %q", want)
