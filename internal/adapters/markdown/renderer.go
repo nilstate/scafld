@@ -38,11 +38,8 @@ func Render(model spec.Model) []byte {
 		fmt.Fprintf(&b, "- none\n")
 	}
 	fmt.Fprintf(&b, "\n")
-	for _, phase := range model.Phases {
-		number := phase.Number
-		if number == 0 {
-			number = len(model.Phases)
-		}
+	for index, phase := range model.Phases {
+		number := phaseDisplayNumber(phase, index)
 		fmt.Fprintf(&b, "## Phase %d: %s\n\n", number, fallback(phase.Name, phase.ID))
 		fmt.Fprintf(&b, "Status: %s\n", fallback(phase.Status, "pending"))
 		fmt.Fprintf(&b, "Dependencies: %s\n\n", fallback(strings.Join(phase.Dependencies, ", "), "none"))
@@ -302,6 +299,19 @@ func renderCriteria(b *strings.Builder, criteria []spec.Criterion) {
 			fmt.Fprintf(b, "  - Source event: %s\n", c.SourceEvent)
 		}
 	}
+}
+
+func phaseDisplayNumber(phase spec.Phase, index int) int {
+	if phase.Number != 0 {
+		return phase.Number
+	}
+	if strings.HasPrefix(phase.ID, "phase") {
+		var number int
+		if _, err := fmt.Sscanf(phase.ID, "phase%d", &number); err == nil {
+			return number
+		}
+	}
+	return index + 1
 }
 
 func checked(status string) string {
