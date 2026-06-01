@@ -37,6 +37,12 @@ func updateSpecMarkdown(current []byte, previous spec.Model, next spec.Model) ([
 	for _, key := range currentDoc.order {
 		seen[key] = true
 		if replacement, ok := replacements[key]; ok {
+			if strings.HasPrefix(key, "phase:") {
+				if merged, ok := mergeLiteratePhaseSegment(currentDoc.segments[key], replacement); ok {
+					b.WriteString(merged)
+					continue
+				}
+			}
 			b.WriteString(replacement)
 			continue
 		}
@@ -239,4 +245,62 @@ func samePhaseShape(a []spec.Phase, b []spec.Phase) bool {
 		}
 	}
 	return true
+}
+
+func mergeLiteratePhaseSegment(current string, replacement string) (string, bool) {
+	if !isLiteratePhaseSegment(current) {
+		return "", false
+	}
+	status, ok := phaseSegmentField(replacement, "status")
+	if !ok {
+		return "", false
+	}
+	return upsertPhaseStatus(current, status), true
+}
+
+func isLiteratePhaseSegment(segment string) bool {
+	for _, line := range strings.Split(segment, "\n") {
+		key, _, ok := parseSpecKeyValue(line)
+		if !ok {
+			continue
+		}
+		switch normalizeSpecKey(key) {
+		case "changes", "acceptance":
+			return false
+		}
+	}
+	return true
+}
+
+func phaseSegmentField(segment string, field string) (string, bool) {
+	for _, line := range strings.Split(segment, "\n") {
+		key, value, ok := parseSpecKeyValue(line)
+		if ok && normalizeSpecKey(key) == field {
+			return value, true
+		}
+	}
+	return "", false
+}
+
+func upsertPhaseStatus(segment string, status string) string {
+	lines := strings.Split(segment, "\n")
+	for i, line := range lines {
+		key, _, ok := parseSpecKeyValue(line)
+		if ok && normalizeSpecKey(key) == "status" {
+			lines[i] = "Status: " + status
+			return strings.Join(lines, "\n")
+		}
+	}
+	insertAt := 1
+	if len(lines) > 1 && strings.TrimSpace(lines[1]) == "" {
+		insertAt = 2
+	}
+	if insertAt > len(lines) {
+		insertAt = len(lines)
+	}
+	insert := []string{"Status: " + status, ""}
+	out := append([]string{}, lines[:insertAt]...)
+	out = append(out, insert...)
+	out = append(out, lines[insertAt:]...)
+	return strings.Join(out, "\n")
 }

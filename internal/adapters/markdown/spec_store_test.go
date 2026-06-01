@@ -332,6 +332,142 @@ func TestUpdateSpecMarkdownIgnoresHeadingLikeTextInsideCodeFences(t *testing.T) 
 	}
 }
 
+func TestRenderPreservesPhaseZeroNumber(t *testing.T) {
+	t.Parallel()
+
+	model := fixtureModel()
+	model.Phases[0].ID = "phase0"
+	model.Phases[0].Number = 0
+	rendered := string(Render(model))
+	if !strings.Contains(rendered, "## Phase 0: Implementation") {
+		t.Fatalf("rendered phase zero with wrong number:\n%s", rendered)
+	}
+	if strings.Contains(rendered, "## Phase 1: Implementation") {
+		t.Fatalf("rendered synthetic phase one for phase0:\n%s", rendered)
+	}
+}
+
+func TestUpdateSpecMarkdownDoesNotAppendSyntheticPhaseForPhaseZero(t *testing.T) {
+	t.Parallel()
+
+	current := []byte(`---
+spec_version: '2.0'
+task_id: phase-zero
+created: '2026-05-01T00:00:00Z'
+updated: '2026-05-01T00:00:00Z'
+status: active
+harden_status: not_run
+size: small
+risk_level: low
+---
+
+# Phase zero task
+
+## Current State
+
+Status: active
+Current phase: phase0
+Next: build
+Reason: phase phase0 opened
+Blockers: none
+Allowed follow-up command: ` + "`" + `scafld handoff phase-zero` + "`" + `
+Latest runner update: 2026-05-01T00:00:00Z
+Review gate: not_started
+
+## Summary
+
+Use a zero-indexed phase.
+
+## Phase 0: Confirm the golden net
+
+- Keep this phase body.
+
+## Phase 1: Implement
+
+- Keep this implementation body.
+`)
+	previous, err := Parse(current)
+	if err != nil {
+		t.Fatal(err)
+	}
+	next := previous
+	next.Phases = append([]spec.Phase(nil), previous.Phases...)
+	next.Phases[0].Status = "completed"
+	updated, err := updateSpecMarkdown(current, previous, next)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(updated)
+	if strings.Contains(text, "## Phase 2: Confirm the golden net") {
+		t.Fatalf("phase0 save appended synthetic phase:\n%s", text)
+	}
+	if got := strings.Count(text, "## Phase "); got != 2 {
+		t.Fatalf("phase count = %d, want 2:\n%s", got, text)
+	}
+}
+
+func TestUpdateSpecMarkdownPreservesLiteratePhaseBodyWhenStatusChanges(t *testing.T) {
+	t.Parallel()
+
+	current := []byte(`---
+spec_version: '2.0'
+task_id: literate-phase
+created: '2026-05-01T00:00:00Z'
+updated: '2026-05-01T00:00:00Z'
+status: active
+harden_status: not_run
+size: small
+risk_level: low
+---
+
+# Literate phase task
+
+## Current State
+
+Status: active
+Current phase: phase1
+Next: build
+Reason: phase phase1 opened
+Blockers: none
+Allowed follow-up command: ` + "`" + `scafld handoff literate-phase` + "`" + `
+Latest runner update: 2026-05-01T00:00:00Z
+Review gate: not_started
+
+## Summary
+
+Keep phase prose stable.
+
+## Phase 1: Implementation
+
+- Introduce the registry.
+- Preserve the concrete implementation contract.
+`)
+	previous, err := Parse(current)
+	if err != nil {
+		t.Fatal(err)
+	}
+	next := previous
+	next.Phases = append([]spec.Phase(nil), previous.Phases...)
+	next.Phases[0].Status = "completed"
+	updated, err := updateSpecMarkdown(current, previous, next)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(updated)
+	for _, want := range []string{
+		"Status: completed",
+		"- Introduce the registry.",
+		"- Preserve the concrete implementation contract.",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("updated spec missing %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "Changes:\n- none") || strings.Contains(text, "Objective: Complete this phase.") {
+		t.Fatalf("literate phase was reset to canonical boilerplate:\n%s", text)
+	}
+}
+
 func TestSavePreservesUnparsedSectionsWhenUpdatingHardenState(t *testing.T) {
 	t.Parallel()
 
