@@ -55,12 +55,18 @@ harden:
     codex:
       model: "gpt-5.5"
       # binary: "codex"
+      # endpoint_host: "api.openai.com"
+      # endpoint_url: "https://api.openai.com"
     claude:
       model: "claude-opus-4-7"
       # binary: "claude"
+      # endpoint_host: "api.anthropic.com"
+      # endpoint_url: "https://api.anthropic.com"
     gemini:
       # model: ""
       # binary: "gemini"
+      # endpoint_host: "generativelanguage.googleapis.com"
+      # endpoint_url: "https://generativelanguage.googleapis.com"
 
 review:
   external:
@@ -75,12 +81,18 @@ review:
     codex:
       model: "gpt-5.5"
       # binary: "codex"
+      # endpoint_host: "api.openai.com"
+      # endpoint_url: "https://api.openai.com"
     claude:
       model: "claude-opus-4-7"
       # binary: "claude"
+      # endpoint_host: "api.anthropic.com"
+      # endpoint_url: "https://api.anthropic.com"
     gemini:
       # model: ""
       # binary: "gemini"
+      # endpoint_host: "generativelanguage.googleapis.com"
+      # endpoint_url: "https://generativelanguage.googleapis.com"
 
   context:
     # Bounded, deterministic project files included in the provider prompt.

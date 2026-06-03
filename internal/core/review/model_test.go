@@ -161,3 +161,23 @@ func TestParseNDJSONAcceptsDossierFrameAndRejectsUnsupportedFrames(t *testing.T)
 		}
 	}
 }
+
+func TestParseTextCalibratedAllowsUnsubstantiatedBlocker(t *testing.T) {
+	t.Parallel()
+
+	// A completion-blocking finding with no location/validation: the strict parse
+	// must reject it, but the gate's calibrated parse must accept it so the gate
+	// can downgrade it to advisory instead of failing as an internal error.
+	raw := `{"verdict":"fail","mode":"discover","summary":"unsubstantiated blocker","findings":[{"id":"f1","severity":"high","blocks_completion":true}],"attack_log":[{"target":"t","attack":"a","result":"finding"}]}`
+
+	if _, err := ParseText(raw); err == nil {
+		t.Fatal("strict ParseText must reject a blocker missing location/validation")
+	}
+	dossier, err := ParseTextCalibrated(raw)
+	if err != nil {
+		t.Fatalf("calibrated parse must accept a raw unsubstantiated blocker: %v", err)
+	}
+	if len(dossier.Findings) != 1 || !dossier.Findings[0].BlocksCompletion {
+		t.Fatalf("calibrated parse should preserve the raw blocker for the gate to downgrade: %+v", dossier.Findings)
+	}
+}

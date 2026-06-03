@@ -1,4 +1,3 @@
-// Package cli translates command-line arguments into application use cases.
 package cli
 
 import (
@@ -12,6 +11,8 @@ import (
 
 	adaptercli "github.com/nilstate/scafld/v2/internal/adapters/cli/adapter"
 	configcli "github.com/nilstate/scafld/v2/internal/adapters/cli/config"
+	gatecli "github.com/nilstate/scafld/v2/internal/adapters/cli/gate"
+	gatestdiocli "github.com/nilstate/scafld/v2/internal/adapters/cli/gatestdio"
 	hardencli "github.com/nilstate/scafld/v2/internal/adapters/cli/harden"
 	hardensubmitcli "github.com/nilstate/scafld/v2/internal/adapters/cli/hardensubmit"
 	clihelp "github.com/nilstate/scafld/v2/internal/adapters/cli/help"
@@ -19,6 +20,7 @@ import (
 	"github.com/nilstate/scafld/v2/internal/adapters/cli/output"
 	reviewcli "github.com/nilstate/scafld/v2/internal/adapters/cli/review"
 	reviewsubmitcli "github.com/nilstate/scafld/v2/internal/adapters/cli/reviewsubmit"
+	verifycli "github.com/nilstate/scafld/v2/internal/adapters/cli/verify"
 	"github.com/nilstate/scafld/v2/internal/adapters/clock"
 	configadapter "github.com/nilstate/scafld/v2/internal/adapters/config"
 	"github.com/nilstate/scafld/v2/internal/adapters/corebundle"
@@ -54,10 +56,11 @@ var commands = []command{
 	{"plan", "Create a draft task spec"}, {"harden", "Stress-test a draft spec before approval"},
 	{"validate", "Validate a task spec"}, {"approve", "Approve a draft spec"},
 	{"build", "Open or advance governed build phases"}, {"review", "Run the adversarial review gate"},
+	{"gate", "Run the host-facing accountability gate"},
 	{"complete", "Complete reviewed work"}, {"fail", "Mark work failed"}, {"cancel", "Cancel work"},
 	{"status", "Show spec status"}, {"list", "List specs"}, {"report", "Aggregate spec and run metrics"},
 	{"handoff", "Render model-facing handoff material"}, {"adapter", "Render provider trigger packet"},
-	{"update", "Refresh managed scafld core files"},
+	{"verify", "Verify a signed scafld receipt"}, {"update", "Refresh managed scafld core files"},
 }
 
 type command struct{ name, summary string }
@@ -72,6 +75,7 @@ var commandHandlers = map[string]commandHandler{
 	"approve":             runApprove,
 	"build":               runBuild,
 	"review":              runReview,
+	"gate":                gatecli.Handler(os.Stdin),
 	"complete":            statusHandler("complete"),
 	"fail":                statusHandler("fail"),
 	"cancel":              statusHandler("cancel"),
@@ -80,12 +84,13 @@ var commandHandlers = map[string]commandHandler{
 	"report":              runReport,
 	"handoff":             runHandoff,
 	"adapter":             adaptercli.Handler(ExitInvalid, ExitWorkspace, ExitGeneric),
+	"verify":              verifycli.Handler(),
 	"update":              runUpdate,
+	"gate-stdio":          gatestdiocli.Handler(os.Args[0], os.Stdin),
 	"review-submit-stdio": reviewsubmitcli.Handler(os.Stdin),
 	"harden-submit-stdio": hardensubmitcli.Handler(os.Stdin),
 }
 
-// Run executes the CLI command and returns the process exit code.
 func Run(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer) int {
 	if ctx == nil {
 		ctx = context.Background()

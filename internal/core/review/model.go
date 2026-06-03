@@ -217,6 +217,32 @@ func ValidCompletionProvider(provider string) bool {
 
 // ParseText parses direct JSON dossiers or NDJSON review streams.
 func ParseText(text string) (Dossier, error) {
+	dossier, err := decodeDossierText(text)
+	if err != nil {
+		return Dossier{}, err
+	}
+	if err := validateDossier(dossier, true); err != nil {
+		return Dossier{}, err
+	}
+	return dossier, nil
+}
+
+// ParseTextCalibrated parses provider output for the accountability gate. It
+// validates dossier shape but does not reject completion-blocking findings that
+// lack location/evidence/validation, so the gate's calibration can downgrade
+// unsubstantiated blockers to advisory instead of failing as an internal error.
+func ParseTextCalibrated(text string) (Dossier, error) {
+	dossier, err := decodeDossierText(text)
+	if err != nil {
+		return Dossier{}, err
+	}
+	if err := validateDossier(dossier, false); err != nil {
+		return Dossier{}, err
+	}
+	return dossier, nil
+}
+
+func decodeDossierText(text string) (Dossier, error) {
 	trimmed := strings.TrimSpace(text)
 	if trimmed == "" {
 		return Dossier{}, fmt.Errorf("%w: empty provider output", ErrInvalidDossier)
@@ -227,14 +253,25 @@ func ParseText(text string) (Dossier, error) {
 			return Dossier{}, fmt.Errorf("%w: %v", ErrInvalidDossier, err)
 		}
 		if _, hasType := probe["type"]; !hasType {
-			return decodeAndValidateDossier([]byte(trimmed), text)
+			return decodeDossierStrict([]byte(trimmed), text)
 		}
 	}
-	return ParseNDJSON(text)
+	return decodeNDJSON(text)
 }
 
 // ParseNDJSON parses newline-delimited review events into a dossier.
 func ParseNDJSON(text string) (Dossier, error) {
+	dossier, err := decodeNDJSON(text)
+	if err != nil {
+		return Dossier{}, err
+	}
+	if err := ValidateDossier(dossier); err != nil {
+		return Dossier{}, err
+	}
+	return dossier, nil
+}
+
+func decodeNDJSON(text string) (Dossier, error) {
 	var dossier Dossier
 	found := false
 	scanner := bufio.NewScanner(strings.NewReader(text))
@@ -275,20 +312,6 @@ func ParseNDJSON(text string) (Dossier, error) {
 	}
 	if !found {
 		return Dossier{}, fmt.Errorf("%w: missing dossier frame", ErrInvalidDossier)
-	}
-	if err := ValidateDossier(dossier); err != nil {
-		return Dossier{}, err
-	}
-	return dossier, nil
-}
-
-func decodeAndValidateDossier(data []byte, raw string) (Dossier, error) {
-	dossier, err := decodeDossierStrict(data, raw)
-	if err != nil {
-		return Dossier{}, err
-	}
-	if err := ValidateDossier(dossier); err != nil {
-		return Dossier{}, err
 	}
 	return dossier, nil
 }
@@ -335,6 +358,10 @@ func NormalizeDossier(dossier Dossier) Dossier {
 
 // ValidateDossier verifies dossier shape and the completion gate contract.
 func ValidateDossier(dossier Dossier) error {
+	return validateDossier(dossier, true)
+}
+
+func validateDossier(dossier Dossier, requireBlockerEvidence bool) error {
 	if !ValidVerdict(dossier.Verdict) {
 		return fmt.Errorf("%w: invalid verdict %q", ErrInvalidDossier, dossier.Verdict)
 	}
@@ -356,7 +383,7 @@ func ValidateDossier(dossier Dossier) error {
 		}
 	}
 	for _, finding := range dossier.Findings {
-		if err := ValidateFinding(finding); err != nil {
+		if err := validateFinding(finding, requireBlockerEvidence); err != nil {
 			return err
 		}
 	}
@@ -369,6 +396,14 @@ func ValidateDossier(dossier Dossier) error {
 
 // ValidateFinding checks one finding's typed fields and repair context.
 func ValidateFinding(finding Finding) error {
+	return validateFinding(finding, true)
+}
+
+// validateFinding optionally enforces the completion-gate evidence requirement.
+// The gate parse path passes requireBlockerEvidence=false so a raw, unsubstantiated
+// blocker survives parsing and the gate can downgrade it to advisory; the normal
+// review path keeps the strict contract.
+func validateFinding(finding Finding, requireBlockerEvidence bool) error {
 	if strings.TrimSpace(finding.ID) == "" {
 		return fmt.Errorf("%w: finding id is required", ErrInvalidDossier)
 	}
@@ -381,7 +416,7 @@ func ValidateFinding(finding Finding) error {
 	if finding.Status != "" && !ValidFindingStatus(finding.Status) {
 		return fmt.Errorf("%w: invalid finding status %q", ErrInvalidDossier, finding.Status)
 	}
-	if BlocksCompletion(finding) {
+	if requireBlockerEvidence && BlocksCompletion(finding) {
 		if finding.Location == nil || strings.TrimSpace(finding.Location.Path) == "" {
 			return fmt.Errorf("%w: completion-blocking finding %q requires location", ErrInvalidDossier, finding.ID)
 		}

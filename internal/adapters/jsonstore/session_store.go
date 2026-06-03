@@ -113,7 +113,15 @@ func (s SessionStore) Append(ctx context.Context, taskID string, entry session.E
 	if entry.ID == "" {
 		entry.ID = fmt.Sprintf("entry-%d", len(ledger.Entries)+1)
 	}
+	priorValid := ledger.LedgerValid
 	ledger = ledger.WithEntry(entry)
+	// Fail closed without persisting when this entry breaks a previously valid
+	// receipt chain (e.g. a stale or concurrently minted receipt whose ledger_head
+	// does not chain from the current head). Leaving the entry out keeps the durable
+	// ledger a valid chain and stops a mismatched receipt being reported as anchored.
+	if priorValid && !ledger.LedgerValid {
+		return session.Session{}, fmt.Errorf("append rejected: entry breaks ledger chain: %s", ledger.LedgerError)
+	}
 	if now != "" {
 		ledger.UpdatedAt = now
 	}

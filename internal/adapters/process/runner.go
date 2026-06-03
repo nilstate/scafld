@@ -41,7 +41,11 @@ func (r Runner) Run(ctx context.Context, req execution.Request) (execution.Resul
 	if err != nil {
 		return execution.Result{}, err
 	}
-	cmd.Env = append(os.Environ(), req.Env...)
+	if req.EnvMode == execution.EnvModeExact {
+		cmd.Env = append(make([]string, 0, len(req.Env)), req.Env...)
+	} else {
+		cmd.Env = append(os.Environ(), req.Env...)
+	}
 	configureProcessGroup(cmd)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

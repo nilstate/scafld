@@ -21,8 +21,13 @@ var scafldGitignoreBlock = []byte(`# scafld runtime state
 !.scafld/prompts/**
 !.scafld/specs/
 !.scafld/specs/**
+!.scafld/trusted-keys.json
 .scafld/config.local.yaml
 .scafld/core/
+.scafld/keys/
+.scafld/private-keys/
+.scafld/**/*.key
+.scafld/**/*.pem
 .scafld/prompts/.manifest.json
 .scafld/runs/
 `)

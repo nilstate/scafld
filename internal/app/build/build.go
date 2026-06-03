@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nilstate/scafld/v2/internal/core/acceptance"
+	appacceptance "github.com/nilstate/scafld/v2/internal/app/acceptance"
 	corecompletion "github.com/nilstate/scafld/v2/internal/core/completion"
 	"github.com/nilstate/scafld/v2/internal/core/execution"
 	"github.com/nilstate/scafld/v2/internal/core/gate"
@@ -294,10 +294,23 @@ func runCriterionList(ctx context.Context, sessions SessionStore, runner Runner,
 	var ledger session.Session
 	passed, failed := 0, 0
 	for _, criterion := range criteria {
-		if criterion.PhaseID == "" {
-			criterion.PhaseID = phaseID
+		withPhase := criterion
+		if withPhase.PhaseID == "" {
+			withPhase.PhaseID = phaseID
 		}
-		entry := criterionEntry(ctx, runner, criterion, cwd, env, timeout, idleTimeout)
+		evaluation := appacceptance.Evaluate(ctx, runner, appacceptance.EvaluateInput{
+			Criteria: []appacceptance.Criterion{{
+				ID:           withPhase.ID,
+				Type:         withPhase.Type,
+				Command:      withPhase.Command,
+				ExpectedKind: string(withPhase.ExpectedKind),
+			}},
+			WorkDir:     cwd,
+			Env:         env,
+			Timeout:     timeout,
+			IdleTimeout: idleTimeout,
+		})
+		entry := criterionEntry(evaluation.Results[0], withPhase.PhaseID)
 		var err error
 		ledger, err = sessions.Append(ctx, taskID, entry, now)
 		if err != nil {
@@ -319,57 +332,18 @@ func runCriterionList(ctx context.Context, sessions SessionStore, runner Runner,
 	return ledger, passed, failed, nil
 }
 
-func criterionEntry(ctx context.Context, runner Runner, criterion spec.Criterion, cwd string, env []string, timeout time.Duration, idleTimeout time.Duration) session.Entry {
-	var result execution.Result
-	var runErr error
-	if strings.TrimSpace(criterion.Command) == "" {
-		evaluation := acceptance.Evaluate(criterion.ExpectedKind, acceptance.Evidence{})
-		return session.Entry{
-			Type:        "criterion",
-			CriterionID: criterion.ID,
-			PhaseID:     criterion.PhaseID,
-			Status:      evaluation.Status,
-			Reason:      evaluation.Reason,
-		}
-	}
-	if runner != nil {
-		result, runErr = runner.Run(ctx, execution.Request{Command: criterion.Command, CWD: cwd, Env: env, Timeout: timeout, IdleTimeout: idleTimeout})
-	} else {
-		runErr = errors.New("missing acceptance runner")
-	}
-	evidenceOutput := result.Output
-	if isBrowserCriterion(criterion) {
-		evidenceOutput = result.Stdout
-	}
-	evaluation := acceptance.Evaluate(criterion.ExpectedKind, acceptance.Evidence{
-		ExitCode:   result.ExitCode,
-		Output:     evidenceOutput,
-		Command:    criterion.Command,
-		Diagnostic: result.Output,
-	})
-	if runErr != nil {
-		evaluation.Status = "fail"
-		evaluation.Reason = runErr.Error()
-	}
-	entryOutput := result.Output
-	if isBrowserCriterion(criterion) && strings.TrimSpace(result.Stdout) != "" {
-		entryOutput = result.Stdout
-	}
+func criterionEntry(result appacceptance.CriterionResult, phaseID string) session.Entry {
 	return session.Entry{
 		Type:        "criterion",
-		CriterionID: criterion.ID,
-		PhaseID:     criterion.PhaseID,
-		Status:      evaluation.Status,
-		Reason:      evaluation.Reason,
-		Command:     criterion.Command,
+		CriterionID: result.ID,
+		PhaseID:     phaseID,
+		Status:      result.Status,
+		Reason:      result.Reason,
+		Command:     result.Command,
 		ExitCode:    result.ExitCode,
-		Output:      snippet(entryOutput),
+		Output:      result.Evidence,
 		Path:        result.DiagnosticPath,
 	}
-}
-
-func isBrowserCriterion(criterion spec.Criterion) bool {
-	return criterion.Type == "browser" || criterion.ExpectedKind == acceptance.ExpectedBrowserEvidence
 }
 
 func appendPhase(ctx context.Context, sessions SessionStore, taskID string, phaseID string, status string, reason string, now string) (session.Session, error) {
@@ -473,13 +447,6 @@ func evidenceReference(ledger session.Session, sourceID string) string {
 		return sourceID
 	}
 	return sourceID
-}
-
-func snippet(s string) string {
-	if len(s) > 1000 {
-		return s[:1000]
-	}
-	return s
 }
 
 func firstPendingPhase(model spec.Model) (string, bool) {

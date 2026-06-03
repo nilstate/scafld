@@ -19,6 +19,7 @@ type Config struct {
 	Invariants InvariantConfig `yaml:"invariants"`
 	LLM        LLMConfig       `yaml:"llm"`
 	Execution  ExecutionConfig `yaml:"execution"`
+	Verify     VerifyConfig    `yaml:"verify"`
 	Harden     HardenConfig    `yaml:"harden"`
 	Review     ReviewConfig    `yaml:"review"`
 }
@@ -39,6 +40,13 @@ type ExecutionConfig struct {
 	Env                    map[string]string `yaml:"env"`
 	AbsoluteTimeoutSeconds int               `yaml:"absolute_timeout_seconds"`
 	IdleTimeoutSeconds     int               `yaml:"idle_timeout_seconds"`
+}
+
+// VerifyConfig controls CI receipt verification defaults.
+type VerifyConfig struct {
+	MinIndependence string `yaml:"min_independence"`
+	TrustedKeysPath string `yaml:"trusted_keys_path"`
+	ReceiptPath     string `yaml:"receipt_path"`
 }
 
 // HardenConfig controls hardening prompt behavior.
@@ -86,8 +94,10 @@ type ExternalReviewConfig struct {
 
 // ProviderConfig configures a named external provider implementation.
 type ProviderConfig struct {
-	Model  string `yaml:"model"`
-	Binary string `yaml:"binary"`
+	Model        string `yaml:"model"`
+	Binary       string `yaml:"binary"`
+	EndpointURL  string `yaml:"endpoint_url"`
+	EndpointHost string `yaml:"endpoint_host"`
 }
 
 // ReviewPassConfig describes one review pass in the review agenda.
@@ -111,6 +121,22 @@ func Load(ctx context.Context, root string) (Config, error) {
 		return Config{}, err
 	}
 	return overlay(cfg, local), nil
+}
+
+// LoadBase reads only the committed base config, ignoring config.local overrides.
+// The gate and verify paths use this so a host-committed config.local.yaml cannot
+// repoint the trust anchor, relax the independence policy, or redirect reviewer
+// endpoints. config.local stays an authoring convenience for the human lifecycle,
+// never an input to the accountability gate.
+func LoadBase(ctx context.Context, root string) (Config, error) {
+	if err := ctx.Err(); err != nil {
+		return Config{}, err
+	}
+	cfg, err := readConfigFile(filepath.Join(root, ".scafld", "config.yaml"), false)
+	if err != nil {
+		return Config{}, err
+	}
+	return overlay(cfg, Config{}), nil
 }
 
 func readConfigFile(path string, optional bool) (Config, error) {
@@ -193,6 +219,11 @@ func Default() Config {
 		Execution: ExecutionConfig{
 			AbsoluteTimeoutSeconds: 300,
 		},
+		Verify: VerifyConfig{
+			MinIndependence: "isolation_only",
+			TrustedKeysPath: ".scafld/trusted-keys.json",
+			ReceiptPath:     ".scafld/receipts",
+		},
 		Harden: HardenConfig{
 			MaxIssuesPerRound: 8,
 			ContextMaxBytes:   16384,
@@ -256,6 +287,7 @@ func overlay(base Config, local Config) Config {
 		base.LLM.ModelProfile = local.LLM.ModelProfile
 	}
 	base.Execution = overlayExecution(base.Execution, local.Execution)
+	base.Verify = overlayVerify(base.Verify, local.Verify)
 	if local.Harden.MaxIssuesPerRound > 0 {
 		base.Harden.MaxIssuesPerRound = local.Harden.MaxIssuesPerRound
 	}
@@ -303,6 +335,12 @@ func overlayProvider(base ProviderConfig, local ProviderConfig) ProviderConfig {
 	if local.Binary != "" {
 		base.Binary = local.Binary
 	}
+	if local.EndpointURL != "" {
+		base.EndpointURL = local.EndpointURL
+	}
+	if local.EndpointHost != "" {
+		base.EndpointHost = local.EndpointHost
+	}
 	return base
 }
 
@@ -316,6 +354,19 @@ func overlayExecution(base ExecutionConfig, local ExecutionConfig) ExecutionConf
 	}
 	if local.IdleTimeoutSeconds > 0 {
 		base.IdleTimeoutSeconds = local.IdleTimeoutSeconds
+	}
+	return base
+}
+
+func overlayVerify(base VerifyConfig, local VerifyConfig) VerifyConfig {
+	if local.MinIndependence != "" {
+		base.MinIndependence = local.MinIndependence
+	}
+	if local.TrustedKeysPath != "" {
+		base.TrustedKeysPath = local.TrustedKeysPath
+	}
+	if local.ReceiptPath != "" {
+		base.ReceiptPath = local.ReceiptPath
 	}
 	return base
 }
@@ -408,6 +459,7 @@ func withDefaults(cfg Config) Config {
 		cfg.LLM.ModelProfile = defaults.LLM.ModelProfile
 	}
 	cfg.Execution = overlayExecution(defaults.Execution, cfg.Execution)
+	cfg.Verify = overlayVerify(defaults.Verify, cfg.Verify)
 	if cfg.Harden.MaxIssuesPerRound <= 0 {
 		cfg.Harden.MaxIssuesPerRound = defaults.Harden.MaxIssuesPerRound
 	}

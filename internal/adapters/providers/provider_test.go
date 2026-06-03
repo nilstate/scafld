@@ -208,6 +208,263 @@ func TestDetectHostAgent(t *testing.T) {
 	}
 }
 
+func TestClassifyIndependenceUnknownHost(t *testing.T) {
+	t.Parallel()
+
+	got := classifyIndependence("vscode", "codex")
+	if got.Level != IndependenceIsolationOnly || got.Distinct {
+		t.Fatalf("independence = %+v, want isolation_only for unknown host", got)
+	}
+}
+
+func TestClassifyIndependenceEmptyHost(t *testing.T) {
+	t.Parallel()
+
+	got := classifyIndependence("", "claude")
+	if got.Level != IndependenceIsolationOnly || got.Distinct {
+		t.Fatalf("independence = %+v, want isolation_only for empty host", got)
+	}
+}
+
+func TestClassifyIndependenceGeminiReviewer(t *testing.T) {
+	t.Parallel()
+
+	got := classifyIndependence(HostAgentCodex, "gemini")
+	if got.Level != IndependenceCrossVendor || !got.Distinct {
+		t.Fatalf("independence = %+v, want cross_vendor Gemini reviewer", got)
+	}
+}
+
+func TestSelectGateReviewerHostOnlyDoesNotReturnStall(t *testing.T) {
+	t.Parallel()
+
+	selected, err := SelectGateReviewer(Selection{
+		HostAgent:      HostAgentCodex,
+		CodexBinary:    "/opt/bin/codex",
+		FallbackPolicy: "disable",
+		CommandExists:  func(string) bool { return false },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selected.Provider != "codex" || selected.Independence.Level != IndependenceIsolationOnly || selected.Independence.Distinct {
+		t.Fatalf("selected = %+v, want host provider at isolation_only", selected)
+	}
+}
+
+func TestSelectGateReviewerUnknownHost(t *testing.T) {
+	t.Parallel()
+
+	selected, err := SelectGateReviewer(Selection{
+		CodexBinary:   "/opt/bin/codex",
+		CommandExists: func(string) bool { return false },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selected.Provider != "codex" || selected.Independence.Level != IndependenceIsolationOnly || selected.Independence.Distinct {
+		t.Fatalf("selected = %+v, want first available provider at isolation_only", selected)
+	}
+}
+
+func TestSelectGateReviewerGeminiCrossVendor(t *testing.T) {
+	t.Parallel()
+
+	selected, err := SelectGateReviewer(Selection{
+		HostAgent:     HostAgentCodex,
+		GeminiBinary:  "/opt/bin/gemini",
+		CommandExists: func(string) bool { return false },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selected.Provider != "gemini" || selected.Independence.Level != IndependenceCrossVendor || !selected.Independence.Distinct {
+		t.Fatalf("selected = %+v, want Gemini cross_vendor reviewer", selected)
+	}
+}
+
+func TestScrubDropsProxy(t *testing.T) {
+	t.Parallel()
+
+	result, err := ScrubProviderEnv(ProviderEnvInput{
+		Provider:     "codex",
+		EndpointHost: "api.openai.com",
+		HostEnviron: []string{
+			"OPENAI_API_KEY=secret",
+			"HTTPS_PROXY=http://proxy.invalid",
+			"http_proxy=http://proxy.invalid",
+			"NO_PROXY=localhost",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := strings.Join(result.Env, "\n")
+	for _, blocked := range []string{"HTTPS_PROXY=", "http_proxy=", "NO_PROXY="} {
+		if strings.Contains(env, blocked) {
+			t.Fatalf("proxy env %q survived scrub: %v", blocked, result.Env)
+		}
+	}
+	if result.EndpointHost != "api.openai.com" {
+		t.Fatalf("endpoint host = %q", result.EndpointHost)
+	}
+}
+
+func TestScrubPinsEndpoint(t *testing.T) {
+	t.Parallel()
+
+	result, err := ScrubProviderEnv(ProviderEnvInput{
+		Provider:     "codex",
+		EndpointHost: "api.openai.com",
+		HostEnviron: []string{
+			"OPENAI_API_KEY=secret",
+			"OPENAI_BASE_URL=https://api.openai.com/v1",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsEnv(result.Env, "OPENAI_BASE_URL=https://api.openai.com/v1") {
+		t.Fatalf("pinned endpoint env missing: %v", result.Env)
+	}
+}
+
+func TestScrubAllowsProviderAuth(t *testing.T) {
+	t.Parallel()
+
+	result, err := ScrubProviderEnv(ProviderEnvInput{
+		Provider: "claude",
+		HostEnviron: []string{
+			"ANTHROPIC_API_KEY=anthropic",
+			"OPENAI_API_KEY=openai",
+			"PATH=/bin",
+		},
+		RequireAuth: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsEnv(result.Env, "ANTHROPIC_API_KEY=anthropic") || containsEnv(result.Env, "OPENAI_API_KEY=openai") {
+		t.Fatalf("auth allowlist wrong: %v", result.Env)
+	}
+}
+
+func TestScrubRejectsUnpinnedEndpoint(t *testing.T) {
+	t.Parallel()
+
+	result, err := ScrubProviderEnv(ProviderEnvInput{
+		Provider:     "codex",
+		EndpointHost: "api.openai.com",
+		HostEnviron: []string{
+			"OPENAI_API_KEY=secret",
+			"OPENAI_BASE_URL=https://evil.invalid",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if containsEnv(result.Env, "OPENAI_BASE_URL=https://evil.invalid") {
+		t.Fatalf("unpinned endpoint env survived scrub: %v", result.Env)
+	}
+}
+
+func TestReceiptGradeBinaryPinnedAbsolute(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "codex-reviewer")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ResolveReceiptGradeBinary(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Path != path || len(got.SHA256) != 64 {
+		t.Fatalf("binary = %+v", got)
+	}
+}
+
+func TestReceiptGradeBinaryRejectsRelative(t *testing.T) {
+	t.Parallel()
+
+	if _, err := ResolveReceiptGradeBinary("codex"); err == nil {
+		t.Fatal("expected relative/PATH-only binary to fail")
+	}
+}
+
+func TestReceiptGradeBinaryRejectsMissing(t *testing.T) {
+	t.Parallel()
+
+	if _, err := ResolveReceiptGradeBinary(filepath.Join(t.TempDir(), "missing")); err == nil {
+		t.Fatal("expected missing binary to fail")
+	}
+}
+
+func TestReceiptGradeBinaryRejectsNonExecutable(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "codex-reviewer")
+	if err := os.WriteFile(path, []byte("not executable"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ResolveReceiptGradeBinary(path); err == nil {
+		t.Fatal("expected non-executable binary to fail")
+	}
+}
+
+func TestReceiptGradeAgentUsesExactEnvAndRuntimeFacts(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "codex-reviewer")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	agent, facts, err := SelectReceiptGradeAgent(Selection{
+		Provider:          "codex",
+		CodexBinary:       path,
+		CodexEndpointHost: "api.openai.com",
+		Runner:            &fakeRunner{},
+	}, []string{
+		"OPENAI_API_KEY=secret",
+		"HTTPS_PROXY=http://proxy.invalid",
+		"OPENAI_BASE_URL=https://api.openai.com/v1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Receipt-grade review is always sandboxed, even without byte-bearing evidence,
+	// so the provider is wrapped; unwrap it to inspect the exact-env codex provider.
+	wrapped, ok := agent.(receiptGradeSandboxAgent)
+	if !ok {
+		t.Fatalf("agent = %T, want receiptGradeSandboxAgent", agent)
+	}
+	t.Cleanup(func() {
+		if wrapped.sandbox.Cleanup != nil {
+			wrapped.sandbox.Cleanup()
+		}
+	})
+	codex, ok := wrapped.Agent.(CodexProvider)
+	if !ok {
+		t.Fatalf("agent = %T, want CodexProvider", wrapped.Agent)
+	}
+	if codex.EnvMode != execution.EnvModeExact || facts.BinarySHA256 == "" || codex.BinarySHA256 != facts.BinarySHA256 || facts.EndpointHost != "api.openai.com" {
+		t.Fatalf("receipt-grade provider/facts wrong: provider=%+v facts=%+v", codex, facts)
+	}
+	env := strings.Join(codex.Env, "\n")
+	if !strings.Contains(env, "OPENAI_API_KEY=secret") || strings.Contains(env, "HTTPS_PROXY=") {
+		t.Fatalf("receipt-grade env wrong: %v", codex.Env)
+	}
+}
+
+func containsEnv(env []string, want string) bool {
+	for _, entry := range env {
+		if entry == want {
+			return true
+		}
+	}
+	return false
+}
+
 func dossierJSON(verdict string) string {
 	if verdict == review.VerdictFail {
 		return `{"verdict":"fail","mode":"discover","summary":"bug found","findings":[{"id":"bug","severity":"high","blocks_completion":true,"location":{"path":"file.go"},"evidence":"bug","impact":"breaks behavior","validation":"rerun tests","summary":"bug"}],"attack_log":[{"target":"diff","attack":"scan","result":"finding"}],"budget":{"actual_findings":1,"actual_attack_angles":1,"depth":"test"}}`

@@ -24,13 +24,14 @@ type Accepted struct {
 
 // Options configures a single-tool submit server.
 type Options struct {
-	OutPath         string
-	ServerName      string
-	ToolName        string
-	ToolTitle       string
-	ToolDescription string
-	SchemaJSON      string
-	ParseAndEncode  func(string) (Accepted, error)
+	OutPath            string
+	ServerName         string
+	ToolName           string
+	ToolTitle          string
+	ToolDescription    string
+	SchemaJSON         string
+	AllowRepeatedCalls bool
+	ParseAndEncode     func(string) (Accepted, error)
 }
 
 // Run serves a minimal MCP stdio server that accepts exactly one tool call and
@@ -134,7 +135,7 @@ func (s *server) handleToolCall(req rpcRequest) {
 		s.respondError(req.ID, -32602, "unknown tool "+params.Name)
 		return
 	}
-	if s.submitted {
+	if s.submitted && !s.opts.AllowRepeatedCalls {
 		s.respond(req.ID, toolError(s.opts.ToolName+" was already called"))
 		return
 	}
