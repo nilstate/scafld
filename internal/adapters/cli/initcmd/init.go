@@ -21,6 +21,11 @@ func Run(ctx context.Context, root string, agentDocs bool) (workspace.InitResult
 		return workspace.InitResult{}, fmt.Errorf("install core bundle: %w", err)
 	}
 	result.Merge(bundle.Created, bundle.Updated, bundle.Skipped)
+	initWire, err := corebundle.InitWire(ctx, result.Root)
+	if err != nil {
+		return workspace.InitResult{}, fmt.Errorf("install init wiring: %w", err)
+	}
+	result.Merge(initWire.Created, initWire.Updated, initWire.Skipped)
 	if agentDocs {
 		agentDocsResult, err := corebundle.InitAgentDocs(ctx, result.Root)
 		if err != nil {

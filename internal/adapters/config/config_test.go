@@ -38,6 +38,7 @@ harden:
     gemini:
       model: "gemini-harden"
       binary: "gemini-harden-bin"
+      endpoint_host: "generativelanguage.googleapis.com"
 review:
   external:
     provider: "codex"
@@ -45,8 +46,10 @@ review:
     absolute_max_seconds: 34
     codex:
       model: "gpt-config"
+      endpoint_url: "https://api.openai.com"
     claude:
       model: "claude-config"
+      endpoint_host: "api.anthropic.com"
     gemini:
       model: "gemini-config"
       binary: "gemini-bin"
@@ -82,7 +85,7 @@ review:
 	if cfg.Harden.MaxIssuesPerRound != 5 {
 		t.Fatalf("harden config = %+v", cfg.Harden)
 	}
-	if cfg.Harden.ContextMaxBytes != 2048 || cfg.Harden.External.Provider != "gemini" || cfg.Harden.External.Gemini.Model != "gemini-harden" || cfg.Harden.External.Gemini.Binary != "gemini-harden-bin" || cfg.Harden.External.IdleTimeoutSeconds != 21 || cfg.Harden.External.AbsoluteMaxSeconds != 43 {
+	if cfg.Harden.ContextMaxBytes != 2048 || cfg.Harden.External.Provider != "gemini" || cfg.Harden.External.Gemini.Model != "gemini-harden" || cfg.Harden.External.Gemini.Binary != "gemini-harden-bin" || cfg.Harden.External.Gemini.EndpointHost != "generativelanguage.googleapis.com" || cfg.Harden.External.IdleTimeoutSeconds != 21 || cfg.Harden.External.AbsoluteMaxSeconds != 43 {
 		t.Fatalf("harden external config = %+v", cfg.Harden.External)
 	}
 	if len(cfg.Execution.PathPrepend) != 1 || cfg.Execution.PathPrepend[0] != "$HOME/.rbenv/shims" || cfg.Execution.Env["BUNDLE_GEMFILE"] != "api/Gemfile" || cfg.Execution.AbsoluteTimeoutSeconds != 600 || cfg.Execution.IdleTimeoutSeconds != 90 {
@@ -91,7 +94,7 @@ review:
 	if cfg.Invariants.Canonical["tenant_isolation"] != "Do not leak data across tenants." {
 		t.Fatalf("invariants = %+v", cfg.Invariants.Canonical)
 	}
-	if cfg.Review.External.Provider != "codex" || cfg.Review.External.Codex.Model != "gpt-config" || cfg.Review.External.Claude.Model != "claude-config" || cfg.Review.External.Gemini.Model != "gemini-config" || cfg.Review.External.Gemini.Binary != "gemini-bin" {
+	if cfg.Review.External.Provider != "codex" || cfg.Review.External.Codex.Model != "gpt-config" || cfg.Review.External.Codex.EndpointURL != "https://api.openai.com" || cfg.Review.External.Claude.Model != "claude-config" || cfg.Review.External.Claude.EndpointHost != "api.anthropic.com" || cfg.Review.External.Gemini.Model != "gemini-config" || cfg.Review.External.Gemini.Binary != "gemini-bin" {
 		t.Fatalf("review config = %+v", cfg.Review.External)
 	}
 	if cfg.Review.External.IdleTimeoutSeconds != 12 || cfg.Review.External.AbsoluteMaxSeconds != 34 {
@@ -122,6 +125,7 @@ review:
     absolute_max_seconds: 34
     codex:
       model: "gpt-config"
+      endpoint_host: "api.openai.com"
     claude:
       model: "claude-config"
 harden:
@@ -144,6 +148,7 @@ review:
     provider: "claude"
     claude:
       model: "claude-local"
+      endpoint_host: "api.anthropic.com"
   context:
     files:
       - MEMORY.md
@@ -163,10 +168,10 @@ harden:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Review.External.Provider != "claude" || cfg.Review.External.Claude.Model != "claude-local" {
+	if cfg.Review.External.Provider != "claude" || cfg.Review.External.Claude.Model != "claude-local" || cfg.Review.External.Claude.EndpointHost != "api.anthropic.com" {
 		t.Fatalf("local overlay did not apply: %+v", cfg.Review.External)
 	}
-	if cfg.Review.External.Codex.Model != "gpt-config" || cfg.Review.External.AbsoluteMaxSeconds != 34 {
+	if cfg.Review.External.Codex.Model != "gpt-config" || cfg.Review.External.Codex.EndpointHost != "api.openai.com" || cfg.Review.External.AbsoluteMaxSeconds != 34 {
 		t.Fatalf("base values were not preserved: %+v", cfg.Review.External)
 	}
 	if cfg.Harden.MaxIssuesPerRound != 8 || cfg.Harden.External.Provider != "gemini" || cfg.Harden.External.Codex.Model != "gpt-harden-config" || cfg.Harden.External.Gemini.Model != "gemini-harden-local" || cfg.Harden.External.Gemini.Binary != "gemini-local-bin" {

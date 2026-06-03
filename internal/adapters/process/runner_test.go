@@ -67,6 +67,37 @@ func TestCommandAcceptsArgv(t *testing.T) {
 	}
 }
 
+func TestRunnerEnvModeExactDoesNotInheritHostEnv(t *testing.T) {
+	t.Setenv("SCAFLD_ENV_MODE_TEST", "host")
+
+	result, err := (Runner{}).Run(context.Background(), execution.Request{
+		Args:    []string{"/bin/sh", "-c", `printf "${SCAFLD_ENV_MODE_TEST:-missing}"`},
+		EnvMode: execution.EnvModeExact,
+		Timeout: time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Stdout != "missing" {
+		t.Fatalf("exact env inherited host value: %+v", result)
+	}
+}
+
+func TestRunnerEnvModeInheritKeepsHostEnv(t *testing.T) {
+	t.Setenv("SCAFLD_ENV_MODE_TEST", "host")
+
+	result, err := (Runner{}).Run(context.Background(), execution.Request{
+		Args:    []string{"/bin/sh", "-c", `printf "$SCAFLD_ENV_MODE_TEST"`},
+		Timeout: time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Stdout != "host" {
+		t.Fatalf("inherited env missing host value: %+v", result)
+	}
+}
+
 func TestCommandCapsOutputAndRecordsEvents(t *testing.T) {
 	t.Parallel()
 	result, err := (Runner{}).Run(context.Background(), execution.Request{

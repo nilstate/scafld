@@ -1,0 +1,23 @@
+name: scafld verify
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  verify-receipt:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Run scafld verify
+        run: go run ./cmd/scafld verify .scafld/receipts/latest.json --target "${{ github.event.pull_request.base.sha || github.event.before }}"

@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "scafld_gate": {
+      "command": "scafld",
+      "args": [
+        "gate-stdio"
+      ],
+      "includeTools": [
+        "scafld_gate"
+      ]
+    }
+  }
+}

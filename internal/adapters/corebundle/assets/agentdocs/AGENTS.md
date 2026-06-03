@@ -1,54 +1,42 @@
 # scafld Agent Contract
 
-## Contract
+## Default Agent Flow
 
-- `spec` is the living contract.
-- `session` is the durable evidence ledger.
-- `handoff` is transport, not source of truth.
-- `review` is the adversarial completion gate.
+Work with the host agent's normal planning, editing, and testing tools. When the work appears done, call `scafld_gate`.
 
-You execute autonomously inside the contract. You do not close the task unchallenged.
+`scafld_gate` is the accountability surface: it records acceptance evidence, runs the independent review path, and returns either blockers or a signed receipt. The agent does not grade its own completion.
 
-## Commands
+## Merge Wall
+
+CI runs `scafld verify <receipt> --target <commit-ish>` against the signed receipt. This is the hard wall for merging. The Claude Stop hook is only a local affordance; it can be bypassed in subagents, piped runs, Codex, Gemini, or other hosts.
+
+## Human And CI Lifecycle
+
+The full CLI lifecycle remains available for operators, automation, and debugging:
 
 ```bash
 scafld init
 scafld plan <task-id> --title "Title" --size small --risk low
 scafld harden <task-id>
-scafld harden <task-id> --mark-passed
 scafld validate <task-id>
 scafld approve <task-id>
 scafld build <task-id>
 scafld review <task-id>
 scafld complete <task-id>
+scafld verify <receipt> --target <commit-ish>
 scafld status <task-id>
-scafld list
-scafld report
 scafld handoff <task-id>
-scafld update
 ```
 
-For real review: `scafld review <task-id> --provider {codex|claude|gemini|command}`.
-`--provider local` is smoke-test only and cannot satisfy `complete`.
-Only an operator may use `scafld review <task-id> --human-reviewed --reason ...`.
-
-## Lifecycle
-
-```text
-plan -> harden -> approve -> build -> review -> complete
-```
-
-Hardening attacks the draft. Review attacks the result.
-Build opens one phase at a time. After implementing the opened phase, run
-`scafld build <task-id>` again to record evidence and advance.
+Use `scafld harden` to strengthen drafts before approval. Use `scafld build` to record phase evidence. Use `scafld review` when running the lifecycle directly. Use `scafld status --json` for automation.
 
 ## Do Not
 
-- Edit outside declared scope, objectives, or invariants.
+- Close governed work without `scafld_gate` or an explicit human decision.
 - Reconstruct lifecycle state by scraping Markdown. Use `status --json`.
 - Mutate `.scafld/core/` by hand. Use `scafld update`.
-- Run `--provider local` for real review.
-- Cite files, commands, or review findings you have not verified.
+- Treat the Stop hook as the merge wall. CI verify is the wall.
+- Cite files, commands, receipts, or review findings you have not verified.
 
 ## Prompts
 

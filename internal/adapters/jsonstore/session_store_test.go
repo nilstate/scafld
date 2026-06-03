@@ -2,6 +2,7 @@ package jsonstore
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"sync"
@@ -9,6 +10,28 @@ import (
 
 	"github.com/nilstate/scafld/v2/internal/core/session"
 )
+
+func TestAppendRejectsChainBreakingReceipt(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	store := SessionStore{Root: root}
+	// A receipt entry whose ledger_head does not chain from the current head must be
+	// rejected and must not be persisted, so a stale or concurrently minted receipt
+	// is never reported as anchored on a valid chain.
+	entry := session.Entry{
+		Type:          session.EntryReceipt,
+		Status:        "pass",
+		ReceiptDigest: "digest",
+		LedgerHead:    "does-not-chain",
+	}
+	if _, err := store.Append(context.Background(), "task", entry, "now"); err == nil {
+		t.Fatal("append must fail closed on a chain-breaking receipt entry")
+	}
+	if _, err := store.Load(context.Background(), "task"); !errors.Is(err, ErrSessionNotFound) {
+		t.Fatalf("a rejected append must not persist the session: err=%v", err)
+	}
+}
 
 func TestAtomicReplaceCleanup(t *testing.T) {
 	t.Parallel()

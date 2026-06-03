@@ -1,0 +1,21 @@
+name: scafld verify
+description: Verify a signed scafld receipt against the merge target.
+
+inputs:
+  receipt:
+    description: Receipt path to verify.
+    required: false
+    default: .scafld/receipts/latest.json
+  target:
+    description: Merge target commit-ish.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Run scafld verify
+      shell: bash
+      env:
+        SCAFLD_RECEIPT_PATH: ${{ inputs.receipt }}
+        SCAFLD_VERIFY_TARGET: ${{ inputs.target }}
+      run: scripts/scafld-verify.sh

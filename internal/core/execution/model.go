@@ -2,6 +2,16 @@ package execution
 
 import "time"
 
+// EnvMode controls whether a process inherits the host environment.
+type EnvMode string
+
+const (
+	// EnvModeInherit preserves the existing inherited environment behavior.
+	EnvModeInherit EnvMode = ""
+	// EnvModeExact runs with Request.Env exactly.
+	EnvModeExact EnvMode = "exact"
+)
+
 // Request describes a command execution requested by an application use case.
 type Request struct {
 	Command                string
@@ -9,6 +19,7 @@ type Request struct {
 	Input                  string
 	CWD                    string
 	Env                    []string
+	EnvMode                EnvMode
 	Timeout                time.Duration
 	IdleTimeout            time.Duration
 	TerminateGrace         time.Duration

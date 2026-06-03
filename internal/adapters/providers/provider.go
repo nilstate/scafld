@@ -15,6 +15,7 @@ import (
 	"github.com/nilstate/scafld/v2/internal/core/execution"
 	coreharden "github.com/nilstate/scafld/v2/internal/core/harden"
 	"github.com/nilstate/scafld/v2/internal/core/review"
+	"github.com/nilstate/scafld/v2/internal/core/reviewevidence"
 )
 
 // ErrProviderFailed wraps provider transport and execution failures.
@@ -45,14 +46,18 @@ type AgentRequest struct {
 
 // AgentResponse is the raw structured payload produced by an agent provider.
 type AgentResponse struct {
-	Text         string
-	Provider     string
-	Model        string
-	SessionID    string
-	OutputFormat string
-	EventSummary map[string]int
-	Result       execution.Result
-	RunErr       error
+	Text               string
+	Provider           string
+	Model              string
+	SessionID          string
+	OutputFormat       string
+	BinarySHA256       string
+	EndpointHost       string
+	EvidenceProvenance []reviewevidence.Provenance
+	SandboxPolicy      SandboxPolicy
+	EventSummary       map[string]int
+	Result             execution.Result
+	RunErr             error
 }
 
 // Agent is the shared provider transport used by protocol-specific adapters.
@@ -62,23 +67,29 @@ type Agent interface {
 
 // Selection contains provider choice, model, timeout, and runner configuration.
 type Selection struct {
-	Provider       string
-	Command        string
-	Binary         string
-	Model          string
-	CodexModel     string
-	ClaudeModel    string
-	GeminiModel    string
-	CodexBinary    string
-	ClaudeBinary   string
-	GeminiBinary   string
-	CWD            string
-	Runner         Runner
-	Timeout        time.Duration
-	Idle           time.Duration
-	FallbackPolicy string
-	HostAgent      string
-	CommandExists  func(string) bool
+	Provider           string
+	Command            string
+	Binary             string
+	Model              string
+	CodexModel         string
+	ClaudeModel        string
+	GeminiModel        string
+	CodexBinary        string
+	ClaudeBinary       string
+	GeminiBinary       string
+	CodexEndpointURL   string
+	ClaudeEndpointURL  string
+	GeminiEndpointURL  string
+	CodexEndpointHost  string
+	ClaudeEndpointHost string
+	GeminiEndpointHost string
+	CWD                string
+	Runner             Runner
+	Timeout            time.Duration
+	Idle               time.Duration
+	FallbackPolicy     string
+	HostAgent          string
+	CommandExists      func(string) bool
 }
 
 // AutoProvider describes the concrete provider selected for provider:auto.
@@ -87,11 +98,41 @@ type AutoProvider struct {
 	Model    string
 }
 
+// Independence stamps how separate the selected reviewer is from the host.
+type Independence struct {
+	Level    string `json:"level"`
+	Distinct bool   `json:"distinct"`
+}
+
+// GateReviewerSelection is the provider adapter contract consumed by the gate
+// path before receipt-grade sandboxing and invocation.
+type GateReviewerSelection struct {
+	Provider     string
+	Binary       string
+	Model        string
+	Independence Independence
+}
+
+// RuntimeFacts carries receipt-grade provider facts that are stamped into the
+// later signed gate receipt.
+type RuntimeFacts struct {
+	BinarySHA256       string
+	EndpointHost       string
+	EvidenceProvenance []reviewevidence.Provenance
+	SandboxPolicy      SandboxPolicy
+}
+
 const (
 	// HostAgentCodex identifies Codex as the agent currently driving scafld.
 	HostAgentCodex = "codex"
 	// HostAgentClaude identifies Claude as the agent currently driving scafld.
 	HostAgentClaude = "claude"
+	// HostAgentGemini identifies Gemini as the agent currently driving scafld.
+	HostAgentGemini = "gemini"
+	// IndependenceIsolationOnly is the always-available same-context-isolated floor.
+	IndependenceIsolationOnly = "isolation_only"
+	// IndependenceCrossVendor is the stronger known-different-vendor classification.
+	IndependenceCrossVendor = "cross_vendor"
 )
 
 // Select returns the configured review provider implementation.
@@ -172,6 +213,156 @@ func selectAutoAgent(opts Selection) (Agent, error) {
 	return agentProviderFor(selected.Provider, opts), nil
 }
 
+// SelectGateReviewer chooses a runnable reviewer for the receipt gate. Unlike
+// AutoProviderInfo, it does not stall when only the host vendor is available:
+// isolation_only still catches context contamination, self-congratulation,
+// drift, forgotten acceptance criteria, and claimed-but-not-done work, while it
+// forfeits protection against correlated blind spots and same-model-wrong-twice.
+func SelectGateReviewer(opts Selection) (GateReviewerSelection, error) {
+	hostAgent := normalizeHostAgent(opts.HostAgent)
+	var firstAvailable GateReviewerSelection
+	for _, provider := range autoProviderOrder(opts.HostAgent) {
+		if !autoProviderAvailable(provider, opts) {
+			continue
+		}
+		selection := GateReviewerSelection{
+			Provider: provider,
+			Binary:   providerBinary(provider, opts),
+			Model:    autoProviderModel(provider, opts),
+		}
+		selection.Independence = classifyIndependence(hostAgent, provider)
+		if firstAvailable.Provider == "" {
+			firstAvailable = selection
+		}
+		if selection.Independence.Level == IndependenceCrossVendor {
+			return selection, nil
+		}
+	}
+	if firstAvailable.Provider != "" {
+		return firstAvailable, nil
+	}
+	return GateReviewerSelection{}, errors.New("no external provider found; install codex, claude, or gemini for gate review")
+}
+
+// ReceiptGradeReviewInput is the gate-only request shape for an isolated,
+// receipt-stamped provider run.
+type ReceiptGradeReviewInput struct {
+	Selection   Selection
+	HostEnviron []string
+	Evidence    []reviewevidence.EvidenceFile
+	Request     AgentRequest
+}
+
+// ReceiptGradeReviewResult returns provider output plus the facts later signed
+// by host-gate.
+type ReceiptGradeReviewResult struct {
+	Response     AgentResponse
+	RuntimeFacts RuntimeFacts
+}
+
+// SelectReceiptGradeAgent returns a provider configured for exact-env,
+// content-hash-pinned gate review. Ordinary review/harden paths do not call it.
+func SelectReceiptGradeAgent(opts Selection, hostEnviron []string) (Agent, RuntimeFacts, error) {
+	return SelectReceiptGradeAgentWithEvidence(opts, hostEnviron, nil)
+}
+
+// SelectReceiptGradeAgentWithEvidence additionally materializes the evidence
+// sandbox and points the reviewer at that scratch root.
+func SelectReceiptGradeAgentWithEvidence(opts Selection, hostEnviron []string, evidence []reviewevidence.EvidenceFile) (Agent, RuntimeFacts, error) {
+	selected, err := selectReceiptGradeProvider(opts)
+	if err != nil {
+		return nil, RuntimeFacts{}, err
+	}
+	binary, err := ResolveReceiptGradeBinary(selected.Binary)
+	if err != nil {
+		return nil, RuntimeFacts{}, err
+	}
+	// Always materialize the isolated sandbox, even when there are zero byte-bearing
+	// evidence files (a deletion-only scope, or one whose only paths are withheld
+	// governed files). Otherwise the reviewer would run from the live repo root with
+	// host HOME/config still reachable, defeating the receipt-grade isolation the
+	// gate certifies.
+	sandbox, err := BuildEvidenceSandbox(evidence)
+	if err != nil {
+		return nil, RuntimeFacts{}, err
+	}
+	opts.CWD = sandbox.CWD
+	endpointURL, endpointHost := providerEndpoint(selected.Provider, opts)
+	env, err := ScrubProviderEnv(ProviderEnvInput{
+		Provider:     selected.Provider,
+		HostEnviron:  hostEnviron,
+		EndpointURL:  endpointURL,
+		EndpointHost: endpointHost,
+		RequireAuth:  true,
+		MemoryHome:   sandbox.Home,
+	})
+	if err != nil {
+		if sandbox.Cleanup != nil {
+			sandbox.Cleanup()
+		}
+		return nil, RuntimeFacts{}, err
+	}
+	facts := RuntimeFacts{
+		BinarySHA256:       binary.SHA256,
+		EndpointHost:       env.EndpointHost,
+		EvidenceProvenance: sandbox.Provenance,
+		SandboxPolicy:      sandbox.Policy,
+	}
+	agent := receiptGradeAgentProviderFor(selected.Provider, opts, binary, env, facts, sandbox.ArgsPolicy)
+	if sandbox.Cleanup != nil {
+		agent = receiptGradeSandboxAgent{Agent: agent, sandbox: sandbox, facts: facts}
+	}
+	return agent, facts, nil
+}
+
+// InvokeReceiptGradeReview runs the gate-only provider path and returns stamped
+// runtime facts alongside the raw response.
+func InvokeReceiptGradeReview(ctx context.Context, input ReceiptGradeReviewInput) (ReceiptGradeReviewResult, error) {
+	agent, facts, err := SelectReceiptGradeAgentWithEvidence(input.Selection, input.HostEnviron, input.Evidence)
+	if err != nil {
+		return ReceiptGradeReviewResult{}, err
+	}
+	resp, err := agent.InvokeAgent(ctx, input.Request)
+	resp = stampRuntimeFacts(resp, facts)
+	return ReceiptGradeReviewResult{Response: resp, RuntimeFacts: facts}, err
+}
+
+// stampRuntimeFacts fills receipt-grade runtime facts onto a provider response
+// when the provider did not surface them itself. It is the single owner of that
+// merge, shared by the direct receipt-grade path and the sandbox-cleanup wrapper.
+func stampRuntimeFacts(resp AgentResponse, facts RuntimeFacts) AgentResponse {
+	if resp.BinarySHA256 == "" {
+		resp.BinarySHA256 = facts.BinarySHA256
+	}
+	if resp.EndpointHost == "" {
+		resp.EndpointHost = facts.EndpointHost
+	}
+	if len(resp.EvidenceProvenance) == 0 {
+		resp.EvidenceProvenance = facts.EvidenceProvenance
+	}
+	if len(resp.SandboxPolicy.ReadRoots) == 0 {
+		resp.SandboxPolicy = facts.SandboxPolicy
+	}
+	return resp
+}
+
+// InvokeReceiptGradeDossier runs the gate-only sandboxed reviewer and returns a
+// parsed dossier plus the runtime facts stamped into the receipt. The reviewer
+// reads only the evidence sandbox; env, binary, memory home, and read roots are
+// pinned by SelectReceiptGradeAgentWithEvidence, and the sandbox is cleaned up
+// by the wrapped agent.
+func InvokeReceiptGradeDossier(ctx context.Context, input ReceiptGradeReviewInput, req review.Request) (review.Dossier, RuntimeFacts, error) {
+	agent, facts, err := SelectReceiptGradeAgentWithEvidence(input.Selection, input.HostEnviron, input.Evidence)
+	if err != nil {
+		return review.Dossier{}, RuntimeFacts{}, err
+	}
+	dossier, err := invokeReviewAgent(ctx, agent, req, review.ParseTextCalibrated)
+	if err != nil {
+		return review.Dossier{}, facts, err
+	}
+	return dossier, facts, nil
+}
+
 // AutoProviderInfo returns the concrete external provider selected by auto.
 //
 // When scafld can tell which agent is currently driving the task, auto prefers
@@ -221,6 +412,30 @@ func agentProviderFor(provider string, opts Selection) Agent {
 	}
 }
 
+func receiptGradeAgentProviderFor(provider string, opts Selection, binary ReceiptGradeBinary, env ProviderEnvResult, facts RuntimeFacts, argsPolicy SandboxArgsPolicy) Agent {
+	readRoots := append([]string(nil), argsPolicy.ReadRoots...)
+	switch provider {
+	case "claude":
+		return ClaudeProvider{Binary: binary.Path, Model: first(opts.Model, opts.ClaudeModel), CWD: opts.CWD, Runner: opts.Runner, Timeout: opts.Timeout, IdleTimeout: opts.Idle, Env: env.Env, EnvMode: execution.EnvModeExact, BinarySHA256: facts.BinarySHA256, EndpointHost: facts.EndpointHost, ReadRoots: readRoots, MemoryAutoloadDisabled: argsPolicy.MemoryAutoloadDisabled, SandboxPolicy: facts.SandboxPolicy}
+	case "gemini":
+		return GeminiProvider{Binary: binary.Path, Model: first(opts.Model, opts.GeminiModel), CWD: opts.CWD, Runner: opts.Runner, Timeout: opts.Timeout, IdleTimeout: opts.Idle, Env: env.Env, EnvMode: execution.EnvModeExact, BinarySHA256: facts.BinarySHA256, EndpointHost: facts.EndpointHost, ReadRoots: readRoots, MemoryAutoloadDisabled: argsPolicy.MemoryAutoloadDisabled, SandboxPolicy: facts.SandboxPolicy}
+	default:
+		return CodexProvider{Binary: binary.Path, Model: first(opts.Model, opts.CodexModel), CWD: opts.CWD, Runner: opts.Runner, Timeout: opts.Timeout, IdleTimeout: opts.Idle, Env: env.Env, EnvMode: execution.EnvModeExact, BinarySHA256: facts.BinarySHA256, EndpointHost: facts.EndpointHost, ReadRoots: readRoots, MemoryAutoloadDisabled: argsPolicy.MemoryAutoloadDisabled, SandboxPolicy: facts.SandboxPolicy}
+	}
+}
+
+func selectReceiptGradeProvider(opts Selection) (GateReviewerSelection, error) {
+	raw := strings.ToLower(strings.TrimSpace(opts.Provider))
+	if raw == "" || raw == "auto" {
+		return SelectGateReviewer(opts)
+	}
+	provider := normalizeReviewerProvider(raw)
+	if provider == "" {
+		return GateReviewerSelection{}, fmt.Errorf("provider %q is not receipt-grade capable", opts.Provider)
+	}
+	return GateReviewerSelection{Provider: provider, Binary: providerBinary(provider, opts), Model: autoProviderModel(provider, opts), Independence: classifyIndependence(opts.HostAgent, provider)}, nil
+}
+
 func autoProviderOrder(hostAgent string) []string {
 	switch normalizeHostAgent(hostAgent) {
 	case HostAgentCodex:
@@ -256,6 +471,28 @@ func autoProviderModel(provider string, opts Selection) string {
 	}
 }
 
+func providerBinary(provider string, opts Selection) string {
+	switch provider {
+	case "claude":
+		return first(opts.Binary, opts.ClaudeBinary)
+	case "gemini":
+		return first(opts.Binary, opts.GeminiBinary)
+	default:
+		return first(opts.Binary, opts.CodexBinary)
+	}
+}
+
+func providerEndpoint(provider string, opts Selection) (string, string) {
+	switch provider {
+	case "claude":
+		return opts.ClaudeEndpointURL, opts.ClaudeEndpointHost
+	case "gemini":
+		return opts.GeminiEndpointURL, opts.GeminiEndpointHost
+	default:
+		return opts.CodexEndpointURL, opts.CodexEndpointHost
+	}
+}
+
 func commandExists(opts Selection, name string) bool {
 	if opts.CommandExists != nil {
 		return opts.CommandExists(name)
@@ -270,13 +507,19 @@ func commandExists(opts Selection, name string) bool {
 func DetectHostAgent(environ []string) string {
 	for _, entry := range environ {
 		key, value, ok := strings.Cut(entry, "=")
-		if !ok {
-			continue
-		}
-		if strings.EqualFold(key, "SCAFLD_HOST_AGENT") {
+		if ok && strings.EqualFold(key, "SCAFLD_HOST_AGENT") {
 			return normalizeHostAgent(value)
 		}
 	}
+	return DetectHostAgentMarker(environ)
+}
+
+// DetectHostAgentMarker infers the host vendor from genuine environment markers
+// only, ignoring the self-declared SCAFLD_HOST_AGENT. The gate uses this for the
+// independence stamp and recorded host vendor so a host cannot manufacture a
+// cross_vendor classification by lying about which agent is driving it. It
+// returns "" when no marker is present, which classifies as isolation_only.
+func DetectHostAgentMarker(environ []string) string {
 	for _, entry := range environ {
 		key, _, _ := strings.Cut(entry, "=")
 		upper := strings.ToUpper(strings.TrimSpace(key))
@@ -310,9 +553,34 @@ func normalizeHostAgent(value string) string {
 		return HostAgentCodex
 	case strings.Contains(value, "claude"):
 		return HostAgentClaude
+	case strings.Contains(value, "gemini"):
+		return HostAgentGemini
 	default:
 		return ""
 	}
+}
+
+func normalizeReviewerProvider(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	switch value {
+	case "codex":
+		return HostAgentCodex
+	case "claude":
+		return HostAgentClaude
+	case "gemini":
+		return HostAgentGemini
+	default:
+		return ""
+	}
+}
+
+func classifyIndependence(hostVendor, reviewerVendor string) Independence {
+	host := normalizeHostAgent(hostVendor)
+	reviewer := normalizeReviewerProvider(reviewerVendor)
+	if host != "" && reviewer != "" && host != reviewer {
+		return Independence{Level: IndependenceCrossVendor, Distinct: true}
+	}
+	return Independence{Level: IndependenceIsolationOnly, Distinct: false}
 }
 
 func first(values ...string) string {
@@ -355,7 +623,7 @@ func (p LocalProvider) InvokeAgent(ctx context.Context, req AgentRequest) (Agent
 
 // Invoke returns a dossier from configured local messages.
 func (p LocalProvider) Invoke(ctx context.Context, req review.Request) (review.Dossier, error) {
-	return invokeReviewAgent(ctx, p, req)
+	return invokeReviewAgent(ctx, p, req, review.ParseText)
 }
 
 // CommandProvider invokes an operator-supplied review command.
@@ -366,6 +634,20 @@ type CommandProvider struct {
 	Runner      Runner
 	Timeout     time.Duration
 	IdleTimeout time.Duration
+}
+
+type receiptGradeSandboxAgent struct {
+	Agent   Agent
+	sandbox EvidenceSandbox
+	facts   RuntimeFacts
+}
+
+func (a receiptGradeSandboxAgent) InvokeAgent(ctx context.Context, req AgentRequest) (AgentResponse, error) {
+	if a.sandbox.Cleanup != nil {
+		defer a.sandbox.Cleanup()
+	}
+	resp, err := a.Agent.InvokeAgent(ctx, req)
+	return stampRuntimeFacts(resp, a.facts), err
 }
 
 // InvokeAgent sends the prompt to the command and returns stdout as the payload.
@@ -397,22 +679,28 @@ func (p CommandProvider) InvokeAgent(ctx context.Context, req AgentRequest) (Age
 
 // Invoke sends the review prompt to the command and parses stdout as a dossier.
 func (p CommandProvider) Invoke(ctx context.Context, req review.Request) (review.Dossier, error) {
-	return invokeReviewAgent(ctx, p, req)
+	return invokeReviewAgent(ctx, p, req, review.ParseText)
 }
 
 // ClaudeProvider invokes Claude with a restricted read-only toolset and a
 // scafld-owned MCP submit tool for the final dossier.
 type ClaudeProvider struct {
-	Binary         string
-	Model          string
-	SessionID      string
-	ScafldBinary   string
-	SubmissionPath string
-	CWD            string
-	Env            []string
-	Runner         Runner
-	Timeout        time.Duration
-	IdleTimeout    time.Duration
+	Binary                 string
+	Model                  string
+	SessionID              string
+	ScafldBinary           string
+	SubmissionPath         string
+	CWD                    string
+	Env                    []string
+	EnvMode                execution.EnvMode
+	BinarySHA256           string
+	EndpointHost           string
+	ReadRoots              []string
+	MemoryAutoloadDisabled bool
+	SandboxPolicy          SandboxPolicy
+	Runner                 Runner
+	Timeout                time.Duration
+	IdleTimeout            time.Duration
 }
 
 // InvokeAgent sends the prompt to Claude and reads the scafld MCP submission.
@@ -441,10 +729,11 @@ func (p ClaudeProvider) InvokeAgent(ctx context.Context, req AgentRequest) (Agen
 		tool = reviewSubmitTool()
 	}
 	result, err := p.Runner.Run(ctx, execution.Request{
-		Args:                   ClaudeArgs(binaryOrDefault(p.Binary, "claude"), p.Model, sessionID, ClaudeMCPConfig(scafldBinaryOrDefault(p.ScafldBinary), submissionPath, tool), tool),
+		Args:                   ClaudeArgs(binaryOrDefault(p.Binary, "claude"), p.Model, sessionID, ClaudeMCPConfig(scafldBinaryOrDefault(p.ScafldBinary), submissionPath, tool), tool, p.ReadRoots),
 		Input:                  req.Prompt,
 		CWD:                    p.CWD,
 		Env:                    p.Env,
+		EnvMode:                p.EnvMode,
 		Timeout:                p.Timeout,
 		IdleTimeout:            p.IdleTimeout,
 		SuppressProgressStderr: true,
@@ -460,33 +749,42 @@ func (p ClaudeProvider) InvokeAgent(ctx context.Context, req AgentRequest) (Agen
 		return AgentResponse{}, providerFailedError(result, fmt.Errorf("provider produced no submission; Claude must call %s exactly once and final text is ignored", tool.Name))
 	}
 	return AgentResponse{
-		Text:         body,
-		Provider:     "claude",
-		Model:        provenance.Model,
-		SessionID:    provenance.SessionID,
-		OutputFormat: "claude.mcp_" + tool.Name,
-		EventSummary: eventSummary(result.StdoutEvents, provenance.Events),
-		Result:       result,
-		RunErr:       err,
+		Text:          body,
+		Provider:      "claude",
+		Model:         provenance.Model,
+		SessionID:     provenance.SessionID,
+		OutputFormat:  "claude.mcp_" + tool.Name,
+		BinarySHA256:  p.BinarySHA256,
+		EndpointHost:  p.EndpointHost,
+		SandboxPolicy: p.SandboxPolicy,
+		EventSummary:  eventSummary(result.StdoutEvents, provenance.Events),
+		Result:        result,
+		RunErr:        err,
 	}, nil
 }
 
 // Invoke sends the review prompt to Claude and parses the resulting dossier.
 func (p ClaudeProvider) Invoke(ctx context.Context, req review.Request) (review.Dossier, error) {
-	return invokeReviewAgent(ctx, p, req)
+	return invokeReviewAgent(ctx, p, req, review.ParseText)
 }
 
 // CodexProvider invokes Codex in read-only ephemeral review mode.
 type CodexProvider struct {
-	Binary      string
-	Model       string
-	SchemaPath  string
-	OutputPath  string
-	CWD         string
-	Env         []string
-	Runner      Runner
-	Timeout     time.Duration
-	IdleTimeout time.Duration
+	Binary                 string
+	Model                  string
+	SchemaPath             string
+	OutputPath             string
+	CWD                    string
+	Env                    []string
+	EnvMode                execution.EnvMode
+	BinarySHA256           string
+	EndpointHost           string
+	ReadRoots              []string
+	MemoryAutoloadDisabled bool
+	SandboxPolicy          SandboxPolicy
+	Runner                 Runner
+	Timeout                time.Duration
+	IdleTimeout            time.Duration
 }
 
 // InvokeAgent sends the prompt to Codex and reads its structured output.
@@ -531,6 +829,7 @@ func (p CodexProvider) InvokeAgent(ctx context.Context, req AgentRequest) (Agent
 		Input:                  req.Prompt,
 		CWD:                    p.CWD,
 		Env:                    p.Env,
+		EnvMode:                p.EnvMode,
 		Timeout:                p.Timeout,
 		IdleTimeout:            p.IdleTimeout,
 		SuppressProgressStderr: true,
@@ -541,28 +840,34 @@ func (p CodexProvider) InvokeAgent(ctx context.Context, req AgentRequest) (Agent
 		body = string(data)
 		outputFormat = "codex.output_file"
 	}
-	return AgentResponse{Text: body, Provider: "codex", OutputFormat: outputFormat, Result: result, RunErr: err}, nil
+	return AgentResponse{Text: body, Provider: "codex", OutputFormat: outputFormat, BinarySHA256: p.BinarySHA256, EndpointHost: p.EndpointHost, SandboxPolicy: p.SandboxPolicy, Result: result, RunErr: err}, nil
 }
 
 // Invoke sends the review prompt to Codex and parses the resulting dossier.
 func (p CodexProvider) Invoke(ctx context.Context, req review.Request) (review.Dossier, error) {
-	return invokeReviewAgent(ctx, p, req)
+	return invokeReviewAgent(ctx, p, req, review.ParseText)
 }
 
 // GeminiProvider invokes Gemini CLI in read-only plan mode with a scafld-owned
 // MCP submit tool for the final dossier.
 type GeminiProvider struct {
-	Binary         string
-	Model          string
-	ScafldBinary   string
-	SubmissionPath string
-	SettingsPath   string
-	PolicyPath     string
-	CWD            string
-	Env            []string
-	Runner         Runner
-	Timeout        time.Duration
-	IdleTimeout    time.Duration
+	Binary                 string
+	Model                  string
+	ScafldBinary           string
+	SubmissionPath         string
+	SettingsPath           string
+	PolicyPath             string
+	CWD                    string
+	Env                    []string
+	EnvMode                execution.EnvMode
+	BinarySHA256           string
+	EndpointHost           string
+	ReadRoots              []string
+	MemoryAutoloadDisabled bool
+	SandboxPolicy          SandboxPolicy
+	Runner                 Runner
+	Timeout                time.Duration
+	IdleTimeout            time.Duration
 }
 
 // InvokeAgent sends the prompt to Gemini and reads the scafld MCP submission.
@@ -598,7 +903,7 @@ func (p GeminiProvider) InvokeAgent(ctx context.Context, req AgentRequest) (Agen
 		cleanupSettings = func() { _ = os.Remove(settingsPath) }
 	}
 	defer cleanupSettings()
-	if err := os.WriteFile(filepath.Clean(settingsPath), []byte(GeminiSettingsJSON(scafldBinaryOrDefault(p.ScafldBinary), submissionPath, tool)), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Clean(settingsPath), []byte(GeminiSettingsJSON(scafldBinaryOrDefault(p.ScafldBinary), submissionPath, tool, p.SandboxPolicy)), 0o600); err != nil {
 		return AgentResponse{}, fmt.Errorf("%w: write Gemini settings file: %v", ErrProviderFailed, err)
 	}
 	policyPath := p.PolicyPath
@@ -623,6 +928,7 @@ func (p GeminiProvider) InvokeAgent(ctx context.Context, req AgentRequest) (Agen
 		Input:                  GeminiPrompt(req.Prompt, tool),
 		CWD:                    p.CWD,
 		Env:                    env,
+		EnvMode:                p.EnvMode,
 		Timeout:                p.Timeout,
 		IdleTimeout:            p.IdleTimeout,
 		SuppressProgressStderr: true,
@@ -637,23 +943,29 @@ func (p GeminiProvider) InvokeAgent(ctx context.Context, req AgentRequest) (Agen
 		return AgentResponse{}, providerFailedError(result, fmt.Errorf("provider produced no submission; Gemini must call mcp_scafld_%s exactly once and final text is ignored", tool.Name))
 	}
 	return AgentResponse{
-		Text:         body,
-		Provider:     "gemini",
-		Model:        extractGeminiModel(result.Stdout),
-		OutputFormat: "gemini.mcp_" + tool.Name,
-		EventSummary: eventSummary(result.StdoutEvents, nil),
-		Result:       result,
-		RunErr:       err,
+		Text:          body,
+		Provider:      "gemini",
+		Model:         extractGeminiModel(result.Stdout),
+		OutputFormat:  "gemini.mcp_" + tool.Name,
+		BinarySHA256:  p.BinarySHA256,
+		EndpointHost:  p.EndpointHost,
+		SandboxPolicy: p.SandboxPolicy,
+		EventSummary:  eventSummary(result.StdoutEvents, nil),
+		Result:        result,
+		RunErr:        err,
 	}, nil
 }
 
 // Invoke sends the review prompt to Gemini and parses the resulting dossier.
 func (p GeminiProvider) Invoke(ctx context.Context, req review.Request) (review.Dossier, error) {
-	return invokeReviewAgent(ctx, p, req)
+	return invokeReviewAgent(ctx, p, req, review.ParseText)
 }
 
-// ClaudeArgs builds the argv for restricted Claude execution.
-func ClaudeArgs(binary string, model string, sessionID string, mcpConfig string, tool SubmitTool) []string {
+// ClaudeArgs builds the argv for restricted Claude execution. readRoots scopes
+// file access to the evidence sandbox via --add-dir; the reviewer also runs with
+// CWD set to that root and a sandbox HOME so no other directory or user-global
+// memory is reachable.
+func ClaudeArgs(binary string, model string, sessionID string, mcpConfig string, tool SubmitTool, readRoots []string) []string {
 	toolName := strings.TrimSpace(tool.Name)
 	if toolName == "" {
 		toolName = "submit_review"
@@ -679,6 +991,11 @@ func ClaudeArgs(binary string, model string, sessionID string, mcpConfig string,
 		"--strict-mcp-config",
 		"--session-id",
 		sessionID,
+	}
+	for _, root := range readRoots {
+		if strings.TrimSpace(root) != "" {
+			args = append(args, "--add-dir", root)
+		}
 	}
 	if model != "" {
 		args = append(args, "--model", model)
@@ -752,7 +1069,7 @@ interactive = false
 // GeminiSettingsJSON returns an isolated single-server MCP configuration for
 // Gemini CLI. It is passed through GEMINI_CLI_SYSTEM_SETTINGS_PATH so scafld does
 // not mutate project or user Gemini settings during review.
-func GeminiSettingsJSON(scafldBinary string, submissionPath string, tool SubmitTool) string {
+func GeminiSettingsJSON(scafldBinary string, submissionPath string, tool SubmitTool, policyOpt ...SandboxPolicy) string {
 	command := strings.TrimSpace(tool.Command)
 	if command == "" {
 		command = "review-submit-stdio"
@@ -777,6 +1094,14 @@ func GeminiSettingsJSON(scafldBinary string, submissionPath string, tool SubmitT
 			"disableYoloMode":    true,
 			"disableAlwaysAllow": true,
 		},
+	}
+	if len(policyOpt) > 0 && len(policyOpt[0].ReadRoots) > 0 {
+		// context.includeDirectories is Gemini's real read-scope setting. Memory
+		// autoload is suppressed by the sandbox HOME/XDG override and the clean
+		// CWD, not a fabricated key.
+		config["context"] = map[string]any{
+			"includeDirectories": policyOpt[0].ReadRoots,
+		}
 	}
 	data, err := json.Marshal(config)
 	if err != nil {
@@ -867,7 +1192,7 @@ func (p HardenProvider) Invoke(ctx context.Context, req coreharden.Request) (cor
 	return dossier, nil
 }
 
-func invokeReviewAgent(ctx context.Context, agent Agent, req review.Request) (review.Dossier, error) {
+func invokeReviewAgent(ctx context.Context, agent Agent, req review.Request, parse func(string) (review.Dossier, error)) (review.Dossier, error) {
 	resp, err := agent.InvokeAgent(ctx, AgentRequest{
 		TaskID:           req.TaskID,
 		Prompt:           req.Prompt,
@@ -879,7 +1204,7 @@ func invokeReviewAgent(ctx context.Context, agent Agent, req review.Request) (re
 	if err != nil {
 		return review.Dossier{}, err
 	}
-	dossier, dossierErr := dossierFromProviderResult(resp.Result, resp.RunErr, resp.Text)
+	dossier, dossierErr := dossierFromProviderResult(resp.Result, resp.RunErr, resp.Text, parse)
 	if dossierErr != nil {
 		return review.Dossier{}, dossierErr
 	}
@@ -891,11 +1216,11 @@ func invokeReviewAgent(ctx context.Context, agent Agent, req review.Request) (re
 	return dossier, nil
 }
 
-func dossierFromProviderResult(result execution.Result, runErr error, text string) (review.Dossier, error) {
+func dossierFromProviderResult(result execution.Result, runErr error, text string, parse func(string) (review.Dossier, error)) (review.Dossier, error) {
 	if runErr != nil && strings.TrimSpace(text) == "" {
 		return review.Dossier{}, providerFailedError(result, runErr)
 	}
-	dossier, parseErr := review.ParseText(text)
+	dossier, parseErr := parse(text)
 	if parseErr != nil {
 		if runErr != nil {
 			return review.Dossier{}, providerFailedError(result, runErr)

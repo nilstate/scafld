@@ -32,6 +32,7 @@ Thumbs.db
 .scafld/prompts/
 .scafld/runs/
 .scafld/reviews/
+.scafld/receipts/
 .scafld/specs/archive/
 .scafld/specs/examples/
 docs/node_modules/

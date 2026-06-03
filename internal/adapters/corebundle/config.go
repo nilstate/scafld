@@ -27,19 +27,25 @@ func installProjectConfig(ctx context.Context, root string, result *Result) erro
 #     provider: "codex"
 #     codex:
 #       model: "gpt-5.5"
+#       # endpoint_host: "api.openai.com"
 #     claude:
 #       model: "claude-opus-4-7"
+#       # endpoint_host: "api.anthropic.com"
 #     gemini:
 #       # model: ""
+#       # endpoint_host: "generativelanguage.googleapis.com"
 # review:
 #   external:
 #     provider: "codex"
 #     codex:
 #       model: "gpt-5.5"
+#       # endpoint_host: "api.openai.com"
 #     claude:
 #       model: "claude-opus-4-7"
+#       # endpoint_host: "api.anthropic.com"
 #     gemini:
 #       # model: ""
+#       # endpoint_host: "generativelanguage.googleapis.com"
 `)
 	return writeManagedFile(filepath.Join(root, ".scafld", "config.local.yaml"), ".scafld/config.local.yaml", local, false, result)
 }

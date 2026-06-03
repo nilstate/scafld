@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "name": "scafld_gate_stop",
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "scafld gate --json --stdin"
+          }
+        ],
+        "reason": "Run scafld_gate before ending the turn when an open gate or unsatisfied receipt exists. CI verify remains the hard merge wall."
+      }
+    ]
+  }
+}
