@@ -226,15 +226,9 @@ func renderHardenRound(b *strings.Builder, round spec.HardenRound) {
 	} else {
 		for _, check := range round.Checks {
 			fmt.Fprintf(b, "- %s\n", fallback(check.Name, "Check not recorded."))
-			if check.GroundedIn != "" {
-				fmt.Fprintf(b, "  - Grounded in: %s\n", check.GroundedIn)
-			}
-			if check.Result != "" {
-				fmt.Fprintf(b, "  - Result: %s\n", check.Result)
-			}
-			if check.Evidence != "" {
-				fmt.Fprintf(b, "  - Evidence: %s\n", check.Evidence)
-			}
+			fmt.Fprintf(b, "  - Grounded in: %s\n", check.GroundedIn)
+			fmt.Fprintf(b, "  - Result: %s\n", check.Result)
+			fmt.Fprintf(b, "  - Evidence: %s\n", check.Evidence)
 		}
 		fmt.Fprintf(b, "\n")
 	}

@@ -241,6 +241,38 @@ Issues:
 	}
 }
 
+func TestRenderRoundTripsHardenCheckSkeleton(t *testing.T) {
+	t.Parallel()
+
+	model := fixtureModel()
+	model.HardenStatus = spec.HardenInProgress
+	model.HardenRounds = []spec.HardenRound{{
+		ID:        "round-1",
+		Status:    string(spec.HardenInProgress),
+		StartedAt: "2026-05-04T00:00:00Z",
+		Checks: []spec.HardenCheck{
+			{Name: "Path audit"},
+			{Name: "Command audit"},
+		},
+	}}
+	rendered := string(Render(model))
+	for _, want := range []string{"- Path audit\n  - Grounded in: \n  - Result: \n  - Evidence: ", "- Command audit\n  - Grounded in: "} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("rendered harden skeleton missing %q:\n%s", want, rendered)
+		}
+	}
+	parsed, err := Parse([]byte(rendered))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(parsed.HardenRounds) != 1 || len(parsed.HardenRounds[0].Checks) != 2 {
+		t.Fatalf("parsed checks = %+v", parsed.HardenRounds)
+	}
+	if got := parsed.HardenRounds[0].Checks[0]; got.Name != "Path audit" || got.GroundedIn != "" || got.Result != "" || got.Evidence != "" {
+		t.Fatalf("parsed skeleton check = %+v", got)
+	}
+}
+
 func TestParseNormalizesAlternateLivingSpecLabels(t *testing.T) {
 	t.Parallel()
 

@@ -17,7 +17,7 @@ func Run(ctx context.Context, stdin io.Reader, stdout io.Writer, stderr io.Write
 		ServerName:      "scafld-harden-submit",
 		ToolName:        "submit_harden",
 		ToolTitle:       "Submit scafld hardening",
-		ToolDescription: "Submit the final scafld HardenDossier. Call exactly once after stress-testing the draft spec.",
+		ToolDescription: "Submit the final scafld HardenDossier. Call exactly once after stress-testing the draft spec. The checks array is a fixed six-row form; fill grounded_in, result, and evidence for every check.",
 		SchemaJSON:      coreharden.DossierSchemaJSON(),
 		ParseAndEncode: func(text string) (mcpsubmit.Accepted, error) {
 			dossier, err := coreharden.ParseText(text)
