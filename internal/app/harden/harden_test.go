@@ -38,6 +38,14 @@ func TestRunOpensHardenRound(t *testing.T) {
 	if len(got.HardenRounds) != 1 || got.HardenRounds[0].Status != string(spec.HardenInProgress) || got.HardenRounds[0].StartedAt == "" {
 		t.Fatalf("harden rounds = %+v", got.HardenRounds)
 	}
+	if len(got.HardenRounds[0].Checks) != len(requiredHardenChecks) {
+		t.Fatalf("harden check skeleton = %+v", got.HardenRounds[0].Checks)
+	}
+	for i, check := range got.HardenRounds[0].Checks {
+		if normalizeCheckName(check.Name) != requiredHardenChecks[i] || check.GroundedIn != "" || check.Result != "" || check.Evidence != "" {
+			t.Fatalf("check skeleton[%d] = %+v", i, check)
+		}
+	}
 	if got.CurrentState.AllowedFollowUp != out.NextCommand {
 		t.Fatalf("current state = %+v", got.CurrentState)
 	}

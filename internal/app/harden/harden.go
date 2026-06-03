@@ -200,6 +200,7 @@ func openRound(ctx context.Context, store SpecStore, path string, model spec.Mod
 		ID:        roundID,
 		Status:    string(spec.HardenInProgress),
 		StartedAt: now,
+		Checks:    hardenCheckSkeleton(),
 	})
 	model.Updated = now
 	model.CurrentState.Next = "harden"
@@ -217,6 +218,21 @@ func openRound(ctx context.Context, store SpecStore, path string, model spec.Mod
 		NextCommand:  model.CurrentState.AllowedFollowUp,
 		Prompt:       prompt,
 	}, nil
+}
+
+func hardenCheckSkeleton() []spec.HardenCheck {
+	checks := make([]spec.HardenCheck, 0, len(requiredHardenChecks))
+	for _, name := range requiredHardenChecks {
+		checks = append(checks, spec.HardenCheck{Name: titleHardenCheckName(name)})
+	}
+	return checks
+}
+
+func titleHardenCheckName(name string) string {
+	if name == "" {
+		return ""
+	}
+	return strings.ToUpper(name[:1]) + name[1:]
 }
 
 func markPassed(ctx context.Context, store SpecStore, path string, model spec.Model, now string, root string) (Output, error) {

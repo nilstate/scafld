@@ -1440,7 +1440,7 @@ func hardenSubmitTool() SubmitTool {
 	return SubmitTool{
 		Name:        "submit_harden",
 		Title:       "Submit scafld hardening",
-		Description: "Submit the final scafld HardenDossier. Call exactly once after stress-testing the draft spec.",
+		Description: "Submit the final scafld HardenDossier. Call exactly once after stress-testing the draft spec. The checks array is a fixed six-row form: path audit, command audit, scope/migration audit, acceptance timing audit, rollback/repair audit, design challenge. Fill grounded_in, result, and evidence for every check.",
 		Command:     "harden-submit-stdio",
 	}
 }

@@ -491,7 +491,15 @@ func TestRunHardenLifecycle(t *testing.T) {
   - Result: passed
   - Evidence: Fixture exercises the harden lifecycle without adding compatibility behavior.
 `
-	text = strings.Replace(text, "Checks:\n- none\n", checks, 1)
+	checkStart := strings.Index(text, "Checks:\n")
+	if checkStart < 0 {
+		t.Fatalf("harden spec missing Checks block:\n%s", text)
+	}
+	issueStart := strings.Index(text[checkStart:], "Issues:\n")
+	if issueStart < 0 {
+		t.Fatalf("harden spec missing Issues block:\n%s", text)
+	}
+	text = text[:checkStart] + checks + "\n" + text[checkStart+issueStart:]
 	if err := os.WriteFile(specPath, []byte(text), 0o644); err != nil {
 		t.Fatal(err)
 	}

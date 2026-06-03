@@ -5,7 +5,7 @@ at `.scafld/prompts/harden.md`.
 
 **Status:** ACTIVE
 **Mode:** HARDEN
-**Output:** Add grounded checks and issues under the latest `## Harden Rounds` entry in the spec; keep `harden_status: "in_progress"` until the operator runs `--mark-passed`.
+**Output:** Fill the generated check rows and add issues under the latest `## Harden Rounds` entry in the spec; keep `harden_status: "in_progress"` until the operator runs `--mark-passed`.
 **Do NOT:** Modify code outside the spec file while hardening.
 
 ---
@@ -24,7 +24,10 @@ Run these checks before polishing wording:
 - Rollback/repair audit: every risky phase has a realistic repair or rollback path.
 - Design challenge: challenge the plan's reason for existing. Ask what deeper product, system, or workflow problem it solves; whether the proposed change is a short-sighted bandaid over an endemic issue; whether a smaller, larger, or different abstraction would remove the root cause; and whether it creates future bloat, compatibility debt, or product confusion.
 
-Record checks in this exact Markdown shape under the latest harden round:
+Manual rounds already contain the six required check rows. Fill the existing
+`Grounded in`, `Result`, and `Evidence` fields; do not delete or rename check
+rows. If a row is missing because the spec was edited by hand, restore this
+exact shape under the latest harden round:
 
 ```markdown
 Checks:
