@@ -47,6 +47,11 @@ type VerifyConfig struct {
 	MinIndependence string `yaml:"min_independence"`
 	TrustedKeysPath string `yaml:"trusted_keys_path"`
 	ReceiptPath     string `yaml:"receipt_path"`
+	// Policy declares the operator's intended enforcement tier (local, advisory,
+	// required). It is reporting-only metadata: it is read by `scafld verify
+	// --self-check` and the docs framing, never by the receipt-verification
+	// verdict path, so a tier can never bypass a real check.
+	Policy string `yaml:"policy"`
 }
 
 // HardenConfig controls hardening prompt behavior.
@@ -120,7 +125,11 @@ func Load(ctx context.Context, root string) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	return overlay(cfg, local), nil
+	effective := overlay(cfg, local)
+	if err := validateVerifyConfig(effective.Verify); err != nil {
+		return Config{}, err
+	}
+	return effective, nil
 }
 
 // LoadBase reads only the committed base config, ignoring config.local overrides.
@@ -136,7 +145,11 @@ func LoadBase(ctx context.Context, root string) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	return overlay(cfg, Config{}), nil
+	effective := overlay(cfg, Config{})
+	if err := validateVerifyConfig(effective.Verify); err != nil {
+		return Config{}, err
+	}
+	return effective, nil
 }
 
 func readConfigFile(path string, optional bool) (Config, error) {
@@ -223,6 +236,7 @@ func Default() Config {
 			MinIndependence: "isolation_only",
 			TrustedKeysPath: ".scafld/trusted-keys.json",
 			ReceiptPath:     ".scafld/receipts/latest.json",
+			Policy:          "local",
 		},
 		Harden: HardenConfig{
 			MaxIssuesPerRound: 8,
@@ -368,7 +382,27 @@ func overlayVerify(base VerifyConfig, local VerifyConfig) VerifyConfig {
 	if local.ReceiptPath != "" {
 		base.ReceiptPath = local.ReceiptPath
 	}
+	if local.Policy != "" {
+		base.Policy = local.Policy
+	}
 	return base
+}
+
+// ValidVerifyPolicy reports whether policy is a supported verify enforcement tier.
+func ValidVerifyPolicy(policy string) bool {
+	switch policy {
+	case "local", "advisory", "required":
+		return true
+	default:
+		return false
+	}
+}
+
+func validateVerifyConfig(v VerifyConfig) error {
+	if !ValidVerifyPolicy(v.Policy) {
+		return fmt.Errorf("invalid verify.policy %q: want local, advisory, or required", v.Policy)
+	}
+	return nil
 }
 
 func overlayReviewContext(base ReviewContextConfig, local ReviewContextConfig) ReviewContextConfig {

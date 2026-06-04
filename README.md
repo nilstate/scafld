@@ -117,6 +117,21 @@ Frontend specs can use `browser` criteria with `browser_evidence`. The project
 still owns Playwright, auth, and the dev server; scafld validates the evidence
 packet and records it in the same session ledger as command results.
 
+## Local by default, CI when you opt in
+
+`scafld finalize` delivers its full value with no CI: it runs the independent
+review and writes a signed receipt under `.scafld/receipts/`. A plain
+`scafld init` sets up this local path and installs no workflow, so anyone who
+only wants local attestation is never pushed into a PR-blocking shape.
+
+The CI merge gate is an additive upgrade. Opt in with `scafld init --ci` to
+install `.github/workflows/scafld-verify.yml`, which re-verifies committed
+receipts on pull requests. Declare intent with the `verify.policy` config field
+(`local` default, `advisory`, `required`) and run `scafld verify --self-check`
+for an offline report of what is wired. Requiring the check before a merge is a
+GitHub branch-protection setting the operator owns; scafld scaffolds and reports
+it, never claiming an enforcement that is not there.
+
 ## What scafld Writes
 
 scafld is not a wrapper around a prompt. It writes artifacts the next agent can

@@ -19,7 +19,7 @@ func TestInitWireCreatesHostKeyAndTrustedKeyIdempotently(t *testing.T) {
 	configHome := t.TempDir()
 	t.Setenv(scafldConfigHomeEnv, configHome)
 
-	result, err := InitWire(t.Context(), root)
+	result, err := InitWire(t.Context(), root, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +54,7 @@ func TestInitWireCreatesHostKeyAndTrustedKeyIdempotently(t *testing.T) {
 		t.Fatalf("trusted public key does not match private key")
 	}
 
-	second, err := InitWire(t.Context(), root)
+	second, err := InitWire(t.Context(), root, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,7 +146,7 @@ func TestInitWireDefaultMCPIsGateOnly(t *testing.T) {
 	configHome := t.TempDir()
 	t.Setenv(scafldConfigHomeEnv, configHome)
 
-	if _, err := InitWire(t.Context(), root); err != nil {
+	if _, err := InitWire(t.Context(), root, false); err != nil {
 		t.Fatal(err)
 	}
 	mcp := mustReadFile(t, filepath.Join(root, ".mcp.json"))
@@ -170,6 +170,35 @@ func TestInitWireDefaultMCPIsGateOnly(t *testing.T) {
 	}
 }
 
+func TestInitWireDefaultSkipsCIWorkflowAndInstallsLocalAssets(t *testing.T) {
+	root := t.TempDir()
+	configHome := t.TempDir()
+	t.Setenv(scafldConfigHomeEnv, configHome)
+
+	// Default init (no --ci) is local-only: it must not write the CI merge-gate workflow.
+	if _, err := InitWire(t.Context(), root, false); err != nil {
+		t.Fatal(err)
+	}
+	workflowPath := filepath.Join(root, ".github", "workflows", "scafld-verify.yml")
+	if _, err := os.Stat(workflowPath); !os.IsNotExist(err) {
+		t.Fatalf("default init wrote CI workflow %q (stat err=%v), want it skipped", workflowPath, err)
+	}
+	// Non-CI assets still install by default.
+	for _, want := range []string{".claude/skills/finalize/SKILL.md", ".claude/commands/finalize.md", ".mcp.json"} {
+		if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(want))); err != nil {
+			t.Fatalf("default init missing local asset %s: %v", want, err)
+		}
+	}
+
+	// Opting in later with --ci adds the workflow idempotently into the same workspace.
+	if _, err := InitWire(t.Context(), root, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(workflowPath); err != nil {
+		t.Fatalf("scafld init --ci did not add the verify workflow on re-run: %v", err)
+	}
+}
+
 func TestInitWireExistingJSONPreservesEntriesAndInstallsAssets(t *testing.T) {
 	root := t.TempDir()
 	configHome := t.TempDir()
@@ -184,7 +213,7 @@ func TestInitWireExistingJSONPreservesEntriesAndInstallsAssets(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err := InitWire(t.Context(), root)
+	result, err := InitWire(t.Context(), root, true)
 	if err != nil {
 		t.Fatal(err)
 	}

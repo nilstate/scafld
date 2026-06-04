@@ -168,11 +168,11 @@ func runInit(ctx context.Context, args []string, stdout io.Writer, stderr io.Wri
 	if root == "" {
 		root = "."
 	}
-	result, err := initcmd.Run(ctx, root, !opts.Flags["no-agent-docs"])
+	result, err := initcmd.Run(ctx, root, !opts.Flags["no-agent-docs"], opts.Flags["ci"])
 	if err != nil {
 		return failOut(stderr, err, ExitWorkspace, opts.JSON)
 	}
-	return okOut(stdout, "init", result, initcmd.Message(result), opts.JSON)
+	return okOut(stdout, "init", result, initcmd.Message(result, opts.Flags["ci"]), opts.JSON)
 }
 
 func runConfig(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer) int {

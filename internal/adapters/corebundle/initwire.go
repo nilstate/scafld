@@ -24,7 +24,7 @@ const (
 )
 
 // InitWire installs host accountability wiring and maintains the host signing key.
-func InitWire(ctx context.Context, root string) (Result, error) {
+func InitWire(ctx context.Context, root string, installCI bool) (Result, error) {
 	if err := ctx.Err(); err != nil {
 		return Result{}, err
 	}
@@ -36,7 +36,7 @@ func InitWire(ctx context.Context, root string) (Result, error) {
 	if err := upsertTrustedKey(root, publicKey, &result); err != nil {
 		return Result{}, err
 	}
-	if err := installInitWireAssets(ctx, root, &result); err != nil {
+	if err := installInitWireAssets(ctx, root, installCI, &result); err != nil {
 		return Result{}, err
 	}
 	return result, nil
@@ -168,7 +168,7 @@ func upsertTrustedKey(root string, publicKey ed25519.PublicKey, result *Result) 
 	return nil
 }
 
-func installInitWireAssets(ctx context.Context, root string, result *Result) error {
+func installInitWireAssets(ctx context.Context, root string, installCI bool, result *Result) error {
 	entries, err := fs.ReadDir(assets, initwireAssetRoot)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -195,11 +195,11 @@ func installInitWireAssets(ctx context.Context, root string, result *Result) err
 		if err != nil {
 			return fmt.Errorf("read embedded %s: %w", path, err)
 		}
-		return installInitWireAsset(root, rel, data, result)
+		return installInitWireAsset(root, rel, data, installCI, result)
 	})
 }
 
-func installInitWireAsset(root string, assetRel string, data []byte, result *Result) error {
+func installInitWireAsset(root string, assetRel string, data []byte, installCI bool, result *Result) error {
 	switch assetRel {
 	case "mcp.json":
 		return mergeJSONConfigFile(root, ".mcp.json", data, MergeMCPConfig, result)
@@ -207,6 +207,10 @@ func installInitWireAsset(root string, assetRel string, data []byte, result *Res
 		return mergeJSONConfigFile(root, ".claude/settings.json", data, MergeClaudeSettings, result)
 	default:
 		if strings.HasPrefix(assetRel, "ci/") {
+			if !installCI {
+				// CI merge gate is opt-in (scafld init --ci); local finalize needs no workflow.
+				return nil
+			}
 			targetRel := ".github/workflows/" + strings.TrimPrefix(assetRel, "ci/")
 			target := filepath.Join(root, filepath.FromSlash(targetRel))
 			return writeManagedFile(target, targetRel, data, false, result)

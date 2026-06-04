@@ -832,3 +832,27 @@ func TestCancelledErrorsUseCancelledExitCode(t *testing.T) {
 		t.Fatalf("exit = %d, want %d", code, ExitCancelled)
 	}
 }
+
+func TestRunInitCIOptInControlsVerifyWorkflow(t *testing.T) {
+	t.Setenv("SCAFLD_CONFIG_HOME", t.TempDir())
+
+	// Default init is local-only: no CI merge-gate workflow, and the message names the opt-in.
+	localRoot := t.TempDir()
+	out := runCLI(t, []string{"init", "--root", localRoot, "--no-agent-docs"})
+	if _, err := os.Stat(filepath.Join(localRoot, ".github", "workflows", "scafld-verify.yml")); !os.IsNotExist(err) {
+		t.Fatalf("default init wrote the verify workflow (stat err=%v), want local-only", err)
+	}
+	if !strings.Contains(out, "not installed") || !strings.Contains(out, "scafld init --ci") {
+		t.Fatalf("default init message did not name the CI opt-in:\n%s", out)
+	}
+
+	// scafld init --ci opts into the workflow and confirms it in the message.
+	ciRoot := t.TempDir()
+	out = runCLI(t, []string{"init", "--root", ciRoot, "--no-agent-docs", "--ci"})
+	if _, err := os.Stat(filepath.Join(ciRoot, ".github", "workflows", "scafld-verify.yml")); err != nil {
+		t.Fatalf("scafld init --ci did not write the verify workflow: %v", err)
+	}
+	if !strings.Contains(out, "installed .github/workflows/scafld-verify.yml") {
+		t.Fatalf("init --ci message did not confirm install:\n%s", out)
+	}
+}
