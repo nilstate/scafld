@@ -1,0 +1,132 @@
+{
+  "body": {
+    "schema_version": 1,
+    "task_id": "gate-without-spec",
+    "session_id": "gate-without-spec",
+    "verdict": "pass",
+    "snapshot_mode": "working_tree",
+    "base_commit": "6a74f1d46035f85c98b9b536073ea5940ab910ac",
+    "head_commit": "6a74f1d46035f85c98b9b536073ea5940ab910ac",
+    "scope": [
+      "internal/adapters/cli/finalize/run.go",
+      "internal/adapters/cli/finalize/run_test.go",
+      "internal/adapters/git/git.go",
+      "internal/adapters/jsonstore/session_store.go",
+      "internal/app/finalize/finalize.go"
+    ],
+    "tree_sha": "ff60b51c144c717e853870c9d99a3a6b1e4c7a12",
+    "file_digests": {
+      "internal/adapters/cli/finalize/run.go": "0dd01beabb6f0b7fcc31126e8956baf6a3b267e29e595774bfec3a7bc1822962",
+      "internal/adapters/cli/finalize/run_test.go": "444463a49c4ece50dfef69b195f1be4df511a5209538a888398478718b4fc833",
+      "internal/adapters/git/git.go": "c97054b00fc87bf82422ebf10b2433ceee3b3f65566deba5f8b607542a9b18b1",
+      "internal/adapters/jsonstore/session_store.go": "343cf7ee7862f3c3e9560d445518b200058996db72b76cbe50ea6471a1ea26ca",
+      "internal/app/finalize/finalize.go": "5d8d8989a711eebe66965f42d16bd60ce525c25e3b5bcb7b31caae6dce2c730f"
+    },
+    "ignored_unreviewed": [],
+    "reviewed_context_provenance": [
+      {
+        "kind": "evidence_file",
+        "path": "internal/adapters/cli/finalize/run.go",
+        "sha256": "0dd01beabb6f0b7fcc31126e8956baf6a3b267e29e595774bfec3a7bc1822962",
+        "bytes": 32101
+      },
+      {
+        "kind": "evidence_file",
+        "path": "internal/adapters/cli/finalize/run_test.go",
+        "sha256": "444463a49c4ece50dfef69b195f1be4df511a5209538a888398478718b4fc833",
+        "bytes": 18738
+      },
+      {
+        "kind": "evidence_file",
+        "path": "internal/adapters/git/git.go",
+        "sha256": "c97054b00fc87bf82422ebf10b2433ceee3b3f65566deba5f8b607542a9b18b1",
+        "bytes": 18266
+      },
+      {
+        "kind": "evidence_file",
+        "path": "internal/adapters/jsonstore/session_store.go",
+        "sha256": "343cf7ee7862f3c3e9560d445518b200058996db72b76cbe50ea6471a1ea26ca",
+        "bytes": 4873
+      },
+      {
+        "kind": "evidence_file",
+        "path": "internal/app/finalize/finalize.go",
+        "sha256": "5d8d8989a711eebe66965f42d16bd60ce525c25e3b5bcb7b31caae6dce2c730f",
+        "bytes": 15256
+      }
+    ],
+    "reviewer": {
+      "provider": "codex",
+      "model": "gpt-5.5",
+      "binary_sha256": "baefc109b871e73a7bab298ee19b8bf73c8b647c4f8649a9794fc5db01db17b9",
+      "endpoint_host": "api.openai.com"
+    },
+    "host_under_review": {
+      "agent": "claude",
+      "session_id": "gate-without-spec"
+    },
+    "independence": {
+      "level": "cross_vendor",
+      "distinct": true,
+      "reason": "cross_vendor: reviewer \"codex\" and host \"claude\" are different model vendors; this is multi-model review that reduces correlated blind spots but remains single-party local tooling"
+    },
+    "spec_fingerprint": "5d0a3db92c992f21ffb4cd18d511d85a4504196aac3734a2a2fb6e3db71fb648",
+    "acceptance_declared": true,
+    "acceptance": [
+      {
+        "id": "v1",
+        "command": "go run ./cmd/scafld validate gate-without-spec",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "b3f3471d7216fbbc228665778c592029e3b5a950aba9eb23afa5f613370f45cd",
+        "diagnostic": ".scafld/runs/gate-without-spec/diagnostics/command-1780605709609317000.txt"
+      },
+      {
+        "id": "ac1_2",
+        "command": "rg -n 'missing spec|NoSpec|specStore.Load|Load\\(' internal/adapters/cli/finalize internal/app/finalize",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "31ee249658dc3276bcf93071e67e4987121e0d93504a4a58d9a8ddf55dc101b5",
+        "diagnostic": ".scafld/runs/gate-without-spec/diagnostics/command-1780605709624025000.txt"
+      },
+      {
+        "id": "ac1_3",
+        "command": "go test ./internal/adapters/git -run 'SnapshotRejectsEmptyScope|SnapshotStableTreeSHA'",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "1628d33f7e084572c0e49a205c6608dea23cc078562ba68b8abe9958d2e52be4",
+        "diagnostic": ".scafld/runs/gate-without-spec/diagnostics/command-1780605709724257000.txt"
+      },
+      {
+        "id": "ac1_4",
+        "command": "rg -n 'AcceptanceDeclared|acceptance_declared' internal/core/receipt internal/app/finalize",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "33741040f5ce27ffcadbd910dbab1127c7780a555cb37a7211a679a513ff5b2a",
+        "diagnostic": ".scafld/runs/gate-without-spec/diagnostics/command-1780605709735278000.txt"
+      }
+    ],
+    "open_blockers": [],
+    "mutation_guard": {
+      "status": "clean",
+      "scope": [
+        "internal/adapters/cli/finalize/run.go",
+        "internal/adapters/cli/finalize/run_test.go",
+        "internal/adapters/git/git.go",
+        "internal/adapters/jsonstore/session_store.go",
+        "internal/app/finalize/finalize.go"
+      ]
+    },
+    "ledger_head": "3a1f2e48418d5dabbebf5e9c265a97ede230935f472185408a3d12176dfa695a",
+    "minted_at": "2026-06-04T20:41:48Z"
+  },
+  "signature": {
+    "alg": "ed25519",
+    "key_id": "ed25519:RGGe6gUQpsB6KGu0VcnMxGUL5IA1I1VDSKi3ecCzYOU",
+    "sig": "fWLZBLEYlZC3ZNw5fngL9nvOoOBycUnTJeTBqV7FiEP336YgoNFC4QdHcqtXMd0dluFmCw8IDQSVUOi9wAdNCA=="
+  }
+}

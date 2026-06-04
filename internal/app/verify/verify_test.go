@@ -241,6 +241,23 @@ func TestRunTargetRequiredInCI(t *testing.T) {
 	}
 }
 
+func TestVerifyRejectsDigestValueMismatch(t *testing.T) {
+	t.Parallel()
+
+	envelope := validEnvelope()
+	ports := validPorts()
+	// Same tree_sha and the same in-scope path, but the recomputed digest value
+	// differs from what the receipt recorded; verify must reject it.
+	ports.Snapshotter = fakeSnapshotter{snapshot: Snapshot{TreeSHA: envelope.Body.TreeSHA, BaseCommit: envelope.Body.BaseCommit, FileDigests: map[string]string{"a.go": "different-sha"}}}
+	result, err := Run(context.Background(), envelope, trust.TrustedKeys{Version: trust.TrustedKeysVersion}, Policy{TargetCommit: "main"}, ports)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Passed || !strings.Contains(result.Reason, "file digest mismatch") {
+		t.Fatalf("result = %+v, want file digest mismatch failure", result)
+	}
+}
+
 func validPorts() Ports {
 	return Ports{
 		Snapshotter:       fakeSnapshotter{snapshot: Snapshot{TreeSHA: "tree", BaseCommit: "base", FileDigests: map[string]string{"a.go": "sha"}}},

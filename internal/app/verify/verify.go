@@ -4,6 +4,7 @@ package verify
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/nilstate/scafld/v2/internal/core/receipt"
@@ -120,6 +121,9 @@ func Run(ctx context.Context, envelope receipt.Envelope, trusted trust.TrustedKe
 	}
 	if missing := missingCoverage(snapshot.FileDigests, body.FileDigests); len(missing) > 0 {
 		return fail("missing in-scope digest: " + strings.Join(missing, ",")), nil
+	}
+	if mismatch := digestValueMismatch(snapshot.FileDigests, body.FileDigests); len(mismatch) > 0 {
+		return fail("file digest mismatch: " + strings.Join(mismatch, ",")), nil
 	}
 	if strings.TrimSpace(policy.TargetCommit) != "" {
 		ok, err := ports.AncestryChecker.IsAncestor(ctx, body.BaseCommit, policy.TargetCommit)
@@ -248,6 +252,20 @@ func missingCoverage(snapshot map[string]string, recorded map[string]string) []s
 		}
 	}
 	return missing
+}
+
+// digestValueMismatch returns in-scope paths whose recomputed digest differs from
+// the value the receipt recorded, so a receipt cannot pass verification while its
+// file_digests attest content that no longer matches the checked-out tree.
+func digestValueMismatch(snapshot map[string]string, recorded map[string]string) []string {
+	var mismatch []string
+	for path, snapDigest := range snapshot {
+		if recDigest, ok := recorded[path]; ok && recDigest != snapDigest {
+			mismatch = append(mismatch, path)
+		}
+	}
+	sort.Strings(mismatch)
+	return mismatch
 }
 
 func acceptanceMismatch(recorded []receipt.Acceptance, observed []AcceptanceResult) string {

@@ -253,6 +253,18 @@ func TestRunStampsHonestIndependenceReason(t *testing.T) {
 			want:          []string{"host vendor was not detected", "cross_vendor separation is not proven"},
 			wantDowngrade: receipt.IndependenceDowngradeUnknownHost,
 		},
+		{
+			name: "cross vendor downgraded when providers are same vendor",
+			input: func() Input {
+				input := baseInput()
+				input.HostUnderReview.Agent = "codex"
+				input.Independence = receipt.Independence{Level: receipt.IndependenceLevelCrossVendor, Distinct: true}
+				return input
+			}(),
+			reviewer:      receipt.Reviewer{Provider: "codex"},
+			want:          []string{"isolation_only", "same-vendor", "correlated blind spots"},
+			wantDowngrade: receipt.IndependenceDowngradeSameVendor,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
