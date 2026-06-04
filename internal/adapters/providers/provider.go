@@ -316,11 +316,28 @@ func SelectReceiptGradeAgentWithEvidence(opts Selection, hostEnviron []string, e
 		EvidenceProvenance: sandbox.Provenance,
 		SandboxPolicy:      sandbox.Policy,
 	}
+	// Record honestly whether the selected provider's CLI hard-confines reads to the
+	// evidence read roots, so the receipt never implies a read jail Codex does not
+	// actually enforce.
+	facts.SandboxPolicy.ReadRootsEnforced = providerEnforcesReadRoots(selected.Provider)
 	agent := receiptGradeAgentProviderFor(selected.Provider, opts, binary, env, facts, sandbox.ArgsPolicy)
 	if sandbox.Cleanup != nil {
 		agent = receiptGradeSandboxAgent{Agent: agent, sandbox: sandbox, facts: facts}
 	}
 	return agent, facts, nil
+}
+
+// providerEnforcesReadRoots reports whether the provider CLI hard-confines the
+// reviewer's reads to the evidence read roots. Claude (--add-dir) and Gemini
+// (includeDirectories) do; Codex's read-only sandbox prevents writes and sets the
+// working directory but does not jail reads.
+func providerEnforcesReadRoots(provider string) bool {
+	switch normalizeReviewerProvider(provider) {
+	case "claude", "gemini":
+		return true
+	default:
+		return false
+	}
 }
 
 func receiptGradeExtraAuthEnv(provider string, hostEnviron []string, sandboxHome string) ([]string, error) {
