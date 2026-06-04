@@ -1,0 +1,62 @@
+{
+  "schema_version": "runx.receipt.v1",
+  "kind": "skill_execution",
+  "issuer": {
+    "type": "local",
+    "kid": "local_602673a057c2ad16",
+    "public_key_sha256": "602673a057c2ad16aa642368cbf597d62024331fd906743793cb20897524b923"
+  },
+  "subject": {
+    "skill_name": "receipt-review",
+    "source_type": "agent-step"
+  },
+  "status": "success",
+  "started_at": "2026-04-20T14:43:36.837Z",
+  "completed_at": "2026-04-20T14:43:36.838Z",
+  "duration_ms": 1,
+  "input_hash": "c34b9281c4db97322d130538bdf6801d4aaaa2c46501e5fb23e230aa92526cb6",
+  "output_hash": "51fd212f6fa7497f859ef53286ef68f9de006f436d09c8230349b53858da51af",
+  "context_from": [],
+  "artifact_ids": [
+    "ax_2b350afbdc794c93"
+  ],
+  "disposition": "completed",
+  "outcome_state": "complete",
+  "execution": {
+    "exit_code": 0,
+    "signal": null
+  },
+  "metadata": {
+    "runner": {
+      "type": "agent-step",
+      "enforcement": "agent-mediated",
+      "attestation": "agent-reported"
+    },
+    "agent_hook": {
+      "source_type": "agent-step",
+      "agent": "reviewer",
+      "task": "receipt-review",
+      "route": "provided",
+      "status": "success"
+    },
+    "chain_governance": {
+      "step_id": "review-receipt",
+      "selected_runner": "default",
+      "scope_admission": {
+        "status": "allow",
+        "requested_scopes": [
+          "runx:builder:review"
+        ],
+        "granted_scopes": [
+          "*"
+        ],
+        "grant_id": "local-default"
+      }
+    }
+  },
+  "id": "rx_fe2bbdcb45e949818c0f323e4679f3d8",
+  "signature": {
+    "alg": "Ed25519",
+    "value": "sK2_KNkU7ar_Yr0jOqBqq4tRBRAp8_arRN1kGvPxqj7KeK4abARiohDjmjlmfNsuZEL4AJ4nZmny9a0Yx36NAg"
+  }
+}

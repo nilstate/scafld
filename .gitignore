@@ -27,14 +27,22 @@ coverage.out
 Thumbs.db
 
 # scafld runtime state
+# Keep project-owned specs/config/prompts in git; ignore generated core and local runtime state.
+!.scafld/
+!.scafld/config.yaml
+!.scafld/prompts/
+!.scafld/prompts/**
+!.scafld/specs/
+!.scafld/specs/**
+!.scafld/trusted-keys.json
+!.scafld/receipts/
+.scafld/receipts/*
+!.scafld/receipts/*.json
 .scafld/config.local.yaml
 .scafld/core/
-.scafld/prompts/
+.scafld/keys/
+.scafld/private-keys/
+.scafld/**/*.key
+.scafld/**/*.pem
+.scafld/prompts/.manifest.json
 .scafld/runs/
-.scafld/reviews/
-.scafld/receipts/
-.scafld/specs/archive/
-.scafld/specs/examples/
-docs/node_modules/
-plans/
-.runx

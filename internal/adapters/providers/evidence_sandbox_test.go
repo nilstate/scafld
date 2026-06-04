@@ -65,6 +65,21 @@ func TestEvidenceFileHashMismatchFailsBeforeWriting(t *testing.T) {
 	}
 }
 
+func TestEvidenceSandboxPathInsideRejectsTraversal(t *testing.T) {
+	t.Parallel()
+
+	root := filepath.Join(t.TempDir(), "sandbox")
+	if pathInside(root, filepath.Join(root, "nested", "file.go")) != true {
+		t.Fatal("path inside sandbox should be accepted")
+	}
+	if pathInside(root, filepath.Join(root, "..", "outside.go")) {
+		t.Fatal("path traversal outside sandbox should be rejected")
+	}
+	if pathInside(root, root) {
+		t.Fatal("sandbox root itself is not a materialized evidence file")
+	}
+}
+
 func TestEvidenceFileBlocklistRejectsAgentInstructionFiles(t *testing.T) {
 	t.Parallel()
 

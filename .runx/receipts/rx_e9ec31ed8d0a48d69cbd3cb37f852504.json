@@ -1,0 +1,74 @@
+{
+  "schema_version": "runx.receipt.v1",
+  "kind": "skill_execution",
+  "issuer": {
+    "type": "local",
+    "kid": "local_602673a057c2ad16",
+    "public_key_sha256": "602673a057c2ad16aa642368cbf597d62024331fd906743793cb20897524b923"
+  },
+  "subject": {
+    "skill_name": "evolve.preflight",
+    "source_type": "cli-tool"
+  },
+  "status": "success",
+  "started_at": "2026-04-12T16:11:48.921Z",
+  "completed_at": "2026-04-12T16:11:49.741Z",
+  "duration_ms": 735,
+  "input_hash": "673e4f6630dde62cdbfe25f95b5281843ab2bd40ccd096f7460f3ff3f80749e6",
+  "output_hash": "7b0c0339579c3cda5991b360be6d2aed0a1f8d53b46859d080cb6e4784e7c0f5",
+  "context_from": [],
+  "artifact_ids": [
+    "ax_a0f1b941cabee7fc"
+  ],
+  "execution": {
+    "exit_code": 0,
+    "signal": null
+  },
+  "metadata": {
+    "runner": {
+      "type": "cli-tool",
+      "enforcement": "runx-enforced",
+      "attestation": "runx-observed"
+    },
+    "sandbox": {
+      "profile": "readonly",
+      "cwd": "/home/kam/dev/runx/oss/packages/cli/skills/evolve",
+      "cwd_policy": "skill-directory",
+      "env": {
+        "mode": "ambient-inherited"
+      },
+      "network": {
+        "declared": false,
+        "enforcement": "not-enforced-locally"
+      },
+      "writable_paths": [],
+      "filesystem": {
+        "enforcement": "declared-policy-only"
+      },
+      "approval": {
+        "required": false,
+        "approved": false
+      }
+    },
+    "context_scope": {
+      "project_key_hash": "61a148da78616dbf57e9e10e5b06dcfaefd562d1cc468ec577e479a505bbcad9"
+    },
+    "chain_governance": {
+      "step_id": "preflight",
+      "selected_runner": "cli-tool",
+      "scope_admission": {
+        "status": "allow",
+        "requested_scopes": [],
+        "granted_scopes": [
+          "*"
+        ],
+        "grant_id": "local-default"
+      }
+    }
+  },
+  "id": "rx_e9ec31ed8d0a48d69cbd3cb37f852504",
+  "signature": {
+    "alg": "Ed25519",
+    "value": "HxIxhOUdZGQxp-9p9KjMtdqXJNncZB-dVMoGnnXw5do9A1b5bnjJ6Nwxq_V_3A6coW--asAJroGOBpMpp2hQCg"
+  }
+}

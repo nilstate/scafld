@@ -205,7 +205,7 @@ func isProviderAuthEnvKey(provider, upper string) bool {
 	case "gemini":
 		return upper == "GEMINI_API_KEY" || upper == "GOOGLE_API_KEY"
 	default:
-		return upper == "OPENAI_API_KEY"
+		return upper == "OPENAI_API_KEY" || upper == "CODEX_HOME"
 	}
 }
 

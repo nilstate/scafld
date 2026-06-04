@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "scafld": {
+      "args": [
+        "finalize-stdio"
+      ],
+      "command": "scafld",
+      "includeTools": [
+        "finalize"
+      ]
+    }
+  }
+}

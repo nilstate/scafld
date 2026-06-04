@@ -16,6 +16,16 @@ func (f fakeSnapshotter) Snapshot(context.Context, SnapshotInput) (Snapshot, err
 	return f.snapshot, nil
 }
 
+type recordingSnapshotter struct {
+	snapshot Snapshot
+	input    SnapshotInput
+}
+
+func (r *recordingSnapshotter) Snapshot(_ context.Context, input SnapshotInput) (Snapshot, error) {
+	r.input = input
+	return r.snapshot, nil
+}
+
 type fakeAcceptance struct{ results []AcceptanceResult }
 
 func (f fakeAcceptance) RunAcceptance(context.Context, []receipt.Acceptance) ([]AcceptanceResult, error) {
@@ -54,7 +64,7 @@ func TestRunReportsInvariantFailures(t *testing.T) {
 	}{
 		{name: "tree mismatch", ports: func() Ports {
 			p := validPorts()
-			p.Snapshotter = fakeSnapshotter{snapshot: Snapshot{TreeSHA: "different", FileDigests: map[string]string{"a.go": "sha"}}}
+			p.Snapshotter = fakeSnapshotter{snapshot: Snapshot{TreeSHA: "different", BaseCommit: "base", FileDigests: map[string]string{"a.go": "sha"}}}
 			return p
 		}, want: "tree mismatch"},
 		{name: "unknown key", ports: func() Ports {
@@ -90,20 +100,33 @@ func TestRunReportsInvariantFailures(t *testing.T) {
 			return b
 		}, want: "mutation_guard"},
 		{name: "same vendor below cross vendor", body: func(b receipt.Body) receipt.Body {
-			b.Independence = receipt.Independence{Level: "isolation_only"}
+			b.Independence = receipt.Independence{Level: receipt.IndependenceLevelIsolationOnly, Downgraded: receipt.IndependenceDowngradeSameVendor}
 			return b
-		}, policy: Policy{TargetCommit: "main", MinIndependence: "cross_vendor"}, want: "independence"},
+		}, policy: Policy{TargetCommit: "main", MinIndependence: receipt.IndependenceLevelCrossVendor}, want: "independence"},
+		{name: "forged downgrade", body: func(b receipt.Body) receipt.Body {
+			b.Independence = receipt.Independence{Level: receipt.IndependenceLevelIsolationOnly}
+			return b
+		}, want: "downgrade"},
+		{name: "unknown snapshot mode", body: func(b receipt.Body) receipt.Body {
+			b.SnapshotMode = "future_mode"
+			return b
+		}, want: "snapshot_mode"},
 		{name: "forged cross vendor stamp", body: func(b receipt.Body) receipt.Body {
 			b.Reviewer.Provider = "claude"
 			b.HostUnderReview.Agent = "claude"
-			b.Independence = receipt.Independence{Level: "cross_vendor", Distinct: true}
+			b.Independence = receipt.Independence{Level: receipt.IndependenceLevelCrossVendor, Distinct: true}
 			return b
-		}, policy: Policy{TargetCommit: "main", MinIndependence: "cross_vendor"}, want: "does not match"},
+		}, policy: Policy{TargetCommit: "main", MinIndependence: receipt.IndependenceLevelCrossVendor}, want: "does not match"},
 		{name: "missing in-scope digest", ports: func() Ports {
 			p := validPorts()
-			p.Snapshotter = fakeSnapshotter{snapshot: Snapshot{TreeSHA: "tree", FileDigests: map[string]string{"a.go": "sha", "b.go": "sha"}}}
+			p.Snapshotter = fakeSnapshotter{snapshot: Snapshot{TreeSHA: "tree", BaseCommit: "base", FileDigests: map[string]string{"a.go": "sha", "b.go": "sha"}}}
 			return p
 		}, want: "missing in-scope digest"},
+		{name: "base commit mismatch", ports: func() Ports {
+			p := validPorts()
+			p.Snapshotter = fakeSnapshotter{snapshot: Snapshot{TreeSHA: "tree", BaseCommit: "other", FileDigests: map[string]string{"a.go": "sha"}}}
+			return p
+		}, want: "base_commit mismatch"},
 		{name: "non ancestor base commit", ports: func() Ports {
 			p := validPorts()
 			p.AncestryChecker = fakeAncestry{ok: false}
@@ -148,14 +171,56 @@ func TestRunReportsInvariantFailures(t *testing.T) {
 	}
 }
 
+func TestRunPassesSignedSnapshotModeAndBaseRefToSnapshotter(t *testing.T) {
+	t.Parallel()
+
+	envelope := validEnvelope()
+	envelope.Body.SnapshotMode = receipt.SnapshotModeBaseDelta
+	envelope.Body.BaseRef = "origin/main"
+	snapshotter := &recordingSnapshotter{snapshot: Snapshot{TreeSHA: "tree", BaseCommit: "base", FileDigests: map[string]string{"a.go": "sha"}}}
+	ports := validPorts()
+	ports.Snapshotter = snapshotter
+	result, err := Run(context.Background(), envelope, trust.TrustedKeys{Version: trust.TrustedKeysVersion}, Policy{TargetCommit: "main"}, ports)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Passed {
+		t.Fatalf("result = %+v", result)
+	}
+	if snapshotter.input.SnapshotMode != receipt.SnapshotModeBaseDelta || snapshotter.input.BaseRef != "main" {
+		t.Fatalf("snapshot input = %+v, want CI target base-delta mode/ref", snapshotter.input)
+	}
+}
+
+func TestRunUsesBaseCommitForBaseDeltaWithoutOriginalBaseRef(t *testing.T) {
+	t.Parallel()
+
+	envelope := validEnvelope()
+	envelope.Body.SnapshotMode = receipt.SnapshotModeBaseDelta
+	envelope.Body.BaseRef = ""
+	snapshotter := &recordingSnapshotter{snapshot: Snapshot{TreeSHA: "tree", BaseCommit: "base", FileDigests: map[string]string{"a.go": "sha"}}}
+	ports := validPorts()
+	ports.Snapshotter = snapshotter
+	result, err := Run(context.Background(), envelope, trust.TrustedKeys{Version: trust.TrustedKeysVersion}, Policy{}, ports)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Passed {
+		t.Fatalf("result = %+v", result)
+	}
+	if snapshotter.input.SnapshotMode != receipt.SnapshotModeBaseDelta || snapshotter.input.BaseRef != "base" {
+		t.Fatalf("snapshot input = %+v, want signed base commit fallback", snapshotter.input)
+	}
+}
+
 func TestRunAcceptsGenuineCrossVendor(t *testing.T) {
 	t.Parallel()
 
 	envelope := validEnvelope()
 	envelope.Body.Reviewer.Provider = "claude"
 	envelope.Body.HostUnderReview.Agent = "codex"
-	envelope.Body.Independence = receipt.Independence{Level: "cross_vendor", Distinct: true}
-	result, err := Run(context.Background(), envelope, trust.TrustedKeys{Version: trust.TrustedKeysVersion}, Policy{TargetCommit: "main", MinIndependence: "cross_vendor"}, validPorts())
+	envelope.Body.Independence = receipt.Independence{Level: receipt.IndependenceLevelCrossVendor, Distinct: true}
+	result, err := Run(context.Background(), envelope, trust.TrustedKeys{Version: trust.TrustedKeysVersion}, Policy{TargetCommit: "main", MinIndependence: receipt.IndependenceLevelCrossVendor}, validPorts())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,7 +243,7 @@ func TestRunTargetRequiredInCI(t *testing.T) {
 
 func validPorts() Ports {
 	return Ports{
-		Snapshotter:       fakeSnapshotter{snapshot: Snapshot{TreeSHA: "tree", FileDigests: map[string]string{"a.go": "sha"}}},
+		Snapshotter:       fakeSnapshotter{snapshot: Snapshot{TreeSHA: "tree", BaseCommit: "base", FileDigests: map[string]string{"a.go": "sha"}}},
 		AcceptanceRunner:  fakeAcceptance{results: []AcceptanceResult{{ID: "ac1", Status: "pass", ExitCode: 0}}},
 		AncestryChecker:   fakeAncestry{ok: true},
 		SignatureVerifier: fakeSignature{},
@@ -192,6 +257,7 @@ func validEnvelope() receipt.Envelope {
 			TaskID:                    "task",
 			SessionID:                 "session",
 			Verdict:                   "pass",
+			SnapshotMode:              receipt.SnapshotModeWorkingTree,
 			BaseCommit:                "base",
 			HeadCommit:                "head",
 			Scope:                     []string{"."},
@@ -201,8 +267,9 @@ func validEnvelope() receipt.Envelope {
 			ReviewedContextProvenance: []receipt.Provenance{{Kind: "evidence_file", Path: "a.go", SHA256: "sha"}},
 			Reviewer:                  receipt.Reviewer{Provider: "codex"},
 			HostUnderReview:           receipt.HostUnderReview{Agent: "codex"},
-			Independence:              receipt.Independence{Level: "isolation_only"},
+			Independence:              receipt.Independence{Level: receipt.IndependenceLevelIsolationOnly, Downgraded: receipt.IndependenceDowngradeSameVendor},
 			SpecFingerprint:           "spec",
+			AcceptanceDeclared:        true,
 			Acceptance:                []receipt.Acceptance{{ID: "ac1", Status: "pass", ExitCode: 0}},
 			OpenBlockers:              []receipt.Blocker{},
 			MutationGuard:             receipt.MutationGuard{Status: "clean"},

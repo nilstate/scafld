@@ -67,24 +67,22 @@ func Run(ctx context.Context, opts Options) (appverify.Result, error) {
 	if ci && target == "" {
 		return appverify.Result{Passed: false, Reason: "missing target in CI policy"}, nil
 	}
-	receiptPath := opts.ReceiptPath
-	if receiptPath == "" {
-		receiptPath = cfg.Verify.ReceiptPath
+	trustedKeysPath := firstNonEmpty(opts.TrustedKeys, os.Getenv("SCAFLD_TRUSTED_KEYS"))
+	if ci && trustedKeysPath == "" {
+		return appverify.Result{Passed: false, Reason: "missing CI trusted keys path"}, nil
 	}
+	if trustedKeysPath == "" {
+		trustedKeysPath = cfg.Verify.TrustedKeysPath
+	}
+	trusted, err := loadTrustedKeys(resolveRootPath(opts.Root, trustedKeysPath))
+	if err != nil {
+		return appverify.Result{}, err
+	}
+	receiptPath := firstNonEmpty(opts.ReceiptPath, os.Getenv("SCAFLD_RECEIPT_PATH"), cfg.Verify.ReceiptPath)
 	if receiptPath == "" {
 		return appverify.Result{}, errors.New("receipt path is required")
 	}
 	envelope, err := loadReceipt(resolveRootPath(opts.Root, receiptPath))
-	if err != nil {
-		return appverify.Result{}, err
-	}
-	// The trust anchor is CI-pinned: an explicit --trusted-keys flag or
-	// SCAFLD_TRUSTED_KEYS env (set by CI, outside the PR's control) takes
-	// precedence over the in-repo default, so a PR author cannot redirect the
-	// allowlist by committing config. Combined with LoadBase ignoring
-	// config.local, the verify trust anchor is not PR-controlled.
-	trustedKeysPath := firstNonEmpty(opts.TrustedKeys, os.Getenv("SCAFLD_TRUSTED_KEYS"), cfg.Verify.TrustedKeysPath)
-	trusted, err := loadTrustedKeys(resolveRootPath(opts.Root, trustedKeysPath))
 	if err != nil {
 		return appverify.Result{}, err
 	}
@@ -105,7 +103,7 @@ func Run(ctx context.Context, opts Options) (appverify.Result, error) {
 type gitSnapshotter struct{ adapter git.Adapter }
 
 func (g gitSnapshotter) Snapshot(ctx context.Context, input appverify.SnapshotInput) (appverify.Snapshot, error) {
-	snapshot, err := g.adapter.Snapshot(ctx, git.SnapshotInput{Scope: input.Scope})
+	snapshot, err := g.adapter.Snapshot(ctx, git.SnapshotInput{Scope: input.Scope, BaseRef: input.BaseRef})
 	if err != nil {
 		return appverify.Snapshot{}, err
 	}
@@ -117,7 +115,7 @@ func (g gitSnapshotter) Snapshot(ctx context.Context, input appverify.SnapshotIn
 	for _, item := range snapshot.IgnoredUnreviewed {
 		ignored = append(ignored, item.Path)
 	}
-	return appverify.Snapshot{TreeSHA: snapshot.TreeSHA, FileDigests: digests, Ignored: ignored}, nil
+	return appverify.Snapshot{TreeSHA: snapshot.TreeSHA, BaseCommit: snapshot.BaseCommit, FileDigests: digests, Ignored: ignored}, nil
 }
 
 type acceptanceRunner struct {

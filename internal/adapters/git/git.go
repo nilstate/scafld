@@ -92,12 +92,13 @@ func (a Adapter) Status(ctx context.Context) (State, error) {
 	return State{Changed: changed}, nil
 }
 
-// scafldRuntimePaths are scafld-owned runtime output directories that are never
+// scafldRuntimePaths are scafld-owned state/output directories that are never
 // part of the reviewed work tree. They are the single source of truth for both
 // the per-file digests (ignoredRuntimePath) and the tree fingerprint
-// (writeTemporaryTree), so a gate that writes a receipt or session ledger under
-// .scafld cannot change the tree_sha it just signed.
+// (writeTemporaryTree), so finalize can write receipts, sessions, and projected
+// specs without changing the tree_sha it just signed.
 var scafldRuntimePaths = []string{
+	".scafld/specs",
 	".scafld/runs",
 	".scafld/reviews",
 	".scafld/receipts",
@@ -126,6 +127,9 @@ func (a Adapter) ChangedFiles(ctx context.Context) ([]string, error) {
 // content-addressed fingerprint without mutating the real index, HEAD, or stash.
 func (a Adapter) Snapshot(ctx context.Context, input SnapshotInput) (Snapshot, error) {
 	scope := normalizeScope(input.Scope)
+	if len(scope) == 0 {
+		return Snapshot{}, fmt.Errorf("snapshot scope is empty; refusing whole-repo fallback")
+	}
 	if err := a.checkIndexFlags(ctx, scope); err != nil {
 		return Snapshot{}, err
 	}
@@ -171,6 +175,59 @@ func (a Adapter) Snapshot(ctx context.Context, input SnapshotInput) (Snapshot, e
 		DeletedPaths:      deleted,
 		IgnoredUnreviewed: ignored,
 	}, nil
+}
+
+// BaseDiffPaths returns deterministic changed paths between baseRef's merge-base
+// with HEAD and the current commit-free working tree. Deleted paths are included
+// so deletion-only changes can still define a no-spec gate scope.
+func (a Adapter) BaseDiffPaths(ctx context.Context, baseRef string) ([]string, error) {
+	baseRef = strings.TrimSpace(baseRef)
+	if baseRef == "" {
+		return nil, nil
+	}
+	allScope := []string{"."}
+	if err := a.checkIndexFlags(ctx, allScope); err != nil {
+		return nil, err
+	}
+	_, hasHead, err := a.resolveHead(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !hasHead {
+		return nil, nil
+	}
+	out, err := a.gitOutput(ctx, nil, "merge-base", baseRef, "HEAD")
+	if err != nil {
+		return nil, err
+	}
+	baseCommit := strings.TrimSpace(string(out))
+	treeSHA, err := a.writeTemporaryTree(ctx, hasHead)
+	if err != nil {
+		return nil, err
+	}
+	statuses, deleted, err := a.diffStatuses(ctx, baseCommit, treeSHA, allScope)
+	if err != nil {
+		return nil, err
+	}
+	seen := map[string]bool{}
+	var paths []string
+	add := func(path string) {
+		path = strings.Trim(strings.ReplaceAll(path, "\\", "/"), "/")
+		path = strings.TrimPrefix(path, "./")
+		if path == "" || ignoredRuntimePath(path) || seen[path] {
+			return
+		}
+		seen[path] = true
+		paths = append(paths, path)
+	}
+	for path := range statuses {
+		add(path)
+	}
+	for _, item := range deleted {
+		add(item.Path)
+	}
+	sort.Strings(paths)
+	return paths, nil
 }
 
 // IsAncestor reports whether ancestor is reachable from descendant.
@@ -520,11 +577,16 @@ func normalizeScope(scope []string) []string {
 }
 
 func pathInScope(path string, scope []string) bool {
-	if len(scope) == 0 {
-		return true
-	}
 	normalized := strings.Trim(strings.ReplaceAll(path, "\\", "/"), "/")
 	for _, prefix := range scope {
+		prefix = strings.Trim(strings.ReplaceAll(prefix, "\\", "/"), "/")
+		prefix = strings.TrimPrefix(prefix, "./")
+		if prefix == "" {
+			continue
+		}
+		if prefix == "." {
+			return true
+		}
 		if normalized == prefix || strings.HasPrefix(normalized, prefix+"/") {
 			return true
 		}

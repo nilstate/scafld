@@ -11,8 +11,11 @@ scafld builds long-running AI coding work under adversarial review.
 The taught surface is deliberately small:
 
 ```text
-plan -> harden -> approve -> build -> review -> complete
+agent work -> finalize -> signed receipt -> scafld verify
 ```
+
+The lifecycle remains available for operators, CI debugging, and direct human
+control, but it is not the default agent path.
 
 ## Directory Layout
 
@@ -33,7 +36,7 @@ plan -> harden -> approve -> build -> review -> complete
   core/
     prompts/
     schemas/              # spec, review dossier, and harden dossier schemas
-    scripts/
+    scripts/              # optional lifecycle helper scripts installed by update
 ```
 
 Prompt ownership:
@@ -57,7 +60,12 @@ reads it, and scafld never reads it back for state.
 
 ## Default Integrations
 
-When the workspace includes them, prefer:
+Fresh `scafld init` installs the `finalize` affordance and CI-facing
+`scafld verify` wiring. It does not install lifecycle wrapper scripts by
+default.
+
+Optional lifecycle helper scripts are operator utilities. They are installed by
+`scafld update` or an explicit managed bundle install path, not by default init:
 
 - `.scafld/core/scripts/scafld-codex-build.sh <task-id>`
 - `.scafld/core/scripts/scafld-codex-review.sh <task-id>`
@@ -71,13 +79,14 @@ state.
 
 ## Adversarial Review
 
-Challenge fires at `review`.
+Default agent work challenges completion through `finalize`. Direct lifecycle
+work challenges completion through `scafld review`.
 
 That means:
 
-- one accepted review dossier per review run, recorded in session
-- one completion gate that matters
-- findings are visible in `review`, `status`, `handoff`, and the spec
+- `finalize` returns blockers or a signed receipt in one agent-facing call
+- `review` remains the operator/lifecycle review command for spec-backed runs
+- `verify` is the CI merge wall for signed receipts
 - diagnostics are transport evidence, not the primary finding surface
 
 ## Metrics

@@ -288,9 +288,17 @@ func SelectReceiptGradeAgentWithEvidence(opts Selection, hostEnviron []string, e
 	}
 	opts.CWD = sandbox.CWD
 	endpointURL, endpointHost := providerEndpoint(selected.Provider, opts)
+	extraEnv, err := receiptGradeExtraAuthEnv(selected.Provider, hostEnviron, sandbox.Home)
+	if err != nil {
+		if sandbox.Cleanup != nil {
+			sandbox.Cleanup()
+		}
+		return nil, RuntimeFacts{}, err
+	}
 	env, err := ScrubProviderEnv(ProviderEnvInput{
 		Provider:     selected.Provider,
 		HostEnviron:  hostEnviron,
+		ExtraEnv:     extraEnv,
 		EndpointURL:  endpointURL,
 		EndpointHost: endpointHost,
 		RequireAuth:  true,
@@ -313,6 +321,65 @@ func SelectReceiptGradeAgentWithEvidence(opts Selection, hostEnviron []string, e
 		agent = receiptGradeSandboxAgent{Agent: agent, sandbox: sandbox, facts: facts}
 	}
 	return agent, facts, nil
+}
+
+func receiptGradeExtraAuthEnv(provider string, hostEnviron []string, sandboxHome string) ([]string, error) {
+	if normalizeReviewerProvider(provider) != "codex" {
+		return nil, nil
+	}
+	hostCodexHome := strings.TrimSpace(hostEnvValue(hostEnviron, "CODEX_HOME"))
+	// Key-based auth with no host Codex home: nothing to copy and nothing to leak.
+	if hostCodexHome == "" && hostEnvHasKey(hostEnviron, "OPENAI_API_KEY") {
+		return nil, nil
+	}
+	// Source auth.json from the explicit host CODEX_HOME if set, else ~/.codex.
+	source := ""
+	if hostCodexHome != "" {
+		source = filepath.Join(hostCodexHome, "auth.json")
+	} else if hostHome := strings.TrimSpace(hostEnvValue(hostEnviron, "HOME")); hostHome != "" {
+		source = filepath.Join(hostHome, ".codex", "auth.json")
+	}
+	// When there is no host CODEX_HOME to neutralize and no auth.json to copy,
+	// leave the env untouched rather than minting an empty sandbox Codex home.
+	if hostCodexHome == "" && source == "" {
+		return nil, nil
+	}
+	codexHome := filepath.Join(sandboxHome, ".codex")
+	if err := os.MkdirAll(codexHome, 0o700); err != nil {
+		return nil, fmt.Errorf("create sandbox codex auth home: %w", err)
+	}
+	if source != "" {
+		data, err := os.ReadFile(source)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("read codex auth: %w", err)
+		}
+		if err == nil {
+			// Copy ONLY auth.json; the host Codex memory, sessions, and config never
+			// enter the sandbox.
+			if err := os.WriteFile(filepath.Join(codexHome, "auth.json"), data, 0o600); err != nil {
+				return nil, fmt.Errorf("write sandbox codex auth: %w", err)
+			}
+		}
+	}
+	// Always override CODEX_HOME with the clean sandbox home (it sorts after the
+	// host entry in ScrubProviderEnv's map merge), so the reviewer never reads the
+	// host Codex home even when the host sets CODEX_HOME directly.
+	return []string{"CODEX_HOME=" + codexHome}, nil
+}
+
+func hostEnvHasKey(env []string, key string) bool {
+	return strings.TrimSpace(hostEnvValue(env, key)) != ""
+}
+
+func hostEnvValue(env []string, key string) string {
+	want := strings.ToUpper(key)
+	for _, entry := range env {
+		k, v, ok := strings.Cut(entry, "=")
+		if ok && strings.ToUpper(strings.TrimSpace(k)) == want {
+			return v
+		}
+	}
+	return ""
 }
 
 // InvokeReceiptGradeReview runs the gate-only provider path and returns stamped
@@ -524,13 +591,30 @@ func DetectHostAgentMarker(environ []string) string {
 		key, _, _ := strings.Cut(entry, "=")
 		upper := strings.ToUpper(strings.TrimSpace(key))
 		switch {
-		case upper == "CODEX" || strings.HasPrefix(upper, "CODEX_"):
+		case codexHostEnvKey(upper):
 			return HostAgentCodex
 		case claudeHostEnvKey(upper):
 			return HostAgentClaude
 		}
 	}
 	return ""
+}
+
+// codexHostEnvKey reports whether key is a genuine running-Codex session marker,
+// not Codex auth or config. CODEX_HOME, CODEX_API_*, and OPENAI_* are credentials
+// or paths that are present whenever Codex is merely the reviewer, so treating
+// them as a host signal would let a Claude host overclaim cross-vendor independence.
+func codexHostEnvKey(key string) bool {
+	switch {
+	case key == "CODEX_THREAD_ID" || strings.HasPrefix(key, "CODEX_THREAD"):
+		return true
+	case key == "CODEX_SESSION_ID" || strings.HasPrefix(key, "CODEX_SESSION"):
+		return true
+	case key == "CODEX_SANDBOX" || strings.HasPrefix(key, "CODEX_SANDBOX"):
+		return true
+	default:
+		return false
+	}
 }
 
 func claudeHostEnvKey(key string) bool {

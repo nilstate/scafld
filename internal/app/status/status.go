@@ -85,6 +85,7 @@ type CompletionInfo struct {
 	Actual        string   `json:"actual,omitempty"`
 	Summary       string   `json:"summary,omitempty"`
 	ReviewEvent   string   `json:"review_event,omitempty"`
+	ReceiptEvent  string   `json:"receipt_event,omitempty"`
 	CompleteEvent string   `json:"complete_event,omitempty"`
 	Evidence      []string `json:"evidence,omitempty"`
 }
@@ -177,6 +178,7 @@ func completionInfo(authority corecompletion.Authority) *CompletionInfo {
 		Actual:        authority.Actual,
 		Summary:       authority.Summary(),
 		ReviewEvent:   eventReference(authority.ReviewEntry),
+		ReceiptEvent:  eventReference(authority.ReceiptEntry),
 		CompleteEvent: eventReference(authority.CompleteEntry),
 		Evidence:      authority.Evidence,
 	}

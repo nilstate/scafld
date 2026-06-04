@@ -1,0 +1,114 @@
+{
+  "body": {
+    "schema_version": 1,
+    "task_id": "reviewer-read-jail-tests",
+    "session_id": "reviewer-read-jail-tests",
+    "verdict": "pass",
+    "snapshot_mode": "working_tree",
+    "base_commit": "cf0f71d94e52b29cf691c0e10849e70d6ccb4c92",
+    "head_commit": "cf0f71d94e52b29cf691c0e10849e70d6ccb4c92",
+    "scope": [
+      "internal/adapters/providers/env_scrub.go",
+      "internal/adapters/providers/evidence_sandbox.go",
+      "internal/adapters/providers/evidence_sandbox_test.go",
+      "internal/adapters/providers/provider.go",
+      "internal/adapters/providers/provider_test.go"
+    ],
+    "tree_sha": "d14dd3a53006c9b0688ec9de2a623a5e4f720e60",
+    "file_digests": {
+      "internal/adapters/providers/env_scrub.go": "12664d13e969a21cd4c1cd310f90786e053edc6118594d3b9722494c9af96bf7",
+      "internal/adapters/providers/evidence_sandbox.go": "cbaa3d7f2ef69dc8e618675c1100ba40c63c96dbf0b20bb57a53c43a133584b1",
+      "internal/adapters/providers/evidence_sandbox_test.go": "c7d5f68b10f47484f8168dd56ec7f863e8967d47736b9c1444d9da54af57c4a8",
+      "internal/adapters/providers/provider.go": "a921a0f7d92cd7652aedf979e02aa331d097245646cf2032e74259a970eadb89",
+      "internal/adapters/providers/provider_test.go": "f92a379a0120c5e4799535c0abb33e5030ed07906b36be6e894e766fcdcfc68e"
+    },
+    "ignored_unreviewed": [],
+    "reviewed_context_provenance": [
+      {
+        "kind": "evidence_file",
+        "path": "internal/adapters/providers/env_scrub.go",
+        "sha256": "12664d13e969a21cd4c1cd310f90786e053edc6118594d3b9722494c9af96bf7",
+        "bytes": 6486
+      },
+      {
+        "kind": "evidence_file",
+        "path": "internal/adapters/providers/evidence_sandbox.go",
+        "sha256": "cbaa3d7f2ef69dc8e618675c1100ba40c63c96dbf0b20bb57a53c43a133584b1",
+        "bytes": 4358
+      },
+      {
+        "kind": "evidence_file",
+        "path": "internal/adapters/providers/evidence_sandbox_test.go",
+        "sha256": "c7d5f68b10f47484f8168dd56ec7f863e8967d47736b9c1444d9da54af57c4a8",
+        "bytes": 11646
+      },
+      {
+        "kind": "evidence_file",
+        "path": "internal/adapters/providers/provider.go",
+        "sha256": "a921a0f7d92cd7652aedf979e02aa331d097245646cf2032e74259a970eadb89",
+        "bytes": 56571
+      },
+      {
+        "kind": "evidence_file",
+        "path": "internal/adapters/providers/provider_test.go",
+        "sha256": "f92a379a0120c5e4799535c0abb33e5030ed07906b36be6e894e766fcdcfc68e",
+        "bytes": 38948
+      }
+    ],
+    "reviewer": {
+      "provider": "codex",
+      "model": "gpt-5.5",
+      "binary_sha256": "baefc109b871e73a7bab298ee19b8bf73c8b647c4f8649a9794fc5db01db17b9",
+      "endpoint_host": "api.openai.com"
+    },
+    "host_under_review": {
+      "agent": "claude",
+      "session_id": "reviewer-read-jail-tests"
+    },
+    "independence": {
+      "level": "cross_vendor",
+      "distinct": true,
+      "reason": "cross_vendor: reviewer \"codex\" and host \"claude\" are different model vendors; this is multi-model review that reduces correlated blind spots but remains single-party local tooling"
+    },
+    "spec_fingerprint": "dbba9613fc14be74223b67f3ac2a6ca01362396d2dd7a090c26119d310d321ec",
+    "acceptance_declared": true,
+    "acceptance": [
+      {
+        "id": "v1",
+        "command": "go run ./cmd/scafld validate reviewer-read-jail-tests",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "afaa924b71945352ea3c04746d240c938884a9d6cdf3051f424512751bd25959",
+        "diagnostic": ".scafld/runs/reviewer-read-jail-tests/diagnostics/command-1780563790003578000.txt"
+      },
+      {
+        "id": "ac1_2",
+        "command": "rg -n 'OS-level sandboxing claims|scafld-controlled process inputs|MemoryAutoloadDisabled' .scafld/specs/active/reviewer-read-jail-tests.md internal/adapters/providers",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "8a0da31da3fd0df7f5becb6e05168db62de60d050382b54bb36a3a5cd9858106",
+        "diagnostic": ".scafld/runs/reviewer-read-jail-tests/diagnostics/command-1780563790021514000.txt"
+      }
+    ],
+    "open_blockers": [],
+    "mutation_guard": {
+      "status": "clean",
+      "scope": [
+        "internal/adapters/providers/env_scrub.go",
+        "internal/adapters/providers/evidence_sandbox.go",
+        "internal/adapters/providers/evidence_sandbox_test.go",
+        "internal/adapters/providers/provider.go",
+        "internal/adapters/providers/provider_test.go"
+      ]
+    },
+    "ledger_head": "d8fd3a632f0373069d22e720c84d4487145319e44ef5b9e0ea51d2a578aa0f76",
+    "minted_at": "2026-06-04T09:03:09Z"
+  },
+  "signature": {
+    "alg": "ed25519",
+    "key_id": "ed25519:RGGe6gUQpsB6KGu0VcnMxGUL5IA1I1VDSKi3ecCzYOU",
+    "sig": "rDCU/1+rtTziW9/GUpO2q5jd7PqOX4PK/JTo7ySjPVS/Agi5plyBa0G6tPm4tluDsCL/JvlCxRthRgmkGbX1Cw=="
+  }
+}

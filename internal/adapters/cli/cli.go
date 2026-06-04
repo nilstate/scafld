@@ -11,8 +11,8 @@ import (
 
 	adaptercli "github.com/nilstate/scafld/v2/internal/adapters/cli/adapter"
 	configcli "github.com/nilstate/scafld/v2/internal/adapters/cli/config"
-	gatecli "github.com/nilstate/scafld/v2/internal/adapters/cli/gate"
-	gatestdiocli "github.com/nilstate/scafld/v2/internal/adapters/cli/gatestdio"
+	finalizecli "github.com/nilstate/scafld/v2/internal/adapters/cli/finalize"
+	finalizestdiocli "github.com/nilstate/scafld/v2/internal/adapters/cli/finalizestdio"
 	hardencli "github.com/nilstate/scafld/v2/internal/adapters/cli/harden"
 	hardensubmitcli "github.com/nilstate/scafld/v2/internal/adapters/cli/hardensubmit"
 	clihelp "github.com/nilstate/scafld/v2/internal/adapters/cli/help"
@@ -56,7 +56,7 @@ var commands = []command{
 	{"plan", "Create a draft task spec"}, {"harden", "Stress-test a draft spec before approval"},
 	{"validate", "Validate a task spec"}, {"approve", "Approve a draft spec"},
 	{"build", "Open or advance governed build phases"}, {"review", "Run the adversarial review gate"},
-	{"gate", "Run the host-facing accountability gate"},
+	{"finalize", "Finalize work with acceptance, review, and a signed receipt"},
 	{"complete", "Complete reviewed work"}, {"fail", "Mark work failed"}, {"cancel", "Cancel work"},
 	{"status", "Show spec status"}, {"list", "List specs"}, {"report", "Aggregate spec and run metrics"},
 	{"handoff", "Render model-facing handoff material"}, {"adapter", "Render provider trigger packet"},
@@ -75,7 +75,7 @@ var commandHandlers = map[string]commandHandler{
 	"approve":             runApprove,
 	"build":               runBuild,
 	"review":              runReview,
-	"gate":                gatecli.Handler(os.Stdin),
+	"finalize":            finalizecli.Handler(os.Stdin),
 	"complete":            statusHandler("complete"),
 	"fail":                statusHandler("fail"),
 	"cancel":              statusHandler("cancel"),
@@ -86,7 +86,7 @@ var commandHandlers = map[string]commandHandler{
 	"adapter":             adaptercli.Handler(ExitInvalid, ExitWorkspace, ExitGeneric),
 	"verify":              verifycli.Handler(),
 	"update":              runUpdate,
-	"gate-stdio":          gatestdiocli.Handler(os.Args[0], os.Stdin),
+	"finalize-stdio":      finalizestdiocli.Handler(os.Args[0], os.Stdin),
 	"review-submit-stdio": reviewsubmitcli.Handler(os.Stdin),
 	"harden-submit-stdio": hardensubmitcli.Handler(os.Stdin),
 }

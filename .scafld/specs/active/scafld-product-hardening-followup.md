@@ -20,7 +20,7 @@ Reason: phase phase3 acceptance failed
 Blockers: phase phase3 acceptance failed
 Allowed follow-up command: `scafld handoff scafld-product-hardening-followup`
 Latest runner update: 2026-05-18T09:30:18Z
-Review gate: not_started
+Review finalize: not_started
 
 ## Summary
 
@@ -81,7 +81,7 @@ This spec is the follow-up program to turn scafld from "working and promising" i
 - Hardening prompt composition and project/core prompt override behavior.
 - Review provider selection and review prompt agenda composition.
 - Review packet schema, provider output parsing, and session review entries.
-- Complete gate verification and reviewed-state freshness checks.
+- Complete finalize verification and reviewed-state freshness checks.
 - Process runner capture limits, diagnostics, timeout behavior, and signal cleanup.
 - Git workspace state hashing used for mutation detection.
 - Package wrappers and release artifact naming.
@@ -187,7 +187,7 @@ Objective: Decide and implement the validation contract. If validation profiles 
 Changes:
 - `internal/core/acceptance/**` - Keep criterion `expected_kind` behavior explicit and covered for `exit_code_zero`, `exit_code_nonzero`, `no_matches`, and `manual`.
 - `internal/app/build/**` - Resolve validation profile from spec risk/profile and execute configured per-phase validation commands only if this becomes runtime behavior.
-- `internal/app/complete/**` - Run or verify configured pre-commit validation only if this becomes a release gate.
+- `internal/app/complete/**` - Run or verify configured pre-commit validation only if this becomes a release finalize.
 - `internal/adapters/config/**` - Add typed validation profile fields only for runtime-enforced behavior; otherwise move profile comments to docs/prompt guidance.
 - `.scafld/core/prompts/build.md` - If validation profiles remain guidance, ensure the build prompt explains how agents should use them without claiming runtime enforcement.
 - `docs/validation.md` - State the exact ownership split between acceptance criteria, validation profiles, manual evidence, and complete gates.
@@ -219,7 +219,7 @@ Acceptance:
   - Evidence: exit code was 0
   - Source event: entry-25
 
-## Phase 3: Review evidence, provenance, and complete gate sealing
+## Phase 3: Review evidence, provenance, and complete finalize sealing
 
 Status: blocked
 Dependencies: phase1

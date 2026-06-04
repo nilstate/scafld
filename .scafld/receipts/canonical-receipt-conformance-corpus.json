@@ -1,0 +1,114 @@
+{
+  "body": {
+    "schema_version": 1,
+    "task_id": "canonical-receipt-conformance-corpus",
+    "session_id": "canonical-receipt-conformance-corpus",
+    "verdict": "pass",
+    "snapshot_mode": "working_tree",
+    "base_commit": "cf0f71d94e52b29cf691c0e10849e70d6ccb4c92",
+    "head_commit": "cf0f71d94e52b29cf691c0e10849e70d6ccb4c92",
+    "scope": [
+      "internal/core/receipt/receipt.go",
+      "internal/core/receipt/receipt_test.go",
+      "internal/core/receipt/testdata/receipt_body.canonical.json",
+      "internal/core/receipt/testdata/receipt_body.digest",
+      "internal/core/receipt/testdata/receipt_body.json"
+    ],
+    "tree_sha": "d14dd3a53006c9b0688ec9de2a623a5e4f720e60",
+    "file_digests": {
+      "internal/core/receipt/receipt.go": "0c250b8aa437bcd1ba9fec286e8bd4efad8d8adb83c5f1c7e78f5b1467673661",
+      "internal/core/receipt/receipt_test.go": "be20733cbd5d6d02f45e448f95ff0bc46b330403f64d2df6a231fecc58f5815a",
+      "internal/core/receipt/testdata/receipt_body.canonical.json": "2c47dff2ba34373583fc0756c589b78360c93638a610be8142b358126ad734bc",
+      "internal/core/receipt/testdata/receipt_body.digest": "fe307f27efadb16e152c355f6248f28c96d589773f23d880ff22c2cab57dc983",
+      "internal/core/receipt/testdata/receipt_body.json": "27250619f142de2c82f339eb0aa9754a372773edccd3761fcb5306d72a6d6b10"
+    },
+    "ignored_unreviewed": [],
+    "reviewed_context_provenance": [
+      {
+        "kind": "evidence_file",
+        "path": "internal/core/receipt/receipt.go",
+        "sha256": "0c250b8aa437bcd1ba9fec286e8bd4efad8d8adb83c5f1c7e78f5b1467673661",
+        "bytes": 12785
+      },
+      {
+        "kind": "evidence_file",
+        "path": "internal/core/receipt/receipt_test.go",
+        "sha256": "be20733cbd5d6d02f45e448f95ff0bc46b330403f64d2df6a231fecc58f5815a",
+        "bytes": 5766
+      },
+      {
+        "kind": "evidence_file",
+        "path": "internal/core/receipt/testdata/receipt_body.canonical.json",
+        "sha256": "2c47dff2ba34373583fc0756c589b78360c93638a610be8142b358126ad734bc",
+        "bytes": 777
+      },
+      {
+        "kind": "evidence_file",
+        "path": "internal/core/receipt/testdata/receipt_body.digest",
+        "sha256": "fe307f27efadb16e152c355f6248f28c96d589773f23d880ff22c2cab57dc983",
+        "bytes": 65
+      },
+      {
+        "kind": "evidence_file",
+        "path": "internal/core/receipt/testdata/receipt_body.json",
+        "sha256": "27250619f142de2c82f339eb0aa9754a372773edccd3761fcb5306d72a6d6b10",
+        "bytes": 1030
+      }
+    ],
+    "reviewer": {
+      "provider": "codex",
+      "model": "gpt-5.5",
+      "binary_sha256": "baefc109b871e73a7bab298ee19b8bf73c8b647c4f8649a9794fc5db01db17b9",
+      "endpoint_host": "api.openai.com"
+    },
+    "host_under_review": {
+      "agent": "claude",
+      "session_id": "canonical-receipt-conformance-corpus"
+    },
+    "independence": {
+      "level": "cross_vendor",
+      "distinct": true,
+      "reason": "cross_vendor: reviewer \"codex\" and host \"claude\" are different model vendors; this is multi-model review that reduces correlated blind spots but remains single-party local tooling"
+    },
+    "spec_fingerprint": "ac4b6a14ec469884fc4e4103b841e5aaa66ac28171831234a179ee3b2dbac234",
+    "acceptance_declared": true,
+    "acceptance": [
+      {
+        "id": "v1",
+        "command": "go run ./cmd/scafld validate canonical-receipt-conformance-corpus",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "a5c282d6384d87ea4c009970412f03e172cbb9f68c5d83ceb85853963fb2f28b",
+        "diagnostic": ".scafld/runs/canonical-receipt-conformance-corpus/diagnostics/command-1780563735691857000.txt"
+      },
+      {
+        "id": "ac1_1",
+        "command": "rg -n 'ledger_head.*(exclude|cleared|digest)|digest.*ledger_head' internal/core/receipt/receipt_test.go internal/core/receipt/testdata",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "56f770b1fae4c9a534d337c4535ca860623490be49a50b038a513a150cae4b7b",
+        "diagnostic": ".scafld/runs/canonical-receipt-conformance-corpus/diagnostics/command-1780563735709903000.txt"
+      }
+    ],
+    "open_blockers": [],
+    "mutation_guard": {
+      "status": "clean",
+      "scope": [
+        "internal/core/receipt/receipt.go",
+        "internal/core/receipt/receipt_test.go",
+        "internal/core/receipt/testdata/receipt_body.canonical.json",
+        "internal/core/receipt/testdata/receipt_body.digest",
+        "internal/core/receipt/testdata/receipt_body.json"
+      ]
+    },
+    "ledger_head": "36e79dd18a0f69d5af2975b07122da8b2df6af0eb8fa742f04093e5c73b345de",
+    "minted_at": "2026-06-04T09:02:15Z"
+  },
+  "signature": {
+    "alg": "ed25519",
+    "key_id": "ed25519:RGGe6gUQpsB6KGu0VcnMxGUL5IA1I1VDSKi3ecCzYOU",
+    "sig": "A4F5pWXIMSm0hARNhgKs9iPLpsMrmyPULJcek4kyVIV2lKjn7syUATVeP4Ak7iGhkE6BBARZUWS6XW0KPVDPCw=="
+  }
+}

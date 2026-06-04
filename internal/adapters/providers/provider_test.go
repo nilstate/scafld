@@ -184,6 +184,54 @@ func TestAutoProviderFallbackPolicyDisableBlocksMissingOppositeAgent(t *testing.
 	}
 }
 
+func TestHostMarkerDoesNotLetCodexAuthOverrideClaudeHost(t *testing.T) {
+	t.Parallel()
+
+	// A Claude host with Codex reviewer credentials present must stay "claude";
+	// otherwise it overclaims cross-vendor independence against a Claude reviewer.
+	environ := []string{"CODEX_HOME=/home/u/.codex", "OPENAI_API_KEY=secret", "CLAUDE_CODE_SESSION=abc"}
+	if got := DetectHostAgentMarker(environ); got != HostAgentClaude {
+		t.Fatalf("DetectHostAgentMarker = %q, want %q (Codex auth must not override a Claude host)", got, HostAgentClaude)
+	}
+	// Codex auth/config alone, with no genuine session marker, is not a host signal.
+	if got := DetectHostAgentMarker([]string{"CODEX_HOME=/home/u/.codex", "OPENAI_API_KEY=secret"}); got != "" {
+		t.Fatalf("DetectHostAgentMarker = %q, want empty for Codex auth-only env", got)
+	}
+	// A genuine Codex session marker is still detected as a Codex host.
+	if got := DetectHostAgentMarker([]string{"CODEX_THREAD_ID=abc"}); got != HostAgentCodex {
+		t.Fatalf("DetectHostAgentMarker = %q, want %q for a genuine Codex session", got, HostAgentCodex)
+	}
+}
+
+func TestReceiptGradeCodexHostCodexHomeDoesNotLeak(t *testing.T) {
+	t.Parallel()
+
+	hostCodex := t.TempDir()
+	if err := os.WriteFile(filepath.Join(hostCodex, "auth.json"), []byte(`{"token":"x"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(hostCodex, "history.jsonl"), []byte("secret host memory\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sandboxHome := t.TempDir()
+	extra, err := receiptGradeExtraAuthEnv("codex", []string{"CODEX_HOME=" + hostCodex}, sandboxHome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// CODEX_HOME is overridden to the clean sandbox home, never the host home.
+	want := "CODEX_HOME=" + filepath.Join(sandboxHome, ".codex")
+	if len(extra) != 1 || extra[0] != want {
+		t.Fatalf("extra env = %v, want %q (host CODEX_HOME must not leak)", extra, want)
+	}
+	// Only auth.json is copied; host Codex memory never enters the sandbox.
+	if _, err := os.Stat(filepath.Join(sandboxHome, ".codex", "auth.json")); err != nil {
+		t.Fatalf("auth.json was not copied into the sandbox codex home: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(sandboxHome, ".codex", "history.jsonl")); !os.IsNotExist(err) {
+		t.Fatalf("host codex memory leaked into the sandbox: %v", err)
+	}
+}
+
 func TestDetectHostAgent(t *testing.T) {
 	t.Parallel()
 
@@ -349,6 +397,107 @@ func TestScrubAllowsProviderAuth(t *testing.T) {
 	}
 }
 
+func TestScrubAllowsCodexHomeAsAuth(t *testing.T) {
+	t.Parallel()
+
+	result, err := ScrubProviderEnv(ProviderEnvInput{
+		Provider: "codex",
+		HostEnviron: []string{
+			"CODEX_HOME=/tmp/codex-auth",
+			"HOME=/Users/alice",
+			"PATH=/bin",
+		},
+		RequireAuth: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsEnv(result.Env, "CODEX_HOME=/tmp/codex-auth") {
+		t.Fatalf("codex auth home missing: %v", result.Env)
+	}
+}
+
+func TestScrubMemoryHomeOverridesHostAgentMemory(t *testing.T) {
+	t.Parallel()
+
+	home := filepath.Join(t.TempDir(), "review-home")
+	result, err := ScrubProviderEnv(ProviderEnvInput{
+		Provider:   "codex",
+		MemoryHome: home,
+		HostEnviron: []string{
+			"OPENAI_API_KEY=secret",
+			"HOME=/Users/alice",
+			"XDG_CONFIG_HOME=/Users/alice/.config",
+			"PATH=/bin",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsEnv(result.Env, "HOME="+home) || !containsEnv(result.Env, "XDG_CONFIG_HOME="+filepath.Join(home, ".config")) {
+		t.Fatalf("memory home override missing: %v", result.Env)
+	}
+	env := strings.Join(result.Env, "\n")
+	if strings.Contains(env, "/Users/alice") {
+		t.Fatalf("host memory path survived scrub: %v", result.Env)
+	}
+}
+
+func TestReceiptGradeCodexCopiesOnlyAuthJSONIntoSandboxHome(t *testing.T) {
+	t.Parallel()
+
+	hostHome := t.TempDir()
+	hostCodex := filepath.Join(hostHome, ".codex")
+	if err := os.MkdirAll(filepath.Join(hostCodex, "sessions"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(hostCodex, "auth.json"), []byte(`{"token":"secret"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(hostCodex, "config.toml"), []byte("model = \"host\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(hostCodex, "sessions", "session.jsonl"), []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	binary := writeExecutable(t, "codex-reviewer")
+	runner := &fakeRunner{result: execution.Result{Stdout: dossierFrame(review.VerdictPass)}}
+	agent, facts, err := SelectReceiptGradeAgentWithEvidence(Selection{
+		Provider:          "codex",
+		CodexBinary:       binary,
+		CodexEndpointHost: "api.openai.com",
+		Runner:            runner,
+	}, []string{"HOME=" + hostHome, "PATH=/bin"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrapped, ok := agent.(receiptGradeSandboxAgent)
+	if !ok {
+		t.Fatalf("agent = %T, want sandbox wrapper", agent)
+	}
+	defer wrapped.sandbox.Cleanup()
+	codex, ok := wrapped.Agent.(CodexProvider)
+	if !ok {
+		t.Fatalf("agent = %T, want sandboxed codex provider", agent)
+	}
+	codexHome := envValue(codex.Env, "CODEX_HOME")
+	home := envValue(codex.Env, "HOME")
+	if codexHome == "" || home == "" || !strings.HasPrefix(codexHome, home+string(filepath.Separator)) {
+		t.Fatalf("CODEX_HOME must be under sandbox HOME: codex_home=%q home=%q facts=%+v", codexHome, home, facts)
+	}
+	if _, err := os.Stat(filepath.Join(codexHome, "auth.json")); err != nil {
+		t.Fatalf("sandbox auth.json missing: %v", err)
+	}
+	for _, forbidden := range []string{"config.toml", filepath.Join("sessions", "session.jsonl")} {
+		if _, err := os.Stat(filepath.Join(codexHome, forbidden)); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("copied host codex state %s: %v", forbidden, err)
+		}
+	}
+	if strings.Contains(strings.Join(codex.Env, "\n"), hostCodex) {
+		t.Fatalf("host codex path leaked into reviewer env: %v", codex.Env)
+	}
+}
+
 func TestScrubRejectsUnpinnedEndpoint(t *testing.T) {
 	t.Parallel()
 
@@ -463,6 +612,16 @@ func containsEnv(env []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func envValue(env []string, key string) string {
+	prefix := key + "="
+	for _, entry := range env {
+		if strings.HasPrefix(entry, prefix) {
+			return strings.TrimPrefix(entry, prefix)
+		}
+	}
+	return ""
 }
 
 func dossierJSON(verdict string) string {

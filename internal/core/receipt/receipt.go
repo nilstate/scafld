@@ -16,6 +16,20 @@ const (
 	SchemaVersion = 1
 	// SignatureAlgorithm is the detached-signature algorithm name.
 	SignatureAlgorithm = "ed25519"
+	// SnapshotModeWorkingTree signs the default working-tree snapshot mode.
+	SnapshotModeWorkingTree = "working_tree"
+	// SnapshotModeBaseDelta signs base-to-head delta snapshot mode.
+	SnapshotModeBaseDelta = "base_delta"
+	// IndependenceLevelIsolationOnly records isolated review without proven model-vendor separation.
+	IndependenceLevelIsolationOnly = "isolation_only"
+	// IndependenceLevelCrossVendor records proven different model-vendor review.
+	IndependenceLevelCrossVendor = "cross_vendor"
+	// IndependenceDowngradeSameVendor records same-vendor isolation-only review.
+	IndependenceDowngradeSameVendor = "same_vendor"
+	// IndependenceDowngradeUnknownHost records missing host-vendor detection.
+	IndependenceDowngradeUnknownHost = "unknown_host"
+	// IndependenceDowngradeUnknownReviewer records missing reviewer-vendor detection.
+	IndependenceDowngradeUnknownReviewer = "unknown_reviewer"
 )
 
 // Body is the canonical receipt payload signed by the host.
@@ -24,6 +38,8 @@ type Body struct {
 	TaskID                    string            `json:"task_id"`
 	SessionID                 string            `json:"session_id"`
 	Verdict                   string            `json:"verdict"`
+	SnapshotMode              string            `json:"snapshot_mode"`
+	BaseRef                   string            `json:"base_ref,omitempty"`
 	BaseCommit                string            `json:"base_commit"`
 	HeadCommit                string            `json:"head_commit"`
 	Scope                     []string          `json:"scope"`
@@ -35,6 +51,7 @@ type Body struct {
 	HostUnderReview           HostUnderReview   `json:"host_under_review"`
 	Independence              Independence      `json:"independence"`
 	SpecFingerprint           string            `json:"spec_fingerprint"`
+	AcceptanceDeclared        bool              `json:"acceptance_declared"`
 	Acceptance                []Acceptance      `json:"acceptance"`
 	OpenBlockers              []Blocker         `json:"open_blockers"`
 	MutationGuard             MutationGuard     `json:"mutation_guard"`
@@ -67,8 +84,10 @@ type HostUnderReview struct {
 
 // Independence records the separation between the host and reviewer.
 type Independence struct {
-	Level    string `json:"level"`
-	Distinct bool   `json:"distinct"`
+	Level      string `json:"level"`
+	Distinct   bool   `json:"distinct"`
+	Downgraded string `json:"downgraded,omitempty"`
+	Reason     string `json:"reason,omitempty"`
 }
 
 // Acceptance records one acceptance command result included in the receipt.
@@ -174,6 +193,7 @@ func validateBody(body Body, requireLedgerHead bool) error {
 		{"task_id", body.TaskID},
 		{"session_id", body.SessionID},
 		{"verdict", body.Verdict},
+		{"snapshot_mode", body.SnapshotMode},
 		{"base_commit", body.BaseCommit},
 		{"head_commit", body.HeadCommit},
 		{"tree_sha", body.TreeSHA},
@@ -225,6 +245,14 @@ func validateBody(body Body, requireLedgerHead bool) error {
 	default:
 		return fmt.Errorf("invalid verdict %q", body.Verdict)
 	}
+	switch body.SnapshotMode {
+	case SnapshotModeWorkingTree, SnapshotModeBaseDelta:
+	default:
+		return fmt.Errorf("invalid snapshot_mode %q", body.SnapshotMode)
+	}
+	if body.SnapshotMode == SnapshotModeWorkingTree && strings.TrimSpace(body.BaseRef) != "" {
+		return fmt.Errorf("base_ref is only valid with snapshot_mode %q", SnapshotModeBaseDelta)
+	}
 	return nil
 }
 
@@ -236,23 +264,38 @@ func validateBody(body Body, requireLedgerHead bool) error {
 // change set.
 func ValidateReviewCoverage(body Body) error {
 	covered := make(map[string]bool, len(body.ReviewedContextProvenance)+len(body.IgnoredUnreviewed))
+	reviewedDigest := make(map[string]string, len(body.ReviewedContextProvenance))
 	for _, p := range body.ReviewedContextProvenance {
 		if p.Path != "" {
 			covered[p.Path] = true
+			if p.SHA256 != "" {
+				reviewedDigest[p.Path] = p.SHA256
+			}
 		}
 	}
 	for _, path := range body.IgnoredUnreviewed {
 		covered[path] = true
 	}
-	var uncovered []string
-	for path := range body.FileDigests {
+	var uncovered, mismatched []string
+	for path, digest := range body.FileDigests {
 		if !covered[path] {
 			uncovered = append(uncovered, path)
+			continue
+		}
+		// A reviewed path's signed digest must equal the digest of the bytes the
+		// reviewer actually saw. Otherwise the receipt attests a file content the
+		// reviewer never reviewed, even though the path is nominally covered.
+		if reviewed, ok := reviewedDigest[path]; ok && digest != "" && reviewed != digest {
+			mismatched = append(mismatched, path)
 		}
 	}
 	if len(uncovered) > 0 {
 		sort.Strings(uncovered)
 		return fmt.Errorf("file_digests not covered by review provenance or ignored_unreviewed: %s", strings.Join(uncovered, ", "))
+	}
+	if len(mismatched) > 0 {
+		sort.Strings(mismatched)
+		return fmt.Errorf("file_digests do not match reviewed provenance digest: %s", strings.Join(mismatched, ", "))
 	}
 	return nil
 }

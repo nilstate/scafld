@@ -4,6 +4,7 @@ package completion
 import (
 	"fmt"
 
+	"github.com/nilstate/scafld/v2/internal/core/receipt"
 	corereview "github.com/nilstate/scafld/v2/internal/core/review"
 	"github.com/nilstate/scafld/v2/internal/core/session"
 )
@@ -18,9 +19,12 @@ type Authority struct {
 	Actual        string
 	Evidence      []string
 	ReviewEntry   session.Entry
+	ReceiptEntry  session.Entry
 	CompleteEntry session.Entry
 	Dossier       corereview.Dossier
 	HasDossier    bool
+	Receipt       receipt.Envelope
+	HasReceipt    bool
 }
 
 // Status returns valid or invalid for display surfaces.
@@ -36,6 +40,8 @@ func (a Authority) Kind() string {
 	switch {
 	case !a.Found || !a.Valid:
 		return "invalid"
+	case a.HasReceipt:
+		return "receipt"
 	case a.HumanReviewed:
 		return "human_reviewed"
 	default:
@@ -45,16 +51,25 @@ func (a Authority) Kind() string {
 
 // Provider returns the provider that produced the authorizing review.
 func (a Authority) Provider() string {
+	if a.HasReceipt {
+		return a.Receipt.Body.Reviewer.Provider
+	}
 	return a.ReviewEntry.Provider
 }
 
 // Verdict returns the authorizing review verdict.
 func (a Authority) Verdict() string {
+	if a.HasReceipt {
+		return a.Receipt.Body.Verdict
+	}
 	return a.ReviewEntry.Status
 }
 
 // Summary returns the best available human-readable authority summary.
 func (a Authority) Summary() string {
+	if a.HasReceipt {
+		return "finalization receipt " + a.Receipt.Body.Verdict
+	}
 	if a.HasDossier && a.Dossier.Summary != "" {
 		return a.Dossier.Summary
 	}
@@ -110,6 +125,8 @@ func reviewGateBefore(ledger session.Session, end int, completeEntry session.Ent
 	for i := end - 1; i >= 0; i-- {
 		entry := ledger.Entries[i]
 		switch entry.Type {
+		case session.EntryReceipt:
+			return validateReceiptEntry(ledger, entry, completeEntry)
 		case "review":
 			return validateReviewEntry(ledger, i, entry, completeEntry)
 		case "review_attempt", "build", "criterion", "phase", "approval", session.EntryWorkspaceBaseline, "fail", "cancel", "complete":
@@ -129,6 +146,60 @@ func reviewGateBefore(ledger session.Session, end int, completeEntry session.Ent
 		Actual:        "no current accepted review",
 		Evidence:      []string{"session review entries"},
 	}
+}
+
+func validateReceiptEntry(ledger session.Session, entry session.Entry, completeEntry session.Entry) Authority {
+	auth := Authority{
+		Found:         true,
+		Completed:     completeEntry.Type == "complete",
+		ReceiptEntry:  entry,
+		CompleteEntry: completeEntry,
+		Evidence:      []string{entryReference(entry)},
+	}
+	if !ledger.LedgerValid {
+		auth.Reason = "receipt ledger failed replay"
+		auth.Actual = ledger.LedgerError
+		return auth
+	}
+	envelope, err := receipt.DecodeEnvelope([]byte(entry.Output))
+	if err != nil {
+		auth.Reason = "latest receipt is invalid"
+		auth.Actual = err.Error()
+		return auth
+	}
+	auth.Receipt = envelope
+	auth.HasReceipt = true
+	if entry.Status != "pass" || envelope.Body.Verdict != "pass" {
+		auth.Reason = "latest finalization receipt has not passed"
+		auth.Actual = "receipt verdict " + envelope.Body.Verdict
+		return auth
+	}
+	if !corereview.ValidCompletionProvider(envelope.Body.Reviewer.Provider) {
+		auth.Reason = "passing receipt came from an unsupported provider"
+		auth.Actual = fmt.Sprintf("provider %q", envelope.Body.Reviewer.Provider)
+		return auth
+	}
+	if envelope.Body.MutationGuard.Status != "clean" {
+		auth.Reason = "receipt mutation guard is not clean"
+		auth.Actual = "mutation guard " + envelope.Body.MutationGuard.Status
+		return auth
+	}
+	if len(envelope.Body.OpenBlockers) > 0 {
+		auth.Reason = "latest receipt still has open completion blockers"
+		auth.Actual = fmt.Sprintf("%d open blocker(s)", len(envelope.Body.OpenBlockers))
+		return auth
+	}
+	for _, acceptance := range envelope.Body.Acceptance {
+		if acceptance.Status != "pass" {
+			auth.Reason = "latest receipt has failing acceptance"
+			auth.Actual = fmt.Sprintf("%s: %s", acceptance.ID, acceptance.Status)
+			return auth
+		}
+	}
+	auth.Valid = true
+	auth.Reason = "completion authorized by finalization receipt"
+	auth.Actual = "receipt verdict pass"
+	return auth
 }
 
 func validateReviewEntry(ledger session.Session, idx int, entry session.Entry, completeEntry session.Entry) Authority {

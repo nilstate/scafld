@@ -4,9 +4,22 @@ The short version:
 
 - `spec` is the contract
 - `session` is the ledger
-- `review` is the adversarial gate
+- `finalize` is the default agent gate
+- `scafld verify` is the CI merge wall
 
-## Default Commands
+## Default Agent And CI Path
+
+Agents should work normally, then call `finalize`. A passing finalize returns a
+signed receipt. CI should verify that receipt with:
+
+```bash
+scafld verify .scafld/receipts/latest.json --target <commit-ish>
+```
+
+## Optional Operator Lifecycle
+
+The full lifecycle is still useful for operators, debugging, and direct
+human-controlled work:
 
 ```bash
 scafld plan my-task --title "My task" --size small --risk low
@@ -23,12 +36,14 @@ scafld report
 
 ## When To Use What
 
+- `finalize`: default agent-facing acceptance and review receipt
+- `verify`: recompute and enforce the signed receipt in CI
 - `plan`: create the draft
 - `harden`: stress-test the draft before approval
 - `approve`: human ratifies the contract
 - `build`: start approved work and drive validation to the next handoff or block
 - `review`: run the adversarial review gate
-- `complete`: archive only after the review gate passes
+- `complete`: archive only after the review finalize passes
 
 Use `scafld config` after init or when project policy changes. It proposes
 config from cited repo evidence; it is not part of the normal task lifecycle.
@@ -38,10 +53,10 @@ Prompt ownership:
 - `.scafld/prompts/*` is the active template layer
 - `.scafld/core/prompts/*` is the managed reset copy
 
-`scafld update` refreshes managed core assets and existing manifest-backed
-prompt copies. Customized project prompts are skipped. It also refreshes root
-agent docs and renders generated `.scafld/config.yaml` into the current strict
-runtime shape.
+`scafld update` refreshes managed core assets, installs optional lifecycle
+helper scripts, and updates existing manifest-backed prompt copies. Customized
+project prompts are skipped. It also refreshes root agent docs and renders
+generated `.scafld/config.yaml` into the current strict runtime shape.
 
 ## Review Providers
 

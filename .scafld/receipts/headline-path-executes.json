@@ -1,0 +1,152 @@
+{
+  "body": {
+    "schema_version": 1,
+    "task_id": "headline-path-executes",
+    "session_id": "headline-path-executes",
+    "verdict": "pass",
+    "snapshot_mode": "base_delta",
+    "base_ref": "HEAD",
+    "base_commit": "cf0f71d94e52b29cf691c0e10849e70d6ccb4c92",
+    "head_commit": "cf0f71d94e52b29cf691c0e10849e70d6ccb4c92",
+    "scope": [
+      "internal/adapters/cli/finalize/run.go",
+      "internal/adapters/cli/verify/verify.go",
+      "internal/adapters/corebundle/assets/initwire/ci/scafld-verify.yml",
+      "internal/adapters/corebundle/initwire.go",
+      "test/e2e"
+    ],
+    "tree_sha": "1dcdb5989dd52be0b7953ce0c1c3b52d527d0375",
+    "file_digests": {
+      "internal/adapters/cli/finalize/run.go": "7946a05c590894d8223c56f9c787373682a3fe70d99916390e39b80fea21865a",
+      "internal/adapters/cli/verify/verify.go": "09fb34b75124c9f1be31cf82e159e4ac0936607b42e0d8a8c649268bc25dc64b",
+      "internal/adapters/corebundle/assets/initwire/ci/scafld-verify.yml": "dd6be835fcab4c0b207adfc57883a27381fa95fdf2566a3452635e750b7ba834",
+      "internal/adapters/corebundle/initwire.go": "46491f0797ab7357983cdb084d8e5e95993deb07247cd8526a40a3979169ca9d",
+      "test/e2e/finalize_receipt_verify_test.go": "d98f4af7a9594eb656e3af1ee7c263aa16ce477e7cdbd4e4a405f9be870414ea",
+      "test/e2e/headline_path_test.go": "9ac4d10b993526c810198fc9009c395469926cb491fd38a820f0278433a5acc9",
+      "test/e2e/lifecycle_test.go": "8ad15fff0c9c0966ec3cab8a03d90c0328494b4fe31a5febb6e9431b528dc673"
+    },
+    "ignored_unreviewed": [],
+    "reviewed_context_provenance": [
+      {
+        "kind": "evidence_file",
+        "path": "internal/adapters/cli/finalize/run.go",
+        "sha256": "7946a05c590894d8223c56f9c787373682a3fe70d99916390e39b80fea21865a",
+        "bytes": 30412
+      },
+      {
+        "kind": "evidence_file",
+        "path": "internal/adapters/cli/verify/verify.go",
+        "sha256": "09fb34b75124c9f1be31cf82e159e4ac0936607b42e0d8a8c649268bc25dc64b",
+        "bytes": 7863
+      },
+      {
+        "kind": "evidence_file",
+        "path": "internal/adapters/corebundle/assets/initwire/ci/scafld-verify.yml",
+        "sha256": "dd6be835fcab4c0b207adfc57883a27381fa95fdf2566a3452635e750b7ba834",
+        "bytes": 1364
+      },
+      {
+        "kind": "evidence_file",
+        "path": "internal/adapters/corebundle/initwire.go",
+        "sha256": "46491f0797ab7357983cdb084d8e5e95993deb07247cd8526a40a3979169ca9d",
+        "bytes": 8140
+      },
+      {
+        "kind": "evidence_file",
+        "path": "test/e2e/finalize_receipt_verify_test.go",
+        "sha256": "d98f4af7a9594eb656e3af1ee7c263aa16ce477e7cdbd4e4a405f9be870414ea",
+        "bytes": 8696
+      },
+      {
+        "kind": "evidence_file",
+        "path": "test/e2e/headline_path_test.go",
+        "sha256": "9ac4d10b993526c810198fc9009c395469926cb491fd38a820f0278433a5acc9",
+        "bytes": 4434
+      },
+      {
+        "kind": "evidence_file",
+        "path": "test/e2e/lifecycle_test.go",
+        "sha256": "8ad15fff0c9c0966ec3cab8a03d90c0328494b4fe31a5febb6e9431b528dc673",
+        "bytes": 16687
+      },
+      {
+        "kind": "deleted",
+        "path": "test/e2e/gate_verify_test.go"
+      }
+    ],
+    "reviewer": {
+      "provider": "codex",
+      "model": "gpt-5.5",
+      "binary_sha256": "baefc109b871e73a7bab298ee19b8bf73c8b647c4f8649a9794fc5db01db17b9",
+      "endpoint_host": "api.openai.com"
+    },
+    "host_under_review": {
+      "agent": "codex",
+      "session_id": "headline-path-executes"
+    },
+    "independence": {
+      "level": "isolation_only",
+      "distinct": false,
+      "downgraded": "same_vendor",
+      "reason": "isolation_only: reviewer \"codex\" matches host \"codex\"; the review is isolated but same-vendor, so correlated blind spots remain possible"
+    },
+    "spec_fingerprint": "0ba58caf9b27114e949103f6cdd6bf0bcf8c7b656e3f528d0cedc141e0226a23",
+    "acceptance_declared": true,
+    "acceptance": [
+      {
+        "id": "v1",
+        "command": "go run ./cmd/scafld validate headline-path-executes",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "3b320188eaf078c1be32471ce236709d26e13931eaab2ace66af6c962b121f47",
+        "diagnostic": "/Users/kam/dev/0state/scafld/.scafld/runs/headline-path-executes/diagnostics/command-1780558237191151000.txt"
+      },
+      {
+        "id": "ac1_1",
+        "command": "sh -c \"rg -n 'func TestFinalizeMintsReceiptVerifyAcceptsAndRejectsTamper|func TestHeadlinePathExecutesFinalizeReceiptVerify' test/e2e/finalize_receipt_verify_test.go test/e2e/headline_path_test.go \u0026\u0026 go test ./test/e2e -run 'FinalizeMintsReceiptVerify|HeadlinePathExecutesFinalizeReceiptVerify'\"",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "ae9cbe6c62d2a114c89168b31fb428914bdc4c57c280505073bbec345a6319c3",
+        "diagnostic": "/Users/kam/dev/0state/scafld/.scafld/runs/headline-path-executes/diagnostics/command-1780558241680459000.txt"
+      },
+      {
+        "id": "ac1_2",
+        "command": "go test ./...",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "51743c256715c350aa23a1ae9391d357c70e7fc0f892911dd03cc95315ea8003",
+        "diagnostic": "/Users/kam/dev/0state/scafld/.scafld/runs/headline-path-executes/diagnostics/command-1780558242525884000.txt"
+      },
+      {
+        "id": "ac1_3",
+        "command": "sh -c \"rg -n 'SCAFLD_RECEIPT_PATH' internal/adapters/cli/verify/verify.go internal/adapters/corebundle/assets/initwire/ci/scafld-verify.yml scripts .github/actions \u0026\u0026 rg -n 'scafld verify .*\\\\\\\\.scafld/receipts/|SCAFLD_RECEIPT_PATH' internal/adapters/corebundle/assets/initwire/ci/scafld-verify.yml scripts .github/actions\"",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "f65f4adcd44a26e82f965d741421bcd233e631399236412e03258f70cc7c2fab",
+        "diagnostic": "/Users/kam/dev/0state/scafld/.scafld/runs/headline-path-executes/diagnostics/command-1780558242564669000.txt"
+      }
+    ],
+    "open_blockers": [],
+    "mutation_guard": {
+      "status": "clean",
+      "scope": [
+        "internal/adapters/cli/finalize/run.go",
+        "internal/adapters/cli/verify/verify.go",
+        "internal/adapters/corebundle/assets/initwire/ci/scafld-verify.yml",
+        "internal/adapters/corebundle/initwire.go",
+        "test/e2e"
+      ]
+    },
+    "ledger_head": "ede1bce63ab6758b61753e4c93b814ef2986880367a77c99cfb152ce215429fb",
+    "minted_at": "2026-06-04T07:30:35Z"
+  },
+  "signature": {
+    "alg": "ed25519",
+    "key_id": "ed25519:RGGe6gUQpsB6KGu0VcnMxGUL5IA1I1VDSKi3ecCzYOU",
+    "sig": "o9/cR4Sm9e49NlIBE5gWchVwbHc3dZRQ5Kd0vYQ/EagF7QRQCk2X6iFSuHo3odtQ3U3p0syUA68algNXWdL2Bg=="
+  }
+}

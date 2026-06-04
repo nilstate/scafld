@@ -282,7 +282,6 @@ func TestRunInit(t *testing.T) {
 		".scafld/core/config.yaml",
 		".scafld/core/prompts/harden.md",
 		".scafld/core/schemas/spec.json",
-		".scafld/core/scripts/scafld-codex-build.sh",
 		".scafld/config.local.yaml",
 		"AGENTS.md",
 		"CLAUDE.md",
@@ -308,8 +307,8 @@ func TestRunInit(t *testing.T) {
 	if !strings.Contains(string(gitignore), "# scafld runtime state") || !strings.Contains(string(gitignore), ".scafld/config.local.yaml") {
 		t.Fatalf(".gitignore does not include scafld rules:\n%s", gitignore)
 	}
-	if info, err := os.Stat(filepath.Join(root, ".scafld", "core", "scripts", "scafld-codex-build.sh")); err != nil || info.Mode()&0o111 == 0 {
-		t.Fatalf("core script should be executable, info=%v err=%v", info, err)
+	if _, err := os.Stat(filepath.Join(root, ".scafld", "core", "scripts", "scafld-codex-build.sh")); !os.IsNotExist(err) {
+		t.Fatalf("default init should not install optional lifecycle helper script, err=%v", err)
 	}
 }
 

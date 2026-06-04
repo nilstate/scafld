@@ -1,0 +1,159 @@
+{
+  "body": {
+    "schema_version": 1,
+    "task_id": "browser-evidence-acceptance",
+    "session_id": "browser-evidence-acceptance",
+    "verdict": "pass",
+    "snapshot_mode": "working_tree",
+    "base_commit": "cf0f71d94e52b29cf691c0e10849e70d6ccb4c92",
+    "head_commit": "cf0f71d94e52b29cf691c0e10849e70d6ccb4c92",
+    "scope": [
+      "docs/configuration.md",
+      "docs/execution.md",
+      "internal/adapters/markdown/parser.go",
+      "internal/adapters/markdown/renderer.go",
+      "internal/app/build/build.go",
+      "internal/core/acceptance/browser.go",
+      "internal/core/acceptance/model.go",
+      "internal/core/spec/model.go"
+    ],
+    "tree_sha": "1dcdb5989dd52be0b7953ce0c1c3b52d527d0375",
+    "file_digests": {
+      "docs/configuration.md": "389f09d15f976cfb40ab41861c8299f5b4cbeb552f6041060f8c924d49f163ef",
+      "docs/execution.md": "7953ee964274227bf7a78ab3529c23c97e406605eb54fb7dbe479644f9d4ac39",
+      "internal/adapters/markdown/parser.go": "886f28ee3a683131c581b87162080fa30f82d65cccb88c8bdc4ac81e3407ebfb",
+      "internal/adapters/markdown/renderer.go": "1b39302fffcd4dca740e264f861159fcdf32dd455c4fc64e02310cd2a9bd1dc5",
+      "internal/app/build/build.go": "ad0b42df71cccf15fb0b0d214e800be7716013236719ea3b591640fc72d9beb7",
+      "internal/core/acceptance/browser.go": "e45a7afb4704494f7eb720e66f3b181f19aece37c9fe75f0c19e545b22615af2",
+      "internal/core/acceptance/model.go": "2cd44caeb59a3b4696fb3cdeb3942429241cb5f22f30ac8f96d0441cd4f3a37e",
+      "internal/core/spec/model.go": "f8497b7f1869387d74e2ad242e2dda97c57e4c6d33dd66700da9585fc6d523b1"
+    },
+    "ignored_unreviewed": [],
+    "reviewed_context_provenance": [
+      {
+        "kind": "evidence_file",
+        "path": "docs/configuration.md",
+        "sha256": "389f09d15f976cfb40ab41861c8299f5b4cbeb552f6041060f8c924d49f163ef",
+        "bytes": 14336
+      },
+      {
+        "kind": "evidence_file",
+        "path": "docs/execution.md",
+        "sha256": "7953ee964274227bf7a78ab3529c23c97e406605eb54fb7dbe479644f9d4ac39",
+        "bytes": 6179
+      },
+      {
+        "kind": "evidence_file",
+        "path": "internal/adapters/markdown/parser.go",
+        "sha256": "886f28ee3a683131c581b87162080fa30f82d65cccb88c8bdc4ac81e3407ebfb",
+        "bytes": 21377
+      },
+      {
+        "kind": "evidence_file",
+        "path": "internal/adapters/markdown/renderer.go",
+        "sha256": "1b39302fffcd4dca740e264f861159fcdf32dd455c4fc64e02310cd2a9bd1dc5",
+        "bytes": 11147
+      },
+      {
+        "kind": "evidence_file",
+        "path": "internal/app/build/build.go",
+        "sha256": "ad0b42df71cccf15fb0b0d214e800be7716013236719ea3b591640fc72d9beb7",
+        "bytes": 17721
+      },
+      {
+        "kind": "evidence_file",
+        "path": "internal/core/acceptance/browser.go",
+        "sha256": "e45a7afb4704494f7eb720e66f3b181f19aece37c9fe75f0c19e545b22615af2",
+        "bytes": 4471
+      },
+      {
+        "kind": "evidence_file",
+        "path": "internal/core/acceptance/model.go",
+        "sha256": "2cd44caeb59a3b4696fb3cdeb3942429241cb5f22f30ac8f96d0441cd4f3a37e",
+        "bytes": 2427
+      },
+      {
+        "kind": "evidence_file",
+        "path": "internal/core/spec/model.go",
+        "sha256": "f8497b7f1869387d74e2ad242e2dda97c57e4c6d33dd66700da9585fc6d523b1",
+        "bytes": 13637
+      }
+    ],
+    "reviewer": {
+      "provider": "codex",
+      "model": "gpt-5.5",
+      "binary_sha256": "baefc109b871e73a7bab298ee19b8bf73c8b647c4f8649a9794fc5db01db17b9",
+      "endpoint_host": "api.openai.com"
+    },
+    "host_under_review": {
+      "agent": "claude",
+      "session_id": "browser-evidence-acceptance"
+    },
+    "independence": {
+      "level": "cross_vendor",
+      "distinct": true,
+      "reason": "cross_vendor: reviewer \"codex\" and host \"claude\" are different model vendors; this is multi-model review that reduces correlated blind spots but remains single-party local tooling"
+    },
+    "spec_fingerprint": "b234139aca96c7893ba0d435b0530a80ab740065fa5c187477c0a054be7ce29a",
+    "acceptance_declared": true,
+    "acceptance": [
+      {
+        "id": "final-tests",
+        "command": "go test ./internal/core/acceptance ./internal/app/build ./internal/adapters/markdown ./internal/core/spec",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "61d91670161f920e0ff7b21e01119a9ba2dfa2260336be2e46b962f6aa72d67e",
+        "diagnostic": ".scafld/runs/browser-evidence-acceptance/diagnostics/command-1780562037361968000.txt"
+      },
+      {
+        "id": "dogfood-browser-evidence",
+        "command": "printf '{\"url\":\"https://example.test/dashboard\",\"viewport\":\"1440x900\",\"auth\":{\"mode\":\"none\"},\"screenshots\":[{\"path\":\".scafld/runs/browser-evidence-acceptance/browser-dashboard.png\",\"description\":\"dashboard loaded\"}],\"console_errors\":[],\"network_errors\":[]}'",
+        "expected_kind": "browser_evidence",
+        "status": "pass",
+        "reason": "browser evidence accepted for https://example.test/dashboard at 1440x900",
+        "output_sha256": "019f3e858fa7f7d14ef617c2d3edf50b713040fe7762f525fb37d0a2b262493a",
+        "diagnostic": ".scafld/runs/browser-evidence-acceptance/diagnostics/command-1780562037368581000.txt"
+      },
+      {
+        "id": "ac1",
+        "command": "go test ./internal/core/acceptance ./internal/app/build ./internal/adapters/markdown ./internal/core/spec",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "61d91670161f920e0ff7b21e01119a9ba2dfa2260336be2e46b962f6aa72d67e",
+        "diagnostic": ".scafld/runs/browser-evidence-acceptance/diagnostics/command-1780562037534272000.txt"
+      },
+      {
+        "id": "ac2",
+        "command": "make check",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "36e5bcd992fa99554e3dc0f2482294ffdbed32696a009eb50c43fa188f534b7c",
+        "diagnostic": ".scafld/runs/browser-evidence-acceptance/diagnostics/command-1780562057643784000.txt"
+      }
+    ],
+    "open_blockers": [],
+    "mutation_guard": {
+      "status": "clean",
+      "scope": [
+        "docs/configuration.md",
+        "docs/execution.md",
+        "internal/adapters/markdown/parser.go",
+        "internal/adapters/markdown/renderer.go",
+        "internal/app/build/build.go",
+        "internal/core/acceptance/browser.go",
+        "internal/core/acceptance/model.go",
+        "internal/core/spec/model.go"
+      ]
+    },
+    "ledger_head": "4a48e4b411f83411a42e35912a10ad206a74ac6e8dd7051cd659ebfb1b8e1a1a",
+    "minted_at": "2026-06-04T08:33:56Z"
+  },
+  "signature": {
+    "alg": "ed25519",
+    "key_id": "ed25519:RGGe6gUQpsB6KGu0VcnMxGUL5IA1I1VDSKi3ecCzYOU",
+    "sig": "FU3BraaFsszm/vlHiGs+k6iyNCZCtRNfEfEQPaMvvaatzwm/jYhPLXASm375/Z49v08I7XsrP0uBrIj/zongBA=="
+  }
+}

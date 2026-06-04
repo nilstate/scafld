@@ -1,0 +1,65 @@
+{
+  "schema_version": "runx.receipt.v1",
+  "kind": "skill_execution",
+  "issuer": {
+    "type": "local",
+    "kid": "local_602673a057c2ad16",
+    "public_key_sha256": "602673a057c2ad16aa642368cbf597d62024331fd906743793cb20897524b923"
+  },
+  "subject": {
+    "skill_name": "harness-author",
+    "source_type": "agent-step"
+  },
+  "status": "success",
+  "started_at": "2026-04-20T14:43:37.844Z",
+  "completed_at": "2026-04-20T14:43:37.857Z",
+  "duration_ms": 9,
+  "input_hash": "894d1694e7d142e36794bc5d2c03633ab49569f124532988dbcd8dc0dce0957a",
+  "output_hash": "bf50fc268e482a5dc687071f33dc983133c4a27228cb7d282a5747dc0fba8fb3",
+  "context_from": [
+    "rx_fe2bbdcb45e949818c0f323e4679f3d8"
+  ],
+  "parent_receipt": "rx_fe2bbdcb45e949818c0f323e4679f3d8",
+  "artifact_ids": [
+    "ax_1266ed295bec9066"
+  ],
+  "disposition": "completed",
+  "outcome_state": "complete",
+  "execution": {
+    "exit_code": 0,
+    "signal": null
+  },
+  "metadata": {
+    "runner": {
+      "type": "agent-step",
+      "enforcement": "agent-mediated",
+      "attestation": "agent-reported"
+    },
+    "agent_hook": {
+      "source_type": "agent-step",
+      "agent": "builder",
+      "task": "harness-author",
+      "route": "provided",
+      "status": "success"
+    },
+    "chain_governance": {
+      "step_id": "author-update-harness",
+      "selected_runner": "default",
+      "scope_admission": {
+        "status": "allow",
+        "requested_scopes": [
+          "runx:builder:write-proposal"
+        ],
+        "granted_scopes": [
+          "*"
+        ],
+        "grant_id": "local-default"
+      }
+    }
+  },
+  "id": "rx_ecfa94b5e40244f19048282d51ccc3b8",
+  "signature": {
+    "alg": "Ed25519",
+    "value": "BCw7ipLAEEqxq5_0p6kMQdCE7JbdQgyZUCws1-3rJq-1z33Uk0_xpDG3_pb_1DnWxfwSEMNkMIO2W8VlvnZIDA"
+  }
+}

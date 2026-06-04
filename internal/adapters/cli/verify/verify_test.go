@@ -41,6 +41,40 @@ func TestRunMissingTargetFailsClosedInCI(t *testing.T) {
 	}
 }
 
+func TestRunMissingTrustedKeysFailsClosedInCI(t *testing.T) {
+	t.Parallel()
+
+	result, err := Run(context.Background(), Options{Root: t.TempDir(), ReceiptPath: "missing.json", Target: "main", CI: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Passed || !strings.Contains(result.Reason, "trusted keys") {
+		t.Fatalf("result = %+v", result)
+	}
+}
+
+func TestRunUsesReceiptPathFromEnvironment(t *testing.T) {
+	t.Setenv("SCAFLD_RECEIPT_PATH", "env-receipt.json")
+
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".scafld"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	keys := trust.TrustedKeys{Version: trust.TrustedKeysVersion}
+	keysJSON, err := trust.MarshalTrustedKeys(keys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".scafld", "trusted-keys.json"), keysJSON, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = Run(context.Background(), Options{Root: root})
+	if err == nil || !strings.Contains(err.Error(), "env-receipt.json") {
+		t.Fatalf("verify must resolve SCAFLD_RECEIPT_PATH before config default, got %v", err)
+	}
+}
+
 func TestTamperedTreeVerifyExitsNonzero(t *testing.T) {
 	t.Parallel()
 
@@ -83,6 +117,7 @@ func TestTamperedTreeVerifyExitsNonzero(t *testing.T) {
 		TaskID:                    "task",
 		SessionID:                 "session",
 		Verdict:                   "pass",
+		SnapshotMode:              receipt.SnapshotModeWorkingTree,
 		BaseCommit:                head,
 		HeadCommit:                head,
 		Scope:                     []string{"."},
@@ -92,8 +127,9 @@ func TestTamperedTreeVerifyExitsNonzero(t *testing.T) {
 		ReviewedContextProvenance: []receipt.Provenance{{Kind: "evidence_file", Path: "a.go", SHA256: "sha"}},
 		Reviewer:                  receipt.Reviewer{Provider: "codex"},
 		HostUnderReview:           receipt.HostUnderReview{Agent: "codex"},
-		Independence:              receipt.Independence{Level: "isolation_only"},
+		Independence:              receipt.Independence{Level: receipt.IndependenceLevelIsolationOnly, Downgraded: receipt.IndependenceDowngradeSameVendor},
 		SpecFingerprint:           "spec",
+		AcceptanceDeclared:        false,
 		Acceptance:                []receipt.Acceptance{},
 		OpenBlockers:              []receipt.Blocker{},
 		MutationGuard:             receipt.MutationGuard{Status: "clean"},
@@ -119,7 +155,7 @@ func TestTamperedTreeVerifyExitsNonzero(t *testing.T) {
 	}
 
 	var stdout, stderr bytes.Buffer
-	exit := Handler()(context.Background(), []string{"--root", root, receiptPath, "--target", head}, &stdout, &stderr)
+	exit := Handler()(context.Background(), []string{"--root", root, receiptPath, "--target", head, "--trusted-keys", filepath.Join(root, ".scafld", "trusted-keys.json")}, &stdout, &stderr)
 	if exit == 0 || !strings.Contains(stderr.String(), "tree mismatch") {
 		t.Fatalf("exit=%d stdout=%q stderr=%q", exit, stdout.String(), stderr.String())
 	}

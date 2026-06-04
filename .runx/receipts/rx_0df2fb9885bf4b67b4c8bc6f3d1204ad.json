@@ -1,0 +1,72 @@
+{
+  "schema_version": "runx.receipt.v1",
+  "id": "rx_0df2fb9885bf4b67b4c8bc6f3d1204ad",
+  "kind": "chain_execution",
+  "issuer": {
+    "type": "local",
+    "kid": "local_602673a057c2ad16",
+    "public_key_sha256": "602673a057c2ad16aa642368cbf597d62024331fd906743793cb20897524b923"
+  },
+  "subject": {
+    "chain_name": "improve-skill",
+    "owner": "runx"
+  },
+  "status": "success",
+  "started_at": "2026-04-20T14:43:37.591Z",
+  "completed_at": "2026-04-20T14:43:37.903Z",
+  "duration_ms": 304,
+  "input_hash": "4ba63a5ae0ece636a3a5b077a1c987a3f21ed884a8df19465175d3a406bcdcb1",
+  "output_hash": "bf50fc268e482a5dc687071f33dc983133c4a27228cb7d282a5747dc0fba8fb3",
+  "disposition": "completed",
+  "outcome_state": "complete",
+  "steps": [
+    {
+      "step_id": "review-receipt",
+      "attempt": 1,
+      "skill": "../receipt-review",
+      "status": "success",
+      "receipt_id": "rx_fe2bbdcb45e949818c0f323e4679f3d8",
+      "context_from": [],
+      "artifact_ids": [
+        "ax_2b350afbdc794c93"
+      ]
+    },
+    {
+      "step_id": "author-update-harness",
+      "attempt": 1,
+      "skill": "../harness-author",
+      "status": "success",
+      "receipt_id": "rx_ecfa94b5e40244f19048282d51ccc3b8",
+      "parent_receipt": "rx_fe2bbdcb45e949818c0f323e4679f3d8",
+      "context_from": [
+        {
+          "input": "review",
+          "from_step": "review-receipt",
+          "output": "receipt_review.data",
+          "receipt_id": "rx_fe2bbdcb45e949818c0f323e4679f3d8"
+        }
+      ],
+      "governance": {
+        "scope_admission": {
+          "status": "allow",
+          "requested_scopes": [
+            "runx:builder:write-proposal"
+          ],
+          "granted_scopes": [
+            "*"
+          ],
+          "grant_id": "local-default"
+        }
+      },
+      "artifact_ids": [
+        "ax_1266ed295bec9066"
+      ],
+      "disposition": "completed",
+      "outcome_state": "complete"
+    }
+  ],
+  "signature": {
+    "alg": "Ed25519",
+    "value": "qeHOAr6XyQqtRVlC4qnJgA8qNbAdMv2SGv2eLFtIZG7yY8CjDBBK1LKdUZdB56PmUKxX2Ot6qRCyBn-S4ZmaCw"
+  }
+}

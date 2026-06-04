@@ -58,6 +58,7 @@ func TestChangedFilesIgnoresScafldRuntimeState(t *testing.T) {
 	}
 	for rel, data := range map[string][]byte{
 		".scafld/runs/task/session.json": []byte("{}\n"),
+		".scafld/specs/archive/task.md":  []byte("# task\n"),
 		".scafld/specs/drafts/task.md":   []byte("# task\n"),
 		".scafld/config.yaml":            []byte("review: {}\n"),
 		"api/handler.go":                 []byte("package api\n"),
@@ -78,7 +79,7 @@ func TestChangedFilesIgnoresScafldRuntimeState(t *testing.T) {
 	if strings.Contains(joined, ".scafld/runs") {
 		t.Fatalf("runtime path leaked into changed files:\n%s", joined)
 	}
-	for _, kept := range []string{".scafld/config.yaml", ".scafld/specs/drafts/task.md", "api/handler.go"} {
+	for _, kept := range []string{".scafld/config.yaml", "api/handler.go"} {
 		if !strings.Contains(joined, kept) {
 			t.Fatalf("expected %q in changed files:\n%s", kept, joined)
 		}
@@ -187,11 +188,11 @@ func TestSnapshotStableTreeSHALeavesIndexAndHeadUntouched(t *testing.T) {
 	beforeIndex := snapshotIndexMD5(t, root)
 
 	adapter := Adapter{Root: root}
-	first, err := adapter.Snapshot(context.Background(), SnapshotInput{})
+	first, err := adapter.Snapshot(context.Background(), SnapshotInput{Scope: []string{"."}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := adapter.Snapshot(context.Background(), SnapshotInput{})
+	second, err := adapter.Snapshot(context.Background(), SnapshotInput{Scope: []string{"."}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -206,6 +207,40 @@ func TestSnapshotStableTreeSHALeavesIndexAndHeadUntouched(t *testing.T) {
 	}
 }
 
+func TestSnapshotRejectsEmptyScope(t *testing.T) {
+	t.Parallel()
+
+	root := initSnapshotRepo(t)
+	writeSnapshotFile(t, root, "file.txt", "one\n")
+	commitSnapshotAll(t, root, "init")
+
+	_, err := (Adapter{Root: root}).Snapshot(context.Background(), SnapshotInput{})
+	if err == nil || !strings.Contains(err.Error(), "scope is empty") {
+		t.Fatalf("Snapshot empty scope error = %v, want fail-closed scope error", err)
+	}
+}
+
+func TestTreeDigestsNormalizesDirectoryScope(t *testing.T) {
+	t.Parallel()
+
+	root := initSnapshotRepo(t)
+	writeSnapshotFile(t, root, "test/e2e/headline_path_test.go", "package e2e\n")
+	commitSnapshotAll(t, root, "init")
+
+	adapter := Adapter{Root: root}
+	snap, err := adapter.Snapshot(context.Background(), SnapshotInput{Scope: []string{"test/e2e/"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	digests, err := adapter.TreeDigests(context.Background(), snap.TreeSHA, []string{"test/e2e/"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(digests) != 1 || digests[0].Path != "test/e2e/headline_path_test.go" {
+		t.Fatalf("TreeDigests with trailing-slash scope = %+v", digests)
+	}
+}
+
 func TestSnapshotBaseHeadCommitSemantics(t *testing.T) {
 	t.Parallel()
 
@@ -216,14 +251,14 @@ func TestSnapshotBaseHeadCommitSemantics(t *testing.T) {
 	head := commitSnapshotAll(t, root, "head")
 
 	adapter := Adapter{Root: root}
-	withoutBase, err := adapter.Snapshot(context.Background(), SnapshotInput{})
+	withoutBase, err := adapter.Snapshot(context.Background(), SnapshotInput{Scope: []string{"."}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if withoutBase.HeadCommit != head || withoutBase.BaseCommit != head {
 		t.Fatalf("without BaseRef: base=%s head=%s want head=%s", withoutBase.BaseCommit, withoutBase.HeadCommit, head)
 	}
-	withBase, err := adapter.Snapshot(context.Background(), SnapshotInput{BaseRef: base})
+	withBase, err := adapter.Snapshot(context.Background(), SnapshotInput{Scope: []string{"."}, BaseRef: base})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -268,12 +303,12 @@ func TestSnapshotAutoCRLFAttributesParity(t *testing.T) {
 
 	adapter := Adapter{Root: root}
 	gitSnapshot(t, root, "config", "core.autocrlf", "true")
-	trueConfig, err := adapter.Snapshot(context.Background(), SnapshotInput{})
+	trueConfig, err := adapter.Snapshot(context.Background(), SnapshotInput{Scope: []string{"."}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	gitSnapshot(t, root, "config", "core.autocrlf", "false")
-	falseConfig, err := adapter.Snapshot(context.Background(), SnapshotInput{})
+	falseConfig, err := adapter.Snapshot(context.Background(), SnapshotInput{Scope: []string{"."}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -301,7 +336,7 @@ func TestSnapshotReadTreeTrackedIgnoredDeletion(t *testing.T) {
 	commitSnapshotAll(t, root, "tracked ignored")
 
 	adapter := Adapter{Root: root}
-	snapshot, err := adapter.Snapshot(context.Background(), SnapshotInput{})
+	snapshot, err := adapter.Snapshot(context.Background(), SnapshotInput{Scope: []string{"."}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -311,7 +346,7 @@ func TestSnapshotReadTreeTrackedIgnoredDeletion(t *testing.T) {
 	if err := os.Remove(filepath.Join(root, "keep.log")); err != nil {
 		t.Fatal(err)
 	}
-	deleted, err := adapter.Snapshot(context.Background(), SnapshotInput{})
+	deleted, err := adapter.Snapshot(context.Background(), SnapshotInput{Scope: []string{"."}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -329,12 +364,12 @@ func TestSnapshotScafldRunsExcludedFromTree(t *testing.T) {
 	commitSnapshotAll(t, root, "runtime tracked")
 
 	adapter := Adapter{Root: root}
-	first, err := adapter.Snapshot(context.Background(), SnapshotInput{})
+	first, err := adapter.Snapshot(context.Background(), SnapshotInput{Scope: []string{"."}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	writeSnapshotFile(t, root, ".scafld/runs/task/session.json", "{\"changed\":true}\n")
-	second, err := adapter.Snapshot(context.Background(), SnapshotInput{})
+	second, err := adapter.Snapshot(context.Background(), SnapshotInput{Scope: []string{"."}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -363,7 +398,7 @@ func TestSnapshotDigestStatusDeletedIgnored(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	snapshot, err := (Adapter{Root: root}).Snapshot(context.Background(), SnapshotInput{})
+	snapshot, err := (Adapter{Root: root}).Snapshot(context.Background(), SnapshotInput{Scope: []string{"."}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -442,7 +477,7 @@ func TestSnapshotIndexFlagEvidenceIntegrity(t *testing.T) {
 	adapter := Adapter{Root: root}
 
 	gitSnapshot(t, root, "update-index", "--skip-worktree", "tracked.txt")
-	_, err := adapter.Snapshot(context.Background(), SnapshotInput{})
+	_, err := adapter.Snapshot(context.Background(), SnapshotInput{Scope: []string{"."}})
 	var integrity EvidenceIntegrityError
 	if !errors.As(err, &integrity) || !snapshotStringIn(integrity.Paths, "tracked.txt") {
 		t.Fatalf("skip-worktree error=%v integrity=%+v", err, integrity)
@@ -450,7 +485,7 @@ func TestSnapshotIndexFlagEvidenceIntegrity(t *testing.T) {
 	gitSnapshot(t, root, "update-index", "--no-skip-worktree", "tracked.txt")
 
 	gitSnapshot(t, root, "update-index", "--assume-unchanged", "tracked.txt")
-	_, err = adapter.Snapshot(context.Background(), SnapshotInput{})
+	_, err = adapter.Snapshot(context.Background(), SnapshotInput{Scope: []string{"."}})
 	integrity = EvidenceIntegrityError{}
 	if !errors.As(err, &integrity) || !snapshotStringIn(integrity.Paths, "tracked.txt") {
 		t.Fatalf("assume-unchanged error=%v integrity=%+v", err, integrity)
@@ -463,14 +498,14 @@ func TestSnapshotIndexFlagEvidenceIntegrity(t *testing.T) {
 	writeSnapshotFile(t, root, "café.txt", "base\n")
 	commitSnapshotAll(t, root, "unicode")
 	gitSnapshot(t, root, "update-index", "--skip-worktree", "café.txt")
-	_, err = adapter.Snapshot(context.Background(), SnapshotInput{})
+	_, err = adapter.Snapshot(context.Background(), SnapshotInput{Scope: []string{"."}})
 	integrity = EvidenceIntegrityError{}
 	if !errors.As(err, &integrity) || len(integrity.Paths) == 0 {
 		t.Fatalf("unicode skip-worktree must fail closed: error=%v", err)
 	}
 	gitSnapshot(t, root, "update-index", "--no-skip-worktree", "café.txt")
 
-	if _, err := adapter.Snapshot(context.Background(), SnapshotInput{}); err != nil {
+	if _, err := adapter.Snapshot(context.Background(), SnapshotInput{Scope: []string{"."}}); err != nil {
 		t.Fatalf("unflagged snapshot failed: %v", err)
 	}
 }
@@ -483,15 +518,17 @@ func TestSnapshotExcludesReceiptOutputFromTreeFingerprint(t *testing.T) {
 	commitSnapshotAll(t, root, "init")
 
 	adapter := Adapter{Root: root}
-	before, err := adapter.Snapshot(context.Background(), SnapshotInput{})
+	before, err := adapter.Snapshot(context.Background(), SnapshotInput{Scope: []string{"."}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	// A passing gate writes the signed receipt under .scafld/receipts after computing
-	// tree_sha. That write must not change the tree a later verify recomputes, or an
-	// honest receipt would fail with a tree mismatch in the same checkout.
+	// A passing finalize writes the signed receipt and projects the completed spec
+	// after computing tree_sha. Those writes must not change the tree a later verify
+	// recomputes, or an honest receipt would fail with a tree mismatch in the same
+	// checkout.
 	writeSnapshotFile(t, root, ".scafld/receipts/demo.json", `{"signed":true}`)
-	after, err := adapter.Snapshot(context.Background(), SnapshotInput{})
+	writeSnapshotFile(t, root, ".scafld/specs/archive/demo.md", `# demo`)
+	after, err := adapter.Snapshot(context.Background(), SnapshotInput{Scope: []string{"."}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -499,8 +536,8 @@ func TestSnapshotExcludesReceiptOutputFromTreeFingerprint(t *testing.T) {
 		t.Fatalf("receipt write changed the tree fingerprint: before=%q after=%q", before.TreeSHA, after.TreeSHA)
 	}
 	for _, d := range after.FileDigests {
-		if strings.HasPrefix(d.Path, ".scafld/receipts") {
-			t.Fatalf("receipt file must never appear as reviewed evidence: %+v", d)
+		if strings.HasPrefix(d.Path, ".scafld/receipts") || strings.HasPrefix(d.Path, ".scafld/specs") {
+			t.Fatalf("scafld state file must never appear as reviewed evidence: %+v", d)
 		}
 	}
 }
@@ -508,12 +545,12 @@ func TestSnapshotExcludesReceiptOutputFromTreeFingerprint(t *testing.T) {
 func TestIgnoredRuntimePathCoversScafldOutputs(t *testing.T) {
 	t.Parallel()
 
-	for _, p := range []string{".scafld/runs/x/session.json", ".scafld/receipts/demo.json", ".scafld/reviews/y.json"} {
+	for _, p := range []string{".scafld/specs/demo.md", ".scafld/runs/x/session.json", ".scafld/receipts/demo.json", ".scafld/reviews/y.json"} {
 		if !ignoredRuntimePath(p) {
 			t.Fatalf("scafld runtime output must be excluded from review: %s", p)
 		}
 	}
-	for _, p := range []string{"src/main.go", ".scafld/specs/demo.md", ".scafld/receiptsX/y"} {
+	for _, p := range []string{"src/main.go", ".scafld/receiptsX/y"} {
 		if ignoredRuntimePath(p) {
 			t.Fatalf("reviewed work file must not be excluded: %s", p)
 		}
