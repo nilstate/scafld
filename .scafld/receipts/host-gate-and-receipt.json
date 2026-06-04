@@ -1,0 +1,405 @@
+{
+  "body": {
+    "schema_version": 1,
+    "task_id": "host-gate-and-receipt",
+    "session_id": "host-gate-and-receipt",
+    "verdict": "pass",
+    "snapshot_mode": "working_tree",
+    "base_commit": "6a74f1d46035f85c98b9b536073ea5940ab910ac",
+    "head_commit": "6a74f1d46035f85c98b9b536073ea5940ab910ac",
+    "scope": [
+      "internal/adapters/cli/cli.go",
+      "internal/adapters/cli/finalize/doc.go",
+      "internal/adapters/cli/finalize/run.go",
+      "internal/adapters/mcp/hostgate/server.go",
+      "internal/adapters/sign/ed25519.go",
+      "internal/app/acceptance/acceptance.go",
+      "internal/app/acceptance/acceptance_test.go",
+      "internal/app/build/build.go",
+      "internal/app/finalize/finalize.go",
+      "internal/app/finalize/finalize_test.go",
+      "internal/core/receipt/receipt.go",
+      "internal/core/receipt/receipt_test.go",
+      "internal/core/session/model.go",
+      "internal/core/trust/trusted_keys.go",
+      "internal/core/trust/trusted_keys_test.go",
+      "internal/platform/mcpsubmit/server.go"
+    ],
+    "tree_sha": "ff60b51c144c717e853870c9d99a3a6b1e4c7a12",
+    "file_digests": {
+      "internal/adapters/cli/cli.go": "0d1f66dfb89076388b7378215774cbf2f571679469219dbbc0253a35fb35391f",
+      "internal/adapters/cli/finalize/doc.go": "91e9d4140e0d476570aea04b206e9fedf51dec8088902ef40454803eaa96e40c",
+      "internal/adapters/cli/finalize/run.go": "0dd01beabb6f0b7fcc31126e8956baf6a3b267e29e595774bfec3a7bc1822962",
+      "internal/adapters/sign/ed25519.go": "d052e37d8af60456195df26cc5e40613d003d1831f0c0221a05bed4836c11daa",
+      "internal/app/acceptance/acceptance.go": "217b897ffb1879f925b6ae1c20457147ff6e69cb2108b365f14a7cb19d2ac3e7",
+      "internal/app/acceptance/acceptance_test.go": "cee062b9ce07564347f069d63f20cbf68b0ff6a58b7ac4381c4ebb199ece004b",
+      "internal/app/build/build.go": "ad0b42df71cccf15fb0b0d214e800be7716013236719ea3b591640fc72d9beb7",
+      "internal/app/finalize/finalize.go": "5d8d8989a711eebe66965f42d16bd60ce525c25e3b5bcb7b31caae6dce2c730f",
+      "internal/app/finalize/finalize_test.go": "259701a586b52ccfc6f7b8f58b42cde6092121c2455567e3bc4e7b8017a437c2",
+      "internal/core/receipt/receipt.go": "0c250b8aa437bcd1ba9fec286e8bd4efad8d8adb83c5f1c7e78f5b1467673661",
+      "internal/core/receipt/receipt_test.go": "be20733cbd5d6d02f45e448f95ff0bc46b330403f64d2df6a231fecc58f5815a",
+      "internal/core/session/model.go": "5a3937503a85fcc8fd530e769116d4c3b7eddf6ef06ada2e43b92a8a8ba64b5b",
+      "internal/core/trust/trusted_keys.go": "dc86300800987b6493e905e88f16ac618564ef520f8b7d1343651ec2eb505ab6",
+      "internal/core/trust/trusted_keys_test.go": "71f85e8fbf8449d938c83984bbfac39ad7f883b0aa4a63f815f723257b3df915",
+      "internal/platform/mcpsubmit/server.go": "84922a577de0ffbda541dd799c201ef33ba53178169e1fbcdb1a460ceb5cb56f"
+    },
+    "ignored_unreviewed": [],
+    "reviewed_context_provenance": [
+      {
+        "kind": "evidence_file",
+        "path": "internal/adapters/cli/cli.go",
+        "sha256": "0d1f66dfb89076388b7378215774cbf2f571679469219dbbc0253a35fb35391f",
+        "bytes": 16897
+      },
+      {
+        "kind": "evidence_file",
+        "path": "internal/adapters/cli/finalize/doc.go",
+        "sha256": "91e9d4140e0d476570aea04b206e9fedf51dec8088902ef40454803eaa96e40c",
+        "bytes": 80
+      },
+      {
+        "kind": "evidence_file",
+        "path": "internal/adapters/cli/finalize/run.go",
+        "sha256": "0dd01beabb6f0b7fcc31126e8956baf6a3b267e29e595774bfec3a7bc1822962",
+        "bytes": 32101
+      },
+      {
+        "kind": "evidence_file",
+        "path": "internal/adapters/sign/ed25519.go",
+        "sha256": "d052e37d8af60456195df26cc5e40613d003d1831f0c0221a05bed4836c11daa",
+        "bytes": 2681
+      },
+      {
+        "kind": "evidence_file",
+        "path": "internal/app/acceptance/acceptance.go",
+        "sha256": "217b897ffb1879f925b6ae1c20457147ff6e69cb2108b365f14a7cb19d2ac3e7",
+        "bytes": 4756
+      },
+      {
+        "kind": "evidence_file",
+        "path": "internal/app/acceptance/acceptance_test.go",
+        "sha256": "cee062b9ce07564347f069d63f20cbf68b0ff6a58b7ac4381c4ebb199ece004b",
+        "bytes": 6920
+      },
+      {
+        "kind": "evidence_file",
+        "path": "internal/app/build/build.go",
+        "sha256": "ad0b42df71cccf15fb0b0d214e800be7716013236719ea3b591640fc72d9beb7",
+        "bytes": 17721
+      },
+      {
+        "kind": "evidence_file",
+        "path": "internal/app/finalize/finalize.go",
+        "sha256": "5d8d8989a711eebe66965f42d16bd60ce525c25e3b5bcb7b31caae6dce2c730f",
+        "bytes": 15256
+      },
+      {
+        "kind": "evidence_file",
+        "path": "internal/app/finalize/finalize_test.go",
+        "sha256": "259701a586b52ccfc6f7b8f58b42cde6092121c2455567e3bc4e7b8017a437c2",
+        "bytes": 13514
+      },
+      {
+        "kind": "evidence_file",
+        "path": "internal/core/receipt/receipt.go",
+        "sha256": "0c250b8aa437bcd1ba9fec286e8bd4efad8d8adb83c5f1c7e78f5b1467673661",
+        "bytes": 12785
+      },
+      {
+        "kind": "evidence_file",
+        "path": "internal/core/receipt/receipt_test.go",
+        "sha256": "be20733cbd5d6d02f45e448f95ff0bc46b330403f64d2df6a231fecc58f5815a",
+        "bytes": 5766
+      },
+      {
+        "kind": "evidence_file",
+        "path": "internal/core/session/model.go",
+        "sha256": "5a3937503a85fcc8fd530e769116d4c3b7eddf6ef06ada2e43b92a8a8ba64b5b",
+        "bytes": 6218
+      },
+      {
+        "kind": "evidence_file",
+        "path": "internal/core/trust/trusted_keys.go",
+        "sha256": "dc86300800987b6493e905e88f16ac618564ef520f8b7d1343651ec2eb505ab6",
+        "bytes": 4296
+      },
+      {
+        "kind": "evidence_file",
+        "path": "internal/core/trust/trusted_keys_test.go",
+        "sha256": "71f85e8fbf8449d938c83984bbfac39ad7f883b0aa4a63f815f723257b3df915",
+        "bytes": 3880
+      },
+      {
+        "kind": "evidence_file",
+        "path": "internal/platform/mcpsubmit/server.go",
+        "sha256": "84922a577de0ffbda541dd799c201ef33ba53178169e1fbcdb1a460ceb5cb56f",
+        "bytes": 7019
+      }
+    ],
+    "reviewer": {
+      "provider": "codex",
+      "model": "gpt-5.5",
+      "binary_sha256": "baefc109b871e73a7bab298ee19b8bf73c8b647c4f8649a9794fc5db01db17b9",
+      "endpoint_host": "api.openai.com"
+    },
+    "host_under_review": {
+      "agent": "claude",
+      "session_id": "host-gate-and-receipt"
+    },
+    "independence": {
+      "level": "cross_vendor",
+      "distinct": true,
+      "reason": "cross_vendor: reviewer \"codex\" and host \"claude\" are different model vendors; this is multi-model review that reduces correlated blind spots but remains single-party local tooling"
+    },
+    "spec_fingerprint": "b01875c78be453a1e4ad53e110e471dbe97c70484c79fa1e7dbfd9c3338f404e",
+    "acceptance_declared": true,
+    "acceptance": [
+      {
+        "id": "v1",
+        "command": "go run ./cmd/scafld validate host-gate-and-receipt",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "eec68c35bfb804fc8b70f2b78d4471dd2ebc38e686e9800cf1ac28ffe80acc73",
+        "diagnostic": ".scafld/runs/host-gate-and-receipt/diagnostics/command-1780605878940389000.txt"
+      },
+      {
+        "id": "v2",
+        "command": "go test ./internal/app/finalize",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "e80532b3976832155e9681135e3054b8a950d37492d372406a0b1e8811ac5d17",
+        "diagnostic": ".scafld/runs/host-gate-and-receipt/diagnostics/command-1780605879020831000.txt"
+      },
+      {
+        "id": "v3",
+        "command": "go test ./internal/arch -run TestCLIIsThin",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "3554df0704d06e3691e0580dc1a0934342bb4f5bfbd5f65300c568cf153c6588",
+        "diagnostic": ".scafld/runs/host-gate-and-receipt/diagnostics/command-1780605879603263000.txt"
+      },
+      {
+        "id": "v5",
+        "command": "go test ./internal/app/acceptance ./internal/app/build ./internal/app/finalize",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "cbdedc4e792c639e91799a0e2ddd4e2579f37e6538d8ea1eac486520102c4015",
+        "diagnostic": ".scafld/runs/host-gate-and-receipt/diagnostics/command-1780605879691553000.txt"
+      },
+      {
+        "id": "v6",
+        "command": "go test ./test/e2e -run TestGateMintsReceipt",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "9863e935d5835b7a79646d7690b99d592dff49696cc1fbab2c3c9bc7e9f99438",
+        "diagnostic": ".scafld/runs/host-gate-and-receipt/diagnostics/command-1780605880082468000.txt"
+      },
+      {
+        "id": "ac1_1",
+        "command": "go test ./internal/core/receipt ./internal/core/trust",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "ea84411fcb690d11476f9c7022aa085f7a793faf23175bf194a8c9b32d196e09",
+        "diagnostic": ".scafld/runs/host-gate-and-receipt/diagnostics/command-1780605880173691000.txt"
+      },
+      {
+        "id": "ac1_2",
+        "command": "rg -n 'sort' ./internal/core/receipt/receipt.go",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "10a1d0cb2c20cabd27d057468f13896e9ea26ac7feba95d05a53fc57809f53cf",
+        "diagnostic": ".scafld/runs/host-gate-and-receipt/diagnostics/command-1780605880181592000.txt"
+      },
+      {
+        "id": "ac1_3",
+        "command": "rg -n 'ed25519' ./internal/adapters/sign/ed25519.go",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "db13d6b73cd9fcffe0284e1e9a798205ba0967cfe0a92dc7da2f2aab8ed771f5",
+        "diagnostic": ".scafld/runs/host-gate-and-receipt/diagnostics/command-1780605880191305000.txt"
+      },
+      {
+        "id": "ac1_3b",
+        "command": "rg -n 'KeyIDFromRawEd25519PublicKey|type TrustedKeys|ParseTrustedKeys' ./internal/core/trust",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "e852d126ccacbceecbb39928095e27ba9dab3ea27c89f06d053ed2fbd1c98f67",
+        "diagnostic": ".scafld/runs/host-gate-and-receipt/diagnostics/command-1780605880201739000.txt"
+      },
+      {
+        "id": "ac1_4",
+        "command": "rg -n 'ledger_head|LedgerHead' ./internal/core/session/model.go",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "056ae07e9e6ac8d01f91ccb90913863970e6651db0bb857fd29e1270ca1c811f",
+        "diagnostic": ".scafld/runs/host-gate-and-receipt/diagnostics/command-1780605880212989000.txt"
+      },
+      {
+        "id": "ac1_5",
+        "command": "go test ./internal/core/session ./internal/arch -run 'TestCoreIsPure|Session'",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "93c32692c40560a400147eca47143c3e9f9866b10180787c81003bb38d70ab14",
+        "diagnostic": ".scafld/runs/host-gate-and-receipt/diagnostics/command-1780605880646022000.txt"
+      },
+      {
+        "id": "ac1_6",
+        "command": "go test ./internal/core/session ./internal/core/receipt -run 'Ledger|ReceiptDigest|Canonical'",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "a682af3b9aa29ef9b8e56dda49ae17396c9024b00fe00d2cbee18c6ab07e9691",
+        "diagnostic": ".scafld/runs/host-gate-and-receipt/diagnostics/command-1780605880737048000.txt"
+      },
+      {
+        "id": "ac2_1",
+        "command": "go test ./internal/app/finalize",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "e80532b3976832155e9681135e3054b8a950d37492d372406a0b1e8811ac5d17",
+        "diagnostic": ".scafld/runs/host-gate-and-receipt/diagnostics/command-1780605880820620000.txt"
+      },
+      {
+        "id": "ac2_2",
+        "command": "go test ./internal/arch -run 'TestAppDoesNotImportAdapters|TestPortsAreNarrow'",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "723ea66b491a07bee2a6e63c97570301faa20c5340a54e4e2fbc27f178a29fd6",
+        "diagnostic": ".scafld/runs/host-gate-and-receipt/diagnostics/command-1780605881247639000.txt"
+      },
+      {
+        "id": "ac2_3",
+        "command": "rg -n 'EvaluateInput|EvaluateOutput|CriterionResult|app/acceptance|acceptance\\\\.' ./internal/app/build ./internal/app/finalize ./internal/app/acceptance",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "cb35ef70dbfaa2db2ede00b9c2b3867f432398c17021a3513faa06cd9e646acc",
+        "diagnostic": ".scafld/runs/host-gate-and-receipt/diagnostics/command-1780605881264443000.txt"
+      },
+      {
+        "id": "ac2_4",
+        "command": "rg -n 'Validation|Location|advisory|downgrade' ./internal/app/finalize/finalize.go",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "be42f1c497a5f1c026648812dc6747c22e47ec83390b9d2430e8f2e760c0cdab",
+        "diagnostic": ".scafld/runs/host-gate-and-receipt/diagnostics/command-1780605881273655000.txt"
+      },
+      {
+        "id": "ac2_5",
+        "command": "rg -n 'func .*criterionEntry|func .*runCriterionList|func .*runFinalAcceptance' ./internal/app/finalize",
+        "expected_kind": "no_matches",
+        "status": "pass",
+        "reason": "output was empty",
+        "exit_code": 1,
+        "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "diagnostic": ".scafld/runs/host-gate-and-receipt/diagnostics/command-1780605881288538000.txt"
+      },
+      {
+        "id": "ac2_6",
+        "command": "go test ./internal/app/acceptance ./internal/app/build",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "b626caf46cce651ec6e070b4efbeac13070759f11e222546ac1a1ab28c650d5d",
+        "diagnostic": ".scafld/runs/host-gate-and-receipt/diagnostics/command-1780605881381368000.txt"
+      },
+      {
+        "id": "ac2_7",
+        "command": "go test ./internal/app/acceptance ./internal/app/build -run 'Browser|Playwright|IdleTimeout|Manual|Diagnostic|Reason'",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "b626caf46cce651ec6e070b4efbeac13070759f11e222546ac1a1ab28c650d5d",
+        "diagnostic": ".scafld/runs/host-gate-and-receipt/diagnostics/command-1780605881473893000.txt"
+      },
+      {
+        "id": "ac3_1",
+        "command": "go test ./internal/arch -run TestCLIIsThin",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "9ece92555b33997bb4678048a684aabefa2c0a6287935252fba63a4cc37fc91e",
+        "diagnostic": ".scafld/runs/host-gate-and-receipt/diagnostics/command-1780605881554359000.txt"
+      },
+      {
+        "id": "ac3_3",
+        "command": "rg -n 'finalize' ./internal/adapters/mcp/finalize/server.go ./internal/adapters/cli/finalize/run.go",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "6525e1bd674a08ca41a0bf2599025c6df7751fcf6143998b4187700938e5ac2b",
+        "diagnostic": ".scafld/runs/host-gate-and-receipt/diagnostics/command-1780605881563764000.txt"
+      },
+      {
+        "id": "ac3_4",
+        "command": "rg -n 'platform/mcpsubmit' ./internal/adapters/mcp/finalize/server.go",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "219ff1ddb4800a5a843f9beecd7304153c80f4b8a017ff648ee9295bf3f8dd22",
+        "diagnostic": ".scafld/runs/host-gate-and-receipt/diagnostics/command-1780605881574310000.txt"
+      },
+      {
+        "id": "ac3_4b",
+        "command": "go test ./internal/arch -run TestImportBoundaries \u0026\u0026 rg -n 'scafld finalize|--json|os/exec|exec.Command' ./internal/adapters/mcp/finalize/server.go",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "0a649389ba16672cdefad168d946780b18836b49f276af57c8a1cf81eb6e37f4",
+        "diagnostic": ".scafld/runs/host-gate-and-receipt/diagnostics/command-1780605882283303000.txt"
+      },
+      {
+        "id": "ac3_5",
+        "command": "go test ./internal/platform/mcpsubmit ./internal/adapters/mcp/finalize -run 'SingleUse|Repeated|Finalize'",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "0fcc195808eb0924e641529c43503b277559ff381bf10ce3e9e9302954000f56",
+        "diagnostic": ".scafld/runs/host-gate-and-receipt/diagnostics/command-1780605882377837000.txt"
+      }
+    ],
+    "open_blockers": [],
+    "mutation_guard": {
+      "status": "clean",
+      "scope": [
+        "internal/adapters/cli/cli.go",
+        "internal/adapters/cli/finalize/doc.go",
+        "internal/adapters/cli/finalize/run.go",
+        "internal/adapters/mcp/hostgate/server.go",
+        "internal/adapters/sign/ed25519.go",
+        "internal/app/acceptance/acceptance.go",
+        "internal/app/acceptance/acceptance_test.go",
+        "internal/app/build/build.go",
+        "internal/app/finalize/finalize.go",
+        "internal/app/finalize/finalize_test.go",
+        "internal/core/receipt/receipt.go",
+        "internal/core/receipt/receipt_test.go",
+        "internal/core/session/model.go",
+        "internal/core/trust/trusted_keys.go",
+        "internal/core/trust/trusted_keys_test.go",
+        "internal/platform/mcpsubmit/server.go"
+      ]
+    },
+    "ledger_head": "ff6f7ebdd87bc22dc6aaef6c878d9f42b8edbb06cc0b7a2041a20fd8b994d550",
+    "minted_at": "2026-06-04T20:44:38Z"
+  },
+  "signature": {
+    "alg": "ed25519",
+    "key_id": "ed25519:RGGe6gUQpsB6KGu0VcnMxGUL5IA1I1VDSKi3ecCzYOU",
+    "sig": "sR5aDUuGkpJDgTgZ5WhTRB2Cko0urqS9HQm3PwwS7ikHBFyJfpZjJiDHor7vhUSeu+002rJjnwZZtSdvHzJgAw=="
+  }
+}

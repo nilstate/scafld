@@ -268,9 +268,34 @@ func snapshotMode(baseRef string) string {
 }
 
 func completeIndependence(ind receipt.Independence, reviewerProvider string, hostAgent string) receipt.Independence {
+	// Fully re-derive the signed level and distinctness from the reviewer that
+	// actually ran versus the detected host, never trusting the passed-in level.
+	// cross_vendor is stamped only when separation is genuinely proven, so neither a
+	// forged cross_vendor input nor a stale isolation_only input can survive.
+	if crossVendorProven(reviewerProvider, hostAgent) {
+		ind.Level = receipt.IndependenceLevelCrossVendor
+		ind.Distinct = true
+	} else {
+		ind.Level = receipt.IndependenceLevelIsolationOnly
+		ind.Distinct = false
+	}
 	ind.Downgraded = independenceDowngrade(ind, reviewerProvider, hostAgent)
 	ind.Reason = independenceReason(ind, reviewerProvider, hostAgent)
 	return ind
+}
+
+// crossVendorProven reports whether the reviewer and host are both known and from
+// different vendors, the only case in which cross_vendor independence is real.
+func crossVendorProven(reviewerProvider, hostAgent string) bool {
+	reviewerProvider = strings.TrimSpace(reviewerProvider)
+	hostAgent = strings.TrimSpace(hostAgent)
+	if reviewerProvider == "" || strings.EqualFold(reviewerProvider, "unknown") {
+		return false
+	}
+	if hostAgent == "" || strings.EqualFold(hostAgent, "unknown") {
+		return false
+	}
+	return !strings.EqualFold(reviewerProvider, hostAgent)
 }
 
 func independenceDowngrade(ind receipt.Independence, reviewerProvider string, hostAgent string) string {

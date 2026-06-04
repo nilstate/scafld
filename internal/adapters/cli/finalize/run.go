@@ -214,7 +214,10 @@ type baseDiffPathser interface {
 }
 
 func deriveGateScope(ctx context.Context, diffs baseDiffPathser, model spec.Model, req Request, hasSpec bool) ([]string, error) {
-	scope := gateScope(model, req.ScopeHint)
+	// Spec scope/touchpoints are markdown prose, parsed leniently; scope_hint is
+	// authoritative agent-supplied paths, used literally so top-level extensionless
+	// files survive (the same reason base-diff paths are used literally below).
+	scope := mergeScope(gateScope(model, nil), literalScope(req.ScopeHint))
 	if len(scope) == 0 && !hasSpec && strings.TrimSpace(req.BaseRef) != "" {
 		paths, err := diffs.BaseDiffPaths(ctx, req.BaseRef)
 		if err != nil {
@@ -229,6 +232,23 @@ func deriveGateScope(ctx context.Context, diffs baseDiffPathser, model spec.Mode
 		return nil, errors.New("finalize scope is empty; provide scope_hint, a scoped spec, or a base_ref with changed paths")
 	}
 	return scope, nil
+}
+
+// mergeScope returns the sorted, de-duplicated union of two scope path lists.
+func mergeScope(a, b []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, list := range [][]string{a, b} {
+		for _, p := range list {
+			if p == "" || seen[p] {
+				continue
+			}
+			seen[p] = true
+			out = append(out, p)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // literalScope cleans, de-duplicates, and sorts authoritative git paths (base
