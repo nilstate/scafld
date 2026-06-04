@@ -290,6 +290,44 @@ func TestConfigDefaultWhenMissing(t *testing.T) {
 	}
 }
 
+func TestVerifyPolicyDefaultsLocalAndOverrides(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := Load(context.Background(), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Verify.Policy != "local" {
+		t.Fatalf("default verify.policy = %q, want local", cfg.Verify.Policy)
+	}
+
+	for _, want := range []string{"advisory", "required", "local"} {
+		root := t.TempDir()
+		writeFile(t, root, ".scafld/config.yaml", "verify:\n  policy: "+want+"\n")
+		cfg, err := Load(context.Background(), root)
+		if err != nil {
+			t.Fatalf("load policy %q: %v", want, err)
+		}
+		if cfg.Verify.Policy != want {
+			t.Fatalf("verify.policy = %q, want %q", cfg.Verify.Policy, want)
+		}
+	}
+}
+
+func TestVerifyPolicyRejectsUnknownValue(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	writeFile(t, root, ".scafld/config.yaml", "verify:\n  policy: blocking\n")
+	if _, err := Load(context.Background(), root); err == nil {
+		t.Fatal("Load accepted invalid verify.policy, want error")
+	}
+	// The verify accountability path (LoadBase) rejects it too.
+	if _, err := LoadBase(context.Background(), root); err == nil {
+		t.Fatal("LoadBase accepted invalid verify.policy, want error")
+	}
+}
+
 func writeFile(t *testing.T, root string, rel string, text string) {
 	t.Helper()
 	path := filepath.Join(root, filepath.FromSlash(rel))

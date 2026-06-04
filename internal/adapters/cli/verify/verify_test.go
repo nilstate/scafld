@@ -29,6 +29,85 @@ func TestParseTarget(t *testing.T) {
 	}
 }
 
+func TestSelfCheckReportsWiringWithoutClaimingEnforcement(t *testing.T) {
+	t.Parallel()
+
+	opts, err := Parse([]string{"--self-check", "--root", "."})
+	if err != nil || !opts.SelfCheck {
+		t.Fatalf("Parse(--self-check) opts=%+v err=%v", opts, err)
+	}
+
+	// Default workspace: no workflow, policy local, no gap, and no enforcement claim.
+	root := t.TempDir()
+	report, err := SelfCheck(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.WorkflowInstalled || report.Policy != "local" || report.Gap != "" {
+		t.Fatalf("default self-check report = %+v, want local/uninstalled/no-gap", report)
+	}
+	text := RenderSelfCheck(report)
+	for _, want := range []string{"not installed", "scafld init --ci", "cannot read or set", "does not assert that any merge gate is active"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("self-check text missing %q:\n%s", want, text)
+		}
+	}
+
+	// required policy without an installed workflow is surfaced as a gap, not hidden.
+	gapRoot := t.TempDir()
+	writeVerifyPolicyConfig(t, gapRoot, "required")
+	gapReport, err := SelfCheck(context.Background(), gapRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gapReport.Gap == "" || !strings.Contains(RenderSelfCheck(gapReport), "gap:") {
+		t.Fatalf("required policy without workflow did not surface a gap: %+v", gapReport)
+	}
+
+	// An installed workflow is reported as installed.
+	wfRoot := t.TempDir()
+	writeVerifyWorkflow(t, wfRoot)
+	wfReport, err := SelfCheck(context.Background(), wfRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !wfReport.WorkflowInstalled || !strings.Contains(RenderSelfCheck(wfReport), "installed (") {
+		t.Fatalf("installed workflow not reported: %+v", wfReport)
+	}
+
+	// Handler path exits zero and prints the report.
+	var stdout, stderr bytes.Buffer
+	code := Handler()(context.Background(), []string{"--self-check", "--root", root}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("self-check exit = %d, stderr=%q", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "verify.policy: local") {
+		t.Fatalf("handler stdout missing policy line:\n%s", stdout.String())
+	}
+}
+
+func writeVerifyPolicyConfig(t *testing.T, root string, policy string) {
+	t.Helper()
+	dir := filepath.Join(root, ".scafld")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte("verify:\n  policy: "+policy+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeVerifyWorkflow(t *testing.T, root string) {
+	t.Helper()
+	dir := filepath.Join(root, ".github", "workflows")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "scafld-verify.yml"), []byte("name: scafld-verify\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestRunMissingTargetFailsClosedInCI(t *testing.T) {
 	t.Parallel()
 

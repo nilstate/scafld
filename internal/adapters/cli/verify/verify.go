@@ -29,6 +29,7 @@ type Options struct {
 	Target      string
 	JSON        bool
 	CI          bool
+	SelfCheck   bool
 }
 
 // Handler returns a CLI-compatible verify handler.
@@ -38,6 +39,15 @@ func Handler() func(context.Context, []string, io.Writer, io.Writer) int {
 		if err != nil {
 			fmt.Fprintf(stderr, "error: %v\n", err)
 			return 2
+		}
+		if opts.SelfCheck {
+			report, err := SelfCheck(ctx, opts.Root)
+			if err != nil {
+				fmt.Fprintf(stderr, "error: %v\n", err)
+				return 2
+			}
+			fmt.Fprint(stdout, RenderSelfCheck(report))
+			return 0
 		}
 		out, err := Run(ctx, opts)
 		if err != nil {
@@ -203,6 +213,8 @@ func Parse(args []string) (Options, error) {
 			opts.JSON = true
 		case arg == "--ci":
 			opts.CI = true
+		case arg == "--self-check":
+			opts.SelfCheck = true
 		case arg == "--target":
 			if i+1 >= len(args) {
 				return Options{}, errors.New("--target requires a value")
@@ -255,4 +267,60 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+const verifyWorkflowRel = ".github/workflows/scafld-verify.yml"
+
+// SelfCheckReport is the offline wiring state scafld can confirm locally. It
+// never asserts that any merge gate is active: requiring the verify check is a
+// GitHub branch-protection setting scafld cannot read or set.
+type SelfCheckReport struct {
+	Policy            string
+	WorkflowInstalled bool
+	WorkflowPath      string
+	// Gap is set when the declared policy implies a CI workflow that is not installed.
+	Gap string
+}
+
+// SelfCheck reports, without contacting any network or service, the local
+// verify wiring: the configured verify.policy and whether the CI workflow file
+// is present. It reads reporting metadata only and never touches a receipt.
+func SelfCheck(ctx context.Context, root string) (SelfCheckReport, error) {
+	if root == "" {
+		root = "."
+	}
+	cfg, err := configadapter.LoadBase(ctx, root)
+	if err != nil {
+		return SelfCheckReport{}, fmt.Errorf("load config: %w", err)
+	}
+	workflowPath := filepath.Join(root, filepath.FromSlash(verifyWorkflowRel))
+	_, statErr := os.Stat(workflowPath)
+	report := SelfCheckReport{
+		Policy:            cfg.Verify.Policy,
+		WorkflowInstalled: statErr == nil,
+		WorkflowPath:      verifyWorkflowRel,
+	}
+	if !report.WorkflowInstalled && (cfg.Verify.Policy == "advisory" || cfg.Verify.Policy == "required") {
+		report.Gap = fmt.Sprintf("verify.policy is %q but %s is not installed; run scafld init --ci to add it", cfg.Verify.Policy, verifyWorkflowRel)
+	}
+	return report, nil
+}
+
+// RenderSelfCheck renders a SelfCheckReport for humans. It states plainly what
+// scafld can and cannot confirm and never claims a merge gate is enforced.
+func RenderSelfCheck(report SelfCheckReport) string {
+	var b strings.Builder
+	b.WriteString("scafld verify self-check (offline)\n")
+	fmt.Fprintf(&b, "verify.policy: %s\n", report.Policy)
+	if report.WorkflowInstalled {
+		fmt.Fprintf(&b, "CI workflow: installed (%s)\n", report.WorkflowPath)
+	} else {
+		fmt.Fprintf(&b, "CI workflow: not installed (%s); run scafld init --ci to add the PR merge gate\n", report.WorkflowPath)
+	}
+	if report.Gap != "" {
+		fmt.Fprintf(&b, "gap: %s\n", report.Gap)
+	}
+	b.WriteString("note: requiring this check before merge is a GitHub branch-protection setting that scafld cannot read or set; confirm it in your repository settings.\n")
+	b.WriteString("scafld confirms local wiring only and does not assert that any merge gate is active.\n")
+	return b.String()
 }
