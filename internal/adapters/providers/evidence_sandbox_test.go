@@ -241,6 +241,22 @@ func TestReceiptGradeEmptyEvidenceStillSandboxed(t *testing.T) {
 	}
 }
 
+func TestReceiptGradeReadRootEnforcementRecordedHonestly(t *testing.T) {
+	t.Parallel()
+
+	// Codex's read-only sandbox does not jail reads, so the receipt must record its
+	// read confinement as best-effort, not enforced.
+	_, codexFacts := selectReceiptGradeSandboxAgent(t, "codex")
+	if codexFacts.SandboxPolicy.ReadRootsEnforced {
+		t.Fatal("codex read confinement is best-effort; the receipt must not claim read roots are enforced")
+	}
+	// Claude hard-confines reads via --add-dir, so enforcement is recorded as true.
+	_, claudeFacts := selectReceiptGradeSandboxAgent(t, "claude")
+	if !claudeFacts.SandboxPolicy.ReadRootsEnforced {
+		t.Fatal("claude --add-dir hard-confines reads; the receipt must record read roots as enforced")
+	}
+}
+
 func selectReceiptGradeSandboxAgent(t *testing.T, provider string) (Agent, RuntimeFacts) {
 	t.Helper()
 	binary := writeExecutable(t, provider+"-reviewer")

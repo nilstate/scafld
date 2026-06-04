@@ -12,7 +12,13 @@ import (
 // SandboxPolicy describes the provider-visible limits applied to a
 // receipt-grade review run.
 type SandboxPolicy struct {
-	ReadRoots               []string `json:"read_roots"`
+	ReadRoots []string `json:"read_roots"`
+	// ReadRootsEnforced is true only when the provider CLI hard-confines the
+	// reviewer's reads to ReadRoots (Claude --add-dir, Gemini includeDirectories).
+	// For Codex it is false: its read-only sandbox plus working directory prevent
+	// writes and default reads outside ReadRoots, but do not jail them, so the
+	// receipt records best-effort confinement honestly rather than claiming a jail.
+	ReadRootsEnforced       bool     `json:"read_roots_enforced"`
 	MemoryAutoloadDisabled  bool     `json:"memory_autoload_disabled"`
 	AgentInstructionBlocked []string `json:"agent_instruction_blocked,omitempty"`
 }
