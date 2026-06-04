@@ -2,9 +2,9 @@
 
 ## Default Agent Flow
 
-Work with the host agent's normal planning, editing, and testing tools. When the work appears done, call `scafld_gate`.
+Work with the host agent's normal planning, editing, and testing tools. When the work appears done, call `finalize`.
 
-`scafld_gate` is the accountability surface: it records acceptance evidence, runs the independent review path, and returns either blockers or a signed receipt. The agent does not grade its own completion.
+`finalize` is the accountability surface: it records acceptance evidence, runs the independent review path, and returns either blockers or a signed receipt. The agent does not grade its own completion.
 
 ## Merge Wall
 
@@ -36,7 +36,7 @@ Use `scafld harden` to strengthen drafts before approval. Use `scafld build` to 
 
 ## Do Not
 
-- Close governed work without `scafld_gate` or an explicit human decision.
+- Close governed work without `finalize` or an explicit human decision.
 - Reconstruct lifecycle state by scraping Markdown. Use `status --json`.
 - Mutate `.scafld/core/` by hand. Use `scafld update`.
 - Treat the Stop hook as the merge wall. CI verify is the wall.

@@ -2,15 +2,15 @@
   "hooks": {
     "Stop": [
       {
-        "name": "scafld_gate_stop",
+        "name": "finalize-stop",
         "matcher": "",
         "hooks": [
           {
             "type": "command",
-            "command": "scafld gate --json --stdin"
+            "command": "scafld finalize --json --stdin"
           }
         ],
-        "reason": "Run scafld_gate before ending the turn when an open gate or unsatisfied receipt exists. CI verify remains the hard merge wall."
+        "reason": "Run finalize before ending the turn when an open finalize or unsatisfied receipt exists. CI verify remains the hard merge wall."
       }
     ]
   }

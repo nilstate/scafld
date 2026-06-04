@@ -1,0 +1,246 @@
+{
+  "body": {
+    "schema_version": 1,
+    "task_id": "context-isolated-reviewer",
+    "session_id": "context-isolated-reviewer",
+    "verdict": "pass",
+    "snapshot_mode": "working_tree",
+    "base_commit": "cf0f71d94e52b29cf691c0e10849e70d6ccb4c92",
+    "head_commit": "cf0f71d94e52b29cf691c0e10849e70d6ccb4c92",
+    "scope": [
+      "internal/adapters/cli/harden/selection.go",
+      "internal/adapters/cli/review/selection.go",
+      "internal/adapters/config/config.go",
+      "internal/adapters/providers/provider.go",
+      "internal/adapters/providers/provider_test.go",
+      "internal/app/review"
+    ],
+    "tree_sha": "d14dd3a53006c9b0688ec9de2a623a5e4f720e60",
+    "file_digests": {
+      "internal/adapters/cli/harden/selection.go": "f265ace388557be3095e1cd6071c5b8767200f8acbc1eea8d0d273e7cf7b8145",
+      "internal/adapters/cli/review/selection.go": "11e29a448ea8dee5f1baff197b76040d0ebe91052a359a36057842a9f97b0903",
+      "internal/adapters/config/config.go": "f37a1d9f7430fd26fc94ccf22a6ca0d8ff31b8c3d151cb1b0caaa443cd6ad2b1",
+      "internal/adapters/providers/provider.go": "a921a0f7d92cd7652aedf979e02aa331d097245646cf2032e74259a970eadb89",
+      "internal/adapters/providers/provider_test.go": "f92a379a0120c5e4799535c0abb33e5030ed07906b36be6e894e766fcdcfc68e",
+      "internal/app/review/context.go": "f42947a984dc6c81ff3c8336d524b3b787d9c8d8835346972e976a4c8345b6c0",
+      "internal/app/review/doc.go": "991951784a6884d335578ff8e2fc6466fbfacf8f3c8b7bebe212a5c468c50241",
+      "internal/app/review/findings.go": "f8bd806b2e5b06c3191e57e1edb01472ecd8139032b6bb727211d28f04f58033",
+      "internal/app/review/mode.go": "8b1336a2d29c2358d6cfd889873ae3b4b5007d3623224e04ca3897f0b4346aa5",
+      "internal/app/review/review.go": "0207dbad85e287d60521689e9797aa498a912a92c9387df4ded09213a608723a",
+      "internal/app/review/review_test.go": "14be39cd18b3fdf9373dffdd93c4daadacc3a03bf257882221fa153b05644a39",
+      "internal/app/review/scope.go": "7088a43ff1de4475ed81ed8f77904004ba71986275d574b388dd0ee80007aed9"
+    },
+    "ignored_unreviewed": [],
+    "reviewed_context_provenance": [
+      {
+        "kind": "evidence_file",
+        "path": "internal/adapters/cli/harden/selection.go",
+        "sha256": "f265ace388557be3095e1cd6071c5b8767200f8acbc1eea8d0d273e7cf7b8145",
+        "bytes": 6037
+      },
+      {
+        "kind": "evidence_file",
+        "path": "internal/adapters/cli/review/selection.go",
+        "sha256": "11e29a448ea8dee5f1baff197b76040d0ebe91052a359a36057842a9f97b0903",
+        "bytes": 9375
+      },
+      {
+        "kind": "evidence_file",
+        "path": "internal/adapters/config/config.go",
+        "sha256": "f37a1d9f7430fd26fc94ccf22a6ca0d8ff31b8c3d151cb1b0caaa443cd6ad2b1",
+        "bytes": 18528
+      },
+      {
+        "kind": "evidence_file",
+        "path": "internal/adapters/providers/provider.go",
+        "sha256": "a921a0f7d92cd7652aedf979e02aa331d097245646cf2032e74259a970eadb89",
+        "bytes": 56571
+      },
+      {
+        "kind": "evidence_file",
+        "path": "internal/adapters/providers/provider_test.go",
+        "sha256": "f92a379a0120c5e4799535c0abb33e5030ed07906b36be6e894e766fcdcfc68e",
+        "bytes": 38948
+      },
+      {
+        "kind": "evidence_file",
+        "path": "internal/app/review/context.go",
+        "sha256": "f42947a984dc6c81ff3c8336d524b3b787d9c8d8835346972e976a4c8345b6c0",
+        "bytes": 12847
+      },
+      {
+        "kind": "evidence_file",
+        "path": "internal/app/review/doc.go",
+        "sha256": "991951784a6884d335578ff8e2fc6466fbfacf8f3c8b7bebe212a5c468c50241",
+        "bytes": 95
+      },
+      {
+        "kind": "evidence_file",
+        "path": "internal/app/review/findings.go",
+        "sha256": "f8bd806b2e5b06c3191e57e1edb01472ecd8139032b6bb727211d28f04f58033",
+        "bytes": 2744
+      },
+      {
+        "kind": "evidence_file",
+        "path": "internal/app/review/mode.go",
+        "sha256": "8b1336a2d29c2358d6cfd889873ae3b4b5007d3623224e04ca3897f0b4346aa5",
+        "bytes": 2002
+      },
+      {
+        "kind": "evidence_file",
+        "path": "internal/app/review/review.go",
+        "sha256": "0207dbad85e287d60521689e9797aa498a912a92c9387df4ded09213a608723a",
+        "bytes": 13458
+      },
+      {
+        "kind": "evidence_file",
+        "path": "internal/app/review/review_test.go",
+        "sha256": "14be39cd18b3fdf9373dffdd93c4daadacc3a03bf257882221fa153b05644a39",
+        "bytes": 32584
+      },
+      {
+        "kind": "evidence_file",
+        "path": "internal/app/review/scope.go",
+        "sha256": "7088a43ff1de4475ed81ed8f77904004ba71986275d574b388dd0ee80007aed9",
+        "bytes": 5875
+      }
+    ],
+    "reviewer": {
+      "provider": "codex",
+      "model": "gpt-5.5",
+      "binary_sha256": "baefc109b871e73a7bab298ee19b8bf73c8b647c4f8649a9794fc5db01db17b9",
+      "endpoint_host": "api.openai.com"
+    },
+    "host_under_review": {
+      "agent": "claude",
+      "session_id": "context-isolated-reviewer"
+    },
+    "independence": {
+      "level": "cross_vendor",
+      "distinct": true,
+      "reason": "cross_vendor: reviewer \"codex\" and host \"claude\" are different model vendors; this is multi-model review that reduces correlated blind spots but remains single-party local tooling"
+    },
+    "spec_fingerprint": "c7567c5d30e6384b27999e820e620bd4fe9e2b4be1355e6d765ad1a75a68939f",
+    "acceptance_declared": true,
+    "acceptance": [
+      {
+        "id": "v1",
+        "command": "go run ./cmd/scafld validate context-isolated-reviewer",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "0fc6383ec091b24d40c1bdb2428c935d1a2f12a87d794ceb1e4e3fc763b2d93a",
+        "diagnostic": ".scafld/runs/context-isolated-reviewer/diagnostics/command-1780564010309816000.txt"
+      },
+      {
+        "id": "ac1_1",
+        "command": "rg -n 'IndependenceIsolationOnly|IndependenceCrossVendor|func classifyIndependence' internal/adapters/providers/provider.go",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "a21a0a6e43c99841cc359beeab3a0fc20753bba17f6df0ffebd830d9c0f74d17",
+        "diagnostic": ".scafld/runs/context-isolated-reviewer/diagnostics/command-1780564010324368000.txt"
+      },
+      {
+        "id": "ac1_2",
+        "command": "go test ./internal/adapters/providers",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "e998d84e4b32ed1f05ccccbaa719297422f4ab4ad258ef13bbdc28a62c5afa22",
+        "diagnostic": ".scafld/runs/context-isolated-reviewer/diagnostics/command-1780564010443690000.txt"
+      },
+      {
+        "id": "ac1_3",
+        "command": "rg -n 'func TestClassifyIndependenceUnknownHost|func TestClassifyIndependenceEmptyHost' internal/adapters/providers/*_test.go \u0026\u0026 go test ./internal/adapters/providers -run 'TestClassifyIndependence(UnknownHost|EmptyHost)'",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "f752ab57df49bf91fc714bf559365ba049bb13c88c6eddf1803e035a56955240",
+        "diagnostic": ".scafld/runs/context-isolated-reviewer/diagnostics/command-1780564035511401000.txt"
+      },
+      {
+        "id": "ac1_4",
+        "command": "rg -n 'func TestClassifyIndependenceGeminiReviewer' internal/adapters/providers/*_test.go \u0026\u0026 go test ./internal/adapters/providers -run 'TestClassifyIndependenceGeminiReviewer'",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "0ac311f966b8eac74cbbbdee89ab54b23a66659d86353ad57e711e63a6d3af3a",
+        "diagnostic": ".scafld/runs/context-isolated-reviewer/diagnostics/command-1780564036940813000.txt"
+      },
+      {
+        "id": "ac2_1",
+        "command": "rg -n 'func SelectGateReviewer' internal/adapters/providers/provider.go",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "0265f97a59a541face194a803da6bd5c69e123dc1f3d22637b24b1865eb8c480",
+        "diagnostic": ".scafld/runs/context-isolated-reviewer/diagnostics/command-1780564036956624000.txt"
+      },
+      {
+        "id": "ac2_2",
+        "command": "rg -n 'no independent auto provider found' internal/adapters/providers/provider.go",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "e885175193369018ced0840456128cf078bbaf14f1501d461e2558f1c0ded5bd",
+        "diagnostic": ".scafld/runs/context-isolated-reviewer/diagnostics/command-1780564036968116000.txt"
+      },
+      {
+        "id": "ac2_3",
+        "command": "rg -n 'type GateReviewerSelection|SelectGateReviewer.*GateReviewerSelection' internal/adapters/providers/provider.go",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "0050891b6f145a5df829726c003a4020892e17f6c9ec17dd93ecbbac2863fd15",
+        "diagnostic": ".scafld/runs/context-isolated-reviewer/diagnostics/command-1780564036982931000.txt"
+      },
+      {
+        "id": "ac3_1",
+        "command": "rg -n 'AutoProviderInfo' internal/adapters/cli/review/selection.go internal/adapters/cli/harden/selection.go",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "647000d040847d2709990ebca6a1887de3ba9d70daa9e8e88f58459fd6f5b3b8",
+        "diagnostic": ".scafld/runs/context-isolated-reviewer/diagnostics/command-1780564036998996000.txt"
+      },
+      {
+        "id": "ac3_3",
+        "command": "go test ./internal/arch -run TestCLIIsThin",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "9ece92555b33997bb4678048a684aabefa2c0a6287935252fba63a4cc37fc91e",
+        "diagnostic": ".scafld/runs/context-isolated-reviewer/diagnostics/command-1780564037112257000.txt"
+      },
+      {
+        "id": "ac3_4",
+        "command": "go test ./internal/adapters/providers ./internal/app/review",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "e7a57317a99148238113725a4276892182a2400c1adc96802eed56c66bf53367",
+        "diagnostic": ".scafld/runs/context-isolated-reviewer/diagnostics/command-1780564037245247000.txt"
+      }
+    ],
+    "open_blockers": [],
+    "mutation_guard": {
+      "status": "clean",
+      "scope": [
+        "internal/adapters/cli/harden/selection.go",
+        "internal/adapters/cli/review/selection.go",
+        "internal/adapters/config/config.go",
+        "internal/adapters/providers/provider.go",
+        "internal/adapters/providers/provider_test.go",
+        "internal/app/review"
+      ]
+    },
+    "ledger_head": "ce1138e5190b046188f6881fccee1b7328b304fb370167b9345768b317a677d0",
+    "minted_at": "2026-06-04T09:06:49Z"
+  },
+  "signature": {
+    "alg": "ed25519",
+    "key_id": "ed25519:RGGe6gUQpsB6KGu0VcnMxGUL5IA1I1VDSKi3ecCzYOU",
+    "sig": "tPKPGVA1dzqdpNRi5JEzDyliKNA93gofDNpL32bSvMF7k/SKsRyp8B2nz8wVJ48e9pEoOgjiVxM6ywUbr5mnDw=="
+  }
+}

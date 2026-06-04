@@ -1,0 +1,195 @@
+{
+  "body": {
+    "schema_version": 1,
+    "task_id": "receipt-attests-base-delta",
+    "session_id": "receipt-attests-base-delta",
+    "verdict": "pass",
+    "snapshot_mode": "working_tree",
+    "base_commit": "cf0f71d94e52b29cf691c0e10849e70d6ccb4c92",
+    "head_commit": "cf0f71d94e52b29cf691c0e10849e70d6ccb4c92",
+    "scope": [
+      "internal/adapters/cli/finalize/run.go",
+      "internal/adapters/cli/finalize/run_test.go",
+      "internal/adapters/cli/verify/verify.go",
+      "internal/adapters/corebundle/assets/initwire/claude/commands/finalize.md",
+      "internal/adapters/corebundle/assets/initwire/claude/skills/finalize/SKILL.md",
+      "internal/adapters/git/git.go",
+      "internal/adapters/mcp/finalize/server.go",
+      "internal/app/finalize/finalize.go",
+      "internal/app/finalize/finalize_test.go",
+      "internal/app/verify/verify.go",
+      "internal/app/verify/verify_test.go",
+      "internal/core/receipt/receipt.go"
+    ],
+    "tree_sha": "d14dd3a53006c9b0688ec9de2a623a5e4f720e60",
+    "file_digests": {
+      "internal/adapters/cli/finalize/run.go": "4278d47819c1f08613dc00dd72bc1336463548bb79bfb3d008d0267dde908468",
+      "internal/adapters/cli/finalize/run_test.go": "444463a49c4ece50dfef69b195f1be4df511a5209538a888398478718b4fc833",
+      "internal/adapters/cli/verify/verify.go": "09fb34b75124c9f1be31cf82e159e4ac0936607b42e0d8a8c649268bc25dc64b",
+      "internal/adapters/corebundle/assets/initwire/claude/commands/finalize.md": "d2d8ee7fd48518184530db1d10961f6105ae3c574f6fdd2407ed99d5fd0f9380",
+      "internal/adapters/corebundle/assets/initwire/claude/skills/finalize/SKILL.md": "d0db13c75c4a6e1172681d2ed64e940a5d392a295ed972ff4b24ea11b3572a24",
+      "internal/adapters/git/git.go": "c97054b00fc87bf82422ebf10b2433ceee3b3f65566deba5f8b607542a9b18b1",
+      "internal/adapters/mcp/finalize/server.go": "a6800c5544d9457e42e6b222ea6882a865d4b61f8e8e769b29c7451f453ce749",
+      "internal/app/finalize/finalize.go": "d7ca342baec4a4b2f137a1d1fcf5285f3bfb8008d1aa72399f4feb7fe8c74b67",
+      "internal/app/finalize/finalize_test.go": "3f7fe6f62baf5e6d814b672965049e229e996efc2e872f1db18de287612caf4b",
+      "internal/app/verify/verify.go": "32b12ca9b4cd4635d5f0f7b1f9ba40a9d242ec17e779846eb603898959cfa3a2",
+      "internal/app/verify/verify_test.go": "78b2f65a5427f76da6ea31e30ed8de552d235cd93ad347511bad6340b184d67b",
+      "internal/core/receipt/receipt.go": "0c250b8aa437bcd1ba9fec286e8bd4efad8d8adb83c5f1c7e78f5b1467673661"
+    },
+    "ignored_unreviewed": [],
+    "reviewed_context_provenance": [
+      {
+        "kind": "evidence_file",
+        "path": "internal/adapters/cli/finalize/run.go",
+        "sha256": "4278d47819c1f08613dc00dd72bc1336463548bb79bfb3d008d0267dde908468",
+        "bytes": 31469
+      },
+      {
+        "kind": "evidence_file",
+        "path": "internal/adapters/cli/finalize/run_test.go",
+        "sha256": "444463a49c4ece50dfef69b195f1be4df511a5209538a888398478718b4fc833",
+        "bytes": 18738
+      },
+      {
+        "kind": "evidence_file",
+        "path": "internal/adapters/cli/verify/verify.go",
+        "sha256": "09fb34b75124c9f1be31cf82e159e4ac0936607b42e0d8a8c649268bc25dc64b",
+        "bytes": 7863
+      },
+      {
+        "kind": "evidence_file",
+        "path": "internal/adapters/corebundle/assets/initwire/claude/commands/finalize.md",
+        "sha256": "d2d8ee7fd48518184530db1d10961f6105ae3c574f6fdd2407ed99d5fd0f9380",
+        "bytes": 411
+      },
+      {
+        "kind": "evidence_file",
+        "path": "internal/adapters/corebundle/assets/initwire/claude/skills/finalize/SKILL.md",
+        "sha256": "d0db13c75c4a6e1172681d2ed64e940a5d392a295ed972ff4b24ea11b3572a24",
+        "bytes": 819
+      },
+      {
+        "kind": "evidence_file",
+        "path": "internal/adapters/git/git.go",
+        "sha256": "c97054b00fc87bf82422ebf10b2433ceee3b3f65566deba5f8b607542a9b18b1",
+        "bytes": 18266
+      },
+      {
+        "kind": "evidence_file",
+        "path": "internal/adapters/mcp/finalize/server.go",
+        "sha256": "a6800c5544d9457e42e6b222ea6882a865d4b61f8e8e769b29c7451f453ce749",
+        "bytes": 3334
+      },
+      {
+        "kind": "evidence_file",
+        "path": "internal/app/finalize/finalize.go",
+        "sha256": "d7ca342baec4a4b2f137a1d1fcf5285f3bfb8008d1aa72399f4feb7fe8c74b67",
+        "bytes": 14218
+      },
+      {
+        "kind": "evidence_file",
+        "path": "internal/app/finalize/finalize_test.go",
+        "sha256": "3f7fe6f62baf5e6d814b672965049e229e996efc2e872f1db18de287612caf4b",
+        "bytes": 13013
+      },
+      {
+        "kind": "evidence_file",
+        "path": "internal/app/verify/verify.go",
+        "sha256": "32b12ca9b4cd4635d5f0f7b1f9ba40a9d242ec17e779846eb603898959cfa3a2",
+        "bytes": 8315
+      },
+      {
+        "kind": "evidence_file",
+        "path": "internal/app/verify/verify_test.go",
+        "sha256": "78b2f65a5427f76da6ea31e30ed8de552d235cd93ad347511bad6340b184d67b",
+        "bytes": 10628
+      },
+      {
+        "kind": "evidence_file",
+        "path": "internal/core/receipt/receipt.go",
+        "sha256": "0c250b8aa437bcd1ba9fec286e8bd4efad8d8adb83c5f1c7e78f5b1467673661",
+        "bytes": 12785
+      }
+    ],
+    "reviewer": {
+      "provider": "codex",
+      "model": "gpt-5.5",
+      "binary_sha256": "baefc109b871e73a7bab298ee19b8bf73c8b647c4f8649a9794fc5db01db17b9",
+      "endpoint_host": "api.openai.com"
+    },
+    "host_under_review": {
+      "agent": "claude",
+      "session_id": "receipt-attests-base-delta"
+    },
+    "independence": {
+      "level": "cross_vendor",
+      "distinct": true,
+      "reason": "cross_vendor: reviewer \"codex\" and host \"claude\" are different model vendors; this is multi-model review that reduces correlated blind spots but remains single-party local tooling"
+    },
+    "spec_fingerprint": "1585ce323bfa8d18b8fbc115670b23e1fa5bec9fd5eb6a12ea6883a8f0837900",
+    "acceptance_declared": true,
+    "acceptance": [
+      {
+        "id": "v1",
+        "command": "go run ./cmd/scafld validate receipt-attests-base-delta",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "40f18ef79b2ca2a0549e6f1dc178809ac930f4e9235acbce2bd0dc3d555ef6e9",
+        "diagnostic": ".scafld/runs/receipt-attests-base-delta/diagnostics/command-1780563412943261000.txt"
+      },
+      {
+        "id": "ac1_1",
+        "command": "go test ./internal/app/finalize ./internal/app/verify ./internal/adapters/cli/finalize -run 'SnapshotMode|BaseRef|BaseDelta|UnknownMode'",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "a83765557426055684737e1b5268ae57ff9e4b7ab66e978ef56db7af7c5908df",
+        "diagnostic": ".scafld/runs/receipt-attests-base-delta/diagnostics/command-1780563414283093000.txt"
+      },
+      {
+        "id": "ac1_2",
+        "command": "rg -n 'SnapshotMode|snapshot_mode' internal/core/receipt internal/app/finalize internal/app/verify",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "7b10cf9a9a5a5a0003e8c8b29a4bdac6f2717b98c88c6036f72dbd63ba43ac8d",
+        "diagnostic": ".scafld/runs/receipt-attests-base-delta/diagnostics/command-1780563414302478000.txt"
+      },
+      {
+        "id": "ac1_3",
+        "command": "rg -n 'base_ref|BaseRef' internal/adapters/mcp/finalize internal/adapters/corebundle/assets/initwire/claude",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "88f72880bfd42f650d8b966590fec5f0cf7b1ddbb3759616c6a8dd955a587117",
+        "diagnostic": ".scafld/runs/receipt-attests-base-delta/diagnostics/command-1780563414319011000.txt"
+      }
+    ],
+    "open_blockers": [],
+    "mutation_guard": {
+      "status": "clean",
+      "scope": [
+        "internal/adapters/cli/finalize/run.go",
+        "internal/adapters/cli/finalize/run_test.go",
+        "internal/adapters/cli/verify/verify.go",
+        "internal/adapters/corebundle/assets/initwire/claude/commands/finalize.md",
+        "internal/adapters/corebundle/assets/initwire/claude/skills/finalize/SKILL.md",
+        "internal/adapters/git/git.go",
+        "internal/adapters/mcp/finalize/server.go",
+        "internal/app/finalize/finalize.go",
+        "internal/app/finalize/finalize_test.go",
+        "internal/app/verify/verify.go",
+        "internal/app/verify/verify_test.go",
+        "internal/core/receipt/receipt.go"
+      ]
+    },
+    "ledger_head": "bdfe073d22a58b10c5e492d8010984ea71e77e8e474871f30c5920e7cd7266f5",
+    "minted_at": "2026-06-04T08:56:51Z"
+  },
+  "signature": {
+    "alg": "ed25519",
+    "key_id": "ed25519:RGGe6gUQpsB6KGu0VcnMxGUL5IA1I1VDSKi3ecCzYOU",
+    "sig": "wURZpAROe1X2sSy/qlu5cOvODwmlS0SNHq9aMlHoO0288x2PkjB0VhlJGRtnADnLJWmiH1rwbRBy7iYn5x2DAA=="
+  }
+}

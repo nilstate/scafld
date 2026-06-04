@@ -222,7 +222,7 @@ func Default() Config {
 		Verify: VerifyConfig{
 			MinIndependence: "isolation_only",
 			TrustedKeysPath: ".scafld/trusted-keys.json",
-			ReceiptPath:     ".scafld/receipts",
+			ReceiptPath:     ".scafld/receipts/latest.json",
 		},
 		Harden: HardenConfig{
 			MaxIssuesPerRound: 8,

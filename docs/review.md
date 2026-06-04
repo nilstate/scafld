@@ -1,20 +1,30 @@
 ---
 title: Review
-description: Adversarial review gate behavior
+description: Adversarial review finalize behavior
 ---
 
 # Review
 
-`review` is the load-bearing gate in scafld.
+`finalize` is the default completion finalize for agent-driven work. `review` is
+the direct lifecycle review command for spec-backed operator work.
 
 Execution tries to finish the job. Review tries to break confidence in the job.
 The implementation agent should not grade its own work.
+
+`cross_vendor` receipts mean multi-model review: the reviewer and host agent are
+from different model vendors, which reduces correlated blind spots. They remain
+single-party local tooling unless a separate operator or CI trust domain verifies
+the signed receipt. `isolation_only` receipts mean the reviewer was isolated, but
+cross-vendor separation was not proven.
 
 ## Run Review
 
 ```bash
 scafld review <task-id>
 ```
+
+For the default host-agent path, call `finalize` instead. A passing gate
+returns a signed receipt; CI verifies that receipt with `scafld verify`.
 
 By default, review uses the provider configured in `.scafld/config.yaml` at
 `review.external.provider`. Fresh workspaces use `auto`: when scafld can infer
@@ -61,7 +71,7 @@ scafld review <task-id> --provider codex --model gpt-5
 scafld review <task-id> --human-reviewed --reason "operator reviewed PR 123"
 ```
 
-For small diffs, keep the same gate but tighten the review budget:
+For small diffs, keep the same finalize but tighten the review budget:
 
 ```bash
 scafld review <task-id> --review-depth light --max-findings 4 --min-attack-angles 3
@@ -156,7 +166,7 @@ Review modes change the attack shape, not the completion standard:
 - `verify`: check known findings, repair regressions, and release blockers
   introduced by the fix.
 
-Both modes use the same ReviewDossier schema and the same pass/fail gate.
+Both modes use the same ReviewDossier schema and the same pass/fail finalize.
 
 The prompt tells the challenger not to mutate the workspace, not to emit
 placeholder output while investigating, and to submit one final ReviewDossier.
@@ -189,7 +199,7 @@ from that submission channel and ignores final prose or fenced JSON. Accepted
 reviews record `output_format` so operators can see whether scafld consumed
 `claude.mcp_submit_review`, `gemini.mcp_submit_review`, `codex.output_file`, or
 another explicit provider path. Provider text that does not arrive through the
-configured submit channel does not satisfy the gate.
+configured submit channel does not satisfy the finalize.
 
 Findings require:
 
@@ -201,7 +211,7 @@ Findings require:
 - `summary` for readable repair output
 
 Any open finding with `blocks_completion: true` forces verdict `fail`. Severity
-and the completion gate are deliberately separate: a high-severity accepted risk
+and the completion finalize are deliberately separate: a high-severity accepted risk
 can be non-blocking, while a medium defect can still block if it violates the
 approved contract.
 
@@ -251,9 +261,9 @@ scafld complete <task-id>
   audited `human` review override
 
 If review fails, repair the work, rerun acceptance as needed, rerun review, then
-complete only after the challenger clears the gate.
+complete only after the challenger clears the finalize.
 
-Use `--human-reviewed` only when the provider gate is blocked for an external
+Use `--human-reviewed` only when the provider finalize is blocked for an external
 reason and a human has actually reviewed the diff, spec, acceptance evidence,
 and scope. It is an audited escape hatch, not a softer review mode.
 

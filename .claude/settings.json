@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "command": "scafld finalize --json --stdin",
+            "type": "command"
+          }
+        ],
+        "matcher": "",
+        "name": "finalize-stop",
+        "reason": "Run finalize before ending the turn when an open finalize or unsatisfied receipt exists. CI verify remains the hard merge wall."
+      }
+    ]
+  }
+}

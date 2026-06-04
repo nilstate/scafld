@@ -1,0 +1,170 @@
+{
+  "body": {
+    "schema_version": 1,
+    "task_id": "demote-lifecycle-install-footprint",
+    "session_id": "demote-lifecycle-install-footprint",
+    "verdict": "pass",
+    "snapshot_mode": "working_tree",
+    "base_commit": "cf0f71d94e52b29cf691c0e10849e70d6ccb4c92",
+    "head_commit": "cf0f71d94e52b29cf691c0e10849e70d6ccb4c92",
+    "scope": [
+      "internal/adapters/corebundle/agent_docs_test.go",
+      "internal/adapters/corebundle/assets/core/OPERATORS.md",
+      "internal/adapters/corebundle/assets/core/README.md",
+      "internal/adapters/corebundle/assets/core/scripts",
+      "internal/adapters/corebundle/bundle.go",
+      "internal/adapters/corebundle/bundle_test.go"
+    ],
+    "tree_sha": "1dcdb5989dd52be0b7953ce0c1c3b52d527d0375",
+    "file_digests": {
+      "internal/adapters/corebundle/agent_docs_test.go": "8768dc6d1a6a98b7a2cdc4642db50d35d19758c575bd458398f32683cd7637f4",
+      "internal/adapters/corebundle/assets/core/OPERATORS.md": "e8ae36f4509785278073834d05203b4188b66a64538bbf961579cbdd88ed897b",
+      "internal/adapters/corebundle/assets/core/README.md": "f302df96297145902b40113077914e9f4bac752e316cdd1f8dfd5c4e681a45f1",
+      "internal/adapters/corebundle/assets/core/scripts/scafld-claude-build.sh": "880fbcfcc207a1f1dab79a6cdf5a7573b60516d6086a9dc545062217e5c6f5bd",
+      "internal/adapters/corebundle/assets/core/scripts/scafld-claude-review.sh": "4a9d007a5b61bd0d8c266a0fa18721959419ef815896a0e36508337c0411151c",
+      "internal/adapters/corebundle/assets/core/scripts/scafld-codex-build.sh": "bfe7954605daae16d4352a2e30b713ea824aafbd77e264fe0300d504c5082c0a",
+      "internal/adapters/corebundle/assets/core/scripts/scafld-codex-review.sh": "d66b598b726aeffd3135298e3668f5f03a3e25de92dc23d9ff1feb4ae1f29f3d",
+      "internal/adapters/corebundle/assets/core/scripts/scafld-provider-adapter.sh": "f51627726f9955995797efdd4c994d4779083b1f2546a1724fff4831a6639a58",
+      "internal/adapters/corebundle/bundle.go": "38a4a415e06dac21f6957a162af67e35eedc4d6a001479a7d226960129f8c40e",
+      "internal/adapters/corebundle/bundle_test.go": "1904f9a6f94e0ff45f7b651c51693f964630365bc80776ad0408adf69f5931b0"
+    },
+    "ignored_unreviewed": [],
+    "reviewed_context_provenance": [
+      {
+        "kind": "evidence_file",
+        "path": "internal/adapters/corebundle/agent_docs_test.go",
+        "sha256": "8768dc6d1a6a98b7a2cdc4642db50d35d19758c575bd458398f32683cd7637f4",
+        "bytes": 4966
+      },
+      {
+        "kind": "evidence_file",
+        "path": "internal/adapters/corebundle/assets/core/OPERATORS.md",
+        "sha256": "e8ae36f4509785278073834d05203b4188b66a64538bbf961579cbdd88ed897b",
+        "bytes": 2451
+      },
+      {
+        "kind": "evidence_file",
+        "path": "internal/adapters/corebundle/assets/core/README.md",
+        "sha256": "f302df96297145902b40113077914e9f4bac752e316cdd1f8dfd5c4e681a45f1",
+        "bytes": 3197
+      },
+      {
+        "kind": "evidence_file",
+        "path": "internal/adapters/corebundle/assets/core/scripts/scafld-claude-build.sh",
+        "sha256": "880fbcfcc207a1f1dab79a6cdf5a7573b60516d6086a9dc545062217e5c6f5bd",
+        "bytes": 162
+      },
+      {
+        "kind": "evidence_file",
+        "path": "internal/adapters/corebundle/assets/core/scripts/scafld-claude-review.sh",
+        "sha256": "4a9d007a5b61bd0d8c266a0fa18721959419ef815896a0e36508337c0411151c",
+        "bytes": 163
+      },
+      {
+        "kind": "evidence_file",
+        "path": "internal/adapters/corebundle/assets/core/scripts/scafld-codex-build.sh",
+        "sha256": "bfe7954605daae16d4352a2e30b713ea824aafbd77e264fe0300d504c5082c0a",
+        "bytes": 161
+      },
+      {
+        "kind": "evidence_file",
+        "path": "internal/adapters/corebundle/assets/core/scripts/scafld-codex-review.sh",
+        "sha256": "d66b598b726aeffd3135298e3668f5f03a3e25de92dc23d9ff1feb4ae1f29f3d",
+        "bytes": 162
+      },
+      {
+        "kind": "evidence_file",
+        "path": "internal/adapters/corebundle/assets/core/scripts/scafld-provider-adapter.sh",
+        "sha256": "f51627726f9955995797efdd4c994d4779083b1f2546a1724fff4831a6639a58",
+        "bytes": 64
+      },
+      {
+        "kind": "evidence_file",
+        "path": "internal/adapters/corebundle/bundle.go",
+        "sha256": "38a4a415e06dac21f6957a162af67e35eedc4d6a001479a7d226960129f8c40e",
+        "bytes": 4395
+      },
+      {
+        "kind": "evidence_file",
+        "path": "internal/adapters/corebundle/bundle_test.go",
+        "sha256": "1904f9a6f94e0ff45f7b651c51693f964630365bc80776ad0408adf69f5931b0",
+        "bytes": 9946
+      }
+    ],
+    "reviewer": {
+      "provider": "codex",
+      "model": "gpt-5.5",
+      "binary_sha256": "baefc109b871e73a7bab298ee19b8bf73c8b647c4f8649a9794fc5db01db17b9",
+      "endpoint_host": "api.openai.com"
+    },
+    "host_under_review": {
+      "agent": "claude",
+      "session_id": "demote-lifecycle-install-footprint"
+    },
+    "independence": {
+      "level": "cross_vendor",
+      "distinct": true,
+      "reason": "cross_vendor: reviewer \"codex\" and host \"claude\" are different model vendors; this is multi-model review that reduces correlated blind spots but remains single-party local tooling"
+    },
+    "spec_fingerprint": "6a1d85c52e1bd361fe0e5d7b7d75d73c55936bc553ac811e4a5be774f1da26d3",
+    "acceptance_declared": true,
+    "acceptance": [
+      {
+        "id": "v1",
+        "command": "go run ./cmd/scafld validate demote-lifecycle-install-footprint",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "86d02d4c26402fc5636edf12c0175fe4681a5f0be8e58ed6623f733ca2052902",
+        "diagnostic": ".scafld/runs/demote-lifecycle-install-footprint/diagnostics/command-1780561263995273000.txt"
+      },
+      {
+        "id": "ac1_1",
+        "command": "go test ./internal/adapters/corebundle -run 'Init|Install|Lifecycle|AgentDocs|Gitignore'",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "992fe048e4ad6ecb503e4192436e065e5821d1a230ff303672c912f4289a3a21",
+        "diagnostic": ".scafld/runs/demote-lifecycle-install-footprint/diagnostics/command-1780561264112388000.txt"
+      },
+      {
+        "id": "ac1_2",
+        "command": "rg -n 'review-submit-stdio|harden-submit-stdio|submit_review|submit_harden' internal/adapters/corebundle/assets/initwire",
+        "expected_kind": "no_matches",
+        "status": "pass",
+        "reason": "output was empty",
+        "exit_code": 1,
+        "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "diagnostic": ".scafld/runs/demote-lifecycle-install-footprint/diagnostics/command-1780561264122872000.txt"
+      },
+      {
+        "id": "ac1_3",
+        "command": "rg -n 'gate|scafld verify|optional.*lifecycle|operator' internal/adapters/corebundle/assets/core/README.md internal/adapters/corebundle/assets/core/OPERATORS.md",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "2ad5fe59e1004a50949618934645b83cac9d1bfa6575c7ebd44f45fee0740e32",
+        "diagnostic": ".scafld/runs/demote-lifecycle-install-footprint/diagnostics/command-1780561264136863000.txt"
+      }
+    ],
+    "open_blockers": [],
+    "mutation_guard": {
+      "status": "clean",
+      "scope": [
+        "internal/adapters/corebundle/agent_docs_test.go",
+        "internal/adapters/corebundle/assets/core/OPERATORS.md",
+        "internal/adapters/corebundle/assets/core/README.md",
+        "internal/adapters/corebundle/assets/core/scripts",
+        "internal/adapters/corebundle/bundle.go",
+        "internal/adapters/corebundle/bundle_test.go"
+      ]
+    },
+    "ledger_head": "e823f030d1ca334542ad9e4896d53afa25ee6ddfa989799c4783118ba80e020d",
+    "minted_at": "2026-06-04T08:21:03Z"
+  },
+  "signature": {
+    "alg": "ed25519",
+    "key_id": "ed25519:RGGe6gUQpsB6KGu0VcnMxGUL5IA1I1VDSKi3ecCzYOU",
+    "sig": "dpKgTidP79ecogboX+bZ9SDO5Lo3WQrnpy9iePh92yuWTF/w8YQvFT2v6BiRCe3oQ5uy7KVKRSwA1RoEmRrlAQ=="
+  }
+}

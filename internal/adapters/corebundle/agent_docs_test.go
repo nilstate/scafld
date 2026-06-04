@@ -52,6 +52,35 @@ func TestBundledAgentDocsStayProjectGeneric(t *testing.T) {
 	}
 }
 
+func TestBundledAccountabilityDocsDoNotOverclaimIndependence(t *testing.T) {
+	t.Parallel()
+
+	repoRoot := filepath.Clean(filepath.Join("..", "..", ".."))
+	files := map[string][]byte{}
+	for _, path := range []string{"docs/review.md"} {
+		data, err := os.ReadFile(filepath.Join(repoRoot, path))
+		if err != nil {
+			t.Fatal(err)
+		}
+		files[path] = data
+	}
+	for _, name := range agentDocFiles {
+		data, err := assets.ReadFile("assets/agentdocs/" + name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		files["assets/agentdocs/"+name] = data
+	}
+	for path, data := range files {
+		text := strings.ToLower(string(data))
+		for _, denied := range []string{"legally independent", "independent party", "organizational independence"} {
+			if strings.Contains(text, denied) {
+				t.Fatalf("%s overclaims independence with %q:\n%s", path, denied, data)
+			}
+		}
+	}
+}
+
 func TestInitAgentDocsPrependsExistingDocs(t *testing.T) {
 	t.Parallel()
 

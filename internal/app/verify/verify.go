@@ -41,12 +41,15 @@ type Ports struct {
 
 // SnapshotInput scopes verification fingerprinting.
 type SnapshotInput struct {
-	Scope []string
+	Scope        []string
+	SnapshotMode string
+	BaseRef      string
 }
 
 // Snapshot is the recomputed tree state.
 type Snapshot struct {
 	TreeSHA     string
+	BaseCommit  string
 	FileDigests map[string]string
 	Ignored     []string
 }
@@ -101,12 +104,19 @@ func Run(ctx context.Context, envelope receipt.Envelope, trusted trust.TrustedKe
 	if ok, reason := meetsIndependence(body.Independence, body.Reviewer.Provider, body.HostUnderReview.Agent, policy.MinIndependence); !ok {
 		return fail(reason), nil
 	}
-	snapshot, err := ports.Snapshotter.Snapshot(ctx, SnapshotInput{Scope: body.Scope})
+	baseRef, ok := verifySnapshotBaseRef(body, policy.TargetCommit)
+	if !ok {
+		return fail("unknown snapshot_mode"), nil
+	}
+	snapshot, err := ports.Snapshotter.Snapshot(ctx, SnapshotInput{Scope: body.Scope, SnapshotMode: body.SnapshotMode, BaseRef: baseRef})
 	if err != nil {
 		return Result{}, err
 	}
 	if snapshot.TreeSHA != body.TreeSHA {
 		return fail("tree mismatch"), nil
+	}
+	if strings.TrimSpace(snapshot.BaseCommit) != strings.TrimSpace(body.BaseCommit) {
+		return fail("base_commit mismatch"), nil
 	}
 	if missing := missingCoverage(snapshot.FileDigests, body.FileDigests); len(missing) > 0 {
 		return fail("missing in-scope digest: " + strings.Join(missing, ",")), nil
@@ -128,6 +138,23 @@ func Run(ctx context.Context, envelope receipt.Envelope, trusted trust.TrustedKe
 		return fail(reason), nil
 	}
 	return Result{Passed: true, Reason: "verified"}, nil
+}
+
+func verifySnapshotBaseRef(body receipt.Body, targetCommit string) (string, bool) {
+	switch body.SnapshotMode {
+	case receipt.SnapshotModeWorkingTree:
+		return "", true
+	case receipt.SnapshotModeBaseDelta:
+		if ref := strings.TrimSpace(targetCommit); ref != "" {
+			return ref, true
+		}
+		if ref := strings.TrimSpace(body.BaseRef); ref != "" {
+			return ref, true
+		}
+		return strings.TrimSpace(body.BaseCommit), true
+	default:
+		return "", false
+	}
 }
 
 func requirePorts(ports Ports) error {
@@ -163,24 +190,43 @@ func meetsIndependence(ind receipt.Independence, reviewer, host, minimum string)
 	reviewerVendor := normalizeVendor(reviewer)
 	hostVendor := normalizeVendor(host)
 	distinct := reviewerVendor != "" && hostVendor != "" && reviewerVendor != hostVendor
-	level := "isolation_only"
+	level := receipt.IndependenceLevelIsolationOnly
 	if distinct {
-		level = "cross_vendor"
+		level = receipt.IndependenceLevelCrossVendor
 	}
 	if ind.Level != level || ind.Distinct != distinct {
 		return false, "independence claim does not match reviewer and host vendors"
 	}
+	if ind.Downgraded != expectedIndependenceDowngrade(level, reviewerVendor, hostVendor) {
+		return false, "independence downgrade does not match reviewer and host vendors"
+	}
 	switch strings.TrimSpace(minimum) {
-	case "", "isolation_only":
+	case "", receipt.IndependenceLevelIsolationOnly:
 		return true, ""
-	case "cross_vendor":
-		if level == "cross_vendor" {
+	case receipt.IndependenceLevelCrossVendor:
+		if level == receipt.IndependenceLevelCrossVendor {
 			return true, ""
 		}
 		return false, "below minimum independence"
 	default:
 		return false, "unknown min_independence policy"
 	}
+}
+
+func expectedIndependenceDowngrade(level string, reviewerVendor string, hostVendor string) string {
+	if level == receipt.IndependenceLevelCrossVendor {
+		return ""
+	}
+	if reviewerVendor == "" {
+		return receipt.IndependenceDowngradeUnknownReviewer
+	}
+	if hostVendor == "" {
+		return receipt.IndependenceDowngradeUnknownHost
+	}
+	if reviewerVendor == hostVendor {
+		return receipt.IndependenceDowngradeSameVendor
+	}
+	return ""
 }
 
 // normalizeVendor lowercases a vendor and folds the "unknown" sentinel (recorded

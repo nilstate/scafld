@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "task_id": "task",
+  "session_id": "session",
+  "verdict": "pass",
+  "snapshot_mode": "working_tree",
+  "base_commit": "base",
+  "head_commit": "head",
+  "scope": [
+    "internal/core"
+  ],
+  "tree_sha": "tree",
+  "file_digests": {
+    "b.go": "two",
+    "a.go": "one"
+  },
+  "ignored_unreviewed": [],
+  "reviewed_context_provenance": [
+    {
+      "kind": "evidence_file",
+      "path": "a.go",
+      "sha256": "one",
+      "bytes": 12
+    },
+    {
+      "kind": "evidence_file",
+      "path": "b.go",
+      "sha256": "two",
+      "bytes": 12
+    }
+  ],
+  "reviewer": {
+    "provider": "codex",
+    "model": "gpt"
+  },
+  "host_under_review": {
+    "agent": "codex"
+  },
+  "independence": {
+    "level": "isolation_only",
+    "distinct": false,
+    "downgraded": "same_vendor"
+  },
+  "spec_fingerprint": "spec",
+  "acceptance_declared": false,
+  "acceptance": [],
+  "open_blockers": [],
+  "mutation_guard": {
+    "status": "clean"
+  },
+  "ledger_head": "ledger",
+  "minted_at": "2026-06-03T00:00:00Z"
+}

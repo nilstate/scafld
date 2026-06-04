@@ -1,0 +1,214 @@
+{
+  "body": {
+    "schema_version": 1,
+    "task_id": "one-command-init-wiring",
+    "session_id": "one-command-init-wiring",
+    "verdict": "pass",
+    "snapshot_mode": "working_tree",
+    "base_commit": "cf0f71d94e52b29cf691c0e10849e70d6ccb4c92",
+    "head_commit": "cf0f71d94e52b29cf691c0e10849e70d6ccb4c92",
+    "scope": [
+      "AGENTS.md",
+      "CLAUDE.md",
+      "internal/adapters/cli/initcmd/init.go",
+      "internal/adapters/corebundle/assets/agentdocs/AGENTS.md",
+      "internal/adapters/corebundle/assets/agentdocs/CLAUDE.md",
+      "internal/adapters/corebundle/bundle.go",
+      "internal/adapters/corebundle/gitignore.go"
+    ],
+    "tree_sha": "1dcdb5989dd52be0b7953ce0c1c3b52d527d0375",
+    "file_digests": {
+      "AGENTS.md": "9a9a52f4ba1def2f74f86e9ca997a673da4fd1b846e3c31e445e30ba4bac7cc5",
+      "CLAUDE.md": "888d4df5374c6e0b3ea0fdb852074519547719ea5f6824f67d905e2e52bdbbfa",
+      "internal/adapters/cli/initcmd/init.go": "5ef84d741ce158e81bf0b8451a076b26e0680e0a33097418e4577c7ffffbc0eb",
+      "internal/adapters/corebundle/assets/agentdocs/AGENTS.md": "73932218491f7d0c15922a0660eb1d02f80cf5bd9c9fd66cbfd1990d231034ed",
+      "internal/adapters/corebundle/assets/agentdocs/CLAUDE.md": "7c48ab8526b28f575459cd0fea487c20c3f6174127ba70eb441ae5a98fccf4d5",
+      "internal/adapters/corebundle/bundle.go": "38a4a415e06dac21f6957a162af67e35eedc4d6a001479a7d226960129f8c40e",
+      "internal/adapters/corebundle/gitignore.go": "4c3049744236205e67fb6a31c8376d726d653a2cda13b1046eb42597e2b97d61"
+    },
+    "ignored_unreviewed": [
+      "AGENTS.md",
+      "CLAUDE.md",
+      "internal/adapters/corebundle/assets/agentdocs/AGENTS.md",
+      "internal/adapters/corebundle/assets/agentdocs/CLAUDE.md"
+    ],
+    "reviewed_context_provenance": [
+      {
+        "kind": "evidence_file",
+        "path": "internal/adapters/cli/initcmd/init.go",
+        "sha256": "5ef84d741ce158e81bf0b8451a076b26e0680e0a33097418e4577c7ffffbc0eb",
+        "bytes": 1719
+      },
+      {
+        "kind": "evidence_file",
+        "path": "internal/adapters/corebundle/bundle.go",
+        "sha256": "38a4a415e06dac21f6957a162af67e35eedc4d6a001479a7d226960129f8c40e",
+        "bytes": 4395
+      },
+      {
+        "kind": "evidence_file",
+        "path": "internal/adapters/corebundle/gitignore.go",
+        "sha256": "4c3049744236205e67fb6a31c8376d726d653a2cda13b1046eb42597e2b97d61",
+        "bytes": 2323
+      }
+    ],
+    "reviewer": {
+      "provider": "codex",
+      "model": "gpt-5.5",
+      "binary_sha256": "baefc109b871e73a7bab298ee19b8bf73c8b647c4f8649a9794fc5db01db17b9",
+      "endpoint_host": "api.openai.com"
+    },
+    "host_under_review": {
+      "agent": "claude",
+      "session_id": "one-command-init-wiring"
+    },
+    "independence": {
+      "level": "cross_vendor",
+      "distinct": true,
+      "reason": "cross_vendor: reviewer \"codex\" and host \"claude\" are different model vendors; this is multi-model review that reduces correlated blind spots but remains single-party local tooling"
+    },
+    "spec_fingerprint": "e125f442deb65535182fbf512817ad92f095d3d2be1f88d340946c0771889734",
+    "acceptance_declared": true,
+    "acceptance": [
+      {
+        "id": "v1",
+        "command": "go run ./cmd/scafld validate one-command-init-wiring",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "56c48420780728491a0a1d9e46fc00b3289be955cde8ccdbeff5fdb5b6b13819",
+        "diagnostic": ".scafld/runs/one-command-init-wiring/diagnostics/command-1780561531618594000.txt"
+      },
+      {
+        "id": "ac1_1",
+        "command": "go test ./internal/adapters/corebundle/",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "992fe048e4ad6ecb503e4192436e065e5821d1a230ff303672c912f4289a3a21",
+        "diagnostic": ".scafld/runs/one-command-init-wiring/diagnostics/command-1780561531752501000.txt"
+      },
+      {
+        "id": "ac1_2",
+        "command": "rg -n 'corebundle.InitWire' internal/adapters/cli/initcmd/init.go",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "7ae0c3bcd87bb98843bdb21cb51a654ba2a53477374c615c50f08e9a11358588",
+        "diagnostic": ".scafld/runs/one-command-init-wiring/diagnostics/command-1780561531765334000.txt"
+      },
+      {
+        "id": "ac1_3",
+        "command": "go test ./internal/core/trust ./internal/adapters/corebundle/ -run 'TrustedKeys|KeyID|InitWire'",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "304a71a55b0d3526195b3a306976290ecdb8f270f50af2b4440755abde35786f",
+        "diagnostic": ".scafld/runs/one-command-init-wiring/diagnostics/command-1780561531887729000.txt"
+      },
+      {
+        "id": "ac2_1",
+        "command": "rg -n 'finalize' internal/adapters/corebundle/assets/initwire/mcp.json",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "6ae3e93ca3c0ca9589d390bcc2d7ffccc13d1c4d6af8d8ed581af97b7b2fa3e2",
+        "diagnostic": ".scafld/runs/one-command-init-wiring/diagnostics/command-1780561531900606000.txt"
+      },
+      {
+        "id": "ac2_2",
+        "command": "rg -n -i 'independ|receipt' internal/adapters/corebundle/assets/initwire/claude/skills/finalize/SKILL.md internal/adapters/corebundle/assets/initwire/claude/commands/finalize.md",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "c538b2339583f3fc2ede896aa2c4c64e8b3083eb7e0e9588eeb6680e5b247c51",
+        "diagnostic": ".scafld/runs/one-command-init-wiring/diagnostics/command-1780561531914970000.txt"
+      },
+      {
+        "id": "ac2_3",
+        "command": "rg -n 'Stop' internal/adapters/corebundle/assets/initwire/claude/settings.json",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "021edd6c04b3e0cbeb0cd42cc0c4f7f56db18608fffc293d034293141f205d18",
+        "diagnostic": ".scafld/runs/one-command-init-wiring/diagnostics/command-1780561531928369000.txt"
+      },
+      {
+        "id": "ac2_4",
+        "command": "go test ./internal/adapters/corebundle/ -run 'MergeMCP|MergeClaudeSettings|InitWireExisting'",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "992fe048e4ad6ecb503e4192436e065e5821d1a230ff303672c912f4289a3a21",
+        "diagnostic": ".scafld/runs/one-command-init-wiring/diagnostics/command-1780561532043527000.txt"
+      },
+      {
+        "id": "ac3_1",
+        "command": "rg -n '\"verify\"' internal/adapters/cli/cli.go \u0026\u0026 rg -n 'verify.*Run|verify\\\\.Run|cli/verify' internal/adapters/cli/cli.go",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "0213cb5270ca249e427bce3980e6c912b8e068b97e3b57561b835071d052bdde",
+        "diagnostic": ".scafld/runs/one-command-init-wiring/diagnostics/command-1780561532063775000.txt"
+      },
+      {
+        "id": "ac3_2",
+        "command": "rg -n 'scafld verify|--target' internal/adapters/corebundle/assets/initwire/ci/scafld-verify.yml",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "13fdcc1e97298492d18c41eb9c9501d41cd4771fea12cdacc3b74e3bf00beb1a",
+        "diagnostic": ".scafld/runs/one-command-init-wiring/diagnostics/command-1780561532077056000.txt"
+      },
+      {
+        "id": "ac3_3",
+        "command": "rg -n 'placeholder|TODO.*verify|fake verify' internal/adapters/corebundle internal/adapters/cli",
+        "expected_kind": "no_matches",
+        "status": "pass",
+        "reason": "output was empty",
+        "exit_code": 1,
+        "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "diagnostic": ".scafld/runs/one-command-init-wiring/diagnostics/command-1780561532093972000.txt"
+      },
+      {
+        "id": "ac4_1",
+        "command": "rg -n 'route every change through the lifecycle' AGENTS.md CLAUDE.md internal/adapters/corebundle/assets/agentdocs/",
+        "expected_kind": "no_matches",
+        "status": "pass",
+        "reason": "output was empty",
+        "exit_code": 1,
+        "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "diagnostic": ".scafld/runs/one-command-init-wiring/diagnostics/command-1780561532107497000.txt"
+      },
+      {
+        "id": "ac4_3",
+        "command": "go test ./internal/adapters/corebundle/ -run AgentDocs",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "992fe048e4ad6ecb503e4192436e065e5821d1a230ff303672c912f4289a3a21",
+        "diagnostic": ".scafld/runs/one-command-init-wiring/diagnostics/command-1780561532225741000.txt"
+      }
+    ],
+    "open_blockers": [],
+    "mutation_guard": {
+      "status": "clean",
+      "scope": [
+        "AGENTS.md",
+        "CLAUDE.md",
+        "internal/adapters/cli/initcmd/init.go",
+        "internal/adapters/corebundle/assets/agentdocs/AGENTS.md",
+        "internal/adapters/corebundle/assets/agentdocs/CLAUDE.md",
+        "internal/adapters/corebundle/bundle.go",
+        "internal/adapters/corebundle/gitignore.go"
+      ]
+    },
+    "ledger_head": "f657131c4038ef4678402f10ab980f5257ce9deb72eb50cfd15492f3d0d14ac3",
+    "minted_at": "2026-06-04T08:25:31Z"
+  },
+  "signature": {
+    "alg": "ed25519",
+    "key_id": "ed25519:RGGe6gUQpsB6KGu0VcnMxGUL5IA1I1VDSKi3ecCzYOU",
+    "sig": "UKEuH+sSLfhJtpRmLlsHAYXYGEIxi6UMBXN7VzKCPbtoJ8FEWmBpdX2Qi2GeXSvwKzhHB6AiXNRSODjAHzKDAw=="
+  }
+}

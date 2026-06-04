@@ -1,0 +1,213 @@
+{
+  "body": {
+    "schema_version": 1,
+    "task_id": "commit-free-tree-fingerprint",
+    "session_id": "commit-free-tree-fingerprint",
+    "verdict": "pass",
+    "snapshot_mode": "working_tree",
+    "base_commit": "cf0f71d94e52b29cf691c0e10849e70d6ccb4c92",
+    "head_commit": "cf0f71d94e52b29cf691c0e10849e70d6ccb4c92",
+    "scope": [
+      "internal/adapters/git/doc.go",
+      "internal/adapters/git/git.go",
+      "internal/adapters/git/git_test.go"
+    ],
+    "tree_sha": "1dcdb5989dd52be0b7953ce0c1c3b52d527d0375",
+    "file_digests": {
+      "internal/adapters/git/doc.go": "580c5fad811bdcac7f1612276f08a7d618973c989f5f12d81aade997c594d6f0",
+      "internal/adapters/git/git.go": "c97054b00fc87bf82422ebf10b2433ceee3b3f65566deba5f8b607542a9b18b1",
+      "internal/adapters/git/git_test.go": "eba3248b1f737ec492a2b77f004553849c87605d22d2c4c73215789636185f24"
+    },
+    "ignored_unreviewed": [],
+    "reviewed_context_provenance": [
+      {
+        "kind": "evidence_file",
+        "path": "internal/adapters/git/doc.go",
+        "sha256": "580c5fad811bdcac7f1612276f08a7d618973c989f5f12d81aade997c594d6f0",
+        "bytes": 612
+      },
+      {
+        "kind": "evidence_file",
+        "path": "internal/adapters/git/git.go",
+        "sha256": "c97054b00fc87bf82422ebf10b2433ceee3b3f65566deba5f8b607542a9b18b1",
+        "bytes": 18266
+      },
+      {
+        "kind": "evidence_file",
+        "path": "internal/adapters/git/git_test.go",
+        "sha256": "eba3248b1f737ec492a2b77f004553849c87605d22d2c4c73215789636185f24",
+        "bytes": 22105
+      }
+    ],
+    "reviewer": {
+      "provider": "codex",
+      "model": "gpt-5.5",
+      "binary_sha256": "baefc109b871e73a7bab298ee19b8bf73c8b647c4f8649a9794fc5db01db17b9",
+      "endpoint_host": "api.openai.com"
+    },
+    "host_under_review": {
+      "agent": "claude",
+      "session_id": "commit-free-tree-fingerprint"
+    },
+    "independence": {
+      "level": "cross_vendor",
+      "distinct": true,
+      "reason": "cross_vendor: reviewer \"codex\" and host \"claude\" are different model vendors; this is multi-model review that reduces correlated blind spots but remains single-party local tooling"
+    },
+    "spec_fingerprint": "c4c9a249b9a6adeba086ba6fbb68c55a98e74518acd92798d165929f9c02e2d1",
+    "acceptance_declared": true,
+    "acceptance": [
+      {
+        "id": "v1",
+        "command": "go run ./cmd/scafld validate commit-free-tree-fingerprint",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "1333b6a7ff835cb7a523f2332346ba05c229879589f15ee08e42b396a30627d0",
+        "diagnostic": ".scafld/runs/commit-free-tree-fingerprint/diagnostics/command-1780561836550010000.txt"
+      },
+      {
+        "id": "v2",
+        "command": "go test ./internal/adapters/git",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "1628d33f7e084572c0e49a205c6608dea23cc078562ba68b8abe9958d2e52be4",
+        "diagnostic": ".scafld/runs/commit-free-tree-fingerprint/diagnostics/command-1780561836722971000.txt"
+      },
+      {
+        "id": "ac1_1",
+        "command": "go test ./internal/adapters/git -run Snapshot",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "1628d33f7e084572c0e49a205c6608dea23cc078562ba68b8abe9958d2e52be4",
+        "diagnostic": ".scafld/runs/commit-free-tree-fingerprint/diagnostics/command-1780561836879742000.txt"
+      },
+      {
+        "id": "ac1_2",
+        "command": "rg -n 'GIT_INDEX_FILE|read-tree|write-tree' internal/adapters/git/git.go",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "9383912a8196e506568fa31134fe74c183d33354b3a4d4a329e287e43aefd794",
+        "diagnostic": ".scafld/runs/commit-free-tree-fingerprint/diagnostics/command-1780561836892197000.txt"
+      },
+      {
+        "id": "ac1_4",
+        "command": "go test ./internal/adapters/git -run 'Snapshot.*(Base|Head|Commit)'",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "1628d33f7e084572c0e49a205c6608dea23cc078562ba68b8abe9958d2e52be4",
+        "diagnostic": ".scafld/runs/commit-free-tree-fingerprint/diagnostics/command-1780561837017103000.txt"
+      },
+      {
+        "id": "ac1_5",
+        "command": "go test ./internal/adapters/git -run 'Snapshot.*(AutoCRLF|Attributes|CRLF)'",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "1628d33f7e084572c0e49a205c6608dea23cc078562ba68b8abe9958d2e52be4",
+        "diagnostic": ".scafld/runs/commit-free-tree-fingerprint/diagnostics/command-1780561837140479000.txt"
+      },
+      {
+        "id": "ac1_6",
+        "command": "go test ./internal/adapters/git -run 'Snapshot.*(ReadTree|TrackedIgnored|Deletion)'",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "1628d33f7e084572c0e49a205c6608dea23cc078562ba68b8abe9958d2e52be4",
+        "diagnostic": ".scafld/runs/commit-free-tree-fingerprint/diagnostics/command-1780561837258904000.txt"
+      },
+      {
+        "id": "ac1_7",
+        "command": "go test ./internal/adapters/git -run 'Snapshot.*Runtime|ScafldRuns'",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "1628d33f7e084572c0e49a205c6608dea23cc078562ba68b8abe9958d2e52be4",
+        "diagnostic": ".scafld/runs/commit-free-tree-fingerprint/diagnostics/command-1780561837369247000.txt"
+      },
+      {
+        "id": "ac2_1",
+        "command": "go test ./internal/adapters/git -run 'Digest|Status|Deleted|Ignored'",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "1628d33f7e084572c0e49a205c6608dea23cc078562ba68b8abe9958d2e52be4",
+        "diagnostic": ".scafld/runs/commit-free-tree-fingerprint/diagnostics/command-1780561837491934000.txt"
+      },
+      {
+        "id": "ac2_2",
+        "command": "rg -n 'status --porcelain --ignored|check-ignore' internal/adapters/git/git.go",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "c8fc9e41f5de62600b7ddb8eb48f3f52572efef755c4e11d399b730ca8cf658f",
+        "diagnostic": ".scafld/runs/commit-free-tree-fingerprint/diagnostics/command-1780561837503583000.txt"
+      },
+      {
+        "id": "ac2_3",
+        "command": "rg -n 'gitlink|submodule' internal/adapters/git/doc.go",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "4ed4b04c806ea623266a3d997337b36cc8eb22cbfee7ea829b0e5262ffbf870c",
+        "diagnostic": ".scafld/runs/commit-free-tree-fingerprint/diagnostics/command-1780561837513149000.txt"
+      },
+      {
+        "id": "ac2_4",
+        "command": "go test ./internal/adapters/git -run 'Snapshot.*Scope'",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "1628d33f7e084572c0e49a205c6608dea23cc078562ba68b8abe9958d2e52be4",
+        "diagnostic": ".scafld/runs/commit-free-tree-fingerprint/diagnostics/command-1780561837609098000.txt"
+      },
+      {
+        "id": "ac2_5",
+        "command": "rg -n 'type IgnoredPath|Reason string' internal/adapters/git/git.go",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "356ae339c2c9887f9223ba35031b5622d7ff23757a13780285aa547b4dd37bc1",
+        "diagnostic": ".scafld/runs/commit-free-tree-fingerprint/diagnostics/command-1780561837619832000.txt"
+      },
+      {
+        "id": "ac3_1",
+        "command": "rg -n 'ls-files -v' internal/adapters/git/git.go",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "744200cd84266b495d098a038a0bce46034eaef25b814647028339298614c4da",
+        "diagnostic": ".scafld/runs/commit-free-tree-fingerprint/diagnostics/command-1780561837628396000.txt"
+      },
+      {
+        "id": "ac3_3",
+        "command": "rg -n 'EvidenceIntegrityError|evidence_integrity' internal/adapters/git/git.go",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "893bc7918befadc6eef331c187332d4197984615b7f72fbc3f7be7e36fd7ad69",
+        "diagnostic": ".scafld/runs/commit-free-tree-fingerprint/diagnostics/command-1780561837640480000.txt"
+      }
+    ],
+    "open_blockers": [],
+    "mutation_guard": {
+      "status": "clean",
+      "scope": [
+        "internal/adapters/git/doc.go",
+        "internal/adapters/git/git.go",
+        "internal/adapters/git/git_test.go"
+      ]
+    },
+    "ledger_head": "a7deab76167a47d13517f289eebe93aef15e9c10ff2870e0b3817f558909d6f9",
+    "minted_at": "2026-06-04T08:30:36Z"
+  },
+  "signature": {
+    "alg": "ed25519",
+    "key_id": "ed25519:RGGe6gUQpsB6KGu0VcnMxGUL5IA1I1VDSKi3ecCzYOU",
+    "sig": "MD5hNIQazdnmy3YdkC45IC1sp5ocrawywe0lrLSCrEqaEgt3F4fgjbBld8ffGQJ5RX4I/Q0z4W/BlxVjBc1aCA=="
+  }
+}

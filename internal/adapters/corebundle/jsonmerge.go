@@ -10,11 +10,10 @@ import (
 )
 
 const (
-	mcpServersKey       = "mcpServers"
-	claudeHooksKey      = "hooks"
-	claudeStopHookKey   = "Stop"
-	scafldStopHookName  = "scafld_gate_stop"
-	scafldMCPServerName = "scafld_gate"
+	mcpServersKey      = "mcpServers"
+	claudeHooksKey     = "hooks"
+	claudeStopHookKey  = "Stop"
+	scafldStopHookName = "finalize-stop"
 )
 
 // MergeMCPConfig upserts the scafld MCP server while preserving unrelated config.

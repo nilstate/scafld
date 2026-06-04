@@ -69,12 +69,58 @@ func TestUpdateSkipsFilesThatAlreadyMatchBundle(t *testing.T) {
 	if _, err := Init(t.Context(), root); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := Update(t.Context(), root); err != nil {
+		t.Fatal(err)
+	}
 	result, err := Update(t.Context(), root)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(result.Updated) != 0 || len(result.Created) != 0 {
 		t.Fatalf("update should be content-idempotent, got created=%v updated=%v", result.Created, result.Updated)
+	}
+}
+
+func TestInitDoesNotInstallLifecycleHelperScripts(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	result, err := Init(t.Context(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, rel := range lifecycleHelperScripts() {
+		if containsPath(result.Created, rel) {
+			t.Fatalf("default init created optional lifecycle helper %s", rel)
+		}
+		if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(rel))); !os.IsNotExist(err) {
+			t.Fatalf("default init lifecycle helper %s stat err=%v, want missing", rel, err)
+		}
+	}
+}
+
+func TestUpdateInstallsOptionalLifecycleHelperScripts(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	if _, err := Init(t.Context(), root); err != nil {
+		t.Fatal(err)
+	}
+	result, err := Update(t.Context(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, rel := range lifecycleHelperScripts() {
+		if !containsPath(result.Created, rel) {
+			t.Fatalf("update created=%v, want optional lifecycle helper %s", result.Created, rel)
+		}
+		info, err := os.Stat(filepath.Join(root, filepath.FromSlash(rel)))
+		if err != nil {
+			t.Fatalf("%s missing after update: %v", rel, err)
+		}
+		if info.Mode()&0o111 == 0 {
+			t.Fatalf("%s should be executable after update: %v", rel, info.Mode())
+		}
 	}
 }
 
@@ -192,6 +238,7 @@ func TestInitGitignoreCreatesScafldRules(t *testing.T) {
 		".scafld/core/",
 		".scafld/prompts/.manifest.json",
 		".scafld/runs/",
+		"!.scafld/receipts/*.json",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf(".gitignore missing %q:\n%s", want, text)
@@ -220,6 +267,14 @@ func containsPath(paths []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func lifecycleHelperScripts() []string {
+	out := make([]string, 0, len(lifecycleHelperScriptPaths))
+	for _, rel := range lifecycleHelperScriptPaths {
+		out = append(out, ".scafld/core/"+rel)
+	}
+	return out
 }
 
 func TestInitGitignoreIsIdempotentAndOverridesBroadScafldIgnore(t *testing.T) {
@@ -264,9 +319,11 @@ func TestInitGitignoreIsIdempotentAndOverridesBroadScafldIgnore(t *testing.T) {
 		t.Fatalf("git init: %v", err)
 	}
 	assertGitIgnore(t, root, ".scafld/runs/task/session.json", true)
+	assertGitIgnore(t, root, ".scafld/receipts/task.log", true)
 	assertGitIgnore(t, root, ".scafld/core/config.yaml", true)
 	assertGitIgnore(t, root, ".scafld/prompts/.manifest.json", true)
 	assertGitIgnore(t, root, ".scafld/config.local.yaml", true)
+	assertGitIgnore(t, root, ".scafld/receipts/task.json", false)
 	assertGitIgnore(t, root, ".scafld/prompts/harden.md", false)
 	assertGitIgnore(t, root, ".scafld/specs/drafts/task.md", false)
 	assertGitIgnore(t, root, ".scafld/config.yaml", false)

@@ -1,0 +1,178 @@
+{
+  "body": {
+    "schema_version": 1,
+    "task_id": "ci-verify-merge-gate",
+    "session_id": "ci-verify-merge-gate",
+    "verdict": "pass",
+    "snapshot_mode": "working_tree",
+    "base_commit": "cf0f71d94e52b29cf691c0e10849e70d6ccb4c92",
+    "head_commit": "cf0f71d94e52b29cf691c0e10849e70d6ccb4c92",
+    "scope": [
+      "internal/adapters/cli/cli.go",
+      "internal/adapters/config/config.go",
+      "internal/adapters/git/git.go",
+      "internal/adapters/process/runner.go",
+      "internal/core/review/model.go",
+      "internal/core/trust/trusted_keys.go"
+    ],
+    "tree_sha": "1dcdb5989dd52be0b7953ce0c1c3b52d527d0375",
+    "file_digests": {
+      "internal/adapters/cli/cli.go": "0d1f66dfb89076388b7378215774cbf2f571679469219dbbc0253a35fb35391f",
+      "internal/adapters/config/config.go": "f37a1d9f7430fd26fc94ccf22a6ca0d8ff31b8c3d151cb1b0caaa443cd6ad2b1",
+      "internal/adapters/git/git.go": "c97054b00fc87bf82422ebf10b2433ceee3b3f65566deba5f8b607542a9b18b1",
+      "internal/adapters/process/runner.go": "be523879e2da7bcb9ac9c4bd52c6c64c6023d2b0f3d6f785123be24fdb92b9e2",
+      "internal/core/review/model.go": "2568e10a4b3427a6b8f603335b582e04d022ed6b0bbde983fcf14c46a868001a",
+      "internal/core/trust/trusted_keys.go": "dc86300800987b6493e905e88f16ac618564ef520f8b7d1343651ec2eb505ab6"
+    },
+    "ignored_unreviewed": [],
+    "reviewed_context_provenance": [
+      {
+        "kind": "evidence_file",
+        "path": "internal/adapters/cli/cli.go",
+        "sha256": "0d1f66dfb89076388b7378215774cbf2f571679469219dbbc0253a35fb35391f",
+        "bytes": 16897
+      },
+      {
+        "kind": "evidence_file",
+        "path": "internal/adapters/config/config.go",
+        "sha256": "f37a1d9f7430fd26fc94ccf22a6ca0d8ff31b8c3d151cb1b0caaa443cd6ad2b1",
+        "bytes": 18528
+      },
+      {
+        "kind": "evidence_file",
+        "path": "internal/adapters/git/git.go",
+        "sha256": "c97054b00fc87bf82422ebf10b2433ceee3b3f65566deba5f8b607542a9b18b1",
+        "bytes": 18266
+      },
+      {
+        "kind": "evidence_file",
+        "path": "internal/adapters/process/runner.go",
+        "sha256": "be523879e2da7bcb9ac9c4bd52c6c64c6023d2b0f3d6f785123be24fdb92b9e2",
+        "bytes": 4973
+      },
+      {
+        "kind": "evidence_file",
+        "path": "internal/core/review/model.go",
+        "sha256": "2568e10a4b3427a6b8f603335b582e04d022ed6b0bbde983fcf14c46a868001a",
+        "bytes": 16541
+      },
+      {
+        "kind": "evidence_file",
+        "path": "internal/core/trust/trusted_keys.go",
+        "sha256": "dc86300800987b6493e905e88f16ac618564ef520f8b7d1343651ec2eb505ab6",
+        "bytes": 4296
+      }
+    ],
+    "reviewer": {
+      "provider": "codex",
+      "model": "gpt-5.5",
+      "binary_sha256": "baefc109b871e73a7bab298ee19b8bf73c8b647c4f8649a9794fc5db01db17b9",
+      "endpoint_host": "api.openai.com"
+    },
+    "host_under_review": {
+      "agent": "claude",
+      "session_id": "ci-verify-merge-gate"
+    },
+    "independence": {
+      "level": "cross_vendor",
+      "distinct": true,
+      "reason": "cross_vendor: reviewer \"codex\" and host \"claude\" are different model vendors; this is multi-model review that reduces correlated blind spots but remains single-party local tooling"
+    },
+    "spec_fingerprint": "df20fe1bd9cd543a6c473a0e674521a05004ef7aa92880f3e8e238179b987cca",
+    "acceptance_declared": true,
+    "acceptance": [
+      {
+        "id": "v1",
+        "command": "rg -n 'sha256\\.(New|Sum256)' internal/app/verify internal/adapters/cli/verify",
+        "expected_kind": "no_matches",
+        "status": "pass",
+        "reason": "output was empty",
+        "exit_code": 1,
+        "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "diagnostic": ".scafld/runs/ci-verify-merge-gate/diagnostics/command-1780561737023290000.txt"
+      },
+      {
+        "id": "v4",
+        "command": "go run ./cmd/scafld validate ci-verify-merge-gate",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "1ba652c3ec9baa2c3f704fbf63664bbf5a45c5ce1dedd01ef4b0882c23e5c6d4",
+        "diagnostic": ".scafld/runs/ci-verify-merge-gate/diagnostics/command-1780561737134445000.txt"
+      },
+      {
+        "id": "v5",
+        "command": "go test ./internal/adapters/cli/verify/... -run 'TestTamperedTreeVerifyExitsNonzero'",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "78ef560ff8a77d543644f8e59beb75e5ede3f19b3144722678f9ebc4ea41374d",
+        "diagnostic": ".scafld/runs/ci-verify-merge-gate/diagnostics/command-1780561737240093000.txt"
+      },
+      {
+        "id": "v6",
+        "command": "go test ./internal/arch -run 'TestAppDoesNotImportAdapters|TestPortsAreNarrow'",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "9ece92555b33997bb4678048a684aabefa2c0a6287935252fba63a4cc37fc91e",
+        "diagnostic": ".scafld/runs/ci-verify-merge-gate/diagnostics/command-1780561737329795000.txt"
+      },
+      {
+        "id": "ac1_5",
+        "command": "go test ./internal/core/trust ./internal/app/verify/... -run 'TrustedKey|KeyID|Revoked|Duplicate'",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "dffd803f5b3a801d8f1098b2fd333a7c0fea9d9b5e3b270752db69774ab3b150",
+        "diagnostic": ".scafld/runs/ci-verify-merge-gate/diagnostics/command-1780561737426184000.txt"
+      },
+      {
+        "id": "ac2_2",
+        "command": "go test ./internal/arch -run TestCLIIsThin",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "9ece92555b33997bb4678048a684aabefa2c0a6287935252fba63a4cc37fc91e",
+        "diagnostic": ".scafld/runs/ci-verify-merge-gate/diagnostics/command-1780561737508469000.txt"
+      },
+      {
+        "id": "ac2_3",
+        "command": "rg -n 'adapters/process|app/acceptance|acceptance\\\\.' internal/adapters/cli/verify internal/app/verify",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "2e6d7cd43ce45599e46fd41f9b0cb675ad29b2e8234c277ffc7a2f732ba58266",
+        "diagnostic": ".scafld/runs/ci-verify-merge-gate/diagnostics/command-1780561737521973000.txt"
+      },
+      {
+        "id": "ac2_5",
+        "command": "go test ./internal/adapters/cli/verify/... -run 'Target|CI'",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "78ef560ff8a77d543644f8e59beb75e5ede3f19b3144722678f9ebc4ea41374d",
+        "diagnostic": ".scafld/runs/ci-verify-merge-gate/diagnostics/command-1780561737618838000.txt"
+      }
+    ],
+    "open_blockers": [],
+    "mutation_guard": {
+      "status": "clean",
+      "scope": [
+        "internal/adapters/cli/cli.go",
+        "internal/adapters/config/config.go",
+        "internal/adapters/git/git.go",
+        "internal/adapters/process/runner.go",
+        "internal/core/review/model.go",
+        "internal/core/trust/trusted_keys.go"
+      ]
+    },
+    "ledger_head": "0563804b0b755685948e69f03a42eb752346f6915a93e62bbbad2de2a60315d3",
+    "minted_at": "2026-06-04T08:28:56Z"
+  },
+  "signature": {
+    "alg": "ed25519",
+    "key_id": "ed25519:RGGe6gUQpsB6KGu0VcnMxGUL5IA1I1VDSKi3ecCzYOU",
+    "sig": "IX1Gg9W0Q+c26HDtpdh0ELoYpILibM6pkrkXLkJwHP9wHJwG9GqwOVmh4zCz7ZApg2j9v+tfkUXYnL4MZNOSAw=="
+  }
+}

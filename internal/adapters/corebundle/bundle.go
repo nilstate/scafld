@@ -18,12 +18,21 @@ import (
 //go:embed assets
 var assets embed.FS
 
+var lifecycleHelperScriptPaths = []string{
+	"scripts/scafld-codex-build.sh",
+	"scripts/scafld-codex-review.sh",
+	"scripts/scafld-claude-build.sh",
+	"scripts/scafld-claude-review.sh",
+	"scripts/scafld-provider-adapter.sh",
+}
+
 // Options controls how embedded core assets are installed.
 type Options struct {
 	OverwriteCore         bool
 	CreateProjectPrompts  bool
 	RefreshProjectPrompts bool
 	CreateProjectConfig   bool
+	InstallLifecycleTools bool
 }
 
 // Result summarizes files created, updated, or skipped during installation.
@@ -43,7 +52,7 @@ func Init(ctx context.Context, root string) (Result, error) {
 
 // Update refreshes managed assets and existing manifest-backed prompt copies.
 func Update(ctx context.Context, root string) (Result, error) {
-	return Install(ctx, root, Options{OverwriteCore: true, RefreshProjectPrompts: true})
+	return Install(ctx, root, Options{OverwriteCore: true, RefreshProjectPrompts: true, InstallLifecycleTools: true})
 }
 
 // Install copies embedded assets into root according to opts.
@@ -52,7 +61,7 @@ func Install(ctx context.Context, root string, opts Options) (Result, error) {
 		return Result{}, err
 	}
 	var result Result
-	if err := installTree(ctx, root, "assets/core", ".scafld/core", opts.OverwriteCore, &result); err != nil {
+	if err := installTree(ctx, root, "assets/core", ".scafld/core", opts.OverwriteCore, opts.InstallLifecycleTools, &result); err != nil {
 		return Result{}, err
 	}
 	if opts.CreateProjectPrompts {
@@ -73,7 +82,7 @@ func Install(ctx context.Context, root string, opts Options) (Result, error) {
 	return result, nil
 }
 
-func installTree(ctx context.Context, root string, source string, dest string, overwrite bool, result *Result) error {
+func installTree(ctx context.Context, root string, source string, dest string, overwrite bool, installLifecycleTools bool, result *Result) error {
 	return fs.WalkDir(assets, source, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil || entry.IsDir() {
 			return err
@@ -85,6 +94,9 @@ func installTree(ctx context.Context, root string, source string, dest string, o
 		if err != nil {
 			return err
 		}
+		if !installLifecycleTools && lifecycleHelperScript(filepath.ToSlash(rel)) {
+			return nil
+		}
 		targetRel := filepath.ToSlash(filepath.Join(dest, rel))
 		target := filepath.Join(root, filepath.FromSlash(targetRel))
 		data, err := assets.ReadFile(path)
@@ -93,6 +105,15 @@ func installTree(ctx context.Context, root string, source string, dest string, o
 		}
 		return writeManagedFile(target, targetRel, data, overwrite, result)
 	})
+}
+
+func lifecycleHelperScript(rel string) bool {
+	for _, path := range lifecycleHelperScriptPaths {
+		if rel == path {
+			return true
+		}
+	}
+	return false
 }
 
 func writeManagedFile(path string, rel string, data []byte, overwrite bool, result *Result) error {
@@ -131,7 +152,7 @@ func writeManagedFile(path string, rel string, data []byte, overwrite bool, resu
 }
 
 func fileMode(rel string) os.FileMode {
-	if strings.Contains(rel, "/scripts/") {
+	if strings.Contains(rel, "/scripts/") || strings.HasPrefix(rel, "scripts/") {
 		return 0o755
 	}
 	return 0o644

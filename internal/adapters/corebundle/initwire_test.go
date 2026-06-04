@@ -79,7 +79,7 @@ func TestMergeMCPConfigPreservesUnrelatedEntriesAndReportsConflict(t *testing.T)
   "custom": true,
   "mcpServers": {
     "other": {"command": "other"},
-    "scafld_gate": {"command": "old", "args": ["wrong"]}
+    "scafld": {"command": "old", "args": ["wrong"]}
   }
 }`)
 	desired := mustReadAsset(t, "assets/initwire/mcp.json")
@@ -98,8 +98,8 @@ func TestMergeMCPConfigPreservesUnrelatedEntriesAndReportsConflict(t *testing.T)
 	if _, ok := servers["other"]; !ok {
 		t.Fatalf("other server lost: %s", merged)
 	}
-	if !strings.Contains(string(merged), "scafld_gate") {
-		t.Fatalf("scafld gate missing: %s", merged)
+	if !strings.Contains(string(merged), `"scafld"`) || !strings.Contains(string(merged), `"finalize"`) {
+		t.Fatalf("scafld finalize server/tool missing: %s", merged)
 	}
 
 	again, changed, conflict, err := MergeMCPConfig(merged, desired)
@@ -118,7 +118,7 @@ func TestMergeClaudeSettingsPreservesUnrelatedEntriesAndReportsConflict(t *testi
     "PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "echo pre"}]}],
     "Stop": [
       {"name": "custom_stop", "hooks": [{"type": "command", "command": "echo custom"}]},
-      {"name": "scafld_gate_stop", "hooks": [{"type": "command", "command": "old"}]}
+      {"name": "finalize-stop", "hooks": [{"type": "command", "command": "old"}]}
     ]
   }
 }`)
@@ -131,13 +131,42 @@ func TestMergeClaudeSettingsPreservesUnrelatedEntriesAndReportsConflict(t *testi
 		t.Fatalf("changed=%v conflict=%v, want true true", changed, conflict)
 	}
 	text := string(merged)
-	for _, want := range []string{"permissions", "PreToolUse", "custom_stop", "scafld_gate_stop", "scafld gate --json --stdin"} {
+	for _, want := range []string{"permissions", "PreToolUse", "custom_stop", "finalize-stop", "scafld finalize --json --stdin"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("merged settings missing %q:\n%s", want, merged)
 		}
 	}
-	if strings.Count(text, "scafld_gate_stop") != 1 {
+	if strings.Count(text, "finalize-stop") != 1 {
 		t.Fatalf("scafld Stop hook duplicated:\n%s", merged)
+	}
+}
+
+func TestInitWireDefaultMCPIsGateOnly(t *testing.T) {
+	root := t.TempDir()
+	configHome := t.TempDir()
+	t.Setenv(scafldConfigHomeEnv, configHome)
+
+	if _, err := InitWire(t.Context(), root); err != nil {
+		t.Fatal(err)
+	}
+	mcp := mustReadFile(t, filepath.Join(root, ".mcp.json"))
+	object := decodeJSONObject(t, mcp)
+	servers := object["mcpServers"].(map[string]any)
+	if len(servers) != 1 {
+		t.Fatalf("mcp servers = %v, want finalize-only default", servers)
+	}
+	if _, ok := servers["scafld"]; !ok {
+		t.Fatalf("scafld server missing from default .mcp.json:\n%s", mcp)
+	}
+	scafldServer := servers["scafld"].(map[string]any)
+	includeTools := scafldServer["includeTools"].([]any)
+	if len(includeTools) != 1 || includeTools[0] != "finalize" {
+		t.Fatalf("default .mcp.json includeTools = %v, want finalize only", includeTools)
+	}
+	for _, denied := range []string{"harden-submit-stdio", "review-submit-stdio"} {
+		if strings.Contains(string(mcp), denied) {
+			t.Fatalf("default .mcp.json includes lifecycle tool %q:\n%s", denied, mcp)
+		}
 	}
 }
 
@@ -164,7 +193,7 @@ func TestInitWireExistingJSONPreservesEntriesAndInstallsAssets(t *testing.T) {
 			t.Fatalf("updated = %v, want %s", result.Updated, want)
 		}
 	}
-	for _, want := range []string{".claude/skills/scafld-gate/SKILL.md", ".claude/commands/scafld-gate.md"} {
+	for _, want := range []string{".claude/skills/finalize/SKILL.md", ".claude/commands/finalize.md"} {
 		if !containsPath(result.Created, want) {
 			t.Fatalf("created = %v, want %s", result.Created, want)
 		}
@@ -173,14 +202,32 @@ func TestInitWireExistingJSONPreservesEntriesAndInstallsAssets(t *testing.T) {
 		}
 	}
 	mcp := mustReadFile(t, filepath.Join(root, ".mcp.json"))
-	if !strings.Contains(string(mcp), "other") || !strings.Contains(string(mcp), "scafld_gate") {
+	if !strings.Contains(string(mcp), "other") || !strings.Contains(string(mcp), `"scafld"`) || !strings.Contains(string(mcp), `"finalize"`) {
 		t.Fatalf(".mcp.json did not preserve and upsert:\n%s", mcp)
 	}
 	settings := mustReadFile(t, filepath.Join(root, ".claude", "settings.json"))
-	for _, want := range []string{"theme", "custom_stop", "scafld_gate_stop"} {
+	for _, want := range []string{"theme", "custom_stop", "finalize-stop"} {
 		if !strings.Contains(string(settings), want) {
 			t.Fatalf("settings missing %q:\n%s", want, settings)
 		}
+	}
+	workflow := mustReadFile(t, filepath.Join(root, ".github", "workflows", "scafld-verify.yml"))
+	for _, want := range []string{"pull_request_target", "actions/setup-go", "SCAFLD_VERSION", "SCAFLD_VERIFY_TARGET", "RUNNER_TEMP", "git show", "scripts/scafld-verify.sh", "pull_request.head.sha"} {
+		if !strings.Contains(string(workflow), want) {
+			t.Fatalf("verify workflow missing %q:\n%s", want, workflow)
+		}
+	}
+	scriptPath := filepath.Join(root, "scripts", "scafld-verify.sh")
+	script := mustReadFile(t, scriptPath)
+	for _, want := range []string{"SCAFLD_TRUSTED_KEYS", "git show \"$target:.scafld/trusted-keys.json\"", "go install", "--trusted-keys", ".scafld/receipts/latest.json"} {
+		if !strings.Contains(string(script), want) {
+			t.Fatalf("verify script missing %q:\n%s", want, script)
+		}
+	}
+	if info, err := os.Stat(scriptPath); err != nil {
+		t.Fatal(err)
+	} else if runtime.GOOS != "windows" && info.Mode().Perm()&0o111 == 0 {
+		t.Fatalf("verify script mode = %o, want executable", info.Mode().Perm())
 	}
 }
 
