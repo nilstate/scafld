@@ -181,6 +181,59 @@ func TestGateRunErrorsOnMissingTaskID(t *testing.T) {
 	}
 }
 
+func TestParseOptionsAcceptsPublicTaskID(t *testing.T) {
+	t.Parallel()
+
+	opts, err := parseOptions([]string{
+		"runx-release-readiness-v1",
+		"--json",
+		"--root", "/repo",
+		"--base-ref=origin/main",
+		"--scope-hint", "internal/adapters/cli/finalize/run.go",
+		"--scope-hint=internal/adapters/cli/finalize/run_test.go",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if opts.TaskID != "runx-release-readiness-v1" || !opts.JSON || opts.Root != "/repo" || opts.BaseRef != "origin/main" {
+		t.Fatalf("opts = %+v", opts)
+	}
+	wantScope := []string{"internal/adapters/cli/finalize/run.go", "internal/adapters/cli/finalize/run_test.go"}
+	if !reflect.DeepEqual(opts.ScopeHint, wantScope) {
+		t.Fatalf("scope hint = %v, want %v", opts.ScopeHint, wantScope)
+	}
+}
+
+func TestParseOptionsRejectsMultipleTaskIDs(t *testing.T) {
+	t.Parallel()
+
+	_, err := parseOptions([]string{"one", "two", "--json"})
+	if err == nil || !strings.Contains(err.Error(), "at most one task_id") {
+		t.Fatalf("multiple task_id error = %v", err)
+	}
+}
+
+func TestReadRequestUsesPublicTaskIDWithoutStdin(t *testing.T) {
+	t.Parallel()
+
+	req, err := readRequest(options{TaskID: "demo", Root: "/repo", BaseRef: "HEAD", ScopeHint: []string{"a.go"}}, strings.NewReader(""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.TaskID != "demo" || req.Root != "/repo" || req.BaseRef != "HEAD" || !reflect.DeepEqual(req.ScopeHint, []string{"a.go"}) {
+		t.Fatalf("request = %+v", req)
+	}
+}
+
+func TestReadRequestRejectsConflictingTaskIDs(t *testing.T) {
+	t.Parallel()
+
+	_, err := readRequest(options{Stdin: true, TaskID: "cli-task"}, strings.NewReader(`{"task_id":"stdin-task"}`))
+	if err == nil || !strings.Contains(err.Error(), "conflicts with stdin task_id") {
+		t.Fatalf("conflicting task_id error = %v", err)
+	}
+}
+
 func TestReadRequestParsesBaseRef(t *testing.T) {
 	t.Parallel()
 
@@ -520,6 +573,46 @@ func TestFinalizeRejectsLedgerHeadMismatch(t *testing.T) {
 	}
 }
 
+func TestFinalizePassWithAcceptanceResultsAppendsReceipt(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	store := jsonstore.SessionStore{Root: root}
+	env := validReceiptEnvelope(t, "demo")
+	out := appfinalize.Output{
+		Verdict: "pass",
+		Receipt: &env,
+		Acceptance: appacceptance.EvaluateOutput{
+			Passed: true,
+			Results: []appacceptance.CriterionResult{
+				{ID: "ac1", Command: "go test ./...", ExpectedKind: "exit_code_zero", Status: "pass", ExitCode: 0, Reason: "exit code was 0"},
+			},
+		},
+	}
+	if _, err := finalize(context.Background(), root, "demo", store, spec.Model{TaskID: "demo"}, false, out); err != nil {
+		t.Fatal(err)
+	}
+	ledger, err := store.Load(context.Background(), "demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ledger.LedgerValid {
+		t.Fatalf("ledger invalid after acceptance+receipt append: %s", ledger.LedgerError)
+	}
+	if len(ledger.Entries) != 3 {
+		t.Fatalf("entries = %+v, want criterion, receipt, complete", ledger.Entries)
+	}
+	if ledger.Entries[0].Type != "criterion" || ledger.Entries[1].Type != session.EntryReceipt || ledger.Entries[2].Type != "complete" {
+		t.Fatalf("entry order = %+v, want criterion, receipt, complete", ledger.Entries)
+	}
+	if ledger.Entries[1].LedgerHead != env.Body.LedgerHead || ledger.LedgerHead != env.Body.LedgerHead {
+		t.Fatalf("ledger head = %q entry head=%q want %q", ledger.LedgerHead, ledger.Entries[1].LedgerHead, env.Body.LedgerHead)
+	}
+	if got := ledger.CriterionStates["ac1"].Status; got != "pass" {
+		t.Fatalf("criterion state = %q, want pass", got)
+	}
+}
+
 func containsString(values []string, want string) bool {
 	for _, v := range values {
 		if v == want {
@@ -727,6 +820,29 @@ func TestGateFailedAcceptanceCarriesCriterionDetails(t *testing.T) {
 	independence, ok := resp["independence"].(receipt.Independence)
 	if !ok || independence.Downgraded != receipt.IndependenceDowngradeSameVendor {
 		t.Fatalf("failed gate response independence = %#v", resp["independence"])
+	}
+}
+
+func TestGateFindingsPreservesLine(t *testing.T) {
+	t.Parallel()
+
+	findings := gateFindings([]review.Finding{{
+		ID:               "FINDING-001",
+		Severity:         review.SeverityMedium,
+		BlocksCompletion: true,
+		Location:         &review.Location{Path: "internal/adapters/cli/finalize/run.go", Line: 742},
+		Summary:          "line-specific finding",
+		Validation:       "go test ./internal/adapters/cli/finalize -run TestGateFindingsPreservesLine -count=1",
+	}})
+	if len(findings) != 1 {
+		t.Fatalf("findings = %+v", findings)
+	}
+	location, ok := findings[0]["location"].(map[string]any)
+	if !ok {
+		t.Fatalf("location = %#v, want structured location", findings[0]["location"])
+	}
+	if location["path"] != "internal/adapters/cli/finalize/run.go" || location["line"] != 742 {
+		t.Fatalf("location = %+v, want path and line", location)
 	}
 }
 

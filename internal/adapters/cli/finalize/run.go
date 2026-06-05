@@ -53,11 +53,12 @@ type Request struct {
 	ScopeHint []string `json:"scope_hint,omitempty"`
 }
 
-// Run handles `scafld finalize --json --stdin`, the CLI child process invoked by the
-// finalize MCP transport. It composes the snapshot, acceptance, isolated
-// review, and signing adapters around the internal/app/finalize use case, then
-// persists the signed receipt, appends it to the session ledger, and marks the
-// matching spec complete when the receipt passes.
+// Run handles the public `scafld finalize <task_id>` command and the
+// `scafld finalize --json --stdin` child process invoked by the finalize MCP
+// transport. It composes the snapshot, acceptance, isolated review, and signing
+// adapters around the internal/app/finalize use case, then persists the signed
+// receipt, appends it to the session ledger, and marks the matching spec
+// complete when the receipt passes.
 func Run(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -65,9 +66,6 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer) 
 	opts, err := parseOptions(args)
 	if err != nil {
 		return err
-	}
-	if !opts.JSON {
-		return errors.New("finalize requires --json")
 	}
 	req, err := readRequest(opts, stdin)
 	if err != nil {
@@ -84,7 +82,7 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer) 
 	if err != nil {
 		return err
 	}
-	return emit(stdout, result)
+	return emit(stdout, result, opts.JSON)
 }
 
 func compose(ctx context.Context, req Request) (map[string]any, error) {
@@ -299,6 +297,7 @@ func finalize(ctx context.Context, root string, taskID string, sessions jsonstor
 		"ok":      true,
 		"command": publicCommand,
 		"tool":    publicCommand,
+		"task_id": taskID,
 		"verdict": out.Verdict,
 	}
 	if out.Receipt == nil {
@@ -339,6 +338,10 @@ func finalize(ctx context.Context, root string, taskID string, sessions jsonstor
 		return nil, err
 	}
 	now := out.Receipt.Body.MintedAt
+	// Criterion evidence is chronological evidence, not a receipt-chain link:
+	// session replay advances LedgerHead only for entries with a receipt digest.
+	// Appending acceptance before the receipt preserves acceptance-before-seal
+	// ordering without changing the prior head the receipt was minted from.
 	if err := appendAcceptanceEvidence(ctx, sessions, taskID, out.Acceptance.Results, phaseByCriterion(model), now); err != nil {
 		return nil, err
 	}
@@ -844,7 +847,11 @@ func gateFindings(findings []review.Finding) []map[string]any {
 			"blocks":   f.BlocksCompletion,
 		}
 		if f.Location != nil {
-			item["location"] = f.Location.Path
+			location := map[string]any{"path": f.Location.Path}
+			if f.Location.Line > 0 {
+				location["line"] = f.Location.Line
+			}
+			item["location"] = location
 		}
 		if strings.TrimSpace(f.Validation) != "" {
 			item["validation"] = f.Validation
@@ -875,24 +882,56 @@ func gateAcceptanceResults(results []appacceptance.CriterionResult) []map[string
 }
 
 func readRequest(opts options, stdin io.Reader) (Request, error) {
+	req := Request{
+		TaskID:    opts.TaskID,
+		Root:      opts.Root,
+		BaseRef:   opts.BaseRef,
+		ScopeHint: append([]string(nil), opts.ScopeHint...),
+	}
 	if !opts.Stdin {
-		return Request{}, nil
+		return req, nil
 	}
 	data, err := io.ReadAll(stdin)
 	if err != nil {
 		return Request{}, fmt.Errorf("read finalize stdin: %w", err)
 	}
 	if strings.TrimSpace(string(data)) == "" {
-		return Request{}, nil
+		return req, nil
 	}
-	var req Request
-	if err := json.Unmarshal(data, &req); err != nil {
+	var payload Request
+	if err := json.Unmarshal(data, &payload); err != nil {
 		return Request{}, fmt.Errorf("parse finalize stdin JSON: %w", err)
+	}
+	req, err = mergeRequestOptions(payload, opts)
+	if err != nil {
+		return Request{}, err
 	}
 	return req, nil
 }
 
-func emit(stdout io.Writer, payload map[string]any) error {
+func mergeRequestOptions(req Request, opts options) (Request, error) {
+	if opts.TaskID != "" {
+		if req.TaskID != "" && req.TaskID != opts.TaskID {
+			return Request{}, fmt.Errorf("finalize task_id %q conflicts with stdin task_id %q", opts.TaskID, req.TaskID)
+		}
+		req.TaskID = opts.TaskID
+	}
+	if opts.Root != "" {
+		req.Root = opts.Root
+	}
+	if opts.BaseRef != "" {
+		req.BaseRef = opts.BaseRef
+	}
+	if len(opts.ScopeHint) > 0 {
+		req.ScopeHint = append([]string(nil), opts.ScopeHint...)
+	}
+	return req, nil
+}
+
+func emit(stdout io.Writer, payload map[string]any, asJSON bool) error {
+	if !asJSON {
+		return emitText(stdout, payload)
+	}
 	data, err := json.Marshal(payload)
 	if err != nil {
 		return err
@@ -901,22 +940,102 @@ func emit(stdout io.Writer, payload map[string]any) error {
 	return err
 }
 
+func emitText(stdout io.Writer, payload map[string]any) error {
+	taskID, _ := payload["task_id"].(string)
+	verdict, _ := payload["verdict"].(string)
+	if taskID == "" {
+		taskID = "work"
+	}
+	if verdict == "pass" {
+		fmt.Fprintf(stdout, "finalize passed: %s\n", taskID)
+		if path, _ := payload["task_receipt_path"].(string); path != "" {
+			fmt.Fprintf(stdout, "receipt: %s\n", path)
+		} else if path, _ := payload["receipt_path"].(string); path != "" {
+			fmt.Fprintf(stdout, "receipt: %s\n", path)
+		}
+		return nil
+	}
+	fmt.Fprintf(stdout, "finalize blocked: %s\n", taskID)
+	if reason, _ := payload["reason"].(string); reason != "" {
+		fmt.Fprintf(stdout, "reason: %s\n", reason)
+	}
+	if findings, ok := payload["findings"].([]map[string]any); ok {
+		for _, finding := range findings {
+			summary, _ := finding["summary"].(string)
+			if summary != "" {
+				fmt.Fprintf(stdout, "- %s\n", summary)
+			}
+		}
+	}
+	return nil
+}
+
 type options struct {
-	JSON  bool
-	Stdin bool
+	JSON      bool
+	Stdin     bool
+	TaskID    string
+	Root      string
+	BaseRef   string
+	ScopeHint []string
 }
 
 func parseOptions(args []string) (options, error) {
 	var opts options
-	for _, arg := range args {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
 		switch arg {
 		case "--json":
 			opts.JSON = true
 		case "--stdin":
 			opts.Stdin = true
+		case "--root":
+			value, err := nextFinalizeArg(args, &i, arg)
+			if err != nil {
+				return options{}, err
+			}
+			opts.Root = value
+		case "--base-ref":
+			value, err := nextFinalizeArg(args, &i, arg)
+			if err != nil {
+				return options{}, err
+			}
+			opts.BaseRef = value
+		case "--scope-hint":
+			value, err := nextFinalizeArg(args, &i, arg)
+			if err != nil {
+				return options{}, err
+			}
+			opts.ScopeHint = append(opts.ScopeHint, value)
 		default:
-			return options{}, fmt.Errorf("unknown finalize argument %q", arg)
+			if key, value, ok := strings.Cut(strings.TrimPrefix(arg, "--"), "="); ok && strings.HasPrefix(arg, "--") {
+				switch key {
+				case "root":
+					opts.Root = value
+				case "base-ref":
+					opts.BaseRef = value
+				case "scope-hint":
+					opts.ScopeHint = append(opts.ScopeHint, value)
+				default:
+					return options{}, fmt.Errorf("unknown finalize argument %q", arg)
+				}
+				continue
+			}
+			if strings.HasPrefix(arg, "-") {
+				return options{}, fmt.Errorf("unknown finalize argument %q", arg)
+			}
+			if opts.TaskID != "" {
+				return options{}, fmt.Errorf("finalize accepts at most one task_id, got %q and %q", opts.TaskID, arg)
+			}
+			opts.TaskID = arg
 		}
 	}
 	return opts, nil
+}
+
+func nextFinalizeArg(args []string, index *int, flag string) (string, error) {
+	if *index+1 >= len(args) {
+		return "", fmt.Errorf("%s requires a value", flag)
+	}
+	*index = *index + 1
+	return args[*index], nil
 }
