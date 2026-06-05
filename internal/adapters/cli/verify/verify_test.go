@@ -133,6 +133,9 @@ func TestRunMissingTrustedKeysFailsClosedInCI(t *testing.T) {
 }
 
 func TestRunUsesReceiptPathFromEnvironment(t *testing.T) {
+	// Hermetic: clear the ambient CI env (GitHub Actions sets CI=true) so this
+	// exercises the non-CI receipt-path resolution, not the CI-policy branch.
+	t.Setenv("CI", "")
 	t.Setenv("SCAFLD_RECEIPT_PATH", "env-receipt.json")
 
 	root := t.TempDir()
