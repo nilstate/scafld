@@ -114,6 +114,11 @@ func compose(ctx context.Context, req Request) (map[string]any, error) {
 	}
 
 	gitAdapter := git.Adapter{Root: root}
+	baseRef, err := defaultFinalizeBaseRef(ctx, gitAdapter, req.BaseRef)
+	if err != nil {
+		return nil, err
+	}
+	req.BaseRef = baseRef
 	scope, err := deriveGateScope(ctx, gitAdapter, model, req, hasSpec)
 	if err != nil {
 		return nil, err
@@ -148,7 +153,7 @@ func compose(ctx context.Context, req Request) (map[string]any, error) {
 		TaskID:           model.TaskID,
 		SessionID:        model.TaskID,
 		Scope:            scope,
-		BaseRef:          strings.TrimSpace(req.BaseRef),
+		BaseRef:          baseRef,
 		ReviewerProvider: reviewerRuntime.Provider,
 		SpecFingerprint:  specFingerprint(model, scope),
 		HostUnderReview:  receipt.HostUnderReview{Agent: hostMarker, SessionID: model.TaskID},
@@ -181,6 +186,25 @@ func compose(ctx context.Context, req Request) (map[string]any, error) {
 		return nil, err
 	}
 	return finalize(ctx, root, req.TaskID, sessionStore, model, hasSpec, out)
+}
+
+type headResolver interface {
+	ResolveHead(context.Context) (string, bool, error)
+}
+
+func defaultFinalizeBaseRef(ctx context.Context, resolver headResolver, requested string) (string, error) {
+	requested = strings.TrimSpace(requested)
+	if requested != "" {
+		return requested, nil
+	}
+	head, ok, err := resolver.ResolveHead(ctx)
+	if err != nil {
+		return "", fmt.Errorf("resolve HEAD for finalize base_ref: %w", err)
+	}
+	if !ok {
+		return "", nil
+	}
+	return strings.TrimSpace(head), nil
 }
 
 func loadGateModel(ctx context.Context, store markdown.Store, req Request) (spec.Model, bool, error) {
@@ -675,7 +699,11 @@ func acceptanceContract(model spec.Model) string {
 		if strings.TrimSpace(c.Command) == "" {
 			continue
 		}
-		lines = append(lines, "- "+c.ID+": "+c.Command)
+		line := "- " + c.ID + ": expected_kind=" + strings.TrimSpace(string(c.ExpectedKind)) + " command=" + c.Command
+		if strings.TrimSpace(c.Status) != "" {
+			line += " status=" + strings.TrimSpace(c.Status)
+		}
+		lines = append(lines, line)
 	}
 	if len(lines) == 0 {
 		return "Acceptance: none declared."

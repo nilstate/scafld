@@ -21,6 +21,13 @@ jobs:
         with:
           go-version: '1.26.2'
 
+      - name: Build scafld from source
+        run: |
+          set -eu
+          mkdir -p "$RUNNER_TEMP/scafld-bin"
+          go build -o "$RUNNER_TEMP/scafld-bin/scafld" ./cmd/scafld
+          echo "$RUNNER_TEMP/scafld-bin" >> "$GITHUB_PATH"
+
       - name: Run scafld verify
         env:
           SCAFLD_VERSION: v2.4.7
