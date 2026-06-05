@@ -354,6 +354,12 @@ func (a Adapter) resolveHead(ctx context.Context) (string, bool, error) {
 	return strings.TrimSpace(string(out)), true, nil
 }
 
+// ResolveHead returns the checked-out HEAD commit when the worktree has one.
+// Repositories without an initial commit return ok=false instead of failing.
+func (a Adapter) ResolveHead(ctx context.Context) (string, bool, error) {
+	return a.resolveHead(ctx)
+}
+
 // TreeDigests lists the in-scope file digests of an existing tree object,
 // reading the immutable tree rather than the working directory. The gate reviewer
 // uses it to read the exact bytes the receipt signs, regardless of any later

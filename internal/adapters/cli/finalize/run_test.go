@@ -3,6 +3,10 @@ package finalize
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,11 +20,15 @@ import (
 	"github.com/nilstate/scafld/v2/internal/adapters/jsonstore"
 	"github.com/nilstate/scafld/v2/internal/adapters/markdown"
 	"github.com/nilstate/scafld/v2/internal/adapters/process"
+	"github.com/nilstate/scafld/v2/internal/adapters/sign"
 	appacceptance "github.com/nilstate/scafld/v2/internal/app/acceptance"
 	appfinalize "github.com/nilstate/scafld/v2/internal/app/finalize"
+	appverify "github.com/nilstate/scafld/v2/internal/app/verify"
 	"github.com/nilstate/scafld/v2/internal/core/receipt"
+	"github.com/nilstate/scafld/v2/internal/core/review"
 	"github.com/nilstate/scafld/v2/internal/core/session"
 	"github.com/nilstate/scafld/v2/internal/core/spec"
+	"github.com/nilstate/scafld/v2/internal/core/trust"
 )
 
 func TestGateScopeUsesSpecScopeAndTouchpoints(t *testing.T) {
@@ -185,6 +193,102 @@ func TestReadRequestParsesBaseRef(t *testing.T) {
 	}
 }
 
+type fakeHeadResolver struct {
+	head  string
+	ok    bool
+	err   error
+	calls int
+}
+
+func (f *fakeHeadResolver) ResolveHead(context.Context) (string, bool, error) {
+	f.calls++
+	return f.head, f.ok, f.err
+}
+
+func TestBaseDeltaDefaultResolvesHEAD(t *testing.T) {
+	t.Parallel()
+
+	resolver := &fakeHeadResolver{head: "abc123", ok: true}
+	got, err := defaultFinalizeBaseRef(context.Background(), resolver, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "abc123" {
+		t.Fatalf("default base_ref = %q, want HEAD commit", got)
+	}
+
+	explicit, err := defaultFinalizeBaseRef(context.Background(), resolver, " origin/main ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if explicit != "origin/main" {
+		t.Fatalf("explicit base_ref = %q, want trimmed caller value", explicit)
+	}
+	if resolver.calls != 1 {
+		t.Fatalf("ResolveHead calls = %d, want only omitted base_ref to resolve HEAD", resolver.calls)
+	}
+}
+
+func TestNoHeadWorkingTreeFallback(t *testing.T) {
+	t.Parallel()
+
+	got, err := defaultFinalizeBaseRef(context.Background(), &fakeHeadResolver{ok: false}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "" {
+		t.Fatalf("no-HEAD default base_ref = %q, want empty working_tree fallback", got)
+	}
+}
+
+func TestCommittedBaseDeltaSealVerifiesAfterCommit(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := initFinalizeRepo(t)
+	parent := strings.TrimSpace(finalizeGitOutput(t, root, "rev-parse", "HEAD"))
+	writeFinalizeFile(t, root, "file.txt", "after\n")
+
+	baseRef, err := defaultFinalizeBaseRef(ctx, git.Adapter{Root: root}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if baseRef != parent {
+		t.Fatalf("default base_ref = %q, want parent HEAD %q", baseRef, parent)
+	}
+
+	out, trusted := mintTestReceipt(t, root, baseRef)
+	if out.Receipt == nil {
+		t.Fatal("finalize did not mint a receipt")
+	}
+	body := out.Receipt.Body
+	if body.SnapshotMode != receipt.SnapshotModeBaseDelta || body.BaseRef != parent || body.BaseCommit != parent {
+		t.Fatalf("receipt snapshot = mode %q base_ref %q base_commit %q, want base_delta against parent %q", body.SnapshotMode, body.BaseRef, body.BaseCommit, parent)
+	}
+
+	receiptBytes, err := json.MarshalIndent(out.Receipt, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFinalizeFile(t, root, ".scafld/receipts/base-delta-seal.json", string(receiptBytes)+"\n")
+	finalizeRunGit(t, root, "add", "-A")
+	finalizeRunGit(t, root, "commit", "-m", "seal")
+
+	ports := appverify.Ports{
+		Snapshotter:       finalizeVerifySnapshotter{git: git.Adapter{Root: root}},
+		AcceptanceRunner:  finalizeVerifyAcceptance{runner: process.Runner{}, root: root},
+		AncestryChecker:   git.Adapter{Root: root},
+		SignatureVerifier: finalizeVerifySignature{},
+	}
+	res, err := appverify.Run(ctx, *out.Receipt, trusted, appverify.Policy{TargetCommit: parent}, ports)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Passed {
+		t.Fatalf("committed base_delta receipt did not verify against parent: %s", res.Reason)
+	}
+}
+
 func TestSelectReviewerRequiresConfiguredAbsoluteBinary(t *testing.T) {
 	t.Parallel()
 
@@ -262,6 +366,19 @@ func TestSpecFingerprintCoversTaskContract(t *testing.T) {
 	changed.Summary = "materially different summary"
 	if specFingerprint(base, base.Scope) == specFingerprint(changed, changed.Scope) {
 		t.Fatal("spec_fingerprint must change when the approved task contract (summary) changes")
+	}
+}
+
+func TestAcceptanceContractIncludesExpectedKind(t *testing.T) {
+	t.Parallel()
+
+	contract := acceptanceContract(spec.Model{Acceptance: spec.Acceptance{Criteria: []spec.Criterion{
+		{ID: "ac2_2", Command: "rg -n 'go install .*cmd/scafld@v2\\.4\\.7' .github/workflows/scafld-verify.yml", ExpectedKind: "no_matches", Status: "pass"},
+	}}})
+	for _, want := range []string{"ac2_2", "expected_kind=no_matches", "status=pass", "go install"} {
+		if !strings.Contains(contract, want) {
+			t.Fatalf("acceptance contract = %q, want %q", contract, want)
+		}
 	}
 }
 
@@ -410,6 +527,175 @@ func containsString(values []string, want string) bool {
 		}
 	}
 	return false
+}
+
+type passingFinalizeReviewer struct{ git git.Adapter }
+
+func (r passingFinalizeReviewer) Review(ctx context.Context, in appfinalize.ReviewInput) (appfinalize.ReviewResult, error) {
+	_, provenance, ignored, err := buildEvidence(ctx, r.git, in.TreeSHA, in.Scope, in.Deleted)
+	if err != nil {
+		return appfinalize.ReviewResult{}, err
+	}
+	return appfinalize.ReviewResult{
+		Dossier:    review.Dossier{Verdict: review.VerdictPass},
+		Provenance: provenance,
+		Ignored:    ignored,
+		Reviewer:   receipt.Reviewer{Provider: "codex", Model: "test"},
+	}, nil
+}
+
+type finalizeVerifySnapshotter struct{ git git.Adapter }
+
+func (s finalizeVerifySnapshotter) Snapshot(ctx context.Context, in appverify.SnapshotInput) (appverify.Snapshot, error) {
+	snap, err := s.git.Snapshot(ctx, git.SnapshotInput{Scope: in.Scope, BaseRef: in.BaseRef})
+	if err != nil {
+		return appverify.Snapshot{}, err
+	}
+	digests := make(map[string]string, len(snap.FileDigests))
+	for _, d := range snap.FileDigests {
+		digests[d.Path] = d.SHA256
+	}
+	ignored := make([]string, 0, len(snap.IgnoredUnreviewed))
+	for _, item := range snap.IgnoredUnreviewed {
+		ignored = append(ignored, item.Path)
+	}
+	return appverify.Snapshot{TreeSHA: snap.TreeSHA, BaseCommit: snap.BaseCommit, FileDigests: digests, Ignored: ignored}, nil
+}
+
+type finalizeVerifyAcceptance struct {
+	runner appacceptance.Runner
+	root   string
+}
+
+func (a finalizeVerifyAcceptance) RunAcceptance(ctx context.Context, criteria []receipt.Acceptance) ([]appverify.AcceptanceResult, error) {
+	out := make([]appverify.AcceptanceResult, 0, len(criteria))
+	for _, c := range criteria {
+		evaluated := appacceptance.Evaluate(ctx, a.runner, appacceptance.EvaluateInput{
+			Criteria: []appacceptance.Criterion{{ID: c.ID, Command: c.Command, ExpectedKind: c.ExpectedKind}},
+			WorkDir:  a.root,
+		})
+		if len(evaluated.Results) == 0 {
+			continue
+		}
+		result := evaluated.Results[0]
+		out = append(out, appverify.AcceptanceResult{ID: result.ID, Status: result.Status, ExitCode: result.ExitCode})
+	}
+	return out, nil
+}
+
+type finalizeVerifySignature struct{}
+
+func (finalizeVerifySignature) Verify(envelope receipt.Envelope, trusted trust.TrustedKeys) error {
+	key, err := trusted.ActiveKey(envelope.Signature.KeyID)
+	if err != nil {
+		return err
+	}
+	pub, err := key.PublicKeyBytes()
+	if err != nil {
+		return err
+	}
+	sig, err := base64.StdEncoding.DecodeString(envelope.Signature.Sig)
+	if err != nil {
+		return err
+	}
+	canonical, err := receipt.CanonicalBody(envelope.Body)
+	if err != nil {
+		return err
+	}
+	if !ed25519.Verify(ed25519.PublicKey(pub), canonical, sig) {
+		return errors.New("invalid signature")
+	}
+	return nil
+}
+
+func mintTestReceipt(t *testing.T, root string, baseRef string) (appfinalize.Output, trust.TrustedKeys) {
+	t.Helper()
+	keyPath, trusted := newFinalizeSigningKey(t)
+	out, err := appfinalize.Run(context.Background(),
+		gateSnapshotter{git: git.Adapter{Root: root}},
+		gateAcceptance{runner: process.Runner{}},
+		passingFinalizeReviewer{git: git.Adapter{Root: root}},
+		sign.Ed25519Signer{PrivateKeyPath: keyPath},
+		appfinalize.Input{
+			TaskID:          "base-delta-seal",
+			SessionID:       "base-delta-seal",
+			Scope:           []string{"file.txt"},
+			BaseRef:         baseRef,
+			SpecFingerprint: "spec",
+			HostUnderReview: receipt.HostUnderReview{Agent: "unknown"},
+			Criteria:        []appacceptance.Criterion{{ID: "ac1", Command: "true", ExpectedKind: "exit_code_zero"}},
+			WorkDir:         root,
+			MintedAt:        time.Date(2026, 6, 5, 0, 0, 0, 0, time.UTC),
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Verdict != review.VerdictPass {
+		t.Fatalf("finalize verdict = %q reason=%q", out.Verdict, out.Reason)
+	}
+	return out, trusted
+}
+
+func newFinalizeSigningKey(t *testing.T) (string, trust.TrustedKeys) {
+	t.Helper()
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyPath := filepath.Join(t.TempDir(), "receipt.key")
+	if err := os.WriteFile(keyPath, priv, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	keyID, err := trust.KeyIDFromRawEd25519PublicKey(pub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	trusted := trust.TrustedKeys{Version: trust.TrustedKeysVersion, Keys: []trust.TrustedKey{
+		{KeyID: keyID, Alg: trust.AlgorithmEd25519, PublicKey: base64.StdEncoding.EncodeToString(pub)},
+	}}
+	return keyPath, trusted
+}
+
+func initFinalizeRepo(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	if out, err := exec.Command("git", "init", root).CombinedOutput(); err != nil {
+		t.Skipf("git init unavailable: %v\n%s", err, out)
+	}
+	finalizeRunGit(t, root, "config", "user.name", "scafld")
+	finalizeRunGit(t, root, "config", "user.email", "scafld@example.invalid")
+	writeFinalizeFile(t, root, "file.txt", "before\n")
+	finalizeRunGit(t, root, "add", "-A")
+	finalizeRunGit(t, root, "commit", "-m", "base")
+	return root
+}
+
+func finalizeRunGit(t *testing.T, root string, args ...string) {
+	t.Helper()
+	_ = finalizeGitOutput(t, root, args...)
+}
+
+func finalizeGitOutput(t *testing.T, root string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = root
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
+	}
+	return string(out)
+}
+
+func writeFinalizeFile(t *testing.T, root string, rel string, content string) {
+	t.Helper()
+	path := filepath.Join(root, filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestGateFailedAcceptanceCarriesCriterionDetails(t *testing.T) {
