@@ -13,11 +13,12 @@ Plans outlive agents. Sessions hold the receipts. Reviews take nothing on faith.
 Given the same spec and session ledger, scafld derives the same state, next
 command, and review gate.
 
-scafld is spec-driven orchestration for AI coding agents.
-
-The work starts from an explicit spec, gets hardened before real effort,
-executes phase-bounded, and ships only through adversarial review. The
-differentiator is simple: **the agent does not get to grade its own homework**.
+The agent does the work however it likes; scafld decides whether "done" is
+true, and signs the answer. A separate model, isolated from the one that wrote
+the code, reviews the exact bytes scafld read from an immutable snapshot;
+acceptance re-runs against the same tree; and the verdict is sealed into an
+ed25519-signed receipt your CI can re-verify. The differentiator is simple:
+**the agent does not get to grade its own homework**.
 
 ## Install
 
@@ -80,8 +81,7 @@ scafld harden add-cache
 scafld harden add-cache --mark-passed
 scafld approve add-cache
 scafld build add-cache
-scafld review add-cache
-scafld complete add-cache
+scafld finalize add-cache
 ```
 
 The lifecycle is deliberately small:
@@ -97,9 +97,11 @@ before build: product goal, authority, ownership boundaries, hidden cutovers,
 halfway failures, recovery commands, testable invariants, and golden examples.
 A weak spec should not become approved work.
 
-`complete` only closes reviewed work. If adversarial review finds a blocking
-issue, scafld sends the task to repair instead of letting the implementation
-agent wave itself through.
+`finalize` is the seal: it re-runs acceptance, has a separate model review the
+canonical diff in a sandbox, and signs an ed25519 receipt on a clean pass. If
+the review finds a blocking issue, finalize refuses and sends the task to repair
+instead of letting the implementation agent wave itself through. `scafld verify`
+re-checks that receipt in CI.
 
 For a new repository, or after project policy changes, run `scafld config`
 once to write an evidence-backed configuration brief for the agent. The agent
