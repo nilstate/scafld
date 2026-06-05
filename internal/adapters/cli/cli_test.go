@@ -344,7 +344,7 @@ func TestRunConfigWritesProposal(t *testing.T) {
 }
 
 func TestRunInitIsIdempotent(t *testing.T) {
-	t.Parallel()
+	t.Setenv("SCAFLD_CONFIG_HOME", t.TempDir())
 
 	root := t.TempDir()
 	runCLI(t, []string{"init", "--root", root})
