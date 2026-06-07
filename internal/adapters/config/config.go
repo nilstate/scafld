@@ -13,6 +13,29 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+const (
+	// DefaultCodexModel names the current strongest Codex CLI model available
+	// under ChatGPT auth. The Codex-specific API models are not always exposed
+	// through that auth path.
+	DefaultCodexModel = "gpt-5.5"
+	// DefaultClaudeModel uses Claude Code's rolling latest-Opus alias.
+	DefaultClaudeModel = "opus"
+)
+
+var legacyCodexDefaultModels = map[string]string{
+	"gpt-5.5":       DefaultCodexModel,
+	"gpt-5-codex":   DefaultCodexModel,
+	"gpt-5.2-codex": DefaultCodexModel,
+}
+
+var legacyClaudeDefaultModels = map[string]string{
+	"claude-opus-4-6": DefaultClaudeModel,
+	"claude-opus-4-7": DefaultClaudeModel,
+	"claude-opus-4-8": DefaultClaudeModel,
+	"claude-opus-4.7": DefaultClaudeModel,
+	"claude-opus-4.8": DefaultClaudeModel,
+}
+
 // Config is the merged runtime configuration for a scafld workspace.
 type Config struct {
 	Version    string          `yaml:"version"`
@@ -245,8 +268,8 @@ func Default() Config {
 				IdleTimeoutSeconds: 180,
 				AbsoluteMaxSeconds: 1800,
 				FallbackPolicy:     "disable",
-				Codex:              ProviderConfig{Model: "gpt-5.5"},
-				Claude:             ProviderConfig{Model: "claude-opus-4-7"},
+				Codex:              ProviderConfig{Model: DefaultCodexModel},
+				Claude:             ProviderConfig{Model: DefaultClaudeModel},
 				Gemini:             ProviderConfig{},
 			},
 		},
@@ -256,8 +279,8 @@ func Default() Config {
 				IdleTimeoutSeconds: 180,
 				AbsoluteMaxSeconds: 1800,
 				FallbackPolicy:     "disable",
-				Codex:              ProviderConfig{Model: "gpt-5.5"},
-				Claude:             ProviderConfig{Model: "claude-opus-4-7"},
+				Codex:              ProviderConfig{Model: DefaultCodexModel},
+				Claude:             ProviderConfig{Model: DefaultClaudeModel},
 				Gemini:             ProviderConfig{},
 			},
 			Context: ReviewContextConfig{
@@ -523,7 +546,22 @@ func withDefaults(cfg Config) Config {
 	cfg.Review.AdversarialPasses = overlayPasses(defaults.Review.AdversarialPasses, cfg.Review.AdversarialPasses)
 	cfg.Review.Context = overlayReviewContext(defaults.Review.Context, cfg.Review.Context)
 	cfg.Review.Dossier = overlayReviewDossier(defaults.Review.Dossier, cfg.Review.Dossier)
+	cfg.Harden.External = normalizeLegacyDefaultModels(cfg.Harden.External)
+	cfg.Review.External = normalizeLegacyDefaultModels(cfg.Review.External)
 	return cfg
+}
+
+func normalizeLegacyDefaultModels(cfg ExternalReviewConfig) ExternalReviewConfig {
+	cfg.Codex.Model = normalizeLegacyDefaultModel(cfg.Codex.Model, legacyCodexDefaultModels)
+	cfg.Claude.Model = normalizeLegacyDefaultModel(cfg.Claude.Model, legacyClaudeDefaultModels)
+	return cfg
+}
+
+func normalizeLegacyDefaultModel(model string, legacy map[string]string) string {
+	if current, ok := legacy[strings.ToLower(strings.TrimSpace(model))]; ok {
+		return current
+	}
+	return model
 }
 
 // ProcessEnv returns stable process environment overrides for acceptance commands.

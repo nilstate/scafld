@@ -29,7 +29,7 @@ func installProjectConfig(ctx context.Context, root string, result *Result) erro
 #       model: "gpt-5.5"
 #       # endpoint_host: "api.openai.com"
 #     claude:
-#       model: "claude-opus-4-7"
+#       model: "opus"
 #       # endpoint_host: "api.anthropic.com"
 #     gemini:
 #       # model: ""
@@ -41,7 +41,7 @@ func installProjectConfig(ctx context.Context, root string, result *Result) erro
 #       model: "gpt-5.5"
 #       # endpoint_host: "api.openai.com"
 #     claude:
-#       model: "claude-opus-4-7"
+#       model: "opus"
 #       # endpoint_host: "api.anthropic.com"
 #     gemini:
 #       # model: ""

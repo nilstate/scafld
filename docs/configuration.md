@@ -251,7 +251,7 @@ review:
       model: "gpt-5.5"
       binary: "codex"
     claude:
-      model: "claude-opus-4-7"
+      model: "opus"
       binary: "claude"
     gemini:
       # model: ""                 # empty uses Gemini CLI's configured default
@@ -289,6 +289,9 @@ review:
 pin a local provider or model without changing the committed project default.
 `init` creates a commented local override file and the repository `.gitignore`
 keeps it uncommitted.
+If a config still contains an old scafld-generated model default, scafld upgrades
+that value to the current default while loading config. Custom model values are
+preserved.
 
 CLI flags override config for a single invocation:
 

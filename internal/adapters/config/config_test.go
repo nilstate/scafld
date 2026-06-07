@@ -273,8 +273,11 @@ func TestConfigDefaultWhenMissing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Review.External.Provider != "auto" || cfg.Review.External.Codex.Model == "" || cfg.Review.External.Claude.Model == "" {
+	if cfg.Review.External.Provider != "auto" || cfg.Review.External.Codex.Model != DefaultCodexModel || cfg.Review.External.Claude.Model != DefaultClaudeModel {
 		t.Fatalf("defaults = %+v", cfg)
+	}
+	if cfg.Harden.External.Codex.Model != DefaultCodexModel || cfg.Harden.External.Claude.Model != DefaultClaudeModel {
+		t.Fatalf("harden defaults = %+v", cfg.Harden.External)
 	}
 	if len(cfg.Review.AdversarialPasses) == 0 || len(cfg.Review.AutomatedPasses) == 0 {
 		t.Fatalf("default review passes missing = %+v", cfg.Review)
@@ -287,6 +290,45 @@ func TestConfigDefaultWhenMissing(t *testing.T) {
 	}
 	if cfg.Review.Dossier.MaxFindings <= 0 || cfg.Review.Dossier.MinAttackAngles <= 0 || cfg.Review.Dossier.ReviewDepth == "" || cfg.Review.Dossier.RerunPolicy == "" {
 		t.Fatalf("default review dossier config missing = %+v", cfg.Review.Dossier)
+	}
+}
+
+func TestLegacyGeneratedProviderModelsUpgradeToCurrentDefaults(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	writeFile(t, root, ".scafld/config.yaml", `
+harden:
+  external:
+    codex:
+      model: "gpt-5.5"
+    claude:
+      model: "claude-opus-4-7"
+review:
+  external:
+    codex:
+      model: "gpt-5-codex"
+    claude:
+      model: "claude-opus-4-8"
+`)
+
+	cfg, err := Load(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Harden.External.Codex.Model != DefaultCodexModel || cfg.Harden.External.Claude.Model != DefaultClaudeModel {
+		t.Fatalf("harden legacy defaults were not upgraded: %+v", cfg.Harden.External)
+	}
+	if cfg.Review.External.Codex.Model != DefaultCodexModel || cfg.Review.External.Claude.Model != DefaultClaudeModel {
+		t.Fatalf("review legacy defaults were not upgraded: %+v", cfg.Review.External)
+	}
+
+	base, err := LoadBase(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if base.Review.External.Codex.Model != DefaultCodexModel || base.Review.External.Claude.Model != DefaultClaudeModel {
+		t.Fatalf("base legacy defaults were not upgraded: %+v", base.Review.External)
 	}
 }
 

@@ -47,7 +47,7 @@ review:
     codex:
       model: "gpt-5.5"
     claude:
-      model: "claude-opus-4-7"
+      model: "opus"
     gemini:
       # model: "" # leave empty to use Gemini CLI's configured default
   dossier:
@@ -58,6 +58,8 @@ review:
 ```
 
 Use `.scafld/config.local.yaml` for local-only provider or model overrides.
+Old scafld-generated model defaults are upgraded while loading config; explicit
+custom model values stay pinned.
 
 Explicit providers:
 
