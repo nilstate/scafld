@@ -29,9 +29,9 @@ var (
 	ErrInvalidHardenEvidence = errors.New("invalid harden evidence")
 )
 
-const groundedInShape = `expected "Grounded in: spec_gap:<field>", "Grounded in: code:<path>:<line>", or "Grounded in: archive:<task-id>"`
+const anchorShape = `expected "Anchor: spec_gap:<field>", "Anchor: code:<path>:<line>", or "Anchor: archive:<task-id>"`
 
-var requiredHardenChecks = append([]string(nil), coreharden.RequiredCheckNames...)
+var requiredHardenDimensions = append([]string(nil), coreharden.RequiredDimensions...)
 
 // SpecStore is the spec persistence port used by hardening.
 type SpecStore interface {
@@ -95,12 +95,12 @@ func Run(ctx context.Context, store SpecStore, clock Clock, input Input) (Output
 		return markPassed(ctx, store, path, model, now, input.Root)
 	}
 	if input.Provider != nil {
-		return runProviderHarden(ctx, store, input.Provider, path, model, now, fallback(input.Prompt, coreprompts.Harden), input.ContextMaxBytes)
+		return runProviderHarden(ctx, store, input.Provider, path, model, now, input.Root, fallback(input.Prompt, coreprompts.Harden), input.ContextMaxBytes)
 	}
 	return openRound(ctx, store, path, model, now, fallback(input.Prompt, coreprompts.Harden))
 }
 
-func runProviderHarden(ctx context.Context, store SpecStore, provider Provider, path string, model spec.Model, now string, prompt string, contextMaxBytes int) (Output, error) {
+func runProviderHarden(ctx context.Context, store SpecStore, provider Provider, path string, model spec.Model, now string, root string, prompt string, contextMaxBytes int) (Output, error) {
 	roundID := nextRoundID(model.HardenRounds)
 	model.HardenStatus = spec.HardenInProgress
 	model.HardenRounds = append(model.HardenRounds, spec.HardenRound{
@@ -141,7 +141,33 @@ func runProviderHarden(ctx context.Context, store SpecStore, provider Provider, 
 	latest := len(model.HardenRounds) - 1
 	model.HardenRounds[latest] = roundFromDossier(model.HardenRounds[latest], dossier, now)
 	model.Updated = now
-	if dossier.Verdict == coreharden.VerdictPass {
+	if warnings := verifyHardenRoundShape(root, model, model.HardenRounds[latest], true); len(warnings) > 0 {
+		reason := "invalid provider dossier evidence: " + strings.Join(warnings, "; ")
+		model.HardenRounds[latest].Status = string(spec.HardenError)
+		model.HardenRounds[latest].Summary = reason
+		model.HardenStatus = spec.HardenError
+		model.CurrentState.Next = "harden"
+		model.CurrentState.Reason = "external hardening provider evidence error"
+		model.CurrentState.Blockers = reason
+		model.CurrentState.AllowedFollowUp = "fix provider harden evidence, then run scafld harden " + model.TaskID + " --provider <provider>"
+		if err := store.Save(ctx, path, model); err != nil {
+			return Output{}, fmt.Errorf("save harden evidence failure: %w", err)
+		}
+		out := Output{TaskID: model.TaskID, Path: path, HardenStatus: model.HardenStatus, RoundID: roundID, Warnings: warnings, Summary: reason, Provider: dossier.Provider, Model: dossier.Model}
+		return out, gate.New(ErrInvalidHardenEvidence, gate.Failure{
+			Gate:     "harden",
+			Status:   string(model.Status),
+			Reason:   "provider hardening evidence is invalid",
+			Evidence: warnings,
+			Expected: "observations with filesystem-verifiable anchors",
+			Actual:   strings.Join(warnings, "; "),
+			Blockers: warnings,
+			Next:     "fix provider harden evidence, then run scafld harden " + model.TaskID + " --provider <provider>",
+		})
+	}
+	verdict := coreharden.VerdictFromDossier(dossier)
+	model.HardenRounds[latest].Verdict = verdict
+	if verdict == coreharden.VerdictPass {
 		model.HardenStatus = spec.HardenPassed
 		model.HardenRounds[latest].Status = string(spec.HardenPassed)
 		model.CurrentState.Next = "approve"
@@ -165,7 +191,7 @@ func runProviderHarden(ctx context.Context, store SpecStore, provider Provider, 
 		HardenStatus: model.HardenStatus,
 		RoundID:      roundID,
 		NextCommand:  model.CurrentState.AllowedFollowUp,
-		Verdict:      dossier.Verdict,
+		Verdict:      verdict,
 		Summary:      dossier.Summary,
 		Provider:     dossier.Provider,
 		Model:        dossier.Model,
@@ -197,10 +223,10 @@ func openRound(ctx context.Context, store SpecStore, path string, model spec.Mod
 	roundID := nextRoundID(model.HardenRounds)
 	model.HardenStatus = spec.HardenInProgress
 	model.HardenRounds = append(model.HardenRounds, spec.HardenRound{
-		ID:        roundID,
-		Status:    string(spec.HardenInProgress),
-		StartedAt: now,
-		Checks:    hardenCheckSkeleton(),
+		ID:           roundID,
+		Status:       string(spec.HardenInProgress),
+		StartedAt:    now,
+		Observations: hardenObservationSkeleton(),
 	})
 	model.Updated = now
 	model.CurrentState.Next = "harden"
@@ -220,19 +246,12 @@ func openRound(ctx context.Context, store SpecStore, path string, model spec.Mod
 	}, nil
 }
 
-func hardenCheckSkeleton() []spec.HardenCheck {
-	checks := make([]spec.HardenCheck, 0, len(requiredHardenChecks))
-	for _, name := range requiredHardenChecks {
-		checks = append(checks, spec.HardenCheck{Name: titleHardenCheckName(name)})
+func hardenObservationSkeleton() []spec.HardenObservation {
+	observations := make([]spec.HardenObservation, 0, len(requiredHardenDimensions))
+	for _, dimension := range requiredHardenDimensions {
+		observations = append(observations, spec.HardenObservation{Dimension: dimension})
 	}
-	return checks
-}
-
-func titleHardenCheckName(name string) string {
-	if name == "" {
-		return ""
-	}
-	return strings.ToUpper(name[:1]) + name[1:]
+	return observations
 }
 
 func markPassed(ctx context.Context, store SpecStore, path string, model spec.Model, now string, root string) (Output, error) {
@@ -240,7 +259,7 @@ func markPassed(ctx context.Context, store SpecStore, path string, model spec.Mo
 		return Output{}, ErrNoHardenRound
 	}
 	latest := len(model.HardenRounds) - 1
-	warnings := verifyHardenRoundEvidence(root, model.HardenRounds[latest])
+	warnings := verifyHardenRoundEvidence(root, model, model.HardenRounds[latest])
 	if len(warnings) > 0 {
 		out := Output{TaskID: model.TaskID, Path: path, HardenStatus: model.HardenStatus, RoundID: model.HardenRounds[latest].ID, Warnings: warnings}
 		return out, gate.New(ErrInvalidHardenEvidence, gate.Failure{
@@ -248,10 +267,10 @@ func markPassed(ctx context.Context, store SpecStore, path string, model spec.Mo
 			Status:   string(model.Status),
 			Reason:   "hardening evidence is incomplete",
 			Evidence: warnings,
-			Expected: "required harden checks with grounded evidence, no open approval-blocking issues, and valid citations",
+			Expected: "required harden observations with verified anchors and no unresolved blocking observations",
 			Actual:   strings.Join(warnings, "; "),
 			Blockers: warnings,
-			Next:     "fix the harden checks/issues, then run scafld harden " + model.TaskID + " --mark-passed",
+			Next:     "fix the harden observations, then run scafld harden " + model.TaskID + " --mark-passed",
 		})
 	}
 	model.HardenRounds[latest].Status = string(spec.HardenPassed)
@@ -278,35 +297,20 @@ func markPassed(ctx context.Context, store SpecStore, path string, model spec.Mo
 
 func roundFromDossier(round spec.HardenRound, dossier coreharden.Dossier, now string) spec.HardenRound {
 	round.EndedAt = now
-	round.Verdict = dossier.Verdict
+	round.Verdict = coreharden.VerdictFromDossier(dossier)
 	round.Summary = dossier.Summary
 	round.Provider = dossier.Provider
 	round.Model = dossier.Model
 	round.OutputFormat = dossier.OutputFormat
-	round.Checks = make([]spec.HardenCheck, 0, len(dossier.Checks))
-	for _, check := range dossier.Checks {
-		round.Checks = append(round.Checks, spec.HardenCheck{
-			Name:       check.Name,
-			GroundedIn: check.GroundedIn,
-			Result:     check.Result,
-			Evidence:   check.Evidence,
-		})
-	}
-	round.Issues = make([]spec.HardenIssue, 0, len(dossier.Issues))
-	for _, issue := range dossier.Issues {
-		round.Issues = append(round.Issues, spec.HardenIssue{
-			ID:                issue.ID,
-			Kind:              issue.Kind,
-			Severity:          issue.Severity,
-			BlocksApproval:    issue.BlocksApproval,
-			Status:            issue.Status,
-			GroundedIn:        issue.GroundedIn,
-			Summary:           issue.Summary,
-			Evidence:          issue.Evidence,
-			Recommendation:    issue.Recommendation,
-			Question:          issue.Question,
-			RecommendedAnswer: issue.RecommendedAnswer,
-			IfUnanswered:      issue.IfUnanswered,
+	round.Observations = make([]spec.HardenObservation, 0, len(dossier.Observations))
+	for _, observation := range dossier.Observations {
+		round.Observations = append(round.Observations, spec.HardenObservation{
+			Dimension: observation.Dimension,
+			Result:    observation.Result,
+			Anchor:    observation.Anchor,
+			Note:      observation.Note,
+			Default:   observation.Default,
+			Status:    observation.Status,
 		})
 	}
 	return round
@@ -314,22 +318,20 @@ func roundFromDossier(round spec.HardenRound, dossier coreharden.Dossier, now st
 
 func hardenBlockers(dossier coreharden.Dossier) string {
 	var blockers []string
-	for _, check := range dossier.Checks {
-		if strings.TrimSpace(strings.ToLower(check.Result)) == "failed" {
-			blockers = append(blockers, "check needs revision: "+check.Name)
+	for _, missing := range coreharden.MissingDimensions(dossier.Observations) {
+		blockers = append(blockers, "missing observation: "+missing)
+	}
+	openBlocks := 0
+	for _, observation := range dossier.Observations {
+		if coreharden.ObservationBlocksApproval(observation) {
+			openBlocks++
 		}
 	}
-	openIssues := 0
-	for _, issue := range dossier.Issues {
-		if issue.BlocksApproval && issueOpen(issue.Status) {
-			openIssues++
-		}
-	}
-	if openIssues > 0 {
-		blockers = append(blockers, fmt.Sprintf("%d approval-blocking issue(s)", openIssues))
+	if openBlocks > 0 {
+		blockers = append(blockers, fmt.Sprintf("%d unresolved blocking observation(s)", openBlocks))
 	}
 	if len(blockers) == 0 {
-		return "harden verdict needs_revision"
+		return "harden observations need revision"
 	}
 	return strings.Join(blockers, "; ")
 }
@@ -347,114 +349,182 @@ func nextRoundID(rounds []spec.HardenRound) string {
 	}
 }
 
-func verifyHardenRoundEvidence(root string, round spec.HardenRound) []string {
+func verifyHardenRoundEvidence(root string, model spec.Model, round spec.HardenRound) []string {
+	return verifyHardenRoundShape(root, model, round, false)
+}
+
+func verifyHardenRoundShape(root string, model spec.Model, round spec.HardenRound, allowOpenBlocks bool) []string {
 	if root == "" {
 		root = "."
 	}
 	var warnings []string
-	warnings = append(warnings, verifyHardenChecks(root, round.Checks)...)
-	warnings = append(warnings, verifyHardenIssues(root, round.Issues)...)
+	warnings = append(warnings, verifyHardenObservations(root, model, round.Observations, allowOpenBlocks)...)
 	return warnings
 }
 
-func verifyHardenIssues(root string, issues []spec.HardenIssue) []string {
+func verifyHardenObservations(root string, model spec.Model, observations []spec.HardenObservation, allowOpenBlocks bool) []string {
 	var warnings []string
-	for i, issue := range issues {
+	if len(observations) == 0 {
+		return []string{"missing harden observations: record path, command, scope, timing, rollback, and design observations before marking hardening passed"}
+	}
+	seen := map[string]bool{}
+	for i, observation := range observations {
 		idx := i + 1
-		label := fmt.Sprintf("issue %d", idx)
-		if strings.TrimSpace(issue.ID) != "" {
-			label = fmt.Sprintf("issue %q", issue.ID)
+		dimension := normalizeDimension(observation.Dimension)
+		label := fmt.Sprintf("observation %d", idx)
+		if dimension != "" {
+			label = fmt.Sprintf("observation %q", dimension)
 		}
-		if strings.TrimSpace(issue.Kind) == "" {
-			warnings = append(warnings, fmt.Sprintf("%s: missing kind", label))
+		if dimension == "" {
+			warnings = append(warnings, fmt.Sprintf("%s: missing dimension", label))
+		} else if !coreharden.ValidDimension(dimension) {
+			warnings = append(warnings, fmt.Sprintf("%s: invalid dimension %q", label, observation.Dimension))
+		} else {
+			seen[dimension] = true
 		}
-		if strings.TrimSpace(issue.Summary) == "" {
-			warnings = append(warnings, fmt.Sprintf("%s: missing summary", label))
+		result := normalizeResult(observation.Result)
+		switch result {
+		case coreharden.ResultClean, coreharden.ResultNotApplicable:
+		case coreharden.ResultAdvisory:
+			if strings.TrimSpace(observation.Note) == "" {
+				warnings = append(warnings, fmt.Sprintf("%s: advisory result requires note", label))
+			}
+		case coreharden.ResultBlocks:
+			if strings.TrimSpace(observation.Note) == "" {
+				warnings = append(warnings, fmt.Sprintf("%s: blocks result requires note", label))
+			}
+			if !allowOpenBlocks && observationOpen(observation.Status) {
+				warnings = append(warnings, fmt.Sprintf("%s: blocking observation is still open", label))
+			}
+		default:
+			warnings = append(warnings, fmt.Sprintf("%s: result must be clean, advisory, blocks, or n/a before marking hardening passed", label))
 		}
-		if strings.TrimSpace(issue.Evidence) == "" {
-			warnings = append(warnings, fmt.Sprintf("%s: missing evidence", label))
+		if strings.TrimSpace(observation.Status) != "" && !coreharden.ValidObservationStatus(observation.Status) {
+			warnings = append(warnings, fmt.Sprintf("%s: invalid status %q", label, observation.Status))
 		}
-		if strings.TrimSpace(issue.Recommendation) == "" {
-			warnings = append(warnings, fmt.Sprintf("%s: missing recommendation", label))
+		warnings = append(warnings, verifyAnchor(root, model, label, anchorShape, observation.Anchor)...)
+	}
+	var missing []string
+	for _, required := range requiredHardenDimensions {
+		if !seen[required] {
+			missing = append(missing, required)
 		}
-		warnings = append(warnings, verifyGroundedIn(root, label, groundedInShape, issue.GroundedIn)...)
-		if issue.BlocksApproval && issueOpen(issue.Status) {
-			warnings = append(warnings, fmt.Sprintf("%s: approval-blocking issue is still open", label))
-		}
-		if strings.TrimSpace(issue.Question) != "" && strings.TrimSpace(issue.RecommendedAnswer) == "" {
-			warnings = append(warnings, fmt.Sprintf("%s: question issue missing recommended answer", label))
-		}
+	}
+	if len(missing) > 0 {
+		warnings = append(warnings, fmt.Sprintf("missing required harden observations: %s (record each under Observations with Result, Anchor, and optional Note/Default/Status)", strings.Join(missing, ", ")))
 	}
 	return warnings
 }
 
-func issueOpen(status string) bool {
-	switch strings.TrimSpace(strings.ToLower(status)) {
-	case "", "open":
+func observationOpen(status string) bool {
+	switch normalizeDimension(status) {
+	case "", coreharden.StatusOpen:
 		return true
-	case "fixed", "accepted_risk", "superseded":
+	case coreharden.StatusFixed, coreharden.StatusAcceptedRisk, coreharden.StatusSuperseded:
 		return false
 	default:
 		return true
 	}
 }
 
-func verifyHardenChecks(root string, checks []spec.HardenCheck) []string {
-	var warnings []string
-	if len(checks) == 0 {
-		return []string{"missing harden checks: record path audit, command audit, scope/migration audit, acceptance timing audit, rollback/repair audit, and design challenge before marking hardening passed"}
-	}
-	seen := map[string]bool{}
-	for i, check := range checks {
-		idx := i + 1
-		name := strings.TrimSpace(check.Name)
-		if name == "" {
-			warnings = append(warnings, fmt.Sprintf("check %d: missing name", idx))
-			continue
-		}
-		normalized := normalizeCheckName(name)
-		seen[normalized] = true
-		label := fmt.Sprintf("check %q", name)
-		warnings = append(warnings, verifyGroundedIn(root, label, groundedInShape, check.GroundedIn)...)
-		if strings.TrimSpace(check.Evidence) == "" {
-			warnings = append(warnings, fmt.Sprintf("%s: missing evidence", label))
-		}
-		switch result := strings.TrimSpace(strings.ToLower(check.Result)); result {
-		case "passed", "not_applicable":
-		default:
-			warnings = append(warnings, fmt.Sprintf("%s: result must be passed or not_applicable before marking hardening passed", label))
-		}
-	}
-	var missing []string
-	for _, required := range requiredHardenChecks {
-		if !seen[required] {
-			missing = append(missing, required)
-		}
-	}
-	if len(missing) > 0 {
-		warnings = append(warnings, fmt.Sprintf("missing required harden checks: %s (record each under Checks with Grounded in, Result, and Evidence)", strings.Join(missing, ", ")))
-	}
-	return warnings
-}
-
-func verifyGroundedIn(root string, label string, expected string, grounded string) []string {
-	grounded = strings.TrimSpace(grounded)
+func verifyAnchor(root string, model spec.Model, label string, expected string, anchor string) []string {
+	anchor = strings.TrimSpace(anchor)
 	switch {
-	case grounded == "":
-		return []string{fmt.Sprintf("%s: missing grounded_in (%s)", label, expected)}
-	case strings.HasPrefix(grounded, "spec_gap:"):
-		return nil
-	case strings.HasPrefix(grounded, "code:"):
-		return verifyCodeCitation(root, label, grounded)
-	case strings.HasPrefix(grounded, "archive:"):
-		return verifyArchiveCitation(root, label, grounded)
+	case anchor == "":
+		return []string{fmt.Sprintf("%s: missing anchor (%s)", label, expected)}
+	case strings.HasPrefix(anchor, "spec_gap:"):
+		return verifySpecGapCitation(model, label, anchor)
+	case strings.HasPrefix(anchor, "code:"):
+		return verifyCodeCitation(root, label, anchor)
+	case strings.HasPrefix(anchor, "archive:"):
+		return verifyArchiveCitation(root, label, anchor)
 	default:
-		return []string{fmt.Sprintf("%s: invalid grounded_in prefix %q (%s)", label, grounded, expected)}
+		return []string{fmt.Sprintf("%s: invalid anchor prefix %q (%s)", label, anchor, expected)}
 	}
 }
 
-func normalizeCheckName(value string) string {
+func verifySpecGapCitation(model spec.Model, label string, anchor string) []string {
+	field := strings.TrimSpace(strings.TrimPrefix(anchor, "spec_gap:"))
+	if field == "" {
+		return []string{fmt.Sprintf("%s: spec_gap citation is empty (expected spec_gap:<field>)", label)}
+	}
+	if validSpecGapField(model, field) {
+		return nil
+	}
+	return []string{fmt.Sprintf("%s: spec_gap citation does not name a known spec field: %s", label, anchor)}
+}
+
+func validSpecGapField(model spec.Model, field string) bool {
+	key := normalizeSpecGapField(field)
+	known := map[string]bool{
+		"acceptance":   true,
+		"assumptions":  true,
+		"context":      true,
+		"currentstate": true,
+		"dependencies": true,
+		"deviations":   true,
+		"hardening":    true,
+		"hardenrounds": true,
+		"metadata":     true,
+		"objectives":   true,
+		"origin":       true,
+		"phases":       true,
+		"planninglog":  true,
+		"review":       true,
+		"risks":        true,
+		"rollback":     true,
+		"scope":        true,
+		"selfeval":     true,
+		"summary":      true,
+		"touchpoints":  true,
+		"validation":   true,
+	}
+	if known[key] {
+		return true
+	}
+	for _, phase := range model.Phases {
+		if key == normalizeSpecGapField(phase.ID) || key == normalizeSpecGapField(phase.Name) {
+			return true
+		}
+	}
+	for _, criterion := range model.Acceptance.Criteria {
+		if key == normalizeSpecGapField(criterion.ID) || key == normalizeSpecGapField(criterion.Title) {
+			return true
+		}
+	}
+	for _, phase := range model.Phases {
+		for _, criterion := range phase.Acceptance {
+			if key == normalizeSpecGapField(criterion.ID) || key == normalizeSpecGapField(criterion.Title) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func normalizeSpecGapField(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	var b strings.Builder
+	for _, r := range value {
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+func normalizeDimension(value string) string {
 	return strings.Join(strings.Fields(strings.ToLower(strings.TrimSpace(value))), " ")
+}
+
+func normalizeResult(value string) string {
+	value = normalizeDimension(value)
+	switch value {
+	case "not_applicable", "not applicable", "na":
+		return coreharden.ResultNotApplicable
+	default:
+		return value
+	}
 }
 
 func verifyCodeCitation(root string, label string, grounded string) []string {

@@ -57,18 +57,17 @@ func frontMatterEnd(lines []string) (int, error) {
 }
 
 type parser struct {
-	model         spec.Model
-	section       string
-	phase         *spec.Phase
-	criterion     *spec.Criterion
-	reviewFinding *corereview.Finding
-	hardenRound   *spec.HardenRound
-	hardenCheck   *spec.HardenCheck
-	hardenIssue   *spec.HardenIssue
-	phaseField    string
-	hardenField   string
-	listTarget    *([]string)
-	phaseIDs      map[string]bool
+	model             spec.Model
+	section           string
+	phase             *spec.Phase
+	criterion         *spec.Criterion
+	reviewFinding     *corereview.Finding
+	hardenRound       *spec.HardenRound
+	hardenObservation *spec.HardenObservation
+	phaseField        string
+	hardenField       string
+	listTarget        *([]string)
+	phaseIDs          map[string]bool
 }
 
 func newParser(front map[string]string) *parser {
@@ -140,7 +139,7 @@ func (p *parser) startPhase(match []string) error {
 	p.criterion = nil
 	p.reviewFinding = nil
 	p.hardenRound = nil
-	p.hardenCheck = nil
+	p.hardenObservation = nil
 	p.phaseField = ""
 	p.hardenField = ""
 	p.listTarget = nil
@@ -153,7 +152,7 @@ func (p *parser) startSection(section string) {
 	p.criterion = nil
 	p.reviewFinding = nil
 	p.hardenRound = nil
-	p.hardenCheck = nil
+	p.hardenObservation = nil
 	p.phaseField = ""
 	p.hardenField = ""
 	p.listTarget = listForSection(&p.model, section)
@@ -362,13 +361,9 @@ func (p *parser) handleHardenLine(line string) bool {
 				p.hardenRound.Summary = value
 			}
 			return true
-		case "checks":
-			p.hardenField = "checks"
-			p.hardenIssue = nil
-			return true
-		case "issues":
-			p.hardenField = "issues"
-			p.hardenCheck = nil
+		case "observations":
+			p.hardenField = "observations"
+			p.hardenObservation = nil
 			return true
 		}
 	}
@@ -381,8 +376,7 @@ func (p *parser) handleHardenLine(line string) bool {
 func (p *parser) startHardenRound(id string) {
 	p.model.HardenRounds = append(p.model.HardenRounds, spec.HardenRound{ID: id})
 	p.hardenRound = &p.model.HardenRounds[len(p.model.HardenRounds)-1]
-	p.hardenCheck = nil
-	p.hardenIssue = nil
+	p.hardenObservation = nil
 	p.hardenField = ""
 }
 
@@ -400,22 +394,18 @@ func (p *parser) handleHardenBullet(value string) bool {
 		}
 		return true
 	}
-	if p.hardenField == "checks" {
-		if key, body, ok := parseSpecKeyValue(value); ok && normalizeSpecKey(key) == "check" {
-			p.startHardenCheck(body)
+	if p.hardenField == "observations" {
+		if key, body, ok := parseSpecKeyValue(value); ok && normalizeSpecKey(key) == "observation" {
+			p.startHardenObservation(body)
 			return true
 		}
-		p.startHardenCheck(value)
-		return true
-	}
-	if p.hardenField == "issues" {
-		p.startHardenIssue(value)
+		p.startHardenObservation(value)
 		return true
 	}
 	return true
 }
 
-func (p *parser) startHardenCheck(value string) {
+func (p *parser) startHardenObservation(value string) {
 	if p.hardenRound == nil {
 		return
 	}
@@ -424,56 +414,14 @@ func (p *parser) startHardenCheck(value string) {
 		return
 	}
 	normalized := normalizeHardenName(value)
-	for i := range p.hardenRound.Checks {
-		if normalizeHardenName(p.hardenRound.Checks[i].Name) == normalized {
-			p.hardenCheck = &p.hardenRound.Checks[i]
+	for i := range p.hardenRound.Observations {
+		if normalizeHardenName(p.hardenRound.Observations[i].Dimension) == normalized {
+			p.hardenObservation = &p.hardenRound.Observations[i]
 			return
 		}
 	}
-	p.hardenRound.Checks = append(p.hardenRound.Checks, spec.HardenCheck{Name: value})
-	p.hardenCheck = &p.hardenRound.Checks[len(p.hardenRound.Checks)-1]
-	p.hardenIssue = nil
-}
-
-func (p *parser) startHardenIssue(value string) {
-	if p.hardenRound == nil {
-		return
-	}
-	value = cleanSpecValue(value)
-	if value == "" {
-		return
-	}
-	issue := spec.HardenIssue{Summary: value, Status: "open"}
-	if strings.HasPrefix(value, "[") {
-		if head, tail, ok := strings.Cut(value, "]"); ok {
-			parts := strings.Split(strings.TrimPrefix(head, "["), "/")
-			if len(parts) > 0 {
-				issue.Severity = strings.TrimSpace(parts[0])
-			}
-			if len(parts) > 1 {
-				gate := strings.TrimSpace(parts[1])
-				issue.BlocksApproval = gate == "blocks approval" || gate == "blocker" || gate == "blocking"
-			}
-			value = strings.TrimSpace(tail)
-		}
-	}
-	if strings.HasPrefix(value, "`") {
-		if rest := strings.TrimPrefix(value, "`"); rest != value {
-			if id, tail, ok := strings.Cut(rest, "`"); ok {
-				issue.ID = strings.TrimSpace(id)
-				tail = strings.TrimSpace(tail)
-				if kind, summary, ok := strings.Cut(tail, " - "); ok {
-					issue.Kind = strings.TrimSpace(kind)
-					issue.Summary = strings.TrimSpace(summary)
-				} else if tail != "" {
-					issue.Summary = strings.TrimSpace(tail)
-				}
-			}
-		}
-	}
-	p.hardenRound.Issues = append(p.hardenRound.Issues, issue)
-	p.hardenIssue = &p.hardenRound.Issues[len(p.hardenRound.Issues)-1]
-	p.hardenCheck = nil
+	p.hardenRound.Observations = append(p.hardenRound.Observations, spec.HardenObservation{Dimension: value})
+	p.hardenObservation = &p.hardenRound.Observations[len(p.hardenRound.Observations)-1]
 }
 
 func (p *parser) handleHardenDetail(value string) bool {
@@ -481,51 +429,27 @@ func (p *parser) handleHardenDetail(value string) bool {
 	if !ok {
 		return true
 	}
-	if p.hardenField == "checks" {
-		if normalizeSpecKey(key) == "check" {
-			p.startHardenCheck(body)
+	if p.hardenField == "observations" {
+		if normalizeSpecKey(key) == "observation" {
+			p.startHardenObservation(body)
 			return true
 		}
-		if p.hardenCheck == nil {
+		if p.hardenObservation == nil {
 			return true
 		}
 		switch normalizeSpecKey(key) {
-		case "grounded in":
-			p.hardenCheck.GroundedIn = body
+		case "dimension":
+			p.hardenObservation.Dimension = body
 		case "result":
-			p.hardenCheck.Result = body
-		case "evidence":
-			p.hardenCheck.Evidence = body
-		}
-		return true
-	}
-	if p.hardenField == "issues" {
-		if p.hardenIssue == nil {
-			return true
-		}
-		switch normalizeSpecKey(key) {
-		case "kind":
-			p.hardenIssue.Kind = body
-		case "severity":
-			p.hardenIssue.Severity = body
-		case "blocks approval":
-			p.hardenIssue.BlocksApproval = strings.EqualFold(body, "true") || strings.EqualFold(body, "yes")
+			p.hardenObservation.Result = body
+		case "anchor":
+			p.hardenObservation.Anchor = body
+		case "note":
+			p.hardenObservation.Note = body
+		case "default":
+			p.hardenObservation.Default = body
 		case "status":
-			p.hardenIssue.Status = body
-		case "grounded in":
-			p.hardenIssue.GroundedIn = body
-		case "summary":
-			p.hardenIssue.Summary = body
-		case "evidence":
-			p.hardenIssue.Evidence = body
-		case "recommendation":
-			p.hardenIssue.Recommendation = body
-		case "question":
-			p.hardenIssue.Question = body
-		case "recommended answer":
-			p.hardenIssue.RecommendedAnswer = body
-		case "if unanswered":
-			p.hardenIssue.IfUnanswered = body
+			p.hardenObservation.Status = body
 		}
 		return true
 	}

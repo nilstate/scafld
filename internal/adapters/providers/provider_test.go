@@ -39,7 +39,7 @@ func TestHardenProviderContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if dossier.Verdict != coreharden.VerdictPass || dossier.Provider != "local" || len(dossier.Checks) != len(coreharden.RequiredCheckNames) {
+	if coreharden.VerdictFromDossier(dossier) != coreharden.VerdictPass || dossier.Provider != "local" || len(dossier.Observations) != len(coreharden.RequiredDimensions) {
 		t.Fatalf("dossier = %+v", dossier)
 	}
 }
@@ -809,6 +809,27 @@ func TestCommandProviderFailureIncludesDiagnosticPath(t *testing.T) {
 	}}}).Invoke(context.Background(), review.Request{TaskID: "task"})
 	if !errors.Is(err, ErrProviderFailed) || !errors.Is(err, review.ErrInvalidDossier) {
 		t.Fatalf("error = %v, want provider failure wrapping invalid dossier", err)
+	}
+	if !strings.Contains(err.Error(), diagnostic) {
+		t.Fatalf("error missing diagnostic path %q: %v", diagnostic, err)
+	}
+}
+
+func TestHardenCommandProviderFailureIncludesDiagnostics(t *testing.T) {
+	t.Parallel()
+
+	diagnostic := filepath.Join(t.TempDir(), "harden-diagnostic.txt")
+	_, err := (HardenProvider{
+		Agent: CommandProvider{
+			Command: "harden-reviewer",
+			Runner: &fakeRunner{result: execution.Result{
+				Stdout:         "{invalid\n",
+				DiagnosticPath: diagnostic,
+			}},
+		},
+	}).Invoke(context.Background(), coreharden.Request{TaskID: "task"})
+	if !errors.Is(err, ErrProviderFailed) || !errors.Is(err, coreharden.ErrInvalidDossier) {
+		t.Fatalf("error = %v, want provider failure wrapping invalid harden dossier", err)
 	}
 	if !strings.Contains(err.Error(), diagnostic) {
 		t.Fatalf("error missing diagnostic path %q: %v", diagnostic, err)

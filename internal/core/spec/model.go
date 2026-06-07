@@ -208,41 +208,26 @@ type Origin struct {
 
 // HardenRound records one pre-approval hardening pass.
 type HardenRound struct {
-	ID           string        `json:"id"`
-	Status       string        `json:"status"`
-	StartedAt    string        `json:"started_at"`
-	EndedAt      string        `json:"ended_at"`
-	Verdict      string        `json:"verdict,omitempty"`
-	Summary      string        `json:"summary,omitempty"`
-	Provider     string        `json:"provider,omitempty"`
-	Model        string        `json:"model,omitempty"`
-	OutputFormat string        `json:"output_format,omitempty"`
-	Checks       []HardenCheck `json:"checks"`
-	Issues       []HardenIssue `json:"issues,omitempty"`
+	ID           string              `json:"id"`
+	Status       string              `json:"status"`
+	StartedAt    string              `json:"started_at"`
+	EndedAt      string              `json:"ended_at"`
+	Verdict      string              `json:"verdict,omitempty"`
+	Summary      string              `json:"summary,omitempty"`
+	Provider     string              `json:"provider,omitempty"`
+	Model        string              `json:"model,omitempty"`
+	OutputFormat string              `json:"output_format,omitempty"`
+	Observations []HardenObservation `json:"observations"`
 }
 
-// HardenCheck records one evidence-backed audit pass from a hardening round.
-type HardenCheck struct {
-	Name       string `json:"name"`
-	GroundedIn string `json:"grounded_in"`
-	Result     string `json:"result"`
-	Evidence   string `json:"evidence"`
-}
-
-// HardenIssue records one approval blocker or non-blocking harden advisory.
-type HardenIssue struct {
-	ID                string `json:"id"`
-	Kind              string `json:"kind"`
-	Severity          string `json:"severity"`
-	BlocksApproval    bool   `json:"blocks_approval"`
-	Status            string `json:"status"`
-	GroundedIn        string `json:"grounded_in"`
-	Summary           string `json:"summary"`
-	Evidence          string `json:"evidence"`
-	Recommendation    string `json:"recommendation"`
-	Question          string `json:"question,omitempty"`
-	RecommendedAnswer string `json:"recommended_answer,omitempty"`
-	IfUnanswered      string `json:"if_unanswered,omitempty"`
+// HardenObservation records one grounded hardening observation.
+type HardenObservation struct {
+	Dimension string `json:"dimension"`
+	Result    string `json:"result"`
+	Anchor    string `json:"anchor"`
+	Note      string `json:"note,omitempty"`
+	Default   string `json:"default,omitempty"`
+	Status    string `json:"status,omitempty"`
 }
 
 // PlanningEvent records a timestamped planning log entry.

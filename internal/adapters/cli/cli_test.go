@@ -26,7 +26,7 @@ func TestRunHelpAndVersion(t *testing.T) {
 		{name: "flag help", args: []string{"--help"}, want: "Usage:"},
 		{name: "version", args: []string{"--version"}, want: displayVersion()},
 		{name: "command help", args: []string{"plan", "--help"}, want: "scafld plan"},
-		{name: "harden help", args: []string{"harden", "--help"}, want: "Design challenge"},
+		{name: "harden help", args: []string{"harden", "--help"}, want: "Required observation dimensions"},
 		{name: "review help", args: []string{"review", "--help"}, want: "--review-scope"},
 	}
 
@@ -464,41 +464,41 @@ func TestRunHardenLifecycle(t *testing.T) {
 	if !strings.Contains(text, "harden_status: in_progress") || !strings.Contains(text, "### round-1") || !strings.Contains(text, "Status: in_progress") {
 		t.Fatalf("spec was not opened for hardening:\n%s", text)
 	}
-	checks := `Checks:
-- Path audit
-  - Grounded in: spec_gap:Scope
-  - Result: passed
-  - Evidence: Generated spec path exists and declared command is scoped.
-- Command audit
-  - Grounded in: spec_gap:Acceptance
-  - Result: passed
-  - Evidence: go version is available from the test shell.
-- Scope/migration audit
-  - Grounded in: spec_gap:Scope
-  - Result: not_applicable
-  - Evidence: Fixture task has no migration or cutover claim.
-- Acceptance timing audit
-  - Grounded in: spec_gap:Phases
-  - Result: passed
-  - Evidence: Criterion can run after planning because it targets the installed go tool.
-- Rollback/repair audit
-  - Grounded in: spec_gap:Rollback
-  - Result: not_applicable
-  - Evidence: Fixture task makes no runtime changes.
-- Design challenge
-  - Grounded in: spec_gap:Summary
-  - Result: passed
-  - Evidence: Fixture exercises the harden lifecycle without adding compatibility behavior.
+	observations := `Observations:
+- path
+  - Result: clean
+  - Anchor: spec_gap:Scope
+  - Note: Generated spec path exists and declared command is scoped.
+- command
+  - Result: clean
+  - Anchor: spec_gap:Acceptance
+  - Note: go version is available from the test shell.
+- scope
+  - Result: n/a
+  - Anchor: spec_gap:Scope
+  - Note: Fixture task has no migration or cutover claim.
+- timing
+  - Result: clean
+  - Anchor: spec_gap:Phases
+  - Note: Criterion can run after planning because it targets the installed go tool.
+- rollback
+  - Result: n/a
+  - Anchor: spec_gap:Rollback
+  - Note: Fixture task makes no runtime changes.
+- design
+  - Result: clean
+  - Anchor: spec_gap:Summary
+  - Note: Fixture exercises the harden lifecycle without adding compatibility behavior.
 `
-	checkStart := strings.Index(text, "Checks:\n")
-	if checkStart < 0 {
-		t.Fatalf("harden spec missing Checks block:\n%s", text)
+	observationStart := strings.Index(text, "Observations:\n")
+	if observationStart < 0 {
+		t.Fatalf("harden spec missing Observations block:\n%s", text)
 	}
-	issueStart := strings.Index(text[checkStart:], "Issues:\n")
-	if issueStart < 0 {
-		t.Fatalf("harden spec missing Issues block:\n%s", text)
+	planningStart := strings.Index(text[observationStart:], "## Planning Log")
+	if planningStart < 0 {
+		t.Fatalf("harden spec missing planning log:\n%s", text)
 	}
-	text = text[:checkStart] + checks + "\n" + text[checkStart+issueStart:]
+	text = text[:observationStart] + observations + "\n" + text[observationStart+planningStart:]
 	if err := os.WriteFile(specPath, []byte(text), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -537,7 +537,7 @@ func TestRunHardenProviderLocalMarksPassed(t *testing.T) {
 	if !strings.Contains(text, "harden_status: passed") ||
 		!strings.Contains(text, "Verdict: pass") ||
 		!strings.Contains(text, "Provider: local") ||
-		!strings.Contains(text, "design challenge") {
+		!strings.Contains(text, "- design") {
 		t.Fatalf("provider harden was not recorded:\n%s", text)
 	}
 }

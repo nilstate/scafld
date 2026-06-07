@@ -96,13 +96,13 @@ the projected state from session evidence.
 - `error`
 
 `scafld harden <task-id>` appends a harden round while the spec is still a
-draft. The active prompt asks the agent to record evidence-backed checks for
-paths, commands, scope and migration claims, acceptance timing, rollback or
-repair shape, and design quality. Issues record both approval blockers and
-non-blocking advisories. `scafld harden <task-id> --mark-passed` verifies
-checks, open approval blockers, and citations before recording that the draft
-survived hardening. Missing checks, open approval blockers, and unresolved
-citations keep approval blocked and leave the round open.
+draft. The active prompt asks the agent to record evidence-backed observations
+for paths, commands, scope and migration claims, acceptance timing, rollback or
+repair shape, and design quality. `scafld harden <task-id>
+--mark-passed` verifies dimension coverage, anchors, and unresolved blocking
+observations before recording that the draft survived hardening. Missing
+dimensions, open blocking observations, and unresolved citations keep approval
+blocked and leave the round open.
 
 Approval remains explicit. Hardening makes the approval decision worth trusting.
 

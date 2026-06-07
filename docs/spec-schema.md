@@ -108,56 +108,46 @@ Model: gpt-5.5
 Output format: codex.output_file
 Summary: The draft needs one ownership decision before approval.
 
-Checks:
-- Path audit
-  - Grounded in: code:src/auth/session.ts:84
-  - Result: passed
-  - Evidence: Existing session owner and target path verified.
-- Command audit
-  - Grounded in: spec_gap:Acceptance
-  - Result: not_applicable
-  - Evidence: Docs-only change has no runnable command beyond final validation.
-- Scope/migration audit
-  - Grounded in: spec_gap:Risks
-  - Result: passed
-  - Evidence: No migration or compatibility fallback is introduced.
-- Acceptance timing audit
-  - Grounded in: spec_gap:Phases
-  - Result: passed
-  - Evidence: Criteria run after the phase creates the target files.
-- Rollback/repair audit
-  - Grounded in: spec_gap:Rollback
-  - Result: not_applicable
-  - Evidence: No runtime rollback is required for the documented change.
-- Design challenge
-  - Grounded in: spec_gap:Summary
-  - Result: passed
-  - Evidence: The plan fixes the root cause without adding aliases or fallback behavior.
-
-Issues:
-- [high/blocks approval] `harden-1` design_challenge - The draft may add a second session cleanup path.
+Observations:
+- path
+  - Result: clean
+  - Anchor: code:src/auth/session.ts:84
+  - Note: Existing session owner and target path verified.
+- command
+  - Result: n/a
+  - Anchor: spec_gap:Acceptance
+  - Note: Docs-only change has no runnable command beyond final validation.
+- scope
+  - Result: clean
+  - Anchor: spec_gap:Risks
+  - Note: No migration or compatibility fallback is introduced.
+- timing
+  - Result: clean
+  - Anchor: spec_gap:Phases
+  - Note: Criteria run after the phase creates the target files.
+- rollback
+  - Result: n/a
+  - Anchor: spec_gap:Rollback
+  - Note: No runtime rollback is required for the documented change.
+- design
+  - Result: blocks
+  - Anchor: code:src/auth/session.ts:84
+  - Note: The draft may add a second session cleanup path.
+  - Default: Reuse the existing owner or explicitly justify the split.
   - Status: open
-  - Grounded in: code:src/auth/session.ts:84
-  - Evidence: cleanupSession already owns this lifecycle.
-  - Recommendation: Reuse the existing owner or explicitly justify the split.
-- [low/advisory] `harden-2` recommended_edit - Scope could name cleanupSession explicitly.
-  - Status: open
-  - Grounded in: spec_gap:Scope
-  - Evidence: Scope is understandable, but the owner is only implicit.
-  - Recommendation: Declare cleanupSession as the owner if the spec is edited again.
 ````
 
-Each check and issue should carry one `Grounded in` value matching
-`spec_gap:<field>`, `code:<file>:<line>`, or `archive:<task_id>`. Checks use
-`Result: passed`, `Result: failed`, or `Result: not_applicable`; only `passed`
-and `not_applicable` can close a round. Open issues with `blocks_approval: true`
-must be fixed, accepted as risk, or superseded before `scafld harden <task-id>
---mark-passed` closes the round. Advisory issues may remain open.
+Each observation should carry one `Anchor` value matching `spec_gap:<field>`,
+`code:<file>:<line>`, or `archive:<task_id>`. Results are `clean`, `advisory`,
+`blocks`, and `n/a`. Open `blocks` observations must be fixed, accepted as risk,
+or superseded before `scafld harden <task-id> --mark-passed` closes the round.
+Advisory observations may remain open.
 
-Provider-backed hardening fills `Verdict`, `Provider`, `Model`,
-`Output format`, `Summary`, and `Issues` from a strict `HardenDossier`. Manual
-hardening may omit those provenance fields, but should still record the required
-checks and any blocker/advisory issues it found.
+Provider-backed hardening fills `Provider`, `Model`, `Output format`, `Summary`,
+and `Observations` from a strict `HardenDossier`. scafld fills `Verdict` by
+deriving it from observation coverage and unresolved blocking observations.
+Manual hardening may omit provenance fields, but should still record the
+required dimensions and any blocker/advisory observations it found.
 
 ## Reconcile Contract
 

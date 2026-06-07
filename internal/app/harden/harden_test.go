@@ -31,23 +31,17 @@ func TestRunOpensHardenRound(t *testing.T) {
 	if out.Prompt != "prompt body" {
 		t.Fatalf("prompt = %q", out.Prompt)
 	}
-	got := store.model
-	if got.HardenStatus != spec.HardenInProgress {
-		t.Fatalf("harden status = %s", got.HardenStatus)
+	round := store.model.HardenRounds[0]
+	if len(round.Observations) != len(requiredHardenDimensions) {
+		t.Fatalf("observation skeleton = %+v", round.Observations)
 	}
-	if len(got.HardenRounds) != 1 || got.HardenRounds[0].Status != string(spec.HardenInProgress) || got.HardenRounds[0].StartedAt == "" {
-		t.Fatalf("harden rounds = %+v", got.HardenRounds)
-	}
-	if len(got.HardenRounds[0].Checks) != len(requiredHardenChecks) {
-		t.Fatalf("harden check skeleton = %+v", got.HardenRounds[0].Checks)
-	}
-	for i, check := range got.HardenRounds[0].Checks {
-		if normalizeCheckName(check.Name) != requiredHardenChecks[i] || check.GroundedIn != "" || check.Result != "" || check.Evidence != "" {
-			t.Fatalf("check skeleton[%d] = %+v", i, check)
+	for i, observation := range round.Observations {
+		if observation.Dimension != requiredHardenDimensions[i] || observation.Anchor != "" || observation.Result != "" || observation.Note != "" {
+			t.Fatalf("observation skeleton[%d] = %+v", i, observation)
 		}
 	}
-	if got.CurrentState.AllowedFollowUp != out.NextCommand {
-		t.Fatalf("current state = %+v", got.CurrentState)
+	if store.model.CurrentState.AllowedFollowUp != out.NextCommand {
+		t.Fatalf("current state = %+v", store.model.CurrentState)
 	}
 }
 
@@ -70,7 +64,7 @@ func TestRunMarkPassedClosesLatestRound(t *testing.T) {
 	model.HardenStatus = spec.HardenInProgress
 	model.HardenRounds = []spec.HardenRound{
 		{ID: "round-1", Status: string(spec.HardenNeedsRevision)},
-		{ID: "round-2", Status: string(spec.HardenInProgress), Checks: passedChecks()},
+		{ID: "round-2", Status: string(spec.HardenInProgress), Observations: passingObservations()},
 	}
 	store := newMemorySpecStore(model)
 	out, err := Run(context.Background(), store, fixedClock{}, Input{TaskID: "fixture-task", MarkPassed: true})
@@ -105,25 +99,24 @@ func TestRunRejectsNonDraftSpec(t *testing.T) {
 	}
 }
 
-func TestRunMarkPassedRejectsUngroundedIssues(t *testing.T) {
+func TestRunMarkPassedRejectsInvalidObservationAnchors(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "code.go"), []byte("package main\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	observations := passingObservations()
+	observations[0].Anchor = "code:code.go:1"
+	observations[1].Anchor = "code:missing.go:1"
+	observations[2].Anchor = ""
+	observations[3].Anchor = "code:code.go"
 	model := fixtureModel()
 	model.HardenStatus = spec.HardenInProgress
 	model.HardenRounds = []spec.HardenRound{{
-		ID:     "round-1",
-		Status: string(spec.HardenInProgress),
-		Checks: passedChecks(),
-		Issues: []spec.HardenIssue{
-			{ID: "harden-1", Kind: "question", Severity: "low", Status: "open", GroundedIn: "code:code.go:1", Summary: "Who owns this?", Evidence: "Owner not named.", Recommendation: "Use the owner.", Question: "Who owns this?", RecommendedAnswer: "Use the owner."},
-			{ID: "harden-2", Kind: "question", Severity: "low", Status: "open", GroundedIn: "code:missing.go:1", Summary: "What proves this?", Evidence: "Missing file cited.", Recommendation: "Use missing.", Question: "What proves this?", RecommendedAnswer: "Use missing."},
-			{ID: "harden-3", Kind: "question", Severity: "low", Status: "open", Summary: "Why now?", Evidence: "Missing grounding.", Recommendation: "Keep scope.", Question: "Why now?", RecommendedAnswer: "Because scope requires it."},
-			{ID: "harden-4", Kind: "question", Severity: "low", Status: "open", GroundedIn: "code:code.go", Summary: "Where?", Evidence: "Invalid code citation.", Recommendation: "Use code.go.", Question: "Where?", RecommendedAnswer: "Use code.go."},
-		},
+		ID:           "round-1",
+		Status:       string(spec.HardenInProgress),
+		Observations: observations,
 	}}
 	store := newMemorySpecStore(model)
 	store.path = filepath.Join(root, ".scafld", "specs", "drafts", "fixture-task.md")
@@ -135,12 +128,9 @@ func TestRunMarkPassedRejectsUngroundedIssues(t *testing.T) {
 	if !errors.As(err, &gateErr) || gateErr.Failure.Gate != "harden" || gateErr.Failure.Expected == "" {
 		t.Fatalf("gate error = %#v", gateErr)
 	}
-	if len(out.Warnings) != 3 {
-		t.Fatalf("warnings = %+v, want 3", out.Warnings)
-	}
 	joined := strings.Join(out.Warnings, "\n")
 	if !strings.Contains(joined, "missing.go") ||
-		!strings.Contains(joined, "missing grounded_in") ||
+		!strings.Contains(joined, "missing anchor") ||
 		!strings.Contains(joined, "expected code:<path>:<line>") ||
 		!strings.Contains(joined, "code:src/file.go:42") {
 		t.Fatalf("warnings did not explain citation issues: %+v", out.Warnings)
@@ -150,7 +140,29 @@ func TestRunMarkPassedRejectsUngroundedIssues(t *testing.T) {
 	}
 }
 
-func TestRunMarkPassedRejectsMissingHardenChecks(t *testing.T) {
+func TestRunMarkPassedRejectsUnknownSpecGapAnchor(t *testing.T) {
+	t.Parallel()
+
+	observations := passingObservations()
+	observations[0].Anchor = "spec_gap:DefinitelyNotASection"
+	model := fixtureModel()
+	model.HardenStatus = spec.HardenInProgress
+	model.HardenRounds = []spec.HardenRound{{
+		ID:           "round-1",
+		Status:       string(spec.HardenInProgress),
+		Observations: observations,
+	}}
+	store := newMemorySpecStore(model)
+	out, err := Run(context.Background(), store, fixedClock{}, Input{TaskID: "fixture-task", MarkPassed: true})
+	if !errors.Is(err, ErrInvalidHardenEvidence) {
+		t.Fatalf("error = %v, want %v", err, ErrInvalidHardenEvidence)
+	}
+	if !strings.Contains(strings.Join(out.Warnings, "\n"), "known spec field") {
+		t.Fatalf("warnings = %+v", out.Warnings)
+	}
+}
+
+func TestRunMarkPassedRejectsMissingObservations(t *testing.T) {
 	t.Parallel()
 
 	model := fixtureModel()
@@ -164,62 +176,62 @@ func TestRunMarkPassedRejectsMissingHardenChecks(t *testing.T) {
 	if !errors.Is(err, ErrInvalidHardenEvidence) {
 		t.Fatalf("error = %v, want %v", err, ErrInvalidHardenEvidence)
 	}
-	if len(out.Warnings) == 0 || !strings.Contains(strings.Join(out.Warnings, "\n"), "missing harden checks") {
-		t.Fatalf("warnings did not require harden checks: %+v", out.Warnings)
+	if len(out.Warnings) == 0 || !strings.Contains(strings.Join(out.Warnings, "\n"), "missing harden observations") {
+		t.Fatalf("warnings did not require harden observations: %+v", out.Warnings)
 	}
 }
 
-func TestRunMarkPassedRejectsIssueQuestionWithoutRecommendedAnswer(t *testing.T) {
+func TestRunMarkPassedRejectsOpenBlockingObservation(t *testing.T) {
 	t.Parallel()
 
 	model := fixtureModel()
 	model.HardenStatus = spec.HardenInProgress
+	observations := passingObservations()
+	observations[5] = spec.HardenObservation{
+		Dimension: "design",
+		Result:    coreharden.ResultBlocks,
+		Anchor:    "spec_gap:Summary",
+		Note:      "Plan treats a symptom.",
+		Status:    coreharden.StatusOpen,
+	}
 	model.HardenRounds = []spec.HardenRound{{
-		ID:     "round-1",
-		Status: string(spec.HardenInProgress),
-		Checks: passedChecks(),
-		Issues: []spec.HardenIssue{{
-			ID:             "harden-1",
-			Kind:           "question",
-			Severity:       "low",
-			BlocksApproval: false,
-			Status:         "open",
-			GroundedIn:     "spec_gap:Scope",
-			Summary:        "Owner is not named.",
-			Evidence:       "Scope omits the owner.",
-			Recommendation: "Name the owner.",
-			Question:       "Who owns this?",
-		}},
+		ID:           "round-1",
+		Status:       string(spec.HardenInProgress),
+		Observations: observations,
 	}}
 	store := newMemorySpecStore(model)
 	out, err := Run(context.Background(), store, fixedClock{}, Input{TaskID: "fixture-task", MarkPassed: true})
 	if !errors.Is(err, ErrInvalidHardenEvidence) {
 		t.Fatalf("error = %v, want %v", err, ErrInvalidHardenEvidence)
 	}
-	joined := strings.Join(out.Warnings, "\n")
-	if !strings.Contains(joined, "question issue missing recommended answer") {
-		t.Fatalf("warnings did not reject incomplete question issue: %+v", out.Warnings)
+	if !strings.Contains(strings.Join(out.Warnings, "\n"), "blocking observation is still open") {
+		t.Fatalf("warnings = %+v", out.Warnings)
 	}
 }
 
-func TestRunMarkPassedAllowsNotApplicableChecks(t *testing.T) {
+func TestRunMarkPassedAllowsAdvisoryObservation(t *testing.T) {
 	t.Parallel()
 
-	checks := passedChecks()
-	checks[4] = spec.HardenCheck{Name: "Rollback/repair audit", GroundedIn: "spec_gap:Rollback", Result: "not_applicable", Evidence: "Docs-only change with no runtime rollback."}
 	model := fixtureModel()
 	model.HardenStatus = spec.HardenInProgress
+	observations := passingObservations()
+	observations[4] = spec.HardenObservation{
+		Dimension: "rollback",
+		Result:    coreharden.ResultAdvisory,
+		Anchor:    "spec_gap:Rollback",
+		Note:      "Rollback could name a recovery command.",
+	}
 	model.HardenRounds = []spec.HardenRound{{
-		ID:     "round-1",
-		Status: string(spec.HardenInProgress),
-		Checks: checks,
+		ID:           "round-1",
+		Status:       string(spec.HardenInProgress),
+		Observations: observations,
 	}}
 	store := newMemorySpecStore(model)
 	out, err := Run(context.Background(), store, fixedClock{}, Input{TaskID: "fixture-task", MarkPassed: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !out.MarkedPassed {
+	if !out.MarkedPassed || out.HardenStatus != spec.HardenPassed {
 		t.Fatalf("output = %+v", out)
 	}
 }
@@ -240,7 +252,7 @@ func TestRunProviderHardenRecordsPassingDossier(t *testing.T) {
 		t.Fatalf("output = %+v", out)
 	}
 	round := store.model.HardenRounds[0]
-	if round.Status != string(spec.HardenPassed) || round.Provider != "codex" || round.Model != "gpt-test" || round.Summary == "" || len(round.Checks) != 6 {
+	if round.Status != string(spec.HardenPassed) || round.Provider != "codex" || round.Model != "gpt-test" || round.Summary == "" || len(round.Observations) != 6 {
 		t.Fatalf("round = %+v", round)
 	}
 }
@@ -249,21 +261,14 @@ func TestRunProviderHardenRecordsNeedsRevision(t *testing.T) {
 	t.Parallel()
 
 	dossier := passingHardenDossier()
-	dossier.Verdict = coreharden.VerdictNeedsRevision
-	dossier.Checks[5].Result = "failed"
-	dossier.Issues = []coreharden.Issue{{
-		ID:                "harden-1",
-		Kind:              "design_challenge",
-		Severity:          "high",
-		BlocksApproval:    true,
-		Status:            "open",
-		GroundedIn:        "spec_gap:Summary",
-		Summary:           "The plan may be future bloat.",
-		Evidence:          "The spec does not cite repeated use.",
-		Recommendation:    "Reduce scope or cite the repeated need.",
-		Question:          "Why add this abstraction?",
-		RecommendedAnswer: "Do not add it until duplicated complexity is proven.",
-	}}
+	dossier.Observations[5] = coreharden.Observation{
+		Dimension: "design",
+		Result:    coreharden.ResultBlocks,
+		Anchor:    "spec_gap:Summary",
+		Note:      "The plan may be future bloat.",
+		Default:   "Do not add it until duplicated complexity is proven.",
+		Status:    coreharden.StatusOpen,
+	}
 	store := newMemorySpecStore(fixtureModel())
 	out, err := Run(context.Background(), store, fixedClock{}, Input{
 		TaskID:   "fixture-task",
@@ -276,31 +281,25 @@ func TestRunProviderHardenRecordsNeedsRevision(t *testing.T) {
 		t.Fatalf("output = %+v", out)
 	}
 	round := store.model.HardenRounds[0]
-	if round.Status != string(spec.HardenNeedsRevision) || len(round.Issues) != 1 {
+	if round.Status != string(spec.HardenNeedsRevision) || len(round.Observations) != 6 {
 		t.Fatalf("round = %+v", round)
 	}
-	if !strings.Contains(store.model.CurrentState.Blockers, "check needs revision") || !strings.Contains(store.model.CurrentState.Blockers, "approval-blocking issue") || !strings.Contains(store.model.CurrentState.AllowedFollowUp, "--provider <provider>") {
+	if !strings.Contains(store.model.CurrentState.Blockers, "unresolved blocking observation") || !strings.Contains(store.model.CurrentState.AllowedFollowUp, "--provider <provider>") {
 		t.Fatalf("current state = %+v", store.model.CurrentState)
 	}
 }
 
-func TestRunProviderHardenAdvisoryIssuesDoNotBlock(t *testing.T) {
+func TestRunProviderHardenAdvisoryObservationsDoNotBlock(t *testing.T) {
 	t.Parallel()
 
 	dossier := passingHardenDossier()
-	dossier.Issues = []coreharden.Issue{{
-		ID:                "harden-1",
-		Kind:              "question",
-		Severity:          "low",
-		BlocksApproval:    false,
-		Status:            "open",
-		GroundedIn:        "spec_gap:Rollback",
-		Summary:           "The rollback section could name a more convenient recovery command.",
-		Evidence:          "Rollback is present, but it is generic.",
-		Recommendation:    "Name the command if it is already known.",
-		Question:          "What command should a human run if the change fails halfway?",
-		RecommendedAnswer: "Use the package's existing recovery command if one exists.",
-	}}
+	dossier.Observations[4] = coreharden.Observation{
+		Dimension: "rollback",
+		Result:    coreharden.ResultAdvisory,
+		Anchor:    "spec_gap:Rollback",
+		Note:      "The rollback section could name a more convenient recovery command.",
+		Default:   "Use the package's existing recovery command if one exists.",
+	}
 	store := newMemorySpecStore(fixtureModel())
 	out, err := Run(context.Background(), store, fixedClock{}, Input{
 		TaskID:   "fixture-task",
@@ -312,73 +311,48 @@ func TestRunProviderHardenAdvisoryIssuesDoNotBlock(t *testing.T) {
 	if out.HardenStatus != spec.HardenPassed || out.Verdict != coreharden.VerdictPass {
 		t.Fatalf("output = %+v", out)
 	}
-	round := store.model.HardenRounds[0]
-	if round.Status != string(spec.HardenPassed) || len(round.Issues) != 1 || round.Issues[0].BlocksApproval {
-		t.Fatalf("round = %+v", round)
-	}
 	if store.model.CurrentState.AllowedFollowUp != "scafld approve fixture-task" {
 		t.Fatalf("current state = %+v", store.model.CurrentState)
 	}
 }
 
-func TestRunMarkPassedRejectsOpenApprovalBlockingIssue(t *testing.T) {
+func TestRunProviderHardenRejectsUnverifiedAnchor(t *testing.T) {
 	t.Parallel()
 
-	model := fixtureModel()
-	model.HardenStatus = spec.HardenInProgress
-	model.HardenRounds = []spec.HardenRound{{
-		ID:     "round-1",
-		Status: string(spec.HardenInProgress),
-		Checks: passedChecks(),
-		Issues: []spec.HardenIssue{{
-			ID:             "harden-1",
-			Kind:           "design_challenge",
-			Severity:       "high",
-			BlocksApproval: true,
-			Status:         "open",
-			GroundedIn:     "spec_gap:Summary",
-			Summary:        "Plan is a bandaid.",
-			Evidence:       "Summary does not name the root cause.",
-			Recommendation: "Fix the root cause or narrow the plan.",
-		}},
-	}}
-	store := newMemorySpecStore(model)
-	out, err := Run(context.Background(), store, fixedClock{}, Input{TaskID: "fixture-task", MarkPassed: true})
+	dossier := passingHardenDossier()
+	dossier.Observations[0].Anchor = "code:missing.go:1"
+	store := newMemorySpecStore(fixtureModel())
+	out, err := Run(context.Background(), store, fixedClock{}, Input{
+		TaskID:   "fixture-task",
+		Provider: fakeHardenProvider{dossier: dossier},
+		Root:     t.TempDir(),
+	})
 	if !errors.Is(err, ErrInvalidHardenEvidence) {
 		t.Fatalf("error = %v, want %v", err, ErrInvalidHardenEvidence)
 	}
-	if !strings.Contains(strings.Join(out.Warnings, "\n"), "approval-blocking issue is still open") {
-		t.Fatalf("warnings = %+v", out.Warnings)
+	if out.HardenStatus != spec.HardenError || !strings.Contains(strings.Join(out.Warnings, "\n"), "missing.go") {
+		t.Fatalf("output = %+v", out)
+	}
+	round := store.model.HardenRounds[0]
+	if round.Status != string(spec.HardenError) || !strings.Contains(round.Summary, "invalid provider dossier evidence") {
+		t.Fatalf("round = %+v", round)
 	}
 }
 
-func TestRunMarkPassedAllowsOpenAdvisoryIssue(t *testing.T) {
+func TestRunProviderHardenRejectsUnknownSpecGapAnchor(t *testing.T) {
 	t.Parallel()
 
-	model := fixtureModel()
-	model.HardenStatus = spec.HardenInProgress
-	model.HardenRounds = []spec.HardenRound{{
-		ID:     "round-1",
-		Status: string(spec.HardenInProgress),
-		Checks: passedChecks(),
-		Issues: []spec.HardenIssue{{
-			ID:             "harden-1",
-			Kind:           "recommended_edit",
-			Severity:       "low",
-			BlocksApproval: false,
-			Status:         "open",
-			GroundedIn:     "spec_gap:Rollback",
-			Summary:        "Rollback could be clearer.",
-			Evidence:       "Rollback exists but is terse.",
-			Recommendation: "Expand rollback if convenient.",
-		}},
-	}}
-	store := newMemorySpecStore(model)
-	out, err := Run(context.Background(), store, fixedClock{}, Input{TaskID: "fixture-task", MarkPassed: true})
-	if err != nil {
-		t.Fatal(err)
+	dossier := passingHardenDossier()
+	dossier.Observations[0].Anchor = "spec_gap:DefinitelyNotASection"
+	store := newMemorySpecStore(fixtureModel())
+	out, err := Run(context.Background(), store, fixedClock{}, Input{
+		TaskID:   "fixture-task",
+		Provider: fakeHardenProvider{dossier: dossier},
+	})
+	if !errors.Is(err, ErrInvalidHardenEvidence) {
+		t.Fatalf("error = %v, want %v", err, ErrInvalidHardenEvidence)
 	}
-	if !out.MarkedPassed || out.HardenStatus != spec.HardenPassed {
+	if out.HardenStatus != spec.HardenError || !strings.Contains(strings.Join(out.Warnings, "\n"), "known spec field") {
 		t.Fatalf("output = %+v", out)
 	}
 }
@@ -412,7 +386,7 @@ func TestRunProviderHardenClosesRoundOnInvalidDossier(t *testing.T) {
 	store := newMemorySpecStore(fixtureModel())
 	_, err := Run(context.Background(), store, fixedClock{}, Input{
 		TaskID:   "fixture-task",
-		Provider: fakeHardenProvider{dossier: coreharden.Dossier{Verdict: coreharden.VerdictPass}},
+		Provider: fakeHardenProvider{dossier: coreharden.Dossier{Summary: "missing observations"}},
 	})
 	if err == nil {
 		t.Fatal("expected invalid dossier error")
@@ -445,14 +419,14 @@ func TestRunProviderHardenReportsFailureRecordingError(t *testing.T) {
 	}
 }
 
-func passedChecks() []spec.HardenCheck {
-	return []spec.HardenCheck{
-		{Name: "Path audit", GroundedIn: "spec_gap:Scope", Result: "passed", Evidence: "Paths checked."},
-		{Name: "Command audit", GroundedIn: "spec_gap:Validation", Result: "passed", Evidence: "Commands checked."},
-		{Name: "Scope/migration audit", GroundedIn: "spec_gap:Risks", Result: "passed", Evidence: "Migration claims checked."},
-		{Name: "Acceptance timing audit", GroundedIn: "spec_gap:Phases", Result: "passed", Evidence: "Criteria timing checked."},
-		{Name: "Rollback/repair audit", GroundedIn: "spec_gap:Rollback", Result: "passed", Evidence: "Rollback checked."},
-		{Name: "Design challenge", GroundedIn: "spec_gap:Summary", Result: "passed", Evidence: "Plan is not a bandaid or future compatibility layer."},
+func passingObservations() []spec.HardenObservation {
+	return []spec.HardenObservation{
+		{Dimension: "path", Result: coreharden.ResultClean, Anchor: "spec_gap:Scope", Note: "Paths checked."},
+		{Dimension: "command", Result: coreharden.ResultClean, Anchor: "spec_gap:Validation", Note: "Commands checked."},
+		{Dimension: "scope", Result: coreharden.ResultClean, Anchor: "spec_gap:Risks", Note: "Migration claims checked."},
+		{Dimension: "timing", Result: coreharden.ResultClean, Anchor: "spec_gap:Phases", Note: "Criteria timing checked."},
+		{Dimension: "rollback", Result: coreharden.ResultNotApplicable, Anchor: "spec_gap:Rollback", Note: "Docs-only change has no runtime rollback."},
+		{Dimension: "design", Result: coreharden.ResultClean, Anchor: "spec_gap:Summary", Note: "Plan is not a bandaid or future compatibility layer."},
 	}
 }
 
@@ -505,22 +479,22 @@ func (p fakeHardenProvider) Invoke(_ context.Context, req coreharden.Request) (c
 }
 
 func passingHardenDossier() coreharden.Dossier {
-	checks := passedChecks()
+	observations := passingObservations()
 	out := coreharden.Dossier{
-		Verdict:      coreharden.VerdictPass,
 		Summary:      "The draft is scoped and ready for approval.",
 		Provider:     "codex",
 		Model:        "gpt-test",
 		OutputFormat: "codex.output_file",
-		Checks:       make([]coreharden.Check, 0, len(checks)),
-		AttackLog:    []coreharden.AttackLogEntry{{Target: "draft", Attack: "challenge core design", Result: "clean"}},
+		Observations: make([]coreharden.Observation, 0, len(observations)),
 	}
-	for _, check := range checks {
-		out.Checks = append(out.Checks, coreharden.Check{
-			Name:       strings.ToLower(check.Name),
-			GroundedIn: check.GroundedIn,
-			Result:     check.Result,
-			Evidence:   check.Evidence,
+	for _, observation := range observations {
+		out.Observations = append(out.Observations, coreharden.Observation{
+			Dimension: observation.Dimension,
+			Result:    observation.Result,
+			Anchor:    observation.Anchor,
+			Note:      observation.Note,
+			Default:   observation.Default,
+			Status:    observation.Status,
 		})
 	}
 	return out

@@ -6,72 +6,76 @@ import (
 	"testing"
 )
 
-func TestParseTextValidatesRequiredChecksAndDerivedVerdict(t *testing.T) {
+func TestParseTextValidatesRequiredObservationsAndDerivedVerdict(t *testing.T) {
 	t.Parallel()
 
-	dossier, err := ParseText(validDossierJSON(VerdictPass))
+	dossier, err := ParseText(validDossierJSON())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if dossier.Verdict != VerdictPass || len(dossier.Checks) != len(RequiredCheckNames) {
-		t.Fatalf("dossier = %+v", dossier)
+	if got := VerdictFromDossier(dossier); got != VerdictPass || len(dossier.Observations) != len(RequiredDimensions) {
+		t.Fatalf("verdict=%s dossier=%+v", got, dossier)
 	}
 }
 
-func TestParseTextRejectsPassWithOpenApprovalBlockingIssue(t *testing.T) {
+func TestParseTextRejectsOldSelfReportedVerdictShape(t *testing.T) {
 	t.Parallel()
 
-	text := validDossierJSON(VerdictPass)
-	var payload map[string]any
-	if err := json.Unmarshal([]byte(text), &payload); err != nil {
-		t.Fatal(err)
-	}
-	payload["issues"] = []any{map[string]any{
-		"id":              "harden-1",
-		"kind":            "design_challenge",
-		"severity":        "high",
-		"blocks_approval": true,
-		"status":          "open",
-		"grounded_in":     "spec_gap:Summary",
-		"summary":         "The plan may be future bloat.",
-		"evidence":        "The spec does not cite repeated use.",
-		"recommendation":  "Reduce scope or cite the repeated need.",
-	}}
-	data, _ := json.Marshal(payload)
-	_, err := ParseText(string(data))
+	_, err := ParseText(`{"verdict":"pass","summary":"clean","observations":[]}`)
 	if !errors.Is(err, ErrInvalidDossier) {
 		t.Fatalf("err = %v", err)
 	}
 }
 
-func TestParseTextAllowsPassWithAdvisoryIssue(t *testing.T) {
+func TestParseTextDerivesNeedsRevisionFromOpenBlock(t *testing.T) {
 	t.Parallel()
 
-	text := validDossierJSON(VerdictPass)
 	var payload map[string]any
-	if err := json.Unmarshal([]byte(text), &payload); err != nil {
+	if err := json.Unmarshal([]byte(validDossierJSON()), &payload); err != nil {
 		t.Fatal(err)
 	}
-	payload["issues"] = []any{map[string]any{
-		"id":                 "harden-1",
-		"kind":               "question",
-		"severity":           "low",
-		"blocks_approval":    false,
-		"status":             "open",
-		"grounded_in":        "spec_gap:Rollback",
-		"summary":            "Rollback could name a recovery command.",
-		"evidence":           "Rollback exists but is terse.",
-		"recommendation":     "Name the command if known.",
-		"question":           "What should a human run if the cutover fails?",
-		"recommended_answer": "Use the existing repair command.",
-	}}
+	observations := payload["observations"].([]any)
+	observations[5] = map[string]any{
+		"dimension": "design",
+		"result":    "blocks",
+		"anchor":    "spec_gap:Summary",
+		"note":      "The plan may be future bloat.",
+		"default":   "Reduce scope or cite the repeated need.",
+		"status":    "open",
+	}
 	data, _ := json.Marshal(payload)
 	dossier, err := ParseText(string(data))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if dossier.Verdict != VerdictPass || len(dossier.Issues) != 1 {
-		t.Fatalf("dossier = %+v", dossier)
+	if got := VerdictFromDossier(dossier); got != VerdictNeedsRevision {
+		t.Fatalf("verdict = %s", got)
+	}
+}
+
+func TestParseTextAllowsAdvisoryObservation(t *testing.T) {
+	t.Parallel()
+
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(validDossierJSON()), &payload); err != nil {
+		t.Fatal(err)
+	}
+	observations := payload["observations"].([]any)
+	observations[4] = map[string]any{
+		"dimension": "rollback",
+		"result":    "advisory",
+		"anchor":    "spec_gap:Rollback",
+		"note":      "Rollback could name a recovery command.",
+		"default":   "Use the existing repair command.",
+		"status":    "",
+	}
+	data, _ := json.Marshal(payload)
+	dossier, err := ParseText(string(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := VerdictFromDossier(dossier); got != VerdictPass {
+		t.Fatalf("verdict = %s", got)
 	}
 }
 
@@ -85,8 +89,8 @@ func TestHardenDossierSchemaIsStrictStructuredOutputCompatible(t *testing.T) {
 	assertStrictStructuredOutputSchema(t, "$", root)
 }
 
-func validDossierJSON(verdict string) string {
-	return `{"verdict":"` + verdict + `","summary":"clean","checks":[{"name":"path audit","grounded_in":"spec_gap:Scope","result":"passed","evidence":"checked"},{"name":"command audit","grounded_in":"spec_gap:Acceptance","result":"passed","evidence":"checked"},{"name":"scope/migration audit","grounded_in":"spec_gap:Scope","result":"passed","evidence":"checked"},{"name":"acceptance timing audit","grounded_in":"spec_gap:Phases","result":"passed","evidence":"checked"},{"name":"rollback/repair audit","grounded_in":"spec_gap:Rollback","result":"passed","evidence":"checked"},{"name":"design challenge","grounded_in":"spec_gap:Summary","result":"passed","evidence":"checked"}],"issues":[],"attack_log":[{"target":"draft","attack":"challenge","result":"clean"}]}`
+func validDossierJSON() string {
+	return `{"summary":"clean","observations":[{"dimension":"path","result":"clean","anchor":"spec_gap:Scope"},{"dimension":"command","result":"clean","anchor":"spec_gap:Acceptance"},{"dimension":"scope","result":"clean","anchor":"spec_gap:Scope"},{"dimension":"timing","result":"clean","anchor":"spec_gap:Phases"},{"dimension":"rollback","result":"n/a","anchor":"spec_gap:Rollback"},{"dimension":"design","result":"clean","anchor":"spec_gap:Summary"}]}`
 }
 
 func assertStrictStructuredOutputSchema(t *testing.T, path string, node map[string]any) {

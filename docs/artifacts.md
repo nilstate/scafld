@@ -42,10 +42,10 @@ The spec is readable state. The session ledger is the evidence source.
 
 ## Harden Round
 
-A harden round records the pre-build challenge. Checks are the evidence that the
-plan was attacked. Issues carry the findings. Only open issues with
-`blocks_approval` block approval; advisories keep their full detail without
-forcing another harden loop.
+A harden round records the pre-build challenge as one observation ledger. Each
+observation covers a dimension, result, and anchor. Open `blocks` observations
+block approval; advisories keep their full detail without forcing another harden
+loop.
 
 ```markdown
 ## Harden Rounds
@@ -59,49 +59,39 @@ Verdict: pass
 Provider: codex
 Model: gpt-5.5
 Output format: codex.output_file
-Summary: The draft contract survived path, command, timing, rollback, and design challenge checks.
+Summary: The draft contract survived path, command, timing, rollback, and design challenge observations.
 
-Checks:
-- Path audit
-  - Grounded in: code:internal/app/review/context.go:30
-  - Result: passed
-  - Evidence: Target package and docs paths exist; new docs file is declared.
-- Command audit
-  - Grounded in: code:Makefile:1
-  - Result: passed
-  - Evidence: `make check` is the repository validation command.
-- Scope/migration audit
-  - Grounded in: spec_gap:Risks
-  - Result: passed
-  - Evidence: No compatibility fallback or data migration is introduced.
-- Acceptance timing audit
-  - Grounded in: spec_gap:Phases
-  - Result: passed
-  - Evidence: Criteria run after the parser and docs updates are in place.
-- Rollback/repair audit
-  - Grounded in: spec_gap:Rollback
-  - Result: not_applicable
-  - Evidence: Change is source-only and reverts cleanly through git.
-- Design challenge
-  - Grounded in: spec_gap:Summary
-  - Result: passed
-  - Evidence: The plan names the underlying review failure, removes the escape hatch at the root, and avoids a compatibility fallback.
-
-Issues:
-- [low/advisory] `harden-1` question - The rollback could name a recovery command.
-  - Status: open
-  - Grounded in: spec_gap:Rollback
-  - Evidence: Rollback is credible but terse.
-  - Recommendation: Name the recovery command if already known.
-  - Question: What should a human run if the cutover fails?
-  - Recommended answer: Use the package's existing repair command.
-  - If unanswered: Keep rollback as-is; do not block approval.
+Observations:
+- path
+  - Result: clean
+  - Anchor: code:internal/app/review/context.go:30
+  - Note: Target package and docs paths exist; new docs file is declared.
+- command
+  - Result: clean
+  - Anchor: code:Makefile:1
+  - Note: `make check` is the repository validation command.
+- scope
+  - Result: clean
+  - Anchor: spec_gap:Risks
+  - Note: No compatibility fallback or data migration is introduced.
+- timing
+  - Result: clean
+  - Anchor: spec_gap:Phases
+  - Note: Criteria run after the parser and docs updates are in place.
+- rollback
+  - Result: advisory
+  - Anchor: spec_gap:Rollback
+  - Note: Rollback is credible but could name a recovery command.
+  - Default: Use the package's existing repair command if already known.
+- design
+  - Result: clean
+  - Anchor: spec_gap:Summary
+  - Note: The plan names the underlying review failure, removes the escape hatch at the root, and avoids a compatibility fallback.
 ```
 
-`Issues: none` is valid when the checks have evidence and no blocker or advisory
-was found. Provider-backed hardening records one strict `HardenDossier` with
-checks, issues, and an attack log. Manual hardening can still be conversational,
-but its durable output should use the same issue shape.
+Provider-backed hardening records one strict `HardenDossier` with summary and
+observations. Manual hardening can still be conversational, but its durable
+output should use the same observation shape.
 
 ## Status JSON
 
