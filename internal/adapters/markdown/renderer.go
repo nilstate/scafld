@@ -220,48 +220,22 @@ func renderHardenRound(b *strings.Builder, round spec.HardenRound) {
 		fmt.Fprintf(b, "Summary: %s\n", round.Summary)
 	}
 	fmt.Fprintf(b, "\n")
-	fmt.Fprintf(b, "Checks:\n")
-	if len(round.Checks) == 0 {
+	fmt.Fprintf(b, "Observations:\n")
+	if len(round.Observations) == 0 {
 		fmt.Fprintf(b, "- none\n\n")
 	} else {
-		for _, check := range round.Checks {
-			fmt.Fprintf(b, "- %s\n", fallback(check.Name, "Check not recorded."))
-			fmt.Fprintf(b, "  - Grounded in: %s\n", check.GroundedIn)
-			fmt.Fprintf(b, "  - Result: %s\n", check.Result)
-			fmt.Fprintf(b, "  - Evidence: %s\n", check.Evidence)
-		}
-		fmt.Fprintf(b, "\n")
-	}
-	fmt.Fprintf(b, "Issues:\n")
-	if len(round.Issues) == 0 {
-		fmt.Fprintf(b, "- none\n\n")
-	} else {
-		for _, issue := range round.Issues {
-			gate := "advisory"
-			if issue.BlocksApproval {
-				gate = "blocks approval"
+		for _, observation := range round.Observations {
+			fmt.Fprintf(b, "- %s\n", fallback(observation.Dimension, "observation"))
+			fmt.Fprintf(b, "  - Result: %s\n", observation.Result)
+			fmt.Fprintf(b, "  - Anchor: %s\n", observation.Anchor)
+			if observation.Note != "" {
+				fmt.Fprintf(b, "  - Note: %s\n", observation.Note)
 			}
-			fmt.Fprintf(b, "- [%s/%s] `%s` %s - %s\n", fallback(issue.Severity, "medium"), gate, fallback(issue.ID, "harden-issue"), fallback(issue.Kind, "issue"), fallback(issue.Summary, "Harden issue not recorded."))
-			if issue.Status != "" {
-				fmt.Fprintf(b, "  - Status: %s\n", issue.Status)
+			if observation.Default != "" {
+				fmt.Fprintf(b, "  - Default: %s\n", observation.Default)
 			}
-			if issue.GroundedIn != "" {
-				fmt.Fprintf(b, "  - Grounded in: %s\n", issue.GroundedIn)
-			}
-			if issue.Evidence != "" {
-				fmt.Fprintf(b, "  - Evidence: %s\n", issue.Evidence)
-			}
-			if issue.Recommendation != "" {
-				fmt.Fprintf(b, "  - Recommendation: %s\n", issue.Recommendation)
-			}
-			if issue.Question != "" {
-				fmt.Fprintf(b, "  - Question: %s\n", issue.Question)
-			}
-			if issue.RecommendedAnswer != "" {
-				fmt.Fprintf(b, "  - Recommended answer: %s\n", issue.RecommendedAnswer)
-			}
-			if issue.IfUnanswered != "" {
-				fmt.Fprintf(b, "  - If unanswered: %s\n", issue.IfUnanswered)
+			if observation.Status != "" {
+				fmt.Fprintf(b, "  - Status: %s\n", observation.Status)
 			}
 		}
 		fmt.Fprintf(b, "\n")

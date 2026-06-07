@@ -18,7 +18,7 @@ func TestRunListsSubmitHardenToolAndWritesValidDossier(t *testing.T) {
 		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`,
 		`{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}`,
 		`{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}`,
-		`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"submit_harden","arguments":{"verdict":"pass","summary":"clean","checks":[{"name":"path audit","grounded_in":"spec_gap:Scope","result":"passed","evidence":"checked"},{"name":"command audit","grounded_in":"spec_gap:Acceptance","result":"passed","evidence":"checked"},{"name":"scope/migration audit","grounded_in":"spec_gap:Scope","result":"passed","evidence":"checked"},{"name":"acceptance timing audit","grounded_in":"spec_gap:Phases","result":"passed","evidence":"checked"},{"name":"rollback/repair audit","grounded_in":"spec_gap:Rollback","result":"passed","evidence":"checked"},{"name":"design challenge","grounded_in":"spec_gap:Summary","result":"passed","evidence":"checked"}],"issues":[],"attack_log":[{"target":"draft","attack":"challenge","result":"clean"}]}}}`,
+		`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"submit_harden","arguments":{"summary":"clean","observations":[{"dimension":"path","result":"clean","anchor":"spec_gap:Scope"},{"dimension":"command","result":"clean","anchor":"spec_gap:Acceptance"},{"dimension":"scope","result":"clean","anchor":"spec_gap:Scope"},{"dimension":"timing","result":"clean","anchor":"spec_gap:Phases"},{"dimension":"rollback","result":"n/a","anchor":"spec_gap:Rollback"},{"dimension":"design","result":"clean","anchor":"spec_gap:Summary"}]}}}`,
 		``,
 	}, "\n")
 	var stdout, stderr bytes.Buffer
@@ -47,7 +47,7 @@ func TestRunListsSubmitHardenToolAndWritesValidDossier(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), `"verdict":"pass"`) || !strings.Contains(string(data), `"checks"`) {
+	if strings.Contains(string(data), `"verdict"`) || strings.Contains(string(data), `"checks"`) || !strings.Contains(string(data), `"observations"`) {
 		t.Fatalf("submission = %s", data)
 	}
 }

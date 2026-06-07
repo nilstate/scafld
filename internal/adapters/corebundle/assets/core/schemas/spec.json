@@ -199,42 +199,22 @@
         "status": {"type": "string", "enum": ["in_progress", "passed", "needs_revision", "error"]},
         "started_at": {"type": "string"},
         "ended_at": {"type": "string"},
-        "checks": {
+        "observations": {
           "type": "array",
-          "items": {"$ref": "#/definitions/harden_check"}
-        },
-        "issues": {
-          "type": "array",
-          "items": {"$ref": "#/definitions/harden_issue"}
+          "items": {"$ref": "#/definitions/harden_observation"}
         }
       }
     },
-    "harden_check": {
+    "harden_observation": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "name": {"type": "string"},
-        "grounded_in": {"type": "string", "pattern": "^(spec_gap:|code:|archive:).+"},
-        "result": {"type": "string", "enum": ["passed", "failed", "not_applicable"]},
-        "evidence": {"type": "string"}
-      }
-    },
-    "harden_issue": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "id": {"type": "string"},
-        "kind": {"type": "string"},
-        "severity": {"type": "string", "enum": ["critical", "high", "medium", "low"]},
-        "blocks_approval": {"type": "boolean"},
-        "status": {"type": "string", "enum": ["open", "fixed", "accepted_risk", "superseded"]},
-        "grounded_in": {"type": "string", "pattern": "^(spec_gap:|code:|archive:).+"},
-        "summary": {"type": "string"},
-        "evidence": {"type": "string"},
-        "recommendation": {"type": "string"},
-        "question": {"type": "string"},
-        "recommended_answer": {"type": "string"},
-        "if_unanswered": {"type": "string"}
+        "dimension": {"type": "string", "enum": ["path", "command", "scope", "timing", "rollback", "design"]},
+        "result": {"type": "string", "enum": ["clean", "advisory", "blocks", "n/a"]},
+        "anchor": {"type": "string", "pattern": "^(spec_gap:|code:|archive:).+"},
+        "note": {"type": "string"},
+        "default": {"type": "string"},
+        "status": {"type": "string", "enum": ["open", "fixed", "accepted_risk", "superseded"]}
       }
     },
     "planning_event": {

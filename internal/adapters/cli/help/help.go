@@ -41,33 +41,29 @@ attacks the draft contract before build.
 
 With --provider, scafld delegates hardening to a separate read-only provider.
 The provider must submit one HardenDossier through the structured channel.
-pass marks hardening passed; needs_revision records checks that need revision
-plus approval-blocking issues in the draft. Provider
-transport or invalid dossier problems are recorded as harden_status error.
-Advisory issues remain recorded.
+scafld derives pass or needs_revision from the submitted observations. Provider
+transport, invalid dossier, or unverified anchor problems are recorded as
+harden_status error. Advisory observations remain recorded.
 Provider auto prefers the other installed agent when the host is detected, can
 use Gemini as an additional external challenger, and fails closed when only the
 host provider is available unless fallback_policy is relaxed or a provider is
 selected explicitly.
 
-Required checks:
-  Path audit
-  Command audit
-  Scope/migration audit
-  Acceptance timing audit
-  Rollback/repair audit
-  Design challenge
+Required observation dimensions:
+  path
+  command
+  scope
+  timing
+  rollback
+  design
 
-Each check needs Grounded in, Result, and Evidence. Result must be passed or
-not_applicable before --mark-passed can close the round.
-Design challenge must question why the plan exists, whether it solves the
+Each observation needs Result and Anchor. Result must be clean, advisory, blocks,
+or n/a. Open blocks keep the round from passing until fixed, accepted_risk, or
+superseded. The design dimension must question why the plan exists, whether it solves the
 underlying problem, and whether it is a short-sighted bandaid or future bloat.
-Grounded in accepts spec_gap:<section>, archive:<task-id>, or a single-line
-code citation such as code:src/file.go:42. Line ranges are rejected.
-
-Issues are optional. Issues: none is valid only after the checks have evidence.
-Open issues with blocks_approval=true block --mark-passed until fixed,
-accepted_risk, or superseded. Advisory issues keep full detail but do not block.
+Anchor accepts spec_gap:<section>, archive:<task-id>, or a single-line code
+citation such as code:src/file.go:42. Line ranges are rejected.
+Advisory observations keep full detail but do not block.
 
 Flags:
   --provider NAME       Run provider-backed hardening

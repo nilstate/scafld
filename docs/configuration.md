@@ -336,26 +336,24 @@ Hardening is operator-driven. `scafld approve` does not force
 `harden_status: passed`, but a complete nontrivial plan spec should usually be
 hardened before approval.
 
-The active harden prompt asks the agent to record evidence-backed checks under
-the latest `## Harden Rounds` entry before recording issues. The required
-checks are path audit, command audit, scope/migration audit, acceptance timing
-audit, rollback/repair audit, and design challenge. The design challenge asks
-why the plan exists, what deeper product or system problem it solves, whether
-the proposed change is a short-sighted bandaid over an endemic issue, and
-whether a different abstraction would remove the root cause more cleanly.
+The active harden prompt asks the agent to record evidence-backed observations
+under the latest `## Harden Rounds` entry. Required dimensions are `path`,
+`command`, `scope`, `timing`, `rollback`, and `design`. The design dimension
+asks why the plan exists, what deeper product or system problem it solves,
+whether the proposed change is a short-sighted bandaid over an endemic issue,
+and whether a different abstraction would remove the root cause more cleanly.
 
-`harden.max_issues_per_round` is read from config and injected into that
-prompt as a cap, not a target. Issues are optional; `Issues: none` is valid only
-after checks have evidence. `--mark-passed` verifies check evidence, open
-approval blockers, and cited code or archive references before closing the
-round. Advisory issues remain recorded without blocking approval.
+`harden.max_issues_per_round` is read from config and injected into the prompt
+as a cap on useful findings, not a target. `--mark-passed` verifies dimension
+coverage, observation anchors, and unresolved blocking observations before
+closing the round. Advisory observations remain recorded without blocking
+approval.
 
 Provider-backed hardening uses `harden.external`. Leave
 `harden.external.provider` empty for manual rounds, or set it to `auto`,
 `codex`, `claude`, `gemini`, `command`, or `local` when the draft should be
 challenged by a separate agent. The provider receives a bounded harden context packet and
-must submit a strict `HardenDossier`: verdict, summary, required checks,
-issues, and attack log. `pass` marks the draft hardened. `needs_revision`
-leaves the spec in draft state with approval-blocking issues rendered into
-`## Harden Rounds`; non-blocking advisories are rendered there too, but do not
-force another harden cycle.
+must submit a strict `HardenDossier`: summary and observations. scafld derives
+`pass` or `needs_revision` from dimension coverage and unresolved `blocks`
+observations. Non-blocking advisories are rendered in `## Harden Rounds`, but do
+not force another harden cycle.

@@ -56,25 +56,17 @@ func TestRoundTripPreservesLiterateSpecFields(t *testing.T) {
 		ID:        "round-1",
 		Status:    string(spec.HardenInProgress),
 		StartedAt: "2026-05-04T00:00:00Z",
-		Checks: []spec.HardenCheck{{
-			Name:       "Path audit",
-			GroundedIn: "spec_gap:Scope",
-			Result:     "passed",
-			Evidence:   "Scope paths checked.",
-		}},
-		Issues: []spec.HardenIssue{{
-			ID:                "harden-1",
-			Kind:              "question",
-			Severity:          "low",
-			BlocksApproval:    false,
-			Status:            "open",
-			GroundedIn:        "spec_gap:Rollback",
-			Summary:           "Rollback could name a recovery command.",
-			Evidence:          "Rollback exists but is terse.",
-			Recommendation:    "Name the command if already known.",
-			Question:          "What recovery command should a human run?",
-			RecommendedAnswer: "Use the existing repair command.",
-			IfUnanswered:      "Keep rollback as-is.",
+		Observations: []spec.HardenObservation{{
+			Dimension: "path",
+			Result:    "clean",
+			Anchor:    "spec_gap:Scope",
+			Note:      "Scope paths checked.",
+		}, {
+			Dimension: "rollback",
+			Result:    "advisory",
+			Anchor:    "spec_gap:Rollback",
+			Note:      "Rollback could name a recovery command.",
+			Default:   "Use the existing repair command.",
 		}},
 	}}
 	model.Review = spec.ReviewState{Status: "completed", Verdict: corereview.VerdictFail, Mode: corereview.ModeDiscover, Provider: "claude", Model: "claude-test", OutputFormat: "claude.mcp_submit_review", Summary: "Review found an open blocker.", Findings: []corereview.Finding{{ID: "f1", Severity: corereview.SeverityHigh, BlocksCompletion: true, Location: &corereview.Location{Path: "file.go"}, Evidence: "bug", Impact: "test impact", Validation: "rerun test", Summary: "bug"}}}
@@ -102,11 +94,11 @@ func TestRoundTripPreservesLiterateSpecFields(t *testing.T) {
 	if parsed.HardenStatus != spec.HardenInProgress || len(parsed.HardenRounds) != 1 || parsed.HardenRounds[0].Status != string(spec.HardenInProgress) {
 		t.Fatalf("harden state lost: %s %+v", parsed.HardenStatus, parsed.HardenRounds)
 	}
-	if got := parsed.HardenRounds[0].Checks[0]; got.Name != "Path audit" || got.Result != "passed" || got.Evidence == "" {
-		t.Fatalf("harden check lost: %+v", got)
+	if got := parsed.HardenRounds[0].Observations[0]; got.Dimension != "path" || got.Result != "clean" || got.Anchor != "spec_gap:Scope" {
+		t.Fatalf("harden observation lost: %+v", got)
 	}
-	if got := parsed.HardenRounds[0].Issues[0]; got.ID != "harden-1" || got.BlocksApproval || got.RecommendedAnswer == "" {
-		t.Fatalf("harden issue lost: %+v", got)
+	if got := parsed.HardenRounds[0].Observations[1]; got.Dimension != "rollback" || got.Result != "advisory" || got.Default == "" {
+		t.Fatalf("harden advisory observation lost: %+v", got)
 	}
 	if got := parsed.Phases[0].Acceptance[0]; got.Evidence != "exit code was 0" || got.SourceEvent != "entry-1" {
 		t.Fatalf("criterion evidence lost: %+v", got)
@@ -184,7 +176,7 @@ func TestParseDefaultsBrowserCriteriaToBrowserEvidence(t *testing.T) {
 	}
 }
 
-func TestParseRoundTripsHardenIssues(t *testing.T) {
+func TestParseRoundTripsHardenObservations(t *testing.T) {
 	t.Parallel()
 
 	input := string(Render(fixtureModel()))
@@ -196,26 +188,18 @@ Status: in_progress
 Started: 2026-05-04T00:00:00Z
 Ended: none
 
-Checks:
-- Path audit
-  - Grounded in: spec_gap:Scope
-  - Result: passed
-  - Evidence: Scope paths checked.
-
-Issues:
-- [high/blocks approval] ` + "`" + `harden-1` + "`" + ` design_challenge - The plan is a bandaid.
+Observations:
+- design
+  - Result: blocks
+  - Anchor: spec_gap:Summary
+  - Note: The plan is a bandaid.
+  - Default: Fix the root cause or narrow the plan.
   - Status: open
-  - Grounded in: spec_gap:Summary
-  - Evidence: The summary names the patch but not the root cause.
-  - Recommendation: Fix the root cause or narrow the plan.
-- [low/advisory] ` + "`" + `harden-2` + "`" + ` question - The rollback could name a recovery command.
-  - Status: open
-  - Grounded in: spec_gap:Rollback
-  - Evidence: Rollback exists but is terse.
-  - Recommendation: Name the recovery command if known.
-  - Question: What should a human run if the cutover fails?
-  - Recommended answer: Use the existing repair command.
-  - If unanswered: Keep rollback as-is.
+- rollback
+  - Result: advisory
+  - Anchor: spec_gap:Rollback
+  - Note: The rollback could name a recovery command.
+  - Default: Use the existing repair command.
 
 ## Planning Log`
 	input = strings.Replace(input, "## Harden Rounds\n\n- none\n\n## Planning Log", harden, 1)
@@ -224,24 +208,25 @@ Issues:
 	if err != nil {
 		t.Fatal(err)
 	}
-	issues := parsed.HardenRounds[0].Issues
-	if len(issues) != 2 {
-		t.Fatalf("issues = %+v", issues)
+	observations := parsed.HardenRounds[0].Observations
+	if len(observations) != 2 {
+		t.Fatalf("observations = %+v", observations)
 	}
-	if !issues[0].BlocksApproval || issues[0].Kind != "design_challenge" || issues[0].Status != "open" {
-		t.Fatalf("blocking issue = %+v", issues[0])
+	if observations[0].Dimension != "design" || observations[0].Result != "blocks" || observations[0].Status != "open" {
+		t.Fatalf("blocking observation = %+v", observations[0])
 	}
-	if issues[1].BlocksApproval || issues[1].Question == "" || issues[1].RecommendedAnswer == "" {
-		t.Fatalf("advisory issue = %+v", issues[1])
+	if observations[1].Dimension != "rollback" || observations[1].Result != "advisory" || observations[1].Default == "" {
+		t.Fatalf("advisory observation = %+v", observations[1])
 	}
 	rendered := string(Render(parsed))
-	if !strings.Contains(rendered, "Issues:\n- [high/blocks approval] `harden-1` design_challenge") ||
-		!strings.Contains(rendered, "- [low/advisory] `harden-2` question") {
-		t.Fatalf("rendered issues missing:\n%s", rendered)
+	if !strings.Contains(rendered, "Observations:\n- design") ||
+		!strings.Contains(rendered, "  - Result: blocks") ||
+		!strings.Contains(rendered, "  - Default: Use the existing repair command.") {
+		t.Fatalf("rendered observations missing:\n%s", rendered)
 	}
 }
 
-func TestRenderRoundTripsHardenCheckSkeleton(t *testing.T) {
+func TestRenderRoundTripsHardenObservationSkeleton(t *testing.T) {
 	t.Parallel()
 
 	model := fixtureModel()
@@ -250,26 +235,26 @@ func TestRenderRoundTripsHardenCheckSkeleton(t *testing.T) {
 		ID:        "round-1",
 		Status:    string(spec.HardenInProgress),
 		StartedAt: "2026-05-04T00:00:00Z",
-		Checks: []spec.HardenCheck{
-			{Name: "Path audit"},
-			{Name: "Command audit"},
+		Observations: []spec.HardenObservation{
+			{Dimension: "path"},
+			{Dimension: "command"},
 		},
 	}}
 	rendered := string(Render(model))
-	for _, want := range []string{"- Path audit\n  - Grounded in: \n  - Result: \n  - Evidence: ", "- Command audit\n  - Grounded in: "} {
+	for _, want := range []string{"- path\n  - Result: \n  - Anchor: ", "- command\n  - Result: "} {
 		if !strings.Contains(rendered, want) {
-			t.Fatalf("rendered harden skeleton missing %q:\n%s", want, rendered)
+			t.Fatalf("rendered observation skeleton missing %q:\n%s", want, rendered)
 		}
 	}
 	parsed, err := Parse([]byte(rendered))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(parsed.HardenRounds) != 1 || len(parsed.HardenRounds[0].Checks) != 2 {
-		t.Fatalf("parsed checks = %+v", parsed.HardenRounds)
+	if len(parsed.HardenRounds) != 1 || len(parsed.HardenRounds[0].Observations) != 2 {
+		t.Fatalf("parsed observations = %+v", parsed.HardenRounds)
 	}
-	if got := parsed.HardenRounds[0].Checks[0]; got.Name != "Path audit" || got.GroundedIn != "" || got.Result != "" || got.Evidence != "" {
-		t.Fatalf("parsed skeleton check = %+v", got)
+	if got := parsed.HardenRounds[0].Observations[0]; got.Dimension != "path" || got.Anchor != "" || got.Result != "" || got.Note != "" {
+		t.Fatalf("parsed skeleton observation = %+v", got)
 	}
 }
 

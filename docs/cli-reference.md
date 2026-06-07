@@ -135,33 +135,31 @@ Without flags, `harden` appends a round, sets `harden_status: in_progress`, and
 prints the active prompt from `.scafld/prompts/harden.md`, falling back to
 `.scafld/core/prompts/harden.md` and then the built-in prompt.
 
-With `--mark-passed`, it verifies the latest round's harden checks and
-`Grounded in` citations, closes the round, and sets `harden_status: passed`.
-Missing checks, checks that did not pass, open approval-blocking issues, and
-unresolved citations keep the round open. Advisory issues stay recorded but do
-not block approval.
+With `--mark-passed`, it verifies the latest round's harden observations and
+`Anchor` citations, closes the round, and sets `harden_status: passed`.
+Missing dimensions, invalid results, open blocking observations, and unresolved
+citations keep the round open. Advisory observations stay recorded but do not
+block approval.
 
 With `--provider`, scafld delegates the harden round to a separate read-only
 provider. The provider must submit one strict `HardenDossier` through the
-structured submit channel. A `pass` verdict closes hardening; `needs_revision`
-records checks that did not pass and open approval-blocking issues in the draft
-for the implementation agent to resolve before approval. Non-blocking advisory
-issues remain in the harden round as evidence, not as forced rework. Provider
-transport or invalid dossier problems are recorded as `harden_status: error`.
+structured submit channel. scafld derives `pass` or `needs_revision` from
+dimension coverage and unresolved `blocks` observations. Non-blocking advisory
+observations remain in the harden round as evidence, not as forced rework.
+Provider transport, invalid dossier, or unverified anchor problems are recorded
+as `harden_status: error`.
 
-Accepted citation shapes are `Grounded in: spec_gap:<field>`,
-`Grounded in: code:<path>:<line>`, and `Grounded in: archive:<task-id>`.
+Accepted citation shapes are `Anchor: spec_gap:<field>`,
+`Anchor: code:<path>:<line>`, and `Anchor: archive:<task-id>`.
 Code citations must use an existing workspace-relative path and a real line
 number. Line ranges are rejected; cite the single line that anchors the
 evidence.
 
-Required checks are `Path audit`, `Command audit`, `Scope/migration audit`,
-`Acceptance timing audit`, `Rollback/repair audit`, and `Design challenge`.
-Each check must record `Result: passed` or `Result: not_applicable` plus
-evidence. `Issues: none` is valid only after those checks have evidence.
-The design challenge is not a style preference: it must challenge why the plan
-exists, whether it solves the underlying problem, and whether it is a
-short-sighted bandaid or future bloat.
+Required dimensions are `path`, `command`, `scope`, `timing`, `rollback`, and
+`design`. Each observation must record `Result: clean`, `advisory`, `blocks`, or
+`n/a` plus an `Anchor`. The design dimension is not a style preference: it must
+challenge why the plan exists, whether it solves the underlying problem, and
+whether it is a short-sighted bandaid or future bloat.
 
 ## validate
 

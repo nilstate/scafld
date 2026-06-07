@@ -8,19 +8,37 @@ it at .scafld/prompts/harden.md.
 
 **Status:** ACTIVE
 **Mode:** HARDEN
-**Output:** Add grounded checks and issues under the latest ## Harden Rounds entry in the spec; keep harden_status in_progress until the operator runs --mark-passed.
+**Output:** Fill grounded observations under the latest ## Harden Rounds entry in the spec; keep harden_status in_progress until the operator runs --mark-passed.
 **Do NOT:** Modify code outside the spec file while hardening.
 
 ---
 
 Interrogate the draft spec until it is executable without invention. Preserve
-full detail, but separate approval blockers from advisories so harden does not
-loop forever on non-blocking polish.
+full detail, but record it as one observation ledger rather than separate checks
+and issues. scafld derives the verdict; do not write one manually.
 
-Run path, command, scope/migration, acceptance timing, rollback/repair, and
-design challenge checks before polishing wording.
+Cover these six dimensions:
 
-Work these harden questions after the checks expose real uncertainty:
+- path
+- command
+- scope
+- timing
+- rollback
+- design
+
+Each observation needs:
+
+- Dimension: one of path, command, scope, timing, rollback, design.
+- Result: clean, advisory, blocks, or n/a.
+- Anchor: spec_gap:<field>, code:<file>:<line>, or archive:<task_id>.
+- Note: required for advisory and blocks; useful for n/a when the reason is not obvious.
+- Default: optional answer for question-shaped observations.
+- Status: open, fixed, accepted_risk, or superseded for blocking observations.
+
+Use anchors as audit trail, not ceremony. Do not invent citations. Do not cite
+code you have not read. Do not ask about behavior the spec already settles.
+
+Work these harden questions after the observations expose real uncertainty:
 
 - What is the real product goal, not just the requested implementation?
 - What is authoritative when two artifacts contain the same fact?
@@ -33,35 +51,29 @@ Work these harden questions after the checks expose real uncertainty:
 - Can we dogfood this?
 - What complexity is being accepted, and why is it worth it?
 
-Ask one question at a time when manual hardening needs operator input. For each
-question, provide your recommended answer.
-If a question can be answered by exploring the codebase, explore the codebase instead of asking.
-Every question must carry one Grounded in value: spec_gap:<field>, code:<file>:<line>, or archive:<task_id>.
+Ask one question at a time when manual hardening needs operator input. If the
+question can be answered by exploring the codebase, explore the codebase instead.
+Record the question in Note and your proposed default in Default.
 
-Use Grounded in as audit trail, not ceremony. Do not invent citations. Do not cite code you have not read. Do not ask about behavior the spec already settles.
+Use blocks only when the draft is unsafe, incoherent, non-executable, or likely
+to create a bad architectural commitment. Advisory observations may remain open
+and do not block approval. Open blocking observations keep harden not-ready until
+they are fixed, accepted_risk, or superseded.
 
-If useful, include If unanswered with the default you would write into the spec if the operator declines to answer.
-
-Record findings in one Issues list. Use blocks approval only when the draft is
-unsafe, incoherent, non-executable, or likely to create a bad architectural
-commitment. Use advisory when the detail is useful but approval can proceed.
-
-If you cannot form a genuine grounded issue, record Issues: none. Do not pad the
-round.
-
-Record each issue in this exact Markdown shape under the latest harden round.
-Do not use YAML object keys such as question:, grounded_in:, recommended_answer:, or resolution.
+Record observations in this exact Markdown shape under the latest harden round:
 
 ` + "```markdown" + `
-Issues:
-- [high/blocks approval] ` + "`" + `harden-1` + "`" + ` question - Which module owns session cleanup?
+Observations:
+- path
+  - Result: clean
+  - Anchor: code:src/auth/session.ts:84
+  - Note: Existing cleanup owner verified in code.
+- design
+  - Result: blocks
+  - Anchor: spec_gap:Summary
+  - Note: The plan treats a symptom and does not name the underlying problem.
+  - Default: Rewrite the summary to address the root cause or shrink the plan.
   - Status: open
-  - Grounded in: code:src/auth/session.ts:84
-  - Evidence: Existing cleanup owner verified in code.
-  - Recommendation: Use the existing cleanupSession owner.
-  - Question: Which module owns session cleanup?
-  - Recommended answer: Use the existing cleanupSession owner.
-  - If unanswered: Default to the existing cleanup path.
 ` + "```" + `
 
 The operator can end the loop by saying done or stop. A satisfactory round is finalized by running scafld harden <task-id> --mark-passed.

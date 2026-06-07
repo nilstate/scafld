@@ -1363,7 +1363,7 @@ func hardenDossierFromProviderResult(result execution.Result, runErr error, text
 	if runErr != nil {
 		return coreharden.Dossier{}, providerFailedError(result, runErr)
 	}
-	if result.ExitCode != 0 && dossier.Verdict != coreharden.VerdictNeedsRevision {
+	if result.ExitCode != 0 && coreharden.VerdictFromDossier(dossier) != coreharden.VerdictNeedsRevision {
 		return coreharden.Dossier{}, providerFailedError(result, fmt.Errorf("exit code %d", result.ExitCode))
 	}
 	return dossier, nil
@@ -1541,13 +1541,13 @@ func hardenSubmitTool() SubmitTool {
 	return SubmitTool{
 		Name:        "submit_harden",
 		Title:       "Submit scafld hardening",
-		Description: "Submit the final scafld HardenDossier. Call exactly once after stress-testing the draft spec. The checks array is a fixed six-row form: path audit, command audit, scope/migration audit, acceptance timing audit, rollback/repair audit, design challenge. Fill grounded_in, result, and evidence for every check.",
+		Description: "Submit the final scafld HardenDossier. Call exactly once after stress-testing the draft spec. The observations array must cover path, command, scope, timing, rollback, and design with result, anchor, and any note/default/status.",
 		Command:     "harden-submit-stdio",
 	}
 }
 
 func localHardenDossier() string {
-	return `{"verdict":"pass","summary":"Local provider smoke hardening passed.","checks":[{"name":"path audit","grounded_in":"spec_gap:Context","result":"passed","evidence":"Local smoke provider records required harden checks."},{"name":"command audit","grounded_in":"spec_gap:Acceptance","result":"passed","evidence":"Local smoke provider records required harden checks."},{"name":"scope/migration audit","grounded_in":"spec_gap:Scope","result":"passed","evidence":"Local smoke provider records required harden checks."},{"name":"acceptance timing audit","grounded_in":"spec_gap:Acceptance","result":"passed","evidence":"Local smoke provider records required harden checks."},{"name":"rollback/repair audit","grounded_in":"spec_gap:Rollback","result":"passed","evidence":"Local smoke provider records required harden checks."},{"name":"design challenge","grounded_in":"spec_gap:Summary","result":"passed","evidence":"Local smoke provider records required harden checks."}],"issues":[],"attack_log":[{"target":"local provider","attack":"deterministic smoke hardening","result":"clean"}]}`
+	return `{"summary":"Local provider smoke hardening passed.","observations":[{"dimension":"path","result":"clean","anchor":"spec_gap:Context","note":"Local smoke provider records required harden observations."},{"dimension":"command","result":"clean","anchor":"spec_gap:Acceptance","note":"Local smoke provider records required harden observations."},{"dimension":"scope","result":"clean","anchor":"spec_gap:Scope","note":"Local smoke provider records required harden observations."},{"dimension":"timing","result":"clean","anchor":"spec_gap:Acceptance","note":"Local smoke provider records required harden observations."},{"dimension":"rollback","result":"clean","anchor":"spec_gap:Rollback","note":"Local smoke provider records required harden observations."},{"dimension":"design","result":"clean","anchor":"spec_gap:Summary","note":"Local smoke provider records required harden observations."}]}`
 }
 
 func safeSchemaName(value string) string {
