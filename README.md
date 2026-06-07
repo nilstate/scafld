@@ -199,7 +199,7 @@ Review failure is structured, not a vibe:
   "verdict": "fail",
   "mode": "discover",
   "provider": "claude",
-  "model": "claude-opus-4-7",
+  "model": "opus",
   "output_format": "claude.mcp_submit_review",
   "summary": "Review found one open completion blocker.",
   "findings": [
@@ -224,7 +224,7 @@ Review failure is structured, not a vibe:
 ```text
 review verdict: fail
 review mode: discover
-review provider: claude:claude-opus-4-7
+review provider: claude:opus
 review output: claude.mcp_submit_review
 summary: Review found one open completion blocker.
 findings:
@@ -460,7 +460,7 @@ review:
     codex:
       model: "gpt-5.5"
     claude:
-      model: "claude-opus-4-7"
+      model: "opus"
     gemini:
       # model: "" # empty uses Gemini CLI's configured default
   context:
@@ -479,6 +479,9 @@ review:
     review_depth: "standard"
     rerun_policy: "verify_open_blockers"
 ```
+
+Old scafld-generated model defaults are upgraded while loading config. Custom
+model values remain pinned.
 
 The review agenda is configurable too. `review.automated_passes` and
 `review.adversarial_passes` are included in the challenger prompt in explicit

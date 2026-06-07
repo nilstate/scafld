@@ -46,10 +46,11 @@ For challenger review work:
   accepts the final verdict only through scafld's `submit_review` MCP tool.
 - Gemini review runs in plan mode with a temporary scafld-owned settings file
   that exposes only the `submit_review` MCP tool for the final verdict
-- Codex review requests `gpt-5.5` by default so review uses the strongest
-  available Codex model unless configured otherwise
-- Claude review requests `claude-opus-4-7` by default unless configured
+- Codex review requests `gpt-5.5` by default so review uses the current strongest
+  OpenAI model known to work through Codex CLI ChatGPT auth unless configured
   otherwise
+- Claude review requests the `opus` rolling alias by default so Claude Code uses
+  the latest Opus model unless configured otherwise
 - Gemini review uses Gemini CLI's configured default model unless
   `review.external.gemini.model` is set. It runs in plan mode with a temporary
   scafld MCP settings file and must submit through `submit_review`

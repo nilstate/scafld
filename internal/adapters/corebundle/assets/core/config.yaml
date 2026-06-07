@@ -53,12 +53,15 @@ harden:
     absolute_max_seconds: 1800
     fallback_policy: "disable"
     codex:
+      # Current strongest OpenAI model known to work through Codex CLI ChatGPT
+      # auth. Override locally to pin a snapshot or use a different Codex model.
       model: "gpt-5.5"
       # binary: "codex"
       # endpoint_host: "api.openai.com"
       # endpoint_url: "https://api.openai.com"
     claude:
-      model: "claude-opus-4-7"
+      # Claude Code rolling alias for the latest Opus model.
+      model: "opus"
       # binary: "claude"
       # endpoint_host: "api.anthropic.com"
       # endpoint_url: "https://api.anthropic.com"
@@ -79,12 +82,15 @@ review:
     absolute_max_seconds: 1800
     fallback_policy: "disable"
     codex:
+      # Current strongest OpenAI model known to work through Codex CLI ChatGPT
+      # auth. Override locally to pin a snapshot or use a different Codex model.
       model: "gpt-5.5"
       # binary: "codex"
       # endpoint_host: "api.openai.com"
       # endpoint_url: "https://api.openai.com"
     claude:
-      model: "claude-opus-4-7"
+      # Claude Code rolling alias for the latest Opus model.
+      model: "opus"
       # binary: "claude"
       # endpoint_host: "api.anthropic.com"
       # endpoint_url: "https://api.anthropic.com"
