@@ -3,6 +3,7 @@ package completion
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/nilstate/scafld/v2/internal/core/receipt"
 	corereview "github.com/nilstate/scafld/v2/internal/core/review"
@@ -216,9 +217,9 @@ func validateReviewEntry(ledger session.Session, idx int, entry session.Entry, c
 		return auth
 	}
 	if entry.Provider != "human" {
-		if stale := priorBlockingReviewWithoutBuild(ledger, idx); stale != "" {
-			auth.Reason = "passing review is missing refreshed build evidence after a blocking review"
-			auth.Actual = "latest passing review follows " + stale + " without intervening build evidence"
+		if stale := priorBlockingReviewWithoutRepairEvidence(ledger, idx); stale != "" {
+			auth.Reason = "passing review is missing repair evidence after a blocking review"
+			auth.Actual = "latest passing review follows " + stale + " without changed workspace or build evidence"
 			auth.Evidence = append(auth.Evidence, stale)
 			return auth
 		}
@@ -257,14 +258,20 @@ func validateReviewEntry(ledger session.Session, idx int, entry session.Entry, c
 	return auth
 }
 
-func priorBlockingReviewWithoutBuild(ledger session.Session, reviewIdx int) string {
+func priorBlockingReviewWithoutRepairEvidence(ledger session.Session, reviewIdx int) string {
 	for i := reviewIdx - 1; i >= 0; i-- {
 		entry := ledger.Entries[i]
 		switch entry.Type {
 		case "build", "criterion", "phase":
 			return ""
 		case "review":
-			if entry.Status == corereview.VerdictFail {
+			switch entry.Status {
+			case corereview.VerdictPass:
+				return ""
+			case corereview.VerdictFail:
+				if reviewAttemptChangedBetween(ledger, i, reviewIdx) {
+					return ""
+				}
 				return entryReference(entry)
 			}
 		case "approval", session.EntryWorkspaceBaseline, "fail", "cancel", "complete":
@@ -272,6 +279,30 @@ func priorBlockingReviewWithoutBuild(ledger session.Session, reviewIdx int) stri
 		}
 	}
 	return ""
+}
+
+func reviewAttemptChangedBetween(ledger session.Session, failedReviewIdx int, passingReviewIdx int) bool {
+	failedAttempt, okFailed := latestReviewAttemptBefore(ledger, failedReviewIdx)
+	passingAttempt, okPassing := latestReviewAttemptBefore(ledger, passingReviewIdx)
+	if !okFailed || !okPassing {
+		return false
+	}
+	failedOutput := strings.TrimSpace(failedAttempt.Output)
+	passingOutput := strings.TrimSpace(passingAttempt.Output)
+	return failedOutput != "" && passingOutput != "" && failedOutput != passingOutput
+}
+
+func latestReviewAttemptBefore(ledger session.Session, reviewIdx int) (session.Entry, bool) {
+	for i := reviewIdx - 1; i >= 0; i-- {
+		entry := ledger.Entries[i]
+		switch entry.Type {
+		case "review_attempt":
+			return entry, true
+		case "review", "build", "criterion", "phase", "approval", session.EntryWorkspaceBaseline, "fail", "cancel", "complete":
+			return session.Entry{}, false
+		}
+	}
+	return session.Entry{}, false
 }
 
 func hasAuditedHumanOverride(ledger session.Session, reviewIdx int) bool {

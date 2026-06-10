@@ -687,6 +687,13 @@ func buildEvidence(ctx context.Context, g git.Adapter, treeSHA string, scope []s
 		}
 		provenance = append(provenance, receipt.Provenance{Kind: "deleted", Path: path})
 	}
+	if len(files) == 0 && len(provenance) == 0 {
+		detail := "scope did not resolve to any file bytes or deletion tombstones"
+		if len(ignored) > 0 {
+			detail = "scope only contains signed but withheld paths: " + strings.Join(ignored, ", ")
+		}
+		return nil, nil, ignored, fmt.Errorf("finalize evidence is not reviewable: %s; run finalize in the owning repository or pass a scope that includes reviewable files", detail)
+	}
 	return files, provenance, ignored, nil
 }
 

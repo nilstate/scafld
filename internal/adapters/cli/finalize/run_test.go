@@ -537,6 +537,42 @@ func TestBuildEvidenceDoesNotSilentlyDropScopedGovernedFiles(t *testing.T) {
 	}
 }
 
+func TestBuildEvidenceRejectsEmptyReviewableEvidence(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	if out, err := exec.Command("git", "init", root).CombinedOutput(); err != nil {
+		t.Skipf("git init unavailable: %v\n%s", err, out)
+	}
+	runGit := func(args ...string) {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = root
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
+		}
+	}
+	runGit("config", "user.name", "scafld")
+	runGit("config", "user.email", "scafld@example.invalid")
+	if err := os.WriteFile(filepath.Join(root, "AGENTS.md"), []byte("instructions\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit("add", "-A")
+	runGit("commit", "-m", "base")
+
+	g := git.Adapter{Root: root}
+	snap, err := g.Snapshot(context.Background(), git.SnapshotInput{Scope: []string{"."}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, ignored, err := buildEvidence(context.Background(), g, snap.TreeSHA, []string{"."}, nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "finalize evidence is not reviewable") {
+		t.Fatalf("error = %v, want not-reviewable evidence failure", err)
+	}
+	if !containsString(ignored, "AGENTS.md") {
+		t.Fatalf("ignored = %v, want AGENTS.md recorded", ignored)
+	}
+}
+
 func TestFinalizeRejectsLedgerHeadMismatch(t *testing.T) {
 	t.Parallel()
 

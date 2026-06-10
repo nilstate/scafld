@@ -192,6 +192,71 @@ func TestStatusReviewFailureNextActionRefreshesBuildBeforeReview(t *testing.T) {
 	}
 }
 
+func TestStatusReviewWithoutLedgerReviewSuggestsReviewNotComplete(t *testing.T) {
+	t.Parallel()
+
+	out, err := Run(context.Background(), fakeSpecStore{model: spec.Model{
+		TaskID: "task",
+		Status: spec.StatusReview,
+		CurrentState: spec.CurrentState{
+			Reason:          "exit code was 0",
+			AllowedFollowUp: "scafld complete task",
+		},
+	}}, fakeSessionStore{ledger: session.New("task", "now")}, "task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Next != "scafld review task" || out.AllowedFollowUp != "scafld review task" {
+		t.Fatalf("next = %q allowed = %q, want review", out.Next, out.AllowedFollowUp)
+	}
+	if out.NextAction.Action != "run_review" || out.NextAction.Command != "scafld review task" {
+		t.Fatalf("next action = %+v", out.NextAction)
+	}
+	if out.Review.Reason != "latest review gate has not passed" {
+		t.Fatalf("review reason = %q", out.Review.Reason)
+	}
+}
+
+func TestStatusReviewPassRequiresValidLedgerAuthority(t *testing.T) {
+	t.Parallel()
+
+	ledger := session.New("task", "now").
+		WithEntry(session.Entry{Type: "review", Status: corereview.VerdictPass, Provider: "local"})
+	out, err := Run(context.Background(), fakeSpecStore{model: spec.Model{
+		TaskID: "task",
+		Status: spec.StatusReview,
+		CurrentState: spec.CurrentState{
+			AllowedFollowUp: "scafld complete task",
+		},
+	}}, fakeSessionStore{ledger: ledger}, "task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.NextAction.Action == "complete" || out.NextAction.Command != "scafld review task" {
+		t.Fatalf("next action = %+v", out.NextAction)
+	}
+}
+
+func TestStatusReviewWithValidLedgerReviewSuggestsComplete(t *testing.T) {
+	t.Parallel()
+
+	ledger := session.New("task", "now").
+		WithEntry(session.Entry{Type: "review", Status: corereview.VerdictPass, Provider: "codex", Output: corereview.EncodeDossier(passingReviewDossier("codex"))})
+	out, err := Run(context.Background(), fakeSpecStore{model: spec.Model{
+		TaskID: "task",
+		Status: spec.StatusReview,
+		CurrentState: spec.CurrentState{
+			AllowedFollowUp: "scafld complete task",
+		},
+	}}, fakeSessionStore{ledger: ledger}, "task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Next != "scafld complete task" || out.NextAction.Action != "complete" || out.NextAction.Command != "scafld complete task" {
+		t.Fatalf("status = %+v", out)
+	}
+}
+
 func TestStatusBlockedRepairContractUsesCurrentPhaseOnly(t *testing.T) {
 	t.Parallel()
 

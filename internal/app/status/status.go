@@ -105,6 +105,7 @@ func Run(ctx context.Context, specs SpecStore, sessions SessionStore, taskID str
 		TrustedState:    "session ledger replay projected into the Markdown spec",
 		AllowedFollowUp: model.CurrentState.AllowedFollowUp,
 	}
+	reviewGateValid := false
 	if sessions != nil {
 		if ledger, err := sessions.Load(ctx, model.TaskID); err == nil {
 			out.SessionOK = true
@@ -117,13 +118,36 @@ func Run(ctx context.Context, specs SpecStore, sessions SessionStore, taskID str
 				out.Next = out.Repair.Next
 				out.AllowedFollowUp = out.Repair.Next
 			}
+			reviewGateValid = applyReviewGateAuthority(&out, model, corecompletion.CurrentReviewGate(ledger))
 		}
 	}
-	out.NextAction = nextAction(model, out.Repair, out.Review, out.Next)
+	if model.Status == spec.StatusReview && !out.SessionOK {
+		out.Next = reviewCommand(model.TaskID)
+		out.AllowedFollowUp = out.Next
+		out.Review.Reason = "session ledger unavailable; review authority cannot be verified"
+	}
+	out.NextAction = nextAction(model, out.Repair, out.Review, out.Next, reviewGateValid)
 	return out, nil
 }
 
-func nextAction(model spec.Model, repair *gate.Failure, review ReviewInfo, command string) NextAction {
+func applyReviewGateAuthority(out *Output, model spec.Model, authority corecompletion.Authority) bool {
+	if model.Status != spec.StatusReview {
+		return false
+	}
+	if authority.Valid {
+		out.Next = completeCommand(model.TaskID)
+		out.AllowedFollowUp = out.Next
+		return true
+	}
+	if out.Repair == nil {
+		out.Next = reviewCommand(model.TaskID)
+		out.AllowedFollowUp = out.Next
+		out.Review.Reason = fallback(out.Review.Reason, authority.Reason)
+	}
+	return false
+}
+
+func nextAction(model spec.Model, repair *gate.Failure, review ReviewInfo, command string, reviewGateValid bool) NextAction {
 	taskCommand := func(name string) string {
 		if model.TaskID == "" {
 			return "scafld " + name
@@ -152,10 +176,10 @@ func nextAction(model spec.Model, repair *gate.Failure, review ReviewInfo, comma
 			}
 			return NextAction{Role: "operator", Action: "repair_review_provider", Command: command, Reason: fallback(repair.Reason, "latest review attempt failed"), ThenCommand: taskCommand("review")}
 		}
-		if review.Verdict == corereview.VerdictPass {
+		if reviewGateValid {
 			return NextAction{Role: "operator", Action: "complete", Command: command, Reason: "latest review gate passed"}
 		}
-		return NextAction{Role: "reviewer", Action: "run_review", Command: command, Reason: fallback(model.CurrentState.Reason, "build completed; ready for review")}
+		return NextAction{Role: "reviewer", Action: "run_review", Command: command, Reason: fallback(review.Reason, fallback(model.CurrentState.Reason, "build completed; ready for review"))}
 	case spec.StatusCompleted:
 		return NextAction{Role: "none", Action: "done", Command: "none", Reason: "task is completed"}
 	case spec.StatusFailed, spec.StatusCancelled:
@@ -163,6 +187,20 @@ func nextAction(model spec.Model, repair *gate.Failure, review ReviewInfo, comma
 	default:
 		return NextAction{Role: "operator", Action: string(model.Status), Command: command, Reason: fallback(model.CurrentState.Reason, "inspect status")}
 	}
+}
+
+func reviewCommand(taskID string) string {
+	if taskID == "" {
+		return "scafld review"
+	}
+	return "scafld review " + taskID
+}
+
+func completeCommand(taskID string) string {
+	if taskID == "" {
+		return "scafld complete"
+	}
+	return "scafld complete " + taskID
 }
 
 func completionInfo(authority corecompletion.Authority) *CompletionInfo {

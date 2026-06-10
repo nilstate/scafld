@@ -191,7 +191,7 @@ func TestCompleteRejectsStaleReviewAfterLaterReviewAttempt(t *testing.T) {
 	}
 }
 
-func TestCompleteRejectsPassingReviewAfterBlockingReviewWithoutBuildEvidence(t *testing.T) {
+func TestCompleteRejectsPassingReviewAfterBlockingReviewWithoutRepairEvidence(t *testing.T) {
 	t.Parallel()
 
 	specs := &fakeSpecs{model: spec.Model{TaskID: "task", Status: spec.StatusReview, Review: spec.ReviewState{Status: "completed", Verdict: "pass"}}}
@@ -203,7 +203,25 @@ func TestCompleteRejectsPassingReviewAfterBlockingReviewWithoutBuildEvidence(t *
 		t.Fatalf("error = %v, want %v", err, ErrReviewGate)
 	}
 	var gateErr gate.Error
-	if !errors.As(err, &gateErr) || gateErr.Failure.Actual != "latest passing review follows review-fail without intervening build evidence" {
+	if !errors.As(err, &gateErr) || gateErr.Failure.Actual != "latest passing review follows review-fail without changed workspace or build evidence" {
 		t.Fatalf("gate error = %#v, ok=%v", gateErr, errors.As(err, &gateErr))
+	}
+}
+
+func TestCompleteAcceptsPassingReviewAfterChangedAttemptEvidence(t *testing.T) {
+	t.Parallel()
+
+	specs := &fakeSpecs{model: spec.Model{TaskID: "task", Status: spec.StatusReview, Review: spec.ReviewState{Status: "completed", Verdict: "pass"}}}
+	ledger := session.New("task", "now").
+		WithEntry(session.Entry{ID: "attempt-fail", Type: "review_attempt", Status: "running", Output: "task_changes_since_baseline:\n- changed file.go (old)"}).
+		WithEntry(session.Entry{ID: "review-fail", Type: "review", Status: corereview.VerdictFail, Provider: "codex"}).
+		WithEntry(session.Entry{ID: "attempt-pass", Type: "review_attempt", Status: "running", Output: "task_changes_since_baseline:\n- changed file.go (new)"}).
+		WithEntry(session.Entry{ID: "review-pass", Type: "review", Status: corereview.VerdictPass, Provider: "codex"})
+	model, err := Run(context.Background(), specs, &fakeSessions{ledger: ledger}, fakeClock{}, "task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if model.Status != spec.StatusCompleted {
+		t.Fatalf("status = %q, want completed", model.Status)
 	}
 }

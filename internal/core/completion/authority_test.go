@@ -102,7 +102,7 @@ func TestTerminalAuthorityAcceptsPassingFinalizationReceipt(t *testing.T) {
 	}
 }
 
-func TestCurrentReviewGateRequiresBuildEvidenceAfterBlockingReview(t *testing.T) {
+func TestCurrentReviewGateRequiresRepairEvidenceAfterBlockingReview(t *testing.T) {
 	t.Parallel()
 
 	ledger := session.New("task", "now")
@@ -110,11 +110,42 @@ func TestCurrentReviewGateRequiresBuildEvidenceAfterBlockingReview(t *testing.T)
 	ledger = ledger.WithEntry(session.Entry{ID: "review-2", Type: "review", Status: corereview.VerdictPass, Provider: "codex", Output: corereview.EncodeDossier(cleanDossier("codex"))})
 
 	authority := CurrentReviewGate(ledger)
-	if authority.Valid || authority.Reason != "passing review is missing refreshed build evidence after a blocking review" {
+	if authority.Valid || authority.Reason != "passing review is missing repair evidence after a blocking review" {
 		t.Fatalf("authority = %+v", authority)
 	}
-	if authority.Actual != "latest passing review follows review-1 without intervening build evidence" {
+	if authority.Actual != "latest passing review follows review-1 without changed workspace or build evidence" {
 		t.Fatalf("actual = %q", authority.Actual)
+	}
+}
+
+func TestCurrentReviewGateAcceptsReviewRepairAfterChangedAttemptEvidence(t *testing.T) {
+	t.Parallel()
+
+	ledger := session.New("task", "now")
+	ledger = ledger.WithEntry(session.Entry{ID: "attempt-1", Type: "review_attempt", Status: "running", Output: "task_changes_since_baseline:\n- changed file.go (old)"})
+	ledger = ledger.WithEntry(session.Entry{ID: "review-1", Type: "review", Status: corereview.VerdictFail, Provider: "codex"})
+	ledger = ledger.WithEntry(session.Entry{ID: "attempt-2", Type: "review_attempt", Status: "running", Output: "task_changes_since_baseline:\n- changed file.go (new)"})
+	ledger = ledger.WithEntry(session.Entry{ID: "review-2", Type: "review", Status: corereview.VerdictPass, Provider: "codex", Output: corereview.EncodeDossier(cleanDossier("codex"))})
+
+	authority := CurrentReviewGate(ledger)
+	if !authority.Valid || authority.ReviewEntry.ID != "review-2" {
+		t.Fatalf("authority = %+v", authority)
+	}
+}
+
+func TestCurrentReviewGateRejectsReviewRerollWithSameAttemptEvidence(t *testing.T) {
+	t.Parallel()
+
+	output := "task_changes_since_baseline:\n- changed file.go (same)"
+	ledger := session.New("task", "now")
+	ledger = ledger.WithEntry(session.Entry{ID: "attempt-1", Type: "review_attempt", Status: "running", Output: output})
+	ledger = ledger.WithEntry(session.Entry{ID: "review-1", Type: "review", Status: corereview.VerdictFail, Provider: "codex"})
+	ledger = ledger.WithEntry(session.Entry{ID: "attempt-2", Type: "review_attempt", Status: "running", Output: output})
+	ledger = ledger.WithEntry(session.Entry{ID: "review-2", Type: "review", Status: corereview.VerdictPass, Provider: "codex", Output: corereview.EncodeDossier(cleanDossier("codex"))})
+
+	authority := CurrentReviewGate(ledger)
+	if authority.Valid || authority.Reason != "passing review is missing repair evidence after a blocking review" {
+		t.Fatalf("authority = %+v", authority)
 	}
 }
 
