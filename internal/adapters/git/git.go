@@ -1,6 +1,8 @@
 package git
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"errors"
@@ -10,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -482,7 +485,15 @@ func (a Adapter) fileDigests(ctx context.Context, treeSHA string, statuses map[s
 	if err != nil {
 		return nil, err
 	}
-	var digests []FileDigest
+	type treeEntry struct {
+		path    string
+		status  string
+		oid     string
+		gitlink bool
+	}
+	var entries []treeEntry
+	var blobOIDs []string
+	seenOIDs := map[string]bool{}
 	for _, entry := range strings.Split(string(out), "\x00") {
 		if entry == "" {
 			continue
@@ -500,25 +511,116 @@ func (a Adapter) fileDigests(ctx context.Context, treeSHA string, statuses map[s
 		if status == "" {
 			status = "unchanged"
 		}
-		sum := ""
-		if mode == "160000" || objectType == "commit" {
+		gitlink := mode == "160000" || objectType == "commit"
+		if gitlink {
 			status = "gitlink"
-			h := sha256.Sum256([]byte("gitlink\x00" + oid))
+		} else if !seenOIDs[oid] {
+			seenOIDs[oid] = true
+			blobOIDs = append(blobOIDs, oid)
+		}
+		entries = append(entries, treeEntry{path: path, status: status, oid: oid, gitlink: gitlink})
+	}
+	blobSums, err := a.blobDigests(ctx, blobOIDs)
+	if err != nil {
+		return nil, err
+	}
+	digests := make([]FileDigest, 0, len(entries))
+	for _, entry := range entries {
+		sum := ""
+		if entry.gitlink {
+			h := sha256.Sum256([]byte("gitlink\x00" + entry.oid))
 			sum = fmt.Sprintf("%x", h)
 		} else {
-			data, err := a.gitOutput(ctx, nil, "cat-file", "blob", oid)
-			if err != nil {
-				return nil, err
+			sum = blobSums[entry.oid]
+			if sum == "" {
+				return nil, fmt.Errorf("missing blob digest for %s (%s)", entry.path, entry.oid)
 			}
-			h := sha256.Sum256(data)
-			sum = fmt.Sprintf("%x", h)
 		}
-		digests = append(digests, FileDigest{Path: path, Status: status, SHA256: sum})
+		digests = append(digests, FileDigest{Path: entry.path, Status: entry.status, SHA256: sum})
 	}
 	sort.Slice(digests, func(i, j int) bool {
 		return digests[i].Path < digests[j].Path
 	})
 	return digests, nil
+}
+
+// blobDigests hashes blobs through one `git cat-file --batch` process instead
+// of one subprocess per file, and reads blob bytes from a dedicated stdout
+// pipe so stderr noise can never reach the hash.
+func (a Adapter) blobDigests(ctx context.Context, oids []string) (map[string]string, error) {
+	sums := make(map[string]string, len(oids))
+	if len(oids) == 0 {
+		return sums, nil
+	}
+	cmd := exec.CommandContext(ctx, "git", "cat-file", "--batch")
+	cmd.Dir = a.Root
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return nil, fmt.Errorf("%w: git cat-file --batch stdin: %v", errGitCommand, err)
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, fmt.Errorf("%w: git cat-file --batch stdout: %v", errGitCommand, err)
+	}
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("%w: git cat-file --batch: %v", errGitCommand, err)
+	}
+	writeErr := make(chan error, 1)
+	go func() {
+		defer stdin.Close()
+		for _, oid := range oids {
+			if _, err := io.WriteString(stdin, oid+"\n"); err != nil {
+				writeErr <- err
+				return
+			}
+		}
+		writeErr <- nil
+	}()
+	reader := bufio.NewReaderSize(stdout, 1<<16)
+	var readErr error
+	for _, oid := range oids {
+		header, err := reader.ReadString('\n')
+		if err != nil {
+			readErr = fmt.Errorf("read header for %s: %w", oid, err)
+			break
+		}
+		fields := strings.Fields(strings.TrimSpace(header))
+		if len(fields) != 3 || fields[0] != oid {
+			readErr = fmt.Errorf("unexpected cat-file header for %s: %q", oid, strings.TrimSpace(header))
+			break
+		}
+		size, err := strconv.ParseInt(fields[2], 10, 64)
+		if err != nil || size < 0 {
+			readErr = fmt.Errorf("bad cat-file size for %s: %q", oid, fields[2])
+			break
+		}
+		hasher := sha256.New()
+		if _, err := io.CopyN(hasher, reader, size); err != nil {
+			readErr = fmt.Errorf("read blob %s: %w", oid, err)
+			break
+		}
+		if _, err := reader.Discard(1); err != nil { // trailing LF after each object
+			readErr = fmt.Errorf("read blob terminator %s: %w", oid, err)
+			break
+		}
+		sums[oid] = fmt.Sprintf("%x", hasher.Sum(nil))
+	}
+	if readErr != nil {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		<-writeErr
+		return nil, fmt.Errorf("%w: git cat-file --batch: %v\n%s", errGitCommand, readErr, stderr.Bytes())
+	}
+	if err := <-writeErr; err != nil {
+		_ = cmd.Wait()
+		return nil, fmt.Errorf("%w: git cat-file --batch write: %v", errGitCommand, err)
+	}
+	if err := cmd.Wait(); err != nil {
+		return nil, fmt.Errorf("%w: git cat-file --batch: %v\n%s", errGitCommand, err, stderr.Bytes())
+	}
+	return sums, nil
 }
 
 func (a Adapter) ignoredPaths(ctx context.Context, scope []string) ([]IgnoredPath, error) {
