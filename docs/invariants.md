@@ -20,6 +20,17 @@ summarized in root agent guidance so the executor sees them before acting.
 | `public_api_stable` | HTTP contracts and event schemas don't change without explicit approval |
 | `config_from_env` | Never hardcoded secrets or configuration |
 
+## Receipt and ledger invariants
+
+Signed receipts are valid only while their trusted key is valid at the receipt's
+`minted_at` time. `revoked`, `revoked_at`, and `expires_at` in
+`.scafld/trusted-keys.json` are honored by both `scafld verify` and session
+ledger replay.
+
+Receipt ledger heads are append-only evidence. A new receipt must chain from the
+current persisted ledger head, and scafld refuses to append a receipt that was
+minted against a stale or broken head.
+
 ## Contract Hierarchy
 
 Convention enforcement has one hierarchy:

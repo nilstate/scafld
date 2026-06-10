@@ -132,7 +132,9 @@ receipts on pull requests. Declare intent with the `verify.policy` config field
 (`local` default, `advisory`, `required`) and run `scafld verify --self-check`
 for an offline report of what is wired. Requiring the check before a merge is a
 GitHub branch-protection setting the operator owns; scafld scaffolds and reports
-it, never claiming an enforcement that is not there.
+it, never claiming an enforcement that is not there. See
+[docs/threat-model.md](docs/threat-model.md) for the exact guarantees and
+limits of signed receipts, trusted keys, and independence detection.
 
 ## What scafld Writes
 

@@ -22,6 +22,7 @@ import (
 	"github.com/nilstate/scafld/v2/internal/adapters/process"
 	"github.com/nilstate/scafld/v2/internal/adapters/providers"
 	"github.com/nilstate/scafld/v2/internal/adapters/sign"
+	"github.com/nilstate/scafld/v2/internal/adapters/trustcheck"
 	appacceptance "github.com/nilstate/scafld/v2/internal/app/acceptance"
 	appfinalize "github.com/nilstate/scafld/v2/internal/app/finalize"
 	"github.com/nilstate/scafld/v2/internal/core/receipt"
@@ -100,7 +101,7 @@ func compose(ctx context.Context, req Request) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	sessionStore := jsonstore.SessionStore{Root: root}
+	sessionStore := jsonstore.SessionStore{Root: root, TrustChecker: trustcheck.FromRoot(root, cfg.Verify.TrustedKeysPath)}
 	now := time.Now().UTC()
 	ledger, err := loadGateLedger(ctx, sessionStore, req.TaskID, now)
 	if err != nil {
@@ -306,7 +307,7 @@ func finalize(ctx context.Context, root string, taskID string, sessions jsonstor
 			return nil, err
 		}
 		if hasSpec {
-			_ = projectSpecFromSession(ctx, root, taskID)
+			_ = projectSpecFromSession(ctx, root, taskID, sessions)
 		}
 		response["findings"] = gateFindings(out.Findings)
 		response["reason"] = out.Reason
@@ -325,12 +326,6 @@ func finalize(ctx context.Context, root string, taskID string, sessions jsonstor
 	}
 	taskReceiptPath := filepath.Join(root, ".scafld", "receipts", taskID+".json")
 	latestReceiptPath := filepath.Join(root, ".scafld", "receipts", "latest.json")
-	if err := os.MkdirAll(filepath.Dir(taskReceiptPath), 0o755); err != nil {
-		return nil, fmt.Errorf("create receipts dir: %w", err)
-	}
-	if err := atomicfile.Write(taskReceiptPath, append(data, '\n'), 0o644); err != nil {
-		return nil, fmt.Errorf("write receipt: %w", err)
-	}
 	digest, err := receipt.ReceiptDigest(out.Receipt.Body)
 	if err != nil {
 		return nil, err
@@ -355,13 +350,20 @@ func finalize(ctx context.Context, root string, taskID string, sessions jsonstor
 	if _, err := sessions.Append(ctx, taskID, session.Entry{Type: "complete", Status: "completed", Reason: "finalization receipt passed"}, now); err != nil {
 		return nil, fmt.Errorf("append completion to ledger: %w", err)
 	}
-	// latest.json is the pointer hosts read; write it only after the receipt is
-	// anchored in the ledger so it never names a receipt the chain rejected.
+	// Receipt files are written only after the receipt is anchored in the ledger
+	// and the task is marked complete, so a losing concurrent finalize cannot
+	// leave behind an unanchored task receipt.
+	if err := os.MkdirAll(filepath.Dir(taskReceiptPath), 0o755); err != nil {
+		return nil, fmt.Errorf("create receipts dir: %w", err)
+	}
+	if err := atomicfile.Write(taskReceiptPath, append(data, '\n'), 0o644); err != nil {
+		return nil, fmt.Errorf("write receipt: %w", err)
+	}
 	if err := atomicfile.Write(latestReceiptPath, append(data, '\n'), 0o644); err != nil {
 		return nil, fmt.Errorf("write latest receipt: %w", err)
 	}
 	if hasSpec {
-		if err := projectSpecFromSession(ctx, root, taskID); err != nil {
+		if err := projectSpecFromSession(ctx, root, taskID, sessions); err != nil {
 			return nil, err
 		}
 	}
@@ -419,7 +421,7 @@ func phaseByCriterion(model spec.Model) map[string]string {
 	return out
 }
 
-func projectSpecFromSession(ctx context.Context, root string, taskID string) error {
+func projectSpecFromSession(ctx context.Context, root string, taskID string, sessions jsonstore.SessionStore) error {
 	specStore := markdown.Store{Root: root}
 	model, path, err := specStore.Load(ctx, taskID)
 	if err != nil {
@@ -428,7 +430,7 @@ func projectSpecFromSession(ctx context.Context, root string, taskID string) err
 		}
 		return fmt.Errorf("load finalized spec: %w", err)
 	}
-	ledger, err := (jsonstore.SessionStore{Root: root}).Load(ctx, taskID)
+	ledger, err := sessions.Load(ctx, taskID)
 	if err != nil {
 		return fmt.Errorf("load finalized session: %w", err)
 	}

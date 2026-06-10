@@ -8,8 +8,8 @@ import (
 	"strings"
 
 	"github.com/nilstate/scafld/v2/internal/adapters/cli/output"
+	clisessionstore "github.com/nilstate/scafld/v2/internal/adapters/cli/sessionstore"
 	"github.com/nilstate/scafld/v2/internal/adapters/filesystem"
-	"github.com/nilstate/scafld/v2/internal/adapters/jsonstore"
 	"github.com/nilstate/scafld/v2/internal/adapters/markdown"
 	"github.com/nilstate/scafld/v2/internal/app/envelope"
 	"github.com/nilstate/scafld/v2/internal/app/handoff"
@@ -77,7 +77,7 @@ func Run(ctx context.Context, opts Options) (Output, error) {
 		root = "."
 	}
 	specs := markdown.Store{Root: root}
-	sessions := jsonstore.SessionStore{Root: root}
+	sessions := clisessionstore.New(ctx, root)
 	statusOut, err := appstatus.Run(ctx, specs, sessions, taskID)
 	if err != nil {
 		return Output{}, err

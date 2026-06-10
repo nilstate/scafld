@@ -14,9 +14,10 @@ import (
 )
 
 var (
-	phaseHeadingPattern  = regexp.MustCompile(`^## Phase ([0-9]+):\s*(.+?)\s*$`)
-	criterionLinePattern = regexp.MustCompile(`^- \[[ xX]\] ` + "`" + `([^` + "`" + `]+)` + "`" + `\s+([^-]+?)\s+-\s*(.*)$`)
-	findingLinePattern   = regexp.MustCompile(`^- \[([a-z]+)/(blocks completion|non-blocking)\]\s+` + "`" + `([^` + "`" + `]+)` + "`" + `\s+(.*)$`)
+	phaseHeadingPattern      = regexp.MustCompile(`^## Phase ([0-9]+):\s*(.+?)\s*$`)
+	criterionLinePattern     = regexp.MustCompile(`^- \[[ xX]\] ` + "`" + `([^` + "`" + `]+)` + "`" + `\s+([^-]+?)\s+-\s*(.*)$`)
+	bareCriterionLinePattern = regexp.MustCompile(`^- \[[ xX]\] ` + "`" + `([^` + "`" + `]+)` + "`" + `\s+(.+?)\s*$`)
+	findingLinePattern       = regexp.MustCompile(`^- \[([a-z]+)/(blocks completion|non-blocking)\]\s+` + "`" + `([^` + "`" + `]+)` + "`" + `\s+(.*)$`)
 )
 
 // Parse converts living Markdown spec bytes into a normalized model.
@@ -550,15 +551,26 @@ func (p *parser) handleCriterionStart(line string) bool {
 		return false
 	}
 	match := criterionLinePattern.FindStringSubmatch(line)
-	if match == nil {
-		return false
+	criterionType := "command"
+	title := ""
+	id := ""
+	if match != nil {
+		id = match[1]
+		criterionType = strings.TrimSpace(match[2])
+		title = strings.TrimSpace(match[3])
+	} else {
+		match = bareCriterionLinePattern.FindStringSubmatch(line)
+		if match == nil {
+			return false
+		}
+		id = match[1]
+		title = strings.TrimSpace(match[2])
 	}
-	criterionType := strings.TrimSpace(match[2])
 	expectedKind := acceptance.ExpectedExitCodeZero
 	if criterionType == "browser" {
 		expectedKind = acceptance.ExpectedBrowserEvidence
 	}
-	c := spec.Criterion{ID: match[1], Type: criterionType, Title: strings.TrimSpace(match[3]), ExpectedKind: expectedKind, Status: "pending"}
+	c := spec.Criterion{ID: id, Type: criterionType, Title: title, ExpectedKind: expectedKind, Status: "pending"}
 	if p.phase != nil {
 		c.PhaseID = p.phase.ID
 		p.phase.Acceptance = append(p.phase.Acceptance, c)

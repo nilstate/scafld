@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 )
 
 const (
@@ -31,6 +32,15 @@ type TrustedKey struct {
 	Alg       string `json:"alg"`
 	PublicKey string `json:"public_key"`
 	Revoked   bool   `json:"revoked,omitempty"`
+	RevokedAt string `json:"revoked_at,omitempty"`
+	ExpiresAt string `json:"expires_at,omitempty"`
+}
+
+// KeyLifecycleSummary counts trusted-key states at one point in time.
+type KeyLifecycleSummary struct {
+	Active  int
+	Revoked int
+	Expired int
 }
 
 // KeyIDFromRawEd25519PublicKey returns the stable receipt key id for a raw public key.
@@ -102,6 +112,12 @@ func (keys TrustedKeys) Validate() error {
 		if derived != key.KeyID {
 			return fmt.Errorf("%s key_id mismatch: got %q want %q", prefix, key.KeyID, derived)
 		}
+		if _, err := parseOptionalTime(prefix, "revoked_at", key.RevokedAt); err != nil {
+			return err
+		}
+		if _, err := parseOptionalTime(prefix, "expires_at", key.ExpiresAt); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -124,6 +140,66 @@ func (keys TrustedKeys) ActiveKey(id string) (TrustedKey, error) {
 	return TrustedKey{}, fmt.Errorf("unknown key_id %q", id)
 }
 
+// ActiveKeyAt returns the trusted key matching id when it was valid at mintedAt.
+// mintedAt must be RFC3339 because receipt verification evaluates key lifecycle
+// against the signed receipt time, not against wall-clock now.
+func (keys TrustedKeys) ActiveKeyAt(id string, mintedAt string) (TrustedKey, error) {
+	key, err := keys.ActiveKey(id)
+	if err != nil {
+		return TrustedKey{}, err
+	}
+	minted, err := time.Parse(time.RFC3339, strings.TrimSpace(mintedAt))
+	if err != nil {
+		return TrustedKey{}, fmt.Errorf("receipt minted_at must be RFC3339 for key lifecycle check: %w", err)
+	}
+	state, reason, err := key.LifecycleStateAt(minted)
+	if err != nil {
+		return TrustedKey{}, err
+	}
+	if state != "active" {
+		return TrustedKey{}, fmt.Errorf("trusted key %q is %s at minted_at: %s", id, state, reason)
+	}
+	return key, nil
+}
+
+// LifecycleSummary returns active/revoked/expired key counts at one point in time.
+func (keys TrustedKeys) LifecycleSummary(at time.Time) KeyLifecycleSummary {
+	var out KeyLifecycleSummary
+	for _, key := range keys.Keys {
+		state, _, err := key.LifecycleStateAt(at)
+		if err != nil {
+			continue
+		}
+		switch state {
+		case "revoked":
+			out.Revoked++
+		case "expired":
+			out.Expired++
+		default:
+			out.Active++
+		}
+	}
+	return out
+}
+
+// LifecycleStateAt reports whether key is active, revoked, or expired at at.
+func (key TrustedKey) LifecycleStateAt(at time.Time) (state string, reason string, err error) {
+	if key.Revoked {
+		return "revoked", "revoked flag is true", nil
+	}
+	if revokedAt, err := parseOptionalTime("key", "revoked_at", key.RevokedAt); err != nil {
+		return "", "", err
+	} else if !revokedAt.IsZero() && !at.Before(revokedAt) {
+		return "revoked", "revoked_at " + revokedAt.UTC().Format(time.RFC3339), nil
+	}
+	if expiresAt, err := parseOptionalTime("key", "expires_at", key.ExpiresAt); err != nil {
+		return "", "", err
+	} else if !expiresAt.IsZero() && !at.Before(expiresAt) {
+		return "expired", "expires_at " + expiresAt.UTC().Format(time.RFC3339), nil
+	}
+	return "active", "", nil
+}
+
 // PublicKeyBytes decodes the raw Ed25519 public key.
 func (key TrustedKey) PublicKeyBytes() ([]byte, error) {
 	raw, err := base64.StdEncoding.DecodeString(key.PublicKey)
@@ -134,4 +210,15 @@ func (key TrustedKey) PublicKeyBytes() ([]byte, error) {
 		return nil, errors.New("malformed ed25519 public key")
 	}
 	return raw, nil
+}
+
+func parseOptionalTime(prefix string, field string, value string) (time.Time, error) {
+	if strings.TrimSpace(value) == "" {
+		return time.Time{}, nil
+	}
+	parsed, err := time.Parse(time.RFC3339, strings.TrimSpace(value))
+	if err != nil {
+		return time.Time{}, fmt.Errorf("%s %s must be RFC3339: %w", prefix, field, err)
+	}
+	return parsed, nil
 }

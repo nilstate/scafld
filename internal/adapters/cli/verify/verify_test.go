@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"os"
 	"os/exec"
@@ -47,7 +48,7 @@ func TestSelfCheckReportsWiringWithoutClaimingEnforcement(t *testing.T) {
 		t.Fatalf("default self-check report = %+v, want local/uninstalled/no-gap", report)
 	}
 	text := RenderSelfCheck(report)
-	for _, want := range []string{"not installed", "scafld init --ci", "cannot read or set", "does not assert that any merge gate is active"} {
+	for _, want := range []string{"not installed", "scafld init --ci", "trusted keys:", "signing key:", "cannot read or set", "does not assert that any merge gate is active"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("self-check text missing %q:\n%s", want, text)
 		}
@@ -83,6 +84,51 @@ func TestSelfCheckReportsWiringWithoutClaimingEnforcement(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "verify.policy: local") {
 		t.Fatalf("handler stdout missing policy line:\n%s", stdout.String())
+	}
+}
+
+func TestSelfCheckReportsTrustedKeyLifecycle(t *testing.T) {
+	root := t.TempDir()
+	activePub, _, err := ed25519.GenerateKey(strings.NewReader(strings.Repeat("a", 64)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	revokedPub, _, err := ed25519.GenerateKey(strings.NewReader(strings.Repeat("b", 64)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	expiredPub, _, err := ed25519.GenerateKey(strings.NewReader(strings.Repeat("c", 64)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys := trust.TrustedKeys{Version: trust.TrustedKeysVersion, Keys: []trust.TrustedKey{
+		verifyTrustedKey(t, activePub),
+		func() trust.TrustedKey {
+			key := verifyTrustedKey(t, revokedPub)
+			key.RevokedAt = time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
+			return key
+		}(),
+		func() trust.TrustedKey {
+			key := verifyTrustedKey(t, expiredPub)
+			key.ExpiresAt = time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
+			return key
+		}(),
+	}}
+	writeTrustedKeys(t, root, keys)
+
+	report, err := SelfCheck(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.TrustedKeysStatus != "valid" {
+		t.Fatalf("trusted key status = %q", report.TrustedKeysStatus)
+	}
+	if report.KeyLifecycle.Active != 1 || report.KeyLifecycle.Revoked != 1 || report.KeyLifecycle.Expired != 1 {
+		t.Fatalf("lifecycle = %+v", report.KeyLifecycle)
+	}
+	text := RenderSelfCheck(report)
+	if !strings.Contains(text, "key lifecycle: active=1 revoked=1 expired=1") {
+		t.Fatalf("rendered lifecycle missing:\n%s", text)
 	}
 }
 
@@ -154,6 +200,38 @@ func TestRunUsesReceiptPathFromEnvironment(t *testing.T) {
 	_, err = Run(context.Background(), Options{Root: root})
 	if err == nil || !strings.Contains(err.Error(), "env-receipt.json") {
 		t.Fatalf("verify must resolve SCAFLD_RECEIPT_PATH before config default, got %v", err)
+	}
+}
+
+func TestSignatureVerifierRejectsRevokedAtAndExpiredKeys(t *testing.T) {
+	pub, priv, err := ed25519.GenerateKey(strings.NewReader(strings.Repeat("z", 64)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseKey := verifyTrustedKey(t, pub)
+	for _, tt := range []struct {
+		name string
+		key  func(trust.TrustedKey) trust.TrustedKey
+		want string
+	}{
+		{name: "revoked_at", want: "revoked", key: func(key trust.TrustedKey) trust.TrustedKey {
+			key.RevokedAt = "2026-06-03T00:00:00Z"
+			return key
+		}},
+		{name: "expires_at", want: "expired", key: func(key trust.TrustedKey) trust.TrustedKey {
+			key.ExpiresAt = "2026-06-03T00:00:00Z"
+			return key
+		}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			body := minimalReceiptBody()
+			body.MintedAt = "2026-06-03T00:00:00Z"
+			envelope := signVerifyReceipt(t, body, baseKey.KeyID, priv)
+			keys := trust.TrustedKeys{Version: trust.TrustedKeysVersion, Keys: []trust.TrustedKey{tt.key(baseKey)}}
+			if err := (signatureVerifier{}).Verify(envelope, keys); err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("Verify error = %v, want %q", err, tt.want)
+			}
+		})
 	}
 }
 
@@ -252,4 +330,71 @@ func gitCmd(t *testing.T, root string, args ...string) string {
 		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
 	}
 	return strings.TrimSpace(string(out))
+}
+
+func writeTrustedKeys(t *testing.T, root string, keys trust.TrustedKeys) {
+	t.Helper()
+	data, err := trust.MarshalTrustedKeys(keys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, ".scafld"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".scafld", "trusted-keys.json"), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func verifyTrustedKey(t *testing.T, pub ed25519.PublicKey) trust.TrustedKey {
+	t.Helper()
+	keyID, err := trust.KeyIDFromRawEd25519PublicKey(pub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return trust.TrustedKey{
+		KeyID:     keyID,
+		Alg:       trust.AlgorithmEd25519,
+		PublicKey: base64.StdEncoding.EncodeToString(pub),
+	}
+}
+
+func signVerifyReceipt(t *testing.T, body receipt.Body, keyID string, privateKey ed25519.PrivateKey) receipt.Envelope {
+	t.Helper()
+	canonical, err := receipt.CanonicalBody(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return receipt.Envelope{Body: body, Signature: receipt.DetachedSignature{
+		Alg:   receipt.SignatureAlgorithm,
+		KeyID: keyID,
+		Sig:   base64.StdEncoding.EncodeToString(ed25519.Sign(privateKey, canonical)),
+	}}
+}
+
+func minimalReceiptBody() receipt.Body {
+	return receipt.Body{
+		SchemaVersion:             receipt.SchemaVersion,
+		TaskID:                    "task",
+		SessionID:                 "session",
+		Verdict:                   "pass",
+		SnapshotMode:              receipt.SnapshotModeWorkingTree,
+		BaseCommit:                "base",
+		HeadCommit:                "head",
+		Scope:                     []string{"."},
+		TreeSHA:                   "tree",
+		FileDigests:               map[string]string{"a.go": "sha"},
+		IgnoredUnreviewed:         []string{},
+		ReviewedContextProvenance: []receipt.Provenance{{Kind: "evidence_file", Path: "a.go", SHA256: "sha"}},
+		Reviewer:                  receipt.Reviewer{Provider: "codex"},
+		HostUnderReview:           receipt.HostUnderReview{Agent: "codex"},
+		Independence:              receipt.Independence{Level: receipt.IndependenceLevelIsolationOnly, Downgraded: receipt.IndependenceDowngradeSameVendor},
+		SpecFingerprint:           "spec",
+		AcceptanceDeclared:        false,
+		Acceptance:                []receipt.Acceptance{},
+		OpenBlockers:              []receipt.Blocker{},
+		MutationGuard:             receipt.MutationGuard{Status: "clean"},
+		LedgerHead:                "ledger",
+		MintedAt:                  "2026-06-03T00:00:00Z",
+	}
 }

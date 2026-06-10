@@ -9,10 +9,12 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
 	configadapter "github.com/nilstate/scafld/v2/internal/adapters/config"
+	"github.com/nilstate/scafld/v2/internal/adapters/corebundle"
 	"github.com/nilstate/scafld/v2/internal/adapters/git"
 	"github.com/nilstate/scafld/v2/internal/adapters/process"
 	appacceptance "github.com/nilstate/scafld/v2/internal/app/acceptance"
@@ -158,7 +160,7 @@ func (a acceptanceRunner) RunAcceptance(ctx context.Context, criteria []receipt.
 type signatureVerifier struct{}
 
 func (signatureVerifier) Verify(envelope receipt.Envelope, trusted trust.TrustedKeys) error {
-	key, err := trusted.ActiveKey(envelope.Signature.KeyID)
+	key, err := trusted.ActiveKeyAt(envelope.Signature.KeyID, envelope.Body.MintedAt)
 	if err != nil {
 		return err
 	}
@@ -278,6 +280,12 @@ type SelfCheckReport struct {
 	Policy            string
 	WorkflowInstalled bool
 	WorkflowPath      string
+	TrustedKeysPath   string
+	TrustedKeysStatus string
+	KeyLifecycle      trust.KeyLifecycleSummary
+	SigningKeyPath    string
+	SigningKeyStatus  string
+	SigningKeyMode    string
 	// Gap is set when the declared policy implies a CI workflow that is not installed.
 	Gap string
 }
@@ -299,7 +307,10 @@ func SelfCheck(ctx context.Context, root string) (SelfCheckReport, error) {
 		Policy:            cfg.Verify.Policy,
 		WorkflowInstalled: statErr == nil,
 		WorkflowPath:      verifyWorkflowRel,
+		TrustedKeysPath:   cfg.Verify.TrustedKeysPath,
 	}
+	report.TrustedKeysStatus, report.KeyLifecycle = inspectTrustedKeys(root, cfg.Verify.TrustedKeysPath, time.Now().UTC())
+	report.SigningKeyPath, report.SigningKeyStatus, report.SigningKeyMode = inspectSigningKey()
 	if !report.WorkflowInstalled && (cfg.Verify.Policy == "advisory" || cfg.Verify.Policy == "required") {
 		report.Gap = fmt.Sprintf("verify.policy is %q but %s is not installed; run scafld init --ci to add it", cfg.Verify.Policy, verifyWorkflowRel)
 	}
@@ -317,10 +328,56 @@ func RenderSelfCheck(report SelfCheckReport) string {
 	} else {
 		fmt.Fprintf(&b, "CI workflow: not installed (%s); run scafld init --ci to add the PR merge gate\n", report.WorkflowPath)
 	}
+	fmt.Fprintf(&b, "trusted keys: %s (%s)\n", report.TrustedKeysStatus, report.TrustedKeysPath)
+	fmt.Fprintf(&b, "key lifecycle: active=%d revoked=%d expired=%d\n", report.KeyLifecycle.Active, report.KeyLifecycle.Revoked, report.KeyLifecycle.Expired)
+	if report.SigningKeyMode != "" {
+		fmt.Fprintf(&b, "signing key: %s (%s, mode %s)\n", report.SigningKeyStatus, report.SigningKeyPath, report.SigningKeyMode)
+	} else {
+		fmt.Fprintf(&b, "signing key: %s (%s)\n", report.SigningKeyStatus, report.SigningKeyPath)
+	}
 	if report.Gap != "" {
 		fmt.Fprintf(&b, "gap: %s\n", report.Gap)
 	}
 	b.WriteString("note: requiring this check before merge is a GitHub branch-protection setting that scafld cannot read or set; confirm it in your repository settings.\n")
 	b.WriteString("scafld confirms local wiring only and does not assert that any merge gate is active.\n")
 	return b.String()
+}
+
+func inspectTrustedKeys(root string, configuredPath string, now time.Time) (string, trust.KeyLifecycleSummary) {
+	if strings.TrimSpace(configuredPath) == "" {
+		return "not configured", trust.KeyLifecycleSummary{}
+	}
+	path := resolveRootPath(root, configuredPath)
+	data, err := os.ReadFile(filepath.Clean(path))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "missing", trust.KeyLifecycleSummary{}
+		}
+		return "unreadable: " + err.Error(), trust.KeyLifecycleSummary{}
+	}
+	keys, err := trust.ParseTrustedKeys(data)
+	if err != nil {
+		return "invalid: " + err.Error(), trust.KeyLifecycleSummary{}
+	}
+	return "valid", keys.LifecycleSummary(now)
+}
+
+func inspectSigningKey() (path string, status string, mode string) {
+	path, err := corebundle.HostPrivateKeyPath()
+	if err != nil {
+		return "", "unresolved: " + err.Error(), ""
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return path, "missing", ""
+		}
+		return path, "unreadable: " + err.Error(), ""
+	}
+	perm := info.Mode().Perm()
+	mode = perm.String()
+	if runtime.GOOS != "windows" && perm&0o077 != 0 {
+		return path, "present but permissions are too broad", mode
+	}
+	return path, "present", mode
 }

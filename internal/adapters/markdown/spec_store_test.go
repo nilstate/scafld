@@ -160,6 +160,21 @@ func TestParseOnlyReadsCriteriaFromAcceptanceBlocks(t *testing.T) {
 	}
 }
 
+func TestParseBareAcceptanceCriterionUsesCommandDetails(t *testing.T) {
+	t.Parallel()
+
+	input := string(Render(fixtureModel()))
+	input = strings.Replace(input, "- [ ] `ac1` command - runs", "- [ ] `ac1` runs", 1)
+	parsed, err := Parse([]byte(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := parsed.Phases[0].Acceptance[0]
+	if got.ID != "ac1" || got.Type != "command" || got.Title != "runs" || got.Command != "true" || got.ExpectedKind != acceptance.ExpectedExitCodeZero {
+		t.Fatalf("bare criterion parsed incorrectly: %+v", got)
+	}
+}
+
 func TestParseDefaultsBrowserCriteriaToBrowserEvidence(t *testing.T) {
 	t.Parallel()
 

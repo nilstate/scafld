@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 
 	"github.com/nilstate/scafld/v2/internal/core/session"
@@ -20,7 +21,8 @@ var ErrSessionNotFound = errors.New("session not found")
 
 // SessionStore persists session ledgers below .scafld/runs.
 type SessionStore struct {
-	Root string
+	Root         string
+	TrustChecker session.ReceiptTrustChecker
 }
 
 var lockMap sync.Map
@@ -42,7 +44,7 @@ func (s SessionStore) Load(ctx context.Context, taskID string) (session.Session,
 	if err := json.Unmarshal(data, &ledger); err != nil {
 		return session.Session{}, fmt.Errorf("parse session: %w", err)
 	}
-	return session.Replay(ledger), nil
+	return s.replay(ledger), nil
 }
 
 // List reads all session ledgers under .scafld/runs.
@@ -71,7 +73,7 @@ func (s SessionStore) List(ctx context.Context) ([]session.Session, error) {
 	sort.Strings(ids)
 	ledgers := make([]session.Session, 0, len(ids))
 	for _, taskID := range ids {
-		ledger, err := s.Load(ctx, taskID)
+		ledger, err := s.loadMetadata(ctx, taskID)
 		if err != nil {
 			return nil, err
 		}
@@ -94,7 +96,7 @@ func (s SessionStore) Save(ctx context.Context, ledger session.Session) error {
 		return err
 	}
 	defer release()
-	return s.writeLocked(path, session.Replay(ledger))
+	return s.writeLocked(path, s.replay(ledger))
 }
 
 // Append appends one evidence entry and atomically writes the replayed ledger.
@@ -111,12 +113,14 @@ func (s SessionStore) Append(ctx context.Context, taskID string, entry session.E
 		return session.Session{}, err
 	}
 	defer release()
-	ledger, err := s.loadUnlocked(path)
+	ledger, err := s.loadRawUnlocked(path)
 	if err != nil {
 		if !errors.Is(err, ErrSessionNotFound) {
 			return session.Session{}, err
 		}
 		ledger = session.New(taskID, now)
+	} else {
+		ledger = s.prepareForAppend(ledger)
 	}
 	if entry.RecordedAt == "" {
 		entry.RecordedAt = now
@@ -125,7 +129,7 @@ func (s SessionStore) Append(ctx context.Context, taskID string, entry session.E
 		entry.ID = fmt.Sprintf("entry-%d", len(ledger.Entries)+1)
 	}
 	priorValid := ledger.LedgerValid
-	ledger = ledger.WithEntry(entry)
+	ledger = session.AppendEntryWithOptions(ledger, entry, session.ReplayOptions{ReceiptTrustChecker: s.TrustChecker})
 	// Fail closed without persisting when this entry breaks a previously valid
 	// receipt chain (e.g. a stale or concurrently minted receipt whose ledger_head
 	// does not chain from the current head). Leaving the entry out keeps the durable
@@ -151,6 +155,14 @@ func (s SessionStore) path(taskID string) string {
 }
 
 func (s SessionStore) loadUnlocked(path string) (session.Session, error) {
+	ledger, err := s.loadRawUnlocked(path)
+	if err != nil {
+		return session.Session{}, err
+	}
+	return s.replay(ledger), nil
+}
+
+func (s SessionStore) loadRawUnlocked(path string) (session.Session, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -162,14 +174,14 @@ func (s SessionStore) loadUnlocked(path string) (session.Session, error) {
 	if err := json.Unmarshal(data, &ledger); err != nil {
 		return session.Session{}, fmt.Errorf("parse session: %w", err)
 	}
-	return session.Replay(ledger), nil
+	return ledger, nil
 }
 
 func (s SessionStore) writeLocked(path string, ledger session.Session) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("create session dir: %w", err)
 	}
-	data, err := json.MarshalIndent(session.Replay(ledger), "", "  ")
+	data, err := json.MarshalIndent(ledger, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode session: %w", err)
 	}
@@ -178,6 +190,50 @@ func (s SessionStore) writeLocked(path string, ledger session.Session) error {
 		return fmt.Errorf("write session: %w", err)
 	}
 	return nil
+}
+
+func (s SessionStore) loadMetadata(ctx context.Context, taskID string) (session.Session, error) {
+	if err := ctx.Err(); err != nil {
+		return session.Session{}, err
+	}
+	path := s.path(taskID)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return session.Session{}, fmt.Errorf("%w: %s", ErrSessionNotFound, taskID)
+		}
+		return session.Session{}, fmt.Errorf("read session: %w", err)
+	}
+	var ledger session.Session
+	if err := json.Unmarshal(data, &ledger); err != nil {
+		return session.Session{}, fmt.Errorf("parse session: %w", err)
+	}
+	return session.ReplayWithOptions(ledger, session.ReplayOptions{SkipReceiptDecode: true}), nil
+}
+
+func (s SessionStore) replay(ledger session.Session) session.Session {
+	return session.ReplayWithOptions(ledger, session.ReplayOptions{ReceiptTrustChecker: s.TrustChecker})
+}
+
+func (s SessionStore) prepareForAppend(ledger session.Session) session.Session {
+	if canAppendFromCachedHead(ledger) {
+		return ledger
+	}
+	return s.replay(ledger)
+}
+
+func canAppendFromCachedHead(ledger session.Session) bool {
+	if !ledger.LedgerValid || ledger.LedgerHead == "" || ledger.CriterionStates == nil || ledger.PhaseBlocks == nil {
+		return false
+	}
+	for i := len(ledger.Entries) - 1; i >= 0; i-- {
+		entry := ledger.Entries[i]
+		if strings.TrimSpace(entry.ReceiptDigest) == "" {
+			continue
+		}
+		return strings.TrimSpace(entry.LedgerHead) == strings.TrimSpace(ledger.LedgerHead)
+	}
+	return strings.TrimSpace(ledger.LedgerHead) == session.LedgerGenesisHead()
 }
 
 func pathLock(path string) *sync.Mutex {

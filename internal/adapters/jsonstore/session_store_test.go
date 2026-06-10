@@ -1,10 +1,14 @@
 package jsonstore
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"testing"
 
@@ -66,6 +70,65 @@ func TestListSessionsSorted(t *testing.T) {
 	}
 }
 
+func TestAppendFallsBackWhenCachedLedgerHeadMismatch(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	store := SessionStore{Root: root}
+	genesis := session.LedgerGenesisHead()
+	receiptHead := session.NextLedgerHead(genesis, "digest")
+	ledger := session.New("task", "now").WithEntry(session.Entry{
+		Type:          session.EntryReceipt,
+		RecordedAt:    "now",
+		ReceiptDigest: "digest",
+		LedgerHead:    receiptHead,
+	})
+	ledger.LedgerHead = "stale-cache"
+	writeRawSession(t, root, ledger)
+
+	got, err := store.Append(context.Background(), "task", session.Entry{Type: "criterion", CriterionID: "ac", Status: "pass"}, "later")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.LedgerValid || got.LedgerHead != receiptHead {
+		t.Fatalf("append should fall back to full replay and repair ledger head: %+v", got)
+	}
+	if len(got.Entries) != 2 {
+		t.Fatalf("entries = %d, want 2", len(got.Entries))
+	}
+}
+
+func TestListUsesMetadataReplayWithoutReceiptDecode(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	store := SessionStore{Root: root}
+	genesis := session.LedgerGenesisHead()
+	ledger := session.New("task", "now").WithEntry(session.Entry{
+		Type:          session.EntryReceipt,
+		RecordedAt:    "now",
+		ReceiptDigest: "digest",
+		LedgerHead:    session.NextLedgerHead(genesis, "digest"),
+		Output:        "{not valid receipt json",
+	})
+	writeRawSession(t, root, ledger)
+
+	listed, err := store.List(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listed) != 1 || !listed[0].LedgerValid {
+		t.Fatalf("metadata list should not decode receipt bodies: %+v", listed)
+	}
+	loaded, err := store.Load(context.Background(), "task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.LedgerValid {
+		t.Fatalf("full load should still reject invalid receipt output: %+v", loaded)
+	}
+}
+
 func TestSessionWriteContentionRaceScenario(t *testing.T) {
 	t.Parallel()
 
@@ -88,5 +151,80 @@ func TestSessionWriteContentionRaceScenario(t *testing.T) {
 	}
 	if len(ledger.Entries) != 8 {
 		t.Fatalf("entries = %d, want 8", len(ledger.Entries))
+	}
+}
+
+func TestSessionStoreMultiProcessAppendContention(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	const writers = 8
+	cmds := make([]*exec.Cmd, 0, writers)
+	outputs := make([]*bytes.Buffer, 0, writers)
+	for i := 0; i < writers; i++ {
+		cmd := exec.Command(os.Args[0], "-test.run", "^TestSessionStoreAppendHelperProcess$")
+		cmd.Env = append(os.Environ(),
+			"SCAFLD_JSONSTORE_APPEND_HELPER=1",
+			"SCAFLD_JSONSTORE_ROOT="+root,
+			"SCAFLD_JSONSTORE_ENTRY="+strconv.Itoa(i),
+		)
+		out := &bytes.Buffer{}
+		cmd.Stdout = out
+		cmd.Stderr = out
+		outputs = append(outputs, out)
+		if err := cmd.Start(); err != nil {
+			t.Fatalf("start helper %d: %v", i, err)
+		}
+		cmds = append(cmds, cmd)
+	}
+	for i, cmd := range cmds {
+		if err := cmd.Wait(); err != nil {
+			t.Fatalf("helper %d failed: %v\n%s", i, err, outputs[i].String())
+		}
+	}
+	ledger, err := (SessionStore{Root: root}).Load(context.Background(), "task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ledger.LedgerValid {
+		t.Fatalf("ledger invalid: %s", ledger.LedgerError)
+	}
+	if len(ledger.Entries) != writers {
+		t.Fatalf("entries = %d, want %d: %+v", len(ledger.Entries), writers, ledger.Entries)
+	}
+}
+
+func TestSessionStoreAppendHelperProcess(t *testing.T) {
+	if os.Getenv("SCAFLD_JSONSTORE_APPEND_HELPER") != "1" {
+		t.Skip("helper process")
+	}
+	idx := os.Getenv("SCAFLD_JSONSTORE_ENTRY")
+	root := os.Getenv("SCAFLD_JSONSTORE_ROOT")
+	if root == "" || idx == "" {
+		t.Fatal("helper environment missing root or entry")
+	}
+	_, err := (SessionStore{Root: root}).Append(context.Background(), "task", session.Entry{
+		Type:        "criterion",
+		CriterionID: "ac-" + idx,
+		Status:      "pass",
+		Output:      "helper " + idx,
+	}, "now-"+idx)
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeRawSession(t *testing.T, root string, ledger session.Session) {
+	t.Helper()
+	path := filepath.Join(root, ".scafld", "runs", ledger.TaskID, "session.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.MarshalIndent(ledger, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(data, '\n'), 0o644); err != nil {
+		t.Fatal(err)
 	}
 }

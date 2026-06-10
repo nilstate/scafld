@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/nilstate/scafld/v2/internal/adapters/cli/output"
+	clisessionstore "github.com/nilstate/scafld/v2/internal/adapters/cli/sessionstore"
 	"github.com/nilstate/scafld/v2/internal/adapters/clock"
 	"github.com/nilstate/scafld/v2/internal/adapters/filesystem"
 	"github.com/nilstate/scafld/v2/internal/adapters/jsonstore"
@@ -162,7 +163,7 @@ func stores(ctx context.Context, opts options) (markdown.Store, jsonstore.Sessio
 	if err != nil {
 		return markdown.Store{}, jsonstore.SessionStore{}, ExitWorkspace, err
 	}
-	return markdown.Store{Root: root}, jsonstore.SessionStore{Root: root}, ExitSuccess, nil
+	return markdown.Store{Root: root}, clisessionstore.New(ctx, root), ExitSuccess, nil
 }
 
 func okOut[T any](w io.Writer, command string, result T, text string, asJSON bool, code ...int) int {

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/nilstate/scafld/v2/internal/adapters/trustcheck"
 	"github.com/nilstate/scafld/v2/internal/core/gate"
 )
 
@@ -162,6 +163,66 @@ func TestBlockedBuildHumanOutputUsesGateFailureContract(t *testing.T) {
 		if !strings.Contains(stdout.String(), want) {
 			t.Fatalf("stdout missing %q:\n%s", want, stdout.String())
 		}
+	}
+}
+
+func TestListDoesNotReadSessionLedgers(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	runCLI(t, []string{"init", "--root", root, "--no-agent-docs"})
+	runCLI(t, []string{"plan", "--root", root, "metadata-only-list", "--title", "Metadata Only List", "--command", "true"})
+	sessionPath := filepath.Join(root, ".scafld", "runs", "metadata-only-list", "session.json")
+	if err := os.MkdirAll(filepath.Dir(sessionPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sessionPath, []byte("{not valid json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out := runCLI(t, []string{"list", "--root", root})
+	if !strings.Contains(out, "metadata-only-list") {
+		t.Fatalf("list output missing task:\n%s", out)
+	}
+}
+
+func TestStoresWireSessionTrustChecker(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	runCLI(t, []string{"init", "--root", root, "--no-agent-docs"})
+	defaultKeysPath := filepath.Join(root, ".scafld", "trusted-keys.json")
+	customKeysPath := filepath.Join(root, ".scafld", "custom-trusted-keys.json")
+	keys, err := os.ReadFile(defaultKeysPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(defaultKeysPath, []byte("{bad json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(customKeysPath, keys, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".scafld", "config.yaml"), []byte("verify:\n  trusted_keys_path: .scafld/custom-trusted-keys.json\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, sessions, code, err := stores(context.Background(), options{Root: root})
+	if err != nil {
+		t.Fatalf("stores() error = %v", err)
+	}
+	if code != ExitSuccess {
+		t.Fatalf("stores() code = %d, want %d", code, ExitSuccess)
+	}
+	if sessions.TrustChecker == nil {
+		t.Fatal("stores() returned a session store without a receipt trust checker")
+	}
+	checker, ok := sessions.TrustChecker.(trustcheck.Checker)
+	if !ok {
+		t.Fatalf("stores() trust checker type = %T, want trustcheck.Checker", sessions.TrustChecker)
+	}
+	if checker.LoadErr != nil {
+		t.Fatalf("stores() did not use configured trusted keys path: %v", checker.LoadErr)
 	}
 }
 

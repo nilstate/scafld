@@ -47,6 +47,8 @@ type Entry struct {
 	Path          string `json:"path,omitempty"`
 	ReceiptDigest string `json:"receipt_digest,omitempty"`
 	LedgerHead    string `json:"ledger_head,omitempty"`
+	TrustStatus   string `json:"trust_status,omitempty"`
+	TrustReason   string `json:"trust_reason,omitempty"`
 }
 
 // StateRecord is the replayed state for a criterion or phase.
@@ -57,12 +59,22 @@ type StateRecord struct {
 	SourceID  string `json:"source_id,omitempty"`
 }
 
+// ReceiptTrustChecker validates receipt key trust at replay time. The core
+// session package owns replay mechanics but not trust-anchor loading, so callers
+// inject key lifecycle checks through this narrow port.
+type ReceiptTrustChecker interface {
+	CheckReceiptTrust(receipt.Envelope) error
+}
+
+// ReplayOptions configures optional replay checks.
+type ReplayOptions struct {
+	ReceiptTrustChecker ReceiptTrustChecker
+	SkipReceiptDecode   bool
+}
+
 // WithEntry returns a replayed copy of the session with entry appended.
 func (s Session) WithEntry(entry Entry) Session {
-	next := s
-	next.Entries = append(append([]Entry(nil), s.Entries...), entry)
-	next = Replay(next)
-	return next
+	return Replay(s).AppendEntry(entry)
 }
 
 // New creates an empty session ledger for taskID.
@@ -82,13 +94,19 @@ func New(taskID string, now string) Session {
 
 // Replay rebuilds derived criterion and phase state from session entries.
 func Replay(s Session) Session {
+	return ReplayWithOptions(s, ReplayOptions{})
+}
+
+// ReplayWithOptions rebuilds derived state and optionally checks receipt trust.
+func ReplayWithOptions(s Session, opts ReplayOptions) Session {
 	next := s
+	next.Entries = append([]Entry(nil), s.Entries...)
 	next.CriterionStates = map[string]StateRecord{}
 	next.PhaseBlocks = map[string]StateRecord{}
 	next.LedgerHead = LedgerGenesisHead()
 	next.LedgerValid = true
 	next.LedgerError = ""
-	for idx, entry := range s.Entries {
+	for idx, entry := range next.Entries {
 		source := entry.ID
 		if source == "" {
 			source = entry.Type
@@ -111,9 +129,55 @@ func Replay(s Session) Session {
 		if idx == len(s.Entries)-1 && entry.RecordedAt != "" {
 			next.UpdatedAt = entry.RecordedAt
 		}
-		next = replayLedgerHead(next, entry)
+		next = replayLedgerHead(next, idx, entry, opts)
 	}
 	return next
+}
+
+// AppendEntry advances a previously replayed session by one entry.
+func (s Session) AppendEntry(entry Entry) Session {
+	return AppendEntryWithOptions(s, entry, ReplayOptions{})
+}
+
+// AppendEntryWithOptions advances a previously replayed session by one entry
+// without replaying older entries. Callers must pass a trusted replayed session
+// or fall back to ReplayWithOptions first.
+func AppendEntryWithOptions(s Session, entry Entry, opts ReplayOptions) Session {
+	next := s
+	if next.LedgerHead == "" {
+		next.LedgerHead = LedgerGenesisHead()
+	}
+	if next.CriterionStates == nil {
+		next.CriterionStates = map[string]StateRecord{}
+	}
+	if next.PhaseBlocks == nil {
+		next.PhaseBlocks = map[string]StateRecord{}
+	}
+	next.Entries = append(append([]Entry(nil), s.Entries...), entry)
+	idx := len(next.Entries) - 1
+	source := entry.ID
+	if source == "" {
+		source = entry.Type
+	}
+	record := StateRecord{
+		Status:    entry.Status,
+		Reason:    entry.Reason,
+		UpdatedAt: entry.RecordedAt,
+		SourceID:  source,
+	}
+	if record.Status == "" {
+		record.Status = entry.Type
+	}
+	if entry.CriterionID != "" {
+		next.CriterionStates[entry.CriterionID] = record
+	}
+	if entry.PhaseID != "" {
+		next.PhaseBlocks[entry.PhaseID] = record
+	}
+	if entry.RecordedAt != "" {
+		next.UpdatedAt = entry.RecordedAt
+	}
+	return replayLedgerHead(next, idx, entry, opts)
 }
 
 // LedgerGenesisHead returns the starting head for sessions with no receipts.
@@ -132,15 +196,30 @@ func NextLedgerHead(priorLedgerHead string, receiptDigest string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func replayLedgerHead(s Session, entry Entry) Session {
+func replayLedgerHead(s Session, idx int, entry Entry, opts ReplayOptions) Session {
 	digest := strings.TrimSpace(entry.ReceiptDigest)
 	storedHead := strings.TrimSpace(entry.LedgerHead)
-	if entry.Type == EntryReceipt && strings.TrimSpace(entry.Output) != "" {
+	if entry.Type == EntryReceipt && strings.TrimSpace(entry.Output) != "" && !opts.SkipReceiptDecode {
 		envelope, err := receipt.DecodeEnvelope([]byte(entry.Output))
 		if err != nil {
 			s.LedgerValid = false
 			s.LedgerError = "invalid receipt entry: " + err.Error()
 			return s
+		}
+		if opts.ReceiptTrustChecker != nil {
+			if err := opts.ReceiptTrustChecker.CheckReceiptTrust(envelope); err != nil {
+				s.LedgerValid = false
+				s.LedgerError = "receipt trust rejected: " + err.Error()
+				if idx >= 0 && idx < len(s.Entries) {
+					s.Entries[idx].TrustStatus = "rejected"
+					s.Entries[idx].TrustReason = err.Error()
+				}
+				return s
+			}
+			if idx >= 0 && idx < len(s.Entries) {
+				s.Entries[idx].TrustStatus = "accepted"
+				s.Entries[idx].TrustReason = ""
+			}
 		}
 		computed, err := receipt.ReceiptDigest(envelope.Body)
 		if err != nil {
