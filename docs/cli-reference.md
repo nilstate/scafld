@@ -10,12 +10,14 @@ humans, agents, wrappers, and package launchers:
 
 ```bash
 scafld init
+scafld config
 scafld plan <task-id>
 scafld harden <task-id>
 scafld validate <task-id>
 scafld approve <task-id>
 scafld build <task-id>
 scafld review <task-id>
+scafld finalize [task-id]
 scafld complete <task-id>
 scafld fail <task-id>
 scafld cancel <task-id>
@@ -24,6 +26,7 @@ scafld list
 scafld report
 scafld handoff <task-id>
 scafld adapter codex|claude|gemini build|review <task-id>
+scafld verify <receipt> --target <commit-ish>
 scafld update
 ```
 
@@ -288,6 +291,34 @@ On review failure, the text output prints the findings and next repair command.
 The same findings appear in `scafld status`, `scafld handoff`, the session
 review entry, and the spec `## Review` section.
 
+## finalize
+
+```bash
+scafld finalize [task-id] [--base-ref REF] [--scope-hint PATH] [--json] [--stdin]
+```
+
+`finalize` is the single-call completion authority. One invocation snapshots
+the workspace into an immutable git tree, runs the spec's acceptance criteria
+against that snapshot, runs the independent adversarial review, and mints an
+ed25519-signed receipt anchored in the task's session ledger. The JSON result
+carries the receipt itself plus `receipt_path`, `task_receipt_path`, and
+`ledger_head`.
+
+Receipts land in `.scafld/receipts/<task-id>.json`. The
+`.scafld/receipts/latest.json` pointer is written only after the receipt is
+anchored in the ledger, so hosts reading it never see an unanchored receipt.
+
+When acceptance or review blocks, finalize returns the verdict, findings, and
+per-criterion acceptance results instead of a receipt, and exits through the
+normal gate codes.
+
+Flags:
+
+- `--base-ref REF`: override the snapshot comparison base.
+- `--scope-hint PATH`: add a path boundary hint; repeatable.
+- `--stdin`: read the finalize request from stdin. The finalize MCP tool uses
+  this mode; operators normally do not.
+
 ## complete
 
 ```bash
@@ -396,3 +427,33 @@ scafld adapter claude review <task-id>
 Renders a provider-facing trigger packet for thin wrapper scripts. The packet
 includes current status, deterministic `next_action` fields, and the current
 handoff text. It does not execute an agent runtime and does not advance state.
+
+## verify
+
+```bash
+scafld verify <receipt-path> --target <commit-ish> [--trusted-keys PATH] [--ci] [--self-check] [--root PATH] [--json]
+```
+
+`verify` is the independent merge wall. It checks a signed receipt without
+trusting the host that minted it:
+
+- verifies the ed25519 signature against an active key in the trusted-keys
+  file, recomputing the canonical receipt digest.
+- snapshots the target workspace and compares file digests against the
+  digests the receipt fingerprints.
+- checks that `--target` is an ancestor-consistent commit for the receipt.
+- re-runs the acceptance criteria recorded in the receipt.
+- enforces `verify.min_independence` from `.scafld/config.yaml`.
+
+The receipt path falls back to `SCAFLD_RECEIPT_PATH` and then
+`verify.receipt_path` from config. The trusted-keys path falls back to
+`SCAFLD_TRUSTED_KEYS` and then `verify.trusted_keys_path`. Verify reads base
+config only; `config.local.yaml` cannot repoint the trust anchors.
+
+CI mode applies when `--ci` is set or the `CI` environment variable is truthy.
+It fails closed when `--target` or the trusted-keys path is missing.
+
+`--self-check` prints a wiring report for the workspace (key material, trusted
+keys, config paths) without verifying a receipt.
+
+Exit codes: `0` verified, `3` verification failed, `2` usage or runtime error.

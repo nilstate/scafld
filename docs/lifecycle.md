@@ -46,6 +46,14 @@ scafld review add-auth
 scafld complete add-auth
 ```
 
+`scafld finalize add-auth` collapses the finish line into one call: it runs
+acceptance against an immutable snapshot, runs the independent review, mints a
+signed receipt, and records completion. Use the step-by-step
+`review` and `complete` commands when hand-sequencing the lifecycle; use
+`finalize` as the default completion authority. `scafld verify <receipt>
+--target <commit-ish>` then replays the receipt as the CI merge wall. See
+[CLI Reference](cli-reference.md) for both commands.
+
 Failure paths:
 
 ```bash
