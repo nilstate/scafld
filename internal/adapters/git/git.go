@@ -545,12 +545,56 @@ func (a Adapter) fileDigests(ctx context.Context, treeSHA string, statuses map[s
 }
 
 // blobDigests hashes blobs through one `git cat-file --batch` process instead
-// of one subprocess per file, and reads blob bytes from a dedicated stdout
-// pipe so stderr noise can never reach the hash.
+// of one subprocess per file.
 func (a Adapter) blobDigests(ctx context.Context, oids []string) (map[string]string, error) {
 	sums := make(map[string]string, len(oids))
-	if len(oids) == 0 {
-		return sums, nil
+	err := a.catFileBatch(ctx, oids, func(index int, r io.Reader, _ int64) error {
+		hasher := sha256.New()
+		if _, err := io.Copy(hasher, r); err != nil {
+			return err
+		}
+		sums[oids[index]] = fmt.Sprintf("%x", hasher.Sum(nil))
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return sums, nil
+}
+
+// TreeBlobs reads the committed bytes of paths at the snapshot tree through one
+// `git cat-file --batch` process. It is the batched form of CanonicalBytes: the
+// bytes come from the content-addressed tree object, never the working files.
+func (a Adapter) TreeBlobs(ctx context.Context, treeSHA string, paths []string) (map[string][]byte, error) {
+	if strings.TrimSpace(treeSHA) == "" {
+		return nil, fmt.Errorf("tree blobs require a tree")
+	}
+	names := make([]string, 0, len(paths))
+	for _, path := range paths {
+		names = append(names, treeSHA+":"+path)
+	}
+	blobs := make(map[string][]byte, len(paths))
+	err := a.catFileBatch(ctx, names, func(index int, r io.Reader, size int64) error {
+		data := make([]byte, size)
+		if _, err := io.ReadFull(r, data); err != nil {
+			return err
+		}
+		blobs[paths[index]] = data
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return blobs, nil
+}
+
+// catFileBatch streams object requests through one `git cat-file --batch`
+// process and hands each response body to handle in request order. Object
+// bytes come from a dedicated stdout pipe so stderr noise can never reach a
+// consumer's hash or evidence bytes.
+func (a Adapter) catFileBatch(ctx context.Context, names []string, handle func(index int, r io.Reader, size int64) error) error {
+	if len(names) == 0 {
+		return nil
 	}
 	cmd := exec.CommandContext(ctx, "git", "cat-file", "--batch")
 	cmd.Dir = a.Root
@@ -558,20 +602,20 @@ func (a Adapter) blobDigests(ctx context.Context, oids []string) (map[string]str
 	cmd.Stderr = &stderr
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
-		return nil, fmt.Errorf("%w: git cat-file --batch stdin: %v", errGitCommand, err)
+		return fmt.Errorf("%w: git cat-file --batch stdin: %v", errGitCommand, err)
 	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return nil, fmt.Errorf("%w: git cat-file --batch stdout: %v", errGitCommand, err)
+		return fmt.Errorf("%w: git cat-file --batch stdout: %v", errGitCommand, err)
 	}
 	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("%w: git cat-file --batch: %v", errGitCommand, err)
+		return fmt.Errorf("%w: git cat-file --batch: %v", errGitCommand, err)
 	}
 	writeErr := make(chan error, 1)
 	go func() {
 		defer stdin.Close()
-		for _, oid := range oids {
-			if _, err := io.WriteString(stdin, oid+"\n"); err != nil {
+		for _, name := range names {
+			if _, err := io.WriteString(stdin, name+"\n"); err != nil {
 				writeErr <- err
 				return
 			}
@@ -580,47 +624,68 @@ func (a Adapter) blobDigests(ctx context.Context, oids []string) (map[string]str
 	}()
 	reader := bufio.NewReaderSize(stdout, 1<<16)
 	var readErr error
-	for _, oid := range oids {
+	for index, name := range names {
 		header, err := reader.ReadString('\n')
 		if err != nil {
-			readErr = fmt.Errorf("read header for %s: %w", oid, err)
+			readErr = fmt.Errorf("read header for %s: %w", name, err)
 			break
 		}
 		fields := strings.Fields(strings.TrimSpace(header))
-		if len(fields) != 3 || fields[0] != oid {
-			readErr = fmt.Errorf("unexpected cat-file header for %s: %q", oid, strings.TrimSpace(header))
+		if len(fields) != 3 {
+			readErr = fmt.Errorf("object %s unavailable: %q", name, strings.TrimSpace(header))
 			break
 		}
 		size, err := strconv.ParseInt(fields[2], 10, 64)
 		if err != nil || size < 0 {
-			readErr = fmt.Errorf("bad cat-file size for %s: %q", oid, fields[2])
+			readErr = fmt.Errorf("bad cat-file size for %s: %q", name, fields[2])
 			break
 		}
-		hasher := sha256.New()
-		if _, err := io.CopyN(hasher, reader, size); err != nil {
-			readErr = fmt.Errorf("read blob %s: %w", oid, err)
+		limited := io.LimitReader(reader, size)
+		if err := handle(index, limited, size); err != nil {
+			readErr = fmt.Errorf("read object %s: %w", name, err)
+			break
+		}
+		if _, err := io.Copy(io.Discard, limited); err != nil { // realign when handle under-reads
+			readErr = fmt.Errorf("drain object %s: %w", name, err)
 			break
 		}
 		if _, err := reader.Discard(1); err != nil { // trailing LF after each object
-			readErr = fmt.Errorf("read blob terminator %s: %w", oid, err)
+			readErr = fmt.Errorf("read object terminator %s: %w", name, err)
 			break
 		}
-		sums[oid] = fmt.Sprintf("%x", hasher.Sum(nil))
 	}
 	if readErr != nil {
 		_ = cmd.Process.Kill()
 		_ = cmd.Wait()
 		<-writeErr
-		return nil, fmt.Errorf("%w: git cat-file --batch: %v\n%s", errGitCommand, readErr, stderr.Bytes())
+		return fmt.Errorf("%w: git cat-file --batch: %v\n%s", errGitCommand, readErr, stderr.Bytes())
 	}
 	if err := <-writeErr; err != nil {
 		_ = cmd.Wait()
-		return nil, fmt.Errorf("%w: git cat-file --batch write: %v", errGitCommand, err)
+		return fmt.Errorf("%w: git cat-file --batch write: %v", errGitCommand, err)
 	}
 	if err := cmd.Wait(); err != nil {
-		return nil, fmt.Errorf("%w: git cat-file --batch: %v\n%s", errGitCommand, err, stderr.Bytes())
+		return fmt.Errorf("%w: git cat-file --batch: %v\n%s", errGitCommand, err, stderr.Bytes())
 	}
-	return sums, nil
+	return nil
+}
+
+// TreeSHA computes only the commit-free snapshot tree fingerprint, skipping the
+// per-file digest, diff, and ignored-path passes. The finalize mutation guard
+// uses it to detect acceptance-time drift without paying for a full snapshot.
+func (a Adapter) TreeSHA(ctx context.Context, input SnapshotInput) (string, error) {
+	scope := normalizeScope(input.Scope)
+	if len(scope) == 0 {
+		return "", fmt.Errorf("snapshot scope is empty; refusing whole-repo fallback")
+	}
+	if err := a.checkIndexFlags(ctx, scope); err != nil {
+		return "", err
+	}
+	_, hasHead, err := a.resolveHead(ctx)
+	if err != nil {
+		return "", err
+	}
+	return a.writeTemporaryTree(ctx, hasHead)
 }
 
 func (a Adapter) ignoredPaths(ctx context.Context, scope []string) ([]IgnoredPath, error) {

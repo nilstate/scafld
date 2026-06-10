@@ -462,7 +462,7 @@ func TestGateEvidenceIncludesDeletedPaths(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, provenance, _, err := buildEvidence(context.Background(), g, snap.TreeSHA, []string{"."}, []string{"removed.go"})
+	_, provenance, _, err := buildEvidence(context.Background(), g, snap.TreeSHA, []string{"."}, []string{"removed.go"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -506,7 +506,7 @@ func TestBuildEvidenceDoesNotSilentlyDropScopedGovernedFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	files, provenance, ignored, err := buildEvidence(context.Background(), g, snap.TreeSHA, []string{"."}, nil)
+	files, provenance, ignored, err := buildEvidence(context.Background(), g, snap.TreeSHA, []string{"."}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -625,7 +625,7 @@ func containsString(values []string, want string) bool {
 type passingFinalizeReviewer struct{ git git.Adapter }
 
 func (r passingFinalizeReviewer) Review(ctx context.Context, in appfinalize.ReviewInput) (appfinalize.ReviewResult, error) {
-	_, provenance, ignored, err := buildEvidence(ctx, r.git, in.TreeSHA, in.Scope, in.Deleted)
+	_, provenance, ignored, err := buildEvidence(ctx, r.git, in.TreeSHA, in.Scope, in.Deleted, nil)
 	if err != nil {
 		return appfinalize.ReviewResult{}, err
 	}

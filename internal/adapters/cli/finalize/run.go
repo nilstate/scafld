@@ -553,8 +553,10 @@ func (s gateSnapshotter) Snapshot(ctx context.Context, in appfinalize.SnapshotIn
 		return appfinalize.Snapshot{}, err
 	}
 	digests := make(map[string]string, len(snap.FileDigests))
+	files := make([]appfinalize.FileFact, 0, len(snap.FileDigests))
 	for _, d := range snap.FileDigests {
 		digests[d.Path] = d.SHA256
+		files = append(files, appfinalize.FileFact{Path: d.Path, Status: d.Status, SHA256: d.SHA256})
 	}
 	ignored := make([]string, 0, len(snap.IgnoredUnreviewed))
 	for _, ig := range snap.IgnoredUnreviewed {
@@ -569,9 +571,14 @@ func (s gateSnapshotter) Snapshot(ctx context.Context, in appfinalize.SnapshotIn
 		BaseCommit:        snap.BaseCommit,
 		HeadCommit:        snap.HeadCommit,
 		FileDigests:       digests,
+		Files:             files,
 		IgnoredUnreviewed: ignored,
 		Deleted:           deleted,
 	}, nil
+}
+
+func (s gateSnapshotter) TreeSHA(ctx context.Context, in appfinalize.SnapshotInput) (string, error) {
+	return s.git.TreeSHA(ctx, git.SnapshotInput{Scope: in.Scope, BaseRef: in.BaseRef})
 }
 
 // gateAcceptance adapts the shared acceptance engine to the app/gate port.
@@ -593,7 +600,7 @@ func (r *gateReviewer) Review(ctx context.Context, in appfinalize.ReviewInput) (
 	// Read the exact bytes the receipt signs from the immutable snapshot tree
 	// object, never a fresh working-tree snapshot, so acceptance-time mutation
 	// cannot make the reviewer inspect different bytes than the receipt certifies.
-	evidence, provenance, ignored, err := buildEvidence(ctx, r.git, in.TreeSHA, in.Scope, in.Deleted)
+	evidence, provenance, ignored, err := buildEvidence(ctx, r.git, in.TreeSHA, in.Scope, in.Deleted, in.Files)
 	if err != nil {
 		return appfinalize.ReviewResult{}, err
 	}
@@ -620,30 +627,51 @@ func (r *gateReviewer) Review(ctx context.Context, in appfinalize.ReviewInput) (
 	}, nil
 }
 
-func buildEvidence(ctx context.Context, g git.Adapter, treeSHA string, scope []string, deleted []string) ([]reviewevidence.EvidenceFile, []receipt.Provenance, []string, error) {
-	digests, err := g.TreeDigests(ctx, treeSHA, scope)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	files := make([]reviewevidence.EvidenceFile, 0, len(digests))
-	provenance := make([]receipt.Provenance, 0, len(digests)+len(deleted))
-	var ignored []string
-	for _, d := range digests {
-		// Submodule gitlinks have no reviewable bytes, and governed instruction/
-		// config files are deliberately withheld from the reviewer so their content
-		// cannot inject instructions. Both are still signed in file_digests, so they
-		// must be recorded as ignored_unreviewed rather than silently dropped, or the
-		// receipt would imply the reviewer saw bytes it never did.
-		if d.Status == "gitlink" || blocklistedEvidence(d.Path) {
-			ignored = append(ignored, d.Path)
-			continue
-		}
-		data, err := g.CanonicalBytes(ctx, treeSHA, d.Path)
+func buildEvidence(ctx context.Context, g git.Adapter, treeSHA string, scope []string, deleted []string, facts []appfinalize.FileFact) ([]reviewevidence.EvidenceFile, []receipt.Provenance, []string, error) {
+	// The snapshot already listed and hashed the tree; reuse its facts instead of
+	// a second ls-tree plus blob-hash pass. The empty case re-derives them from
+	// the same immutable tree object.
+	if len(facts) == 0 {
+		digests, err := g.TreeDigests(ctx, treeSHA, scope)
 		if err != nil {
 			return nil, nil, nil, err
 		}
-		files = append(files, reviewevidence.EvidenceFile{Path: d.Path, Status: d.Status, SHA256: d.SHA256, Bytes: data})
-		provenance = append(provenance, receipt.Provenance{Kind: "evidence_file", Path: d.Path, SHA256: d.SHA256, Bytes: len(data)})
+		facts = make([]appfinalize.FileFact, 0, len(digests))
+		for _, d := range digests {
+			facts = append(facts, appfinalize.FileFact{Path: d.Path, Status: d.Status, SHA256: d.SHA256})
+		}
+	}
+	// Submodule gitlinks have no reviewable bytes, and governed instruction/
+	// config files are deliberately withheld from the reviewer so their content
+	// cannot inject instructions. Both are still signed in file_digests, so they
+	// must be recorded as ignored_unreviewed rather than silently dropped, or the
+	// receipt would imply the reviewer saw bytes it never did.
+	var ignored []string
+	reviewable := make([]appfinalize.FileFact, 0, len(facts))
+	for _, fact := range facts {
+		if fact.Status == "gitlink" || blocklistedEvidence(fact.Path) {
+			ignored = append(ignored, fact.Path)
+			continue
+		}
+		reviewable = append(reviewable, fact)
+	}
+	paths := make([]string, 0, len(reviewable))
+	for _, fact := range reviewable {
+		paths = append(paths, fact.Path)
+	}
+	blobs, err := g.TreeBlobs(ctx, treeSHA, paths)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	files := make([]reviewevidence.EvidenceFile, 0, len(reviewable))
+	provenance := make([]receipt.Provenance, 0, len(reviewable)+len(deleted))
+	for _, fact := range reviewable {
+		data, ok := blobs[fact.Path]
+		if !ok {
+			return nil, nil, nil, fmt.Errorf("missing evidence bytes for %s", fact.Path)
+		}
+		files = append(files, reviewevidence.EvidenceFile{Path: fact.Path, Status: fact.Status, SHA256: fact.SHA256, Bytes: data})
+		provenance = append(provenance, receipt.Provenance{Kind: "evidence_file", Path: fact.Path, SHA256: fact.SHA256, Bytes: len(data)})
 	}
 	// Deleted scoped files have no bytes to review, but the receipt must still
 	// record the removal so a deletion-only change is part of the reviewed and

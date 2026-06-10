@@ -126,6 +126,10 @@ func (s finalizeSnap) Snapshot(ctx context.Context, in appfinalize.SnapshotInput
 	return appfinalize.Snapshot{TreeSHA: snap.TreeSHA, BaseCommit: snap.BaseCommit, HeadCommit: snap.HeadCommit, FileDigests: digests, IgnoredUnreviewed: ignored}, nil
 }
 
+func (s finalizeSnap) TreeSHA(ctx context.Context, in appfinalize.SnapshotInput) (string, error) {
+	return s.g.TreeSHA(ctx, git.SnapshotInput{Scope: in.Scope, BaseRef: in.BaseRef})
+}
+
 type finalizeAccept struct{ runner appacceptance.Runner }
 
 func (a finalizeAccept) Evaluate(ctx context.Context, in appacceptance.EvaluateInput) (appacceptance.EvaluateOutput, error) {

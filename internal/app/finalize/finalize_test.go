@@ -12,18 +12,19 @@ import (
 	"github.com/nilstate/scafld/v2/internal/core/session"
 )
 
-// mutatingSnapshotter returns a different tree on its second call, simulating a
-// scoped file rewritten by an acceptance command between the signed snapshot and
-// the mutation-guard re-snapshot.
+// mutatingSnapshotter returns a different tree from the guard's TreeSHA call
+// than from the signed snapshot, simulating a scoped file rewritten by an
+// acceptance command between the signed snapshot and the mutation guard.
 type mutatingSnapshotter struct{ calls int }
 
 func (m *mutatingSnapshotter) Snapshot(context.Context, SnapshotInput) (Snapshot, error) {
 	m.calls++
-	tree := "tree-pre"
-	if m.calls > 1 {
-		tree = "tree-post-mutation"
-	}
-	return Snapshot{TreeSHA: tree, FileDigests: map[string]string{"f.go": "sha"}, IgnoredUnreviewed: []string{}}, nil
+	return Snapshot{TreeSHA: "tree-pre", FileDigests: map[string]string{"f.go": "sha"}, IgnoredUnreviewed: []string{}}, nil
+}
+
+func (m *mutatingSnapshotter) TreeSHA(context.Context, SnapshotInput) (string, error) {
+	m.calls++
+	return "tree-post-mutation", nil
 }
 
 type fakeSnapshotter struct {
@@ -36,6 +37,11 @@ func (f *fakeSnapshotter) Snapshot(_ context.Context, input SnapshotInput) (Snap
 	f.called++
 	f.input = input
 	return f.snapshot, nil
+}
+
+func (f *fakeSnapshotter) TreeSHA(_ context.Context, input SnapshotInput) (string, error) {
+	f.input = input
+	return f.snapshot.TreeSHA, nil
 }
 
 type fakeAcceptance struct {

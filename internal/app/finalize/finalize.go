@@ -16,8 +16,11 @@ import (
 )
 
 // Snapshotter computes the commit-free tree facts reviewed by finalization.
+// TreeSHA recomputes only the tree fingerprint; the mutation guard uses it to
+// detect acceptance-time drift without paying for a second full snapshot.
 type Snapshotter interface {
 	Snapshot(context.Context, SnapshotInput) (Snapshot, error)
+	TreeSHA(context.Context, SnapshotInput) (string, error)
 }
 
 // AcceptanceRunner evaluates declared acceptance criteria.
@@ -62,8 +65,17 @@ type Snapshot struct {
 	BaseCommit        string
 	HeadCommit        string
 	FileDigests       map[string]string
+	Files             []FileFact
 	IgnoredUnreviewed []string
 	Deleted           []string
+}
+
+// FileFact carries the per-file snapshot facts the reviewer evidence reuses,
+// so review does not re-list and re-hash the tree the snapshot already walked.
+type FileFact struct {
+	Path   string
+	Status string
+	SHA256 string
 }
 
 // ReviewInput is the app-level review request.
@@ -72,6 +84,7 @@ type ReviewInput struct {
 	TreeSHA    string
 	Scope      []string
 	Deleted    []string
+	Files      []FileFact
 	Depth      string
 	DiffScoped bool
 }
@@ -141,14 +154,14 @@ func Run(ctx context.Context, snapshotter Snapshotter, acceptanceRunner Acceptan
 	if !accepted.Passed {
 		return Output{Verdict: review.VerdictFail, Acceptance: accepted, Independence: selectedIndependence, Reason: "acceptance failed before review"}, nil
 	}
-	// Mutation guard: acceptance may have rewritten scoped files. Re-snapshot and
-	// fail closed if the tree drifted, so the reviewer and the signed receipt
-	// describe the exact same bytes.
-	post, err := snapshotter.Snapshot(ctx, SnapshotInput{Scope: input.Scope, BaseRef: input.BaseRef})
+	// Mutation guard: acceptance may have rewritten scoped files. Recompute the
+	// tree fingerprint and fail closed if it drifted, so the reviewer and the
+	// signed receipt describe the exact same bytes.
+	postTree, err := snapshotter.TreeSHA(ctx, SnapshotInput{Scope: input.Scope, BaseRef: input.BaseRef})
 	if err != nil {
 		return Output{}, fmt.Errorf("mutation snapshot: %w", err)
 	}
-	if post.TreeSHA != snap.TreeSHA {
+	if postTree != snap.TreeSHA {
 		return Output{Verdict: review.VerdictFail, Acceptance: accepted, Independence: selectedIndependence, Reason: "workspace mutated during acceptance; gate failed closed"}, nil
 	}
 	result, err := reviewer.Review(ctx, ReviewInput{
@@ -156,6 +169,7 @@ func Run(ctx context.Context, snapshotter Snapshotter, acceptanceRunner Acceptan
 		TreeSHA:    snap.TreeSHA,
 		Scope:      append([]string(nil), input.Scope...),
 		Deleted:    append([]string(nil), snap.Deleted...),
+		Files:      append([]FileFact(nil), snap.Files...),
 		Depth:      "light",
 		DiffScoped: true,
 	})
