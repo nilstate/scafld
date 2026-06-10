@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -176,8 +175,7 @@ func okOut[T any](w io.Writer, command string, result T, text string, asJSON boo
 		if exit != ExitSuccess {
 			env.Error = &envelope.Error{Code: output.CodeName(exit), Message: "gate blocked", Gate: output.GateFailureFromResult(result), ExitCode: exit}
 		}
-		_ = json.NewEncoder(w).Encode(env)
-		return exit
+		return output.EncodeEnvelope(w, env, exit)
 	}
 	fmt.Fprint(w, text)
 	return exit
@@ -191,7 +189,7 @@ func failOut(w io.Writer, err error, exit int, asJSON bool) int {
 		exit = ExitCancelled
 	}
 	if asJSON {
-		_ = json.NewEncoder(w).Encode(envelope.Envelope[map[string]any]{
+		return output.EncodeEnvelope(w, envelope.Envelope[map[string]any]{
 			OK: false,
 			Error: &envelope.Error{
 				Code:     output.CodeName(exit),
@@ -199,8 +197,7 @@ func failOut(w io.Writer, err error, exit int, asJSON bool) int {
 				Gate:     output.GateFailure(err),
 				ExitCode: exit,
 			},
-		})
-		return exit
+		}, exit)
 	}
 	fmt.Fprintf(w, "error: %v\n", err)
 	if gateText := output.Gate(output.GateFailure(err)); gateText != "" {

@@ -2,17 +2,32 @@
 package output
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 
 	appbuild "github.com/nilstate/scafld/v2/internal/app/build"
+	"github.com/nilstate/scafld/v2/internal/app/envelope"
 	appreport "github.com/nilstate/scafld/v2/internal/app/report"
 	appreview "github.com/nilstate/scafld/v2/internal/app/review"
 	appstatus "github.com/nilstate/scafld/v2/internal/app/status"
 	"github.com/nilstate/scafld/v2/internal/core/gate"
 	"github.com/nilstate/scafld/v2/internal/core/spec"
 )
+
+// EncodeEnvelope writes env as one JSON line, surfacing an encode failure on
+// the stream and refusing to report success (exit 0) over corrupt output.
+func EncodeEnvelope[T any](w io.Writer, env envelope.Envelope[T], exit int) int {
+	if err := json.NewEncoder(w).Encode(env); err != nil {
+		fmt.Fprintf(w, "\nerror: encode result envelope: %v\n", err)
+		if exit == 0 {
+			return 1
+		}
+	}
+	return exit
+}
 
 // CodeName maps process exit codes to stable JSON error codes.
 func CodeName(exit int) string {

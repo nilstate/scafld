@@ -2,7 +2,6 @@ package adapter
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -129,8 +128,7 @@ func parseArgs(args []string) (cliOptions, error) {
 
 func ok(w io.Writer, out Output, asJSON bool) int {
 	if asJSON {
-		_ = json.NewEncoder(w).Encode(envelope.Envelope[Output]{OK: true, Command: "adapter", Result: out})
-		return 0
+		return output.EncodeEnvelope(w, envelope.Envelope[Output]{OK: true, Command: "adapter", Result: out}, 0)
 	}
 	fmt.Fprint(w, out.Packet)
 	return 0
@@ -138,8 +136,7 @@ func ok(w io.Writer, out Output, asJSON bool) int {
 
 func fail(w io.Writer, err error, exit int, asJSON bool) int {
 	if asJSON {
-		_ = json.NewEncoder(w).Encode(envelope.Envelope[map[string]any]{OK: false, Error: &envelope.Error{Code: output.CodeName(exit), Message: err.Error(), ExitCode: exit}})
-		return exit
+		return output.EncodeEnvelope(w, envelope.Envelope[map[string]any]{OK: false, Error: &envelope.Error{Code: output.CodeName(exit), Message: err.Error(), ExitCode: exit}}, exit)
 	}
 	fmt.Fprintf(w, "error: %v\n", err)
 	return exit

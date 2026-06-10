@@ -342,7 +342,10 @@ func writeCanonical(out *bytes.Buffer, value any) error {
 			out.WriteString("false")
 		}
 	case string:
-		data, _ := json.Marshal(typed)
+		data, err := json.Marshal(typed)
+		if err != nil {
+			return fmt.Errorf("encode canonical string: %w", err)
+		}
 		out.Write(data)
 	case json.Number:
 		out.WriteString(typed.String())
@@ -368,7 +371,10 @@ func writeCanonical(out *bytes.Buffer, value any) error {
 			if i > 0 {
 				out.WriteByte(',')
 			}
-			keyJSON, _ := json.Marshal(key)
+			keyJSON, err := json.Marshal(key)
+			if err != nil {
+				return fmt.Errorf("encode canonical key: %w", err)
+			}
 			out.Write(keyJSON)
 			out.WriteByte(':')
 			if err := writeCanonical(out, typed[key]); err != nil {
