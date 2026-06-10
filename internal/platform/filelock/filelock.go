@@ -1,0 +1,12 @@
+// Package filelock provides advisory cross-process file locking for stores
+// that read-modify-write shared state. In-process callers must still serialize
+// with their own mutex; the file lock only fences other processes.
+package filelock
+
+// Lock acquires an exclusive advisory lock on path, blocking until the lock
+// is available. It returns a release function that must be called to unlock.
+// On platforms without flock semantics it is a no-op, preserving the previous
+// in-process-only guarantee rather than failing.
+func Lock(path string) (func(), error) {
+	return lock(path)
+}

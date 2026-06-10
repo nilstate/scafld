@@ -7,6 +7,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"os"
+	"runtime"
 	"strings"
 
 	"github.com/nilstate/scafld/v2/internal/core/receipt"
@@ -50,6 +51,9 @@ func (s Ed25519Signer) SignCanonical(canonical []byte) (receipt.DetachedSignatur
 }
 
 func loadEd25519PrivateKey(path string) (ed25519.PrivateKey, error) {
+	if err := checkPrivateKeyMode(path); err != nil {
+		return nil, err
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read ed25519 private key: %w", err)
@@ -72,6 +76,23 @@ func loadEd25519PrivateKey(path string) (ed25519.PrivateKey, error) {
 		}
 	}
 	return normalizePrivateKey(data)
+}
+
+// checkPrivateKeyMode refuses group- or world-accessible signing keys so a
+// shared host cannot read the key and forge receipts. Windows file modes do
+// not map onto POSIX permission bits, so the check is unix-only.
+func checkPrivateKeyMode(path string) error {
+	if runtime.GOOS == "windows" {
+		return nil
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("stat ed25519 private key: %w", err)
+	}
+	if mode := info.Mode().Perm(); mode&0o077 != 0 {
+		return fmt.Errorf("ed25519 private key %s has mode %04o; require 0600 (chmod 600 to fix)", path, mode)
+	}
+	return nil
 }
 
 func normalizePrivateKey(data []byte) (ed25519.PrivateKey, error) {

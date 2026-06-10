@@ -12,6 +12,7 @@ import (
 
 	"github.com/nilstate/scafld/v2/internal/core/session"
 	"github.com/nilstate/scafld/v2/internal/platform/atomicfile"
+	"github.com/nilstate/scafld/v2/internal/platform/filelock"
 )
 
 // ErrSessionNotFound is returned when a task has no session ledger.
@@ -88,6 +89,11 @@ func (s SessionStore) Save(ctx context.Context, ledger session.Session) error {
 	mutex := pathLock(path)
 	mutex.Lock()
 	defer mutex.Unlock()
+	release, err := lockSessionFile(path)
+	if err != nil {
+		return err
+	}
+	defer release()
 	return s.writeLocked(path, session.Replay(ledger))
 }
 
@@ -100,6 +106,11 @@ func (s SessionStore) Append(ctx context.Context, taskID string, entry session.E
 	mutex := pathLock(path)
 	mutex.Lock()
 	defer mutex.Unlock()
+	release, err := lockSessionFile(path)
+	if err != nil {
+		return session.Session{}, err
+	}
+	defer release()
 	ledger, err := s.loadUnlocked(path)
 	if err != nil {
 		if !errors.Is(err, ErrSessionNotFound) {
@@ -172,4 +183,18 @@ func (s SessionStore) writeLocked(path string, ledger session.Session) error {
 func pathLock(path string) *sync.Mutex {
 	value, _ := lockMap.LoadOrStore(path, &sync.Mutex{})
 	return value.(*sync.Mutex)
+}
+
+// lockSessionFile fences concurrent scafld processes (e.g. two finalize calls
+// on one task) so a read-modify-write cannot silently drop the other process's
+// ledger entry. The in-process pathLock mutex must already be held.
+func lockSessionFile(path string) (func(), error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return nil, fmt.Errorf("create session dir: %w", err)
+	}
+	release, err := filelock.Lock(path + ".lock")
+	if err != nil {
+		return nil, fmt.Errorf("lock session: %w", err)
+	}
+	return release, nil
 }

@@ -30,6 +30,7 @@ import (
 	"github.com/nilstate/scafld/v2/internal/core/reviewevidence"
 	"github.com/nilstate/scafld/v2/internal/core/session"
 	"github.com/nilstate/scafld/v2/internal/core/spec"
+	"github.com/nilstate/scafld/v2/internal/platform/atomicfile"
 )
 
 const publicCommand = "finalize"
@@ -327,11 +328,8 @@ func finalize(ctx context.Context, root string, taskID string, sessions jsonstor
 	if err := os.MkdirAll(filepath.Dir(taskReceiptPath), 0o755); err != nil {
 		return nil, fmt.Errorf("create receipts dir: %w", err)
 	}
-	if err := os.WriteFile(taskReceiptPath, append(data, '\n'), 0o644); err != nil {
+	if err := atomicfile.Write(taskReceiptPath, append(data, '\n'), 0o644); err != nil {
 		return nil, fmt.Errorf("write receipt: %w", err)
-	}
-	if err := os.WriteFile(latestReceiptPath, append(data, '\n'), 0o644); err != nil {
-		return nil, fmt.Errorf("write latest receipt: %w", err)
 	}
 	digest, err := receipt.ReceiptDigest(out.Receipt.Body)
 	if err != nil {
@@ -356,6 +354,11 @@ func finalize(ctx context.Context, root string, taskID string, sessions jsonstor
 	}
 	if _, err := sessions.Append(ctx, taskID, session.Entry{Type: "complete", Status: "completed", Reason: "finalization receipt passed"}, now); err != nil {
 		return nil, fmt.Errorf("append completion to ledger: %w", err)
+	}
+	// latest.json is the pointer hosts read; write it only after the receipt is
+	// anchored in the ledger so it never names a receipt the chain rejected.
+	if err := atomicfile.Write(latestReceiptPath, append(data, '\n'), 0o644); err != nil {
+		return nil, fmt.Errorf("write latest receipt: %w", err)
 	}
 	if hasSpec {
 		if err := projectSpecFromSession(ctx, root, taskID); err != nil {
