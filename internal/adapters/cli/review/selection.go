@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/nilstate/scafld/v2/internal/adapters/cli/output"
+	"github.com/nilstate/scafld/v2/internal/adapters/cli/providerinfo"
 	configadapter "github.com/nilstate/scafld/v2/internal/adapters/config"
 	"github.com/nilstate/scafld/v2/internal/adapters/process"
 	"github.com/nilstate/scafld/v2/internal/adapters/providers"
@@ -64,9 +65,9 @@ func Select(ctx context.Context, opts Options) (Selection, error) {
 		diagnosticsPath = opts.Root + "/.scafld/runs/" + opts.TaskID + "/diagnostics"
 	}
 	provider, err := providers.Select(providers.Selection{
-		Provider:       first(opts.Provider, external.Provider),
-		Command:        first(opts.Command, external.Command),
-		Binary:         first(opts.ProviderBinary, external.ProviderBinary),
+		Provider:       providerinfo.First(opts.Provider, external.Provider),
+		Command:        providerinfo.First(opts.Command, external.Command),
+		Binary:         providerinfo.First(opts.ProviderBinary, external.ProviderBinary),
 		Model:          opts.Model,
 		CodexModel:     external.Codex.Model,
 		ClaudeModel:    external.Claude.Model,
@@ -89,43 +90,7 @@ func Select(ctx context.Context, opts Options) (Selection, error) {
 }
 
 func progressLabel(opts Options, external configadapter.ExternalReviewConfig) string {
-	provider := first(opts.Provider, external.Provider, "auto")
-	model := opts.Model
-	switch provider {
-	case "command":
-		return "review[command]"
-	case "local":
-		return "review[local]"
-	case "claude":
-		model = first(model, external.Claude.Model)
-	case "codex":
-		model = first(model, external.Codex.Model)
-	case "gemini":
-		model = first(model, external.Gemini.Model)
-	default:
-		selected, err := providers.AutoProviderInfo(providers.Selection{
-			Binary:         opts.ProviderBinary,
-			Model:          opts.Model,
-			CodexModel:     external.Codex.Model,
-			ClaudeModel:    external.Claude.Model,
-			GeminiModel:    external.Gemini.Model,
-			CodexBinary:    external.Codex.Binary,
-			ClaudeBinary:   external.Claude.Binary,
-			GeminiBinary:   external.Gemini.Binary,
-			FallbackPolicy: external.FallbackPolicy,
-			HostAgent:      providers.DetectHostAgent(os.Environ()),
-		})
-		if err != nil {
-			provider = "auto"
-		} else {
-			provider = selected.Provider
-			model = selected.Model
-		}
-	}
-	if strings.TrimSpace(model) == "" {
-		return "review[" + provider + "]"
-	}
-	return "review[" + provider + ":" + strings.TrimSpace(model) + "]"
+	return providerinfo.ProgressLabel("review", opts.Provider, opts.Model, opts.ProviderBinary, external)
 }
 
 func cloneStrings(values map[string]string) map[string]string {
@@ -304,13 +269,4 @@ func hasPrivateEnvSegment(path string) bool {
 		}
 	}
 	return false
-}
-
-func first(values ...string) string {
-	for _, value := range values {
-		if value != "" {
-			return value
-		}
-	}
-	return ""
 }

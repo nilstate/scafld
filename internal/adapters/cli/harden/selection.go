@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/nilstate/scafld/v2/internal/adapters/cli/output"
+	"github.com/nilstate/scafld/v2/internal/adapters/cli/providerinfo"
 	configadapter "github.com/nilstate/scafld/v2/internal/adapters/config"
 	"github.com/nilstate/scafld/v2/internal/adapters/process"
 	"github.com/nilstate/scafld/v2/internal/adapters/providers"
@@ -103,9 +104,9 @@ func Select(ctx context.Context, opts Options) (Selection, error) {
 		diagnosticsPath = opts.Root + "/.scafld/runs/" + opts.TaskID + "/diagnostics"
 	}
 	provider, err := providers.SelectHarden(providers.Selection{
-		Provider:       first(opts.Provider, external.Provider),
-		Command:        first(opts.Command, external.Command),
-		Binary:         first(opts.ProviderBinary, external.ProviderBinary),
+		Provider:       providerinfo.First(opts.Provider, external.Provider),
+		Command:        providerinfo.First(opts.Command, external.Command),
+		Binary:         providerinfo.First(opts.ProviderBinary, external.ProviderBinary),
 		Model:          opts.Model,
 		CodexModel:     external.Codex.Model,
 		ClaudeModel:    external.Claude.Model,
@@ -135,48 +136,5 @@ func hardenProviderRequested(opts Options, external configadapter.ExternalReview
 }
 
 func progressLabel(opts Options, external configadapter.ExternalReviewConfig) string {
-	provider := first(opts.Provider, external.Provider, "auto")
-	model := opts.Model
-	switch provider {
-	case "command":
-		return "harden[command]"
-	case "local":
-		return "harden[local]"
-	case "claude":
-		model = first(model, external.Claude.Model)
-	case "codex":
-		model = first(model, external.Codex.Model)
-	case "gemini":
-		model = first(model, external.Gemini.Model)
-	default:
-		selected, err := providers.AutoProviderInfo(providers.Selection{
-			Binary:         opts.ProviderBinary,
-			Model:          opts.Model,
-			CodexModel:     external.Codex.Model,
-			ClaudeModel:    external.Claude.Model,
-			GeminiModel:    external.Gemini.Model,
-			CodexBinary:    external.Codex.Binary,
-			ClaudeBinary:   external.Claude.Binary,
-			GeminiBinary:   external.Gemini.Binary,
-			FallbackPolicy: external.FallbackPolicy,
-			HostAgent:      providers.DetectHostAgent(os.Environ()),
-		})
-		if err == nil {
-			provider = selected.Provider
-			model = selected.Model
-		}
-	}
-	if strings.TrimSpace(model) == "" {
-		return "harden[" + provider + "]"
-	}
-	return "harden[" + provider + ":" + strings.TrimSpace(model) + "]"
-}
-
-func first(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return value
-		}
-	}
-	return ""
+	return providerinfo.ProgressLabel("harden", opts.Provider, opts.Model, opts.ProviderBinary, external)
 }
