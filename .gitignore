@@ -26,6 +26,9 @@ coverage.out
 .DS_Store
 Thumbs.db
 
+# runx runtime state (governance receipts from runx-managed runs; never project-owned)
+.runx/
+
 # scafld runtime state
 # Keep project-owned specs/config/prompts in git; ignore generated core and local runtime state.
 !.scafld/
