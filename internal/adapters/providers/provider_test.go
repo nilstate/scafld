@@ -866,7 +866,8 @@ func TestClaudeProviderBuildsRestrictedStreamJSONArgsAndExtractsStructuredOutput
 	}
 	wantPrefix := []string{
 		"claude-bin", "-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
-		"--no-session-persistence", "--disable-slash-commands", "--no-chrome", "--tools", "Read,Grep,Glob",
+		"--no-session-persistence", "--disable-slash-commands", "--no-chrome",
+		"--permission-mode", "dontAsk", "--setting-sources", "user", "--tools", "Read,Grep,Glob",
 		"--allowedTools", "Read,Grep,Glob,mcp__scafld__submit_review",
 		"--disallowedTools", "Agent,Task,Bash,Edit,MultiEdit,Write,NotebookEdit",
 		"--mcp-config",

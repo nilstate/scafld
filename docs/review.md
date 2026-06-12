@@ -93,9 +93,10 @@ Provider meanings:
   scafld disables Codex user config and execpolicy rules for the review
   subprocess.
 - `claude`: Claude review with session persistence disabled, slash commands and
-  browser integration disabled, built-in tools restricted to `Read`, `Grep`,
-  and `Glob`, and final dossier submission forced through scafld's
-  `submit_review` MCP tool.
+  browser integration disabled, project/local settings ignored, non-interactive
+  permissions (`dontAsk`), built-in tools restricted to `Read`, `Grep`, and
+  `Glob`, and final dossier submission forced through scafld's `submit_review`
+  MCP tool.
 - `gemini`: Gemini CLI review in plan/read-only mode. scafld writes a temporary
   Gemini settings file that exposes only its `submit_review` MCP tool for the
   final dossier; final text is ignored. Gemini CLI must already be
