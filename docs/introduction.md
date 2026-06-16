@@ -10,6 +10,13 @@ The agent passes through. The protocol stays.
 
 Plans outlive agents. Sessions hold the receipts. Reviews take nothing on faith.
 
+That review loop is the one careful teams run by hand before they ship: someone
+interrogates the plan while it is still cheap to change, and someone reads the
+finished diff with fresh eyes. scafld runs both on every non-trivial task, so the
+discipline no longer depends on whether anyone remembered to. It adds minutes to
+a build and removes the hours teams lose to defects a second look would have
+caught.
+
 scafld gives AI coding work a deterministic state machine. Every non-trivial
 task starts as a Markdown living spec. Every important runtime event appends to
 the session ledger. Current state, next command, acceptance evidence, and review

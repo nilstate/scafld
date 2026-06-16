@@ -10,6 +10,10 @@ The agent passes through. The protocol stays.
 
 Plans outlive agents. Sessions hold the receipts. Reviews take nothing on faith.
 
+It makes the careful engineer's habit automatic and unskippable: question the
+plan before the code, then review the diff cold. Minutes at build time, against
+the hours you would lose to what shipped without it.
+
 Given the same spec and session ledger, scafld derives the same state, next
 command, and review gate.
 
