@@ -19,7 +19,7 @@ func Prompt(ctx context.Context, root string) string {
 	}
 	var b strings.Builder
 	b.WriteString(prompt)
-	fmt.Fprintf(&b, "\n\nConfigured max_issues_per_round: %d. This is a cap, not a target.\n", cfg.Harden.MaxIssuesPerRound)
+	fmt.Fprintf(&b, "\n\nConfigured max_issues_per_round: %d. This is a budget for real findings, not filler.\n", cfg.Harden.MaxIssuesPerRound)
 	if len(cfg.Invariants.Canonical) > 0 {
 		b.WriteString("\nConfigured project invariants:\n")
 		keys := make([]string, 0, len(cfg.Invariants.Canonical))

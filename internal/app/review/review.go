@@ -40,6 +40,7 @@ type Provider interface {
 // WorkspaceStatus is the mutation-guard workspace state port.
 type WorkspaceStatus interface {
 	ChangedFiles(context.Context) ([]string, error)
+	ResolveHead(context.Context) (string, bool, error)
 }
 
 // Clock supplies review timestamps.
@@ -130,6 +131,10 @@ func RunWithInput(ctx context.Context, specs SpecStore, sessions SessionStore, w
 	if input.PrintContext {
 		return Output{TaskID: model.TaskID, Verdict: "not_run", Next: "scafld review " + model.TaskID, Context: prompt}, nil
 	}
+	seal, err := reviewSeal(ctx, workspace, beforeComparison)
+	if err != nil {
+		return Output{}, reviewGateError(model, err, "review workspace head unavailable", err.Error())
+	}
 	now := clock.Now().UTC().Format(time.RFC3339)
 	if _, err := sessions.Append(ctx, model.TaskID, session.Entry{
 		Type:   "review_attempt",
@@ -140,7 +145,9 @@ func RunWithInput(ctx context.Context, specs SpecStore, sessions SessionStore, w
 		return Output{}, err
 	}
 	dossier, err := provider.Invoke(ctx, review.Request{TaskID: model.TaskID, Prompt: prompt, Context: contextPacket})
-	afterFull, mutationErr := workspaceSnapshot(ctx, workspace)
+	postReviewCtx, cancelPostReview := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+	defer cancelPostReview()
+	afterFull, mutationErr := workspaceSnapshot(postReviewCtx, workspace)
 	if mutationErr != nil {
 		_, _ = sessions.Append(context.WithoutCancel(ctx), model.TaskID, session.Entry{
 			Type:   "review_attempt",
@@ -192,7 +199,7 @@ func RunWithInput(ctx context.Context, specs SpecStore, sessions SessionStore, w
 		}, now)
 		return Output{}, reviewGateError(model, err, "review dossier invalid", err.Error())
 	}
-	return recordReviewDossier(ctx, specs, sessions, model, path, dossier, now)
+	return recordReviewDossier(postReviewCtx, specs, sessions, model, path, dossier, now, seal)
 }
 
 func reviewCompletionSuffix(ctx context.Context, sessions SessionStore, taskID string) string {
@@ -234,17 +241,26 @@ func diagnosticPath(err error) string {
 	return ""
 }
 
-func recordReviewDossier(ctx context.Context, specs SpecStore, sessions SessionStore, model spec.Model, path string, dossier review.Dossier, now string) (Output, error) {
+func recordReviewDossier(ctx context.Context, specs SpecStore, sessions SessionStore, model spec.Model, path string, dossier review.Dossier, now string, seal reviewSessionSeal) (Output, error) {
 	if err := review.ValidateDossier(dossier); err != nil {
 		return Output{}, err
 	}
 	next, command := nextForVerdict(model.TaskID, dossier.Verdict)
+	packet := review.EncodeDossier(dossier)
 	ledger, err := sessions.Append(ctx, model.TaskID, session.Entry{
-		Type:     "review",
-		Status:   dossier.Verdict,
-		Reason:   reviewReason(dossier),
-		Provider: dossier.Provider,
-		Output:   review.EncodeDossier(dossier),
+		Type:                    "review",
+		Status:                  dossier.Verdict,
+		Reason:                  reviewReason(dossier),
+		Provider:                dossier.Provider,
+		Output:                  packet,
+		ReviewPacket:            packet,
+		CanonicalResponseSHA256: review.ResponseSHA256(packet),
+		ProviderModel:           dossier.Model,
+		ProviderSession:         dossier.SessionID,
+		ReviewedHead:            seal.reviewedHead,
+		ReviewedDirty:           seal.reviewedDirty,
+		ReviewedDiff:            seal.reviewedDiff,
+		ReviewedSpec:            spec.ContractDigest(model),
 	}, now)
 	if err != nil {
 		return Output{}, err

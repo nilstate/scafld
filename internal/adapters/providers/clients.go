@@ -261,7 +261,7 @@ func (p CodexProvider) InvokeAgent(ctx context.Context, req AgentRequest) (Agent
 		body = string(data)
 		outputFormat = "codex.output_file"
 	}
-	return AgentResponse{Text: body, Provider: "codex", OutputFormat: outputFormat, BinarySHA256: p.BinarySHA256, EndpointHost: p.EndpointHost, SandboxPolicy: p.SandboxPolicy, Result: result, RunErr: err}, nil
+	return AgentResponse{Text: body, Provider: "codex", Model: p.Model, OutputFormat: outputFormat, BinarySHA256: p.BinarySHA256, EndpointHost: p.EndpointHost, SandboxPolicy: p.SandboxPolicy, Result: result, RunErr: err}, nil
 }
 
 // Invoke sends the review prompt to Codex and parses the resulting dossier.

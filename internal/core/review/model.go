@@ -3,6 +3,8 @@ package review
 import (
 	"bufio"
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -161,6 +163,22 @@ func EncodeDossier(dossier Dossier) string {
 		return ""
 	}
 	return string(data)
+}
+
+// CanonicalResponseSHA256 returns the digest of the canonical serialized
+// ReviewDossier packet. It is the value sealed into session review entries.
+func CanonicalResponseSHA256(dossier Dossier) string {
+	return ResponseSHA256(EncodeDossier(dossier))
+}
+
+// ResponseSHA256 returns the digest for an already serialized review packet.
+func ResponseSHA256(packet string) string {
+	packet = strings.TrimSpace(packet)
+	if packet == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(packet))
+	return hex.EncodeToString(sum[:])
 }
 
 // DecodeDossier parses a dossier recorded in a session review entry.

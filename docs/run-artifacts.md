@@ -58,7 +58,10 @@ It records typed events such as:
 
 Criterion and phase state is replayed into `criterion_states` and
 `phase_blocks`. Review entries store the verdict in `status`, the accepted
-finding payload in `output`, and the provider in `provider`.
+finding payload in `output`, the accepted `review_packet`, the
+`canonical_response_sha256`, the provider in `provider`, provider provenance in
+`provider_model` and `provider_session` when available, and the reviewed
+workspace seal in `reviewed_head`, `reviewed_dirty`, and `reviewed_diff`.
 Human-reviewed overrides record a `review_override` entry with the operator
 reason before the passing `review` entry with provider `human`.
 
@@ -92,6 +95,12 @@ Minimal session excerpt:
       "type": "review",
       "status": "fail",
       "provider": "codex",
+      "canonical_response_sha256": "d6552ecb8f6b...",
+      "provider_model": "gpt-5.5",
+      "provider_session": "session-123",
+      "reviewed_head": "a1b2c3d4",
+      "reviewed_dirty": "true",
+      "reviewed_diff": "9f8e7d6c5b4a...",
       "output": "{\"verdict\":\"fail\",\"mode\":\"discover\",\"summary\":\"Review found one open completion blocker.\",\"findings\":[{\"id\":\"cache-tenant-leak\",\"severity\":\"high\",\"blocks_completion\":true,\"location\":{\"path\":\"internal/cache/store.go\",\"line\":88},\"evidence\":\"invalidation keys omit tenant id\",\"impact\":\"cross-tenant cache state can leak\",\"validation\":\"go test ./internal/cache\",\"summary\":\"tenant id omitted from cache key\"}],\"attack_log\":[{\"target\":\"cache invalidation\",\"attack\":\"trace tenant key construction\",\"result\":\"finding\"}],\"budget\":{\"actual_findings\":1,\"actual_attack_angles\":1}}"
     }
   ]
@@ -172,7 +181,8 @@ will not reopen them; create a new task for follow-up work.
 For completed tasks, scafld derives a terminal completion authority from the
 session ledger:
 
-- latest passing external review before `complete`
+- latest passing external review before `complete`, with sealed review packet,
+  matching canonical hash, and reviewed workspace state
 - audited human-reviewed override before `complete`
 - integrity error when a completed ledger has no valid terminal authority
 

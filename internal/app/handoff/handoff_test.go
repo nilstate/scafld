@@ -8,6 +8,7 @@ import (
 	corereview "github.com/nilstate/scafld/v2/internal/core/review"
 	"github.com/nilstate/scafld/v2/internal/core/session"
 	"github.com/nilstate/scafld/v2/internal/core/spec"
+	"github.com/nilstate/scafld/v2/internal/testkit/sessiontest"
 )
 
 func TestGoldenHandoffRepairRecoveryChallengerExecutor(t *testing.T) {
@@ -305,17 +306,7 @@ func TestHandoffCompletedShowsCompletionAuthorityNotHistoricalFailedReview(t *te
 	ledger := session.New("task", "2026-05-05T00:00:00Z")
 	ledger = ledger.WithEntry(session.Entry{ID: "review-old", Type: "review", Status: corereview.VerdictFail, Provider: "codex", Output: corereview.EncodeDossier(reviewDossier())})
 	ledger = ledger.WithEntry(session.Entry{ID: "build-repair", Type: "build", Status: string(spec.StatusReview), Reason: "review repair evidence refreshed"})
-	ledger = ledger.WithEntry(session.Entry{ID: "review-pass", Type: "review", Status: corereview.VerdictPass, Provider: "codex", Output: corereview.EncodeDossier(corereview.Dossier{
-		Verdict:  corereview.VerdictPass,
-		Mode:     corereview.ModeVerify,
-		Provider: "codex",
-		Summary:  "review passed",
-		AttackLog: []corereview.AttackLogEntry{{
-			Target: "diff",
-			Attack: "scan",
-			Result: corereview.AttackResultClean,
-		}},
-	})})
+	ledger = ledger.WithEntry(sessiontest.PassingReviewEntry("review-pass", "codex"))
 	ledger = ledger.WithEntry(session.Entry{ID: "complete-1", Type: "complete", Status: "completed"})
 	out, err := Run(context.Background(), fakeSpecStore{model: spec.Model{
 		TaskID: "task",

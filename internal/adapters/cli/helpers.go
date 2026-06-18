@@ -11,6 +11,7 @@ import (
 	clisessionstore "github.com/nilstate/scafld/v2/internal/adapters/cli/sessionstore"
 	"github.com/nilstate/scafld/v2/internal/adapters/clock"
 	"github.com/nilstate/scafld/v2/internal/adapters/filesystem"
+	"github.com/nilstate/scafld/v2/internal/adapters/git"
 	"github.com/nilstate/scafld/v2/internal/adapters/jsonstore"
 	"github.com/nilstate/scafld/v2/internal/adapters/markdown"
 	"github.com/nilstate/scafld/v2/internal/app/cancel"
@@ -223,7 +224,7 @@ func statusCommand(ctx context.Context, args []string, stdout io.Writer, stderr 
 	var result any
 	switch command {
 	case "complete":
-		result, err = complete.Run(ctx, store, sessions, clock.System{}, opts.Positionals[0])
+		result, err = complete.Run(ctx, store, sessions, git.Adapter{Root: store.Root}, clock.System{}, opts.Positionals[0])
 	case "fail":
 		result, err = fail.Run(ctx, store, sessions, clock.System{}, opts.Positionals[0], reason)
 	case "cancel":

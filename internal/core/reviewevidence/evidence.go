@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"path"
 	"strings"
+
+	coreworkspace "github.com/nilstate/scafld/v2/internal/core/workspace"
 )
 
 const (
@@ -100,4 +102,47 @@ func VerifyHash(file EvidenceFile) error {
 func SHA256Hex(data []byte) string {
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])
+}
+
+// ComparisonSnapshot returns the Git-visible changes that review and complete
+// use for stale-review checks. scafld runtime state is excluded because session
+// and spec projection writes must not invalidate the review that produced them.
+func ComparisonSnapshot(snapshot []string) []string {
+	var kept []string
+	for _, raw := range snapshot {
+		if ComparisonPath(coreworkspace.ParseChange(raw).Path) {
+			kept = append(kept, raw)
+		}
+	}
+	return kept
+}
+
+// ComparisonPath reports whether path is part of the reviewed workspace state.
+func ComparisonPath(raw string) bool {
+	normalized := strings.Trim(strings.ReplaceAll(raw, "\\", "/"), "/")
+	for _, prefix := range []string{
+		".scafld/runs/",
+		".scafld/specs/",
+	} {
+		if strings.HasPrefix(normalized+"/", prefix) {
+			return false
+		}
+	}
+	return true
+}
+
+// SnapshotDigest returns the stable digest sealed into review session entries.
+func SnapshotDigest(snapshot []string) string {
+	if len(snapshot) == 0 {
+		return SHA256Hex([]byte("clean"))
+	}
+	return SHA256Hex([]byte(strings.Join(snapshot, "\n")))
+}
+
+// SnapshotDirty returns the string form stored in session JSON.
+func SnapshotDirty(snapshot []string) string {
+	if len(snapshot) == 0 {
+		return "false"
+	}
+	return "true"
 }

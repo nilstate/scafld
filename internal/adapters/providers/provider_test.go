@@ -934,7 +934,7 @@ func TestCodexProviderBuildsReadOnlyEphemeralArgsAndReadsOutputFile(t *testing.T
 	if dossier.Verdict != review.VerdictPass {
 		t.Fatalf("dossier = %+v", dossier)
 	}
-	if dossier.Provider != "codex" || dossier.OutputFormat != "codex.output_file" {
+	if dossier.Provider != "codex" || dossier.Model != "gpt-test" || dossier.OutputFormat != "codex.output_file" {
 		t.Fatalf("dossier = %+v", dossier)
 	}
 	wantArgs := []string{

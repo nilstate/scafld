@@ -7,6 +7,7 @@ import (
 	corereview "github.com/nilstate/scafld/v2/internal/core/review"
 	"github.com/nilstate/scafld/v2/internal/core/session"
 	"github.com/nilstate/scafld/v2/internal/core/spec"
+	"github.com/nilstate/scafld/v2/internal/testkit/sessiontest"
 )
 
 type fakeSpecStore struct{ model spec.Model }
@@ -38,20 +39,6 @@ func reviewDossier(id string, summary string) corereview.Dossier {
 		}},
 		AttackLog: []corereview.AttackLogEntry{{Target: "diff", Attack: "scan", Result: "finding"}},
 		Budget:    corereview.Budget{ActualFindings: 1, ActualAttackAngles: 1},
-	}
-}
-
-func passingReviewDossier(provider string) corereview.Dossier {
-	return corereview.Dossier{
-		Verdict:  corereview.VerdictPass,
-		Mode:     corereview.ModeVerify,
-		Provider: provider,
-		Summary:  "review passed",
-		AttackLog: []corereview.AttackLogEntry{{
-			Target: "diff",
-			Attack: "scan",
-			Result: corereview.AttackResultClean,
-		}},
 	}
 }
 
@@ -241,7 +228,7 @@ func TestStatusReviewWithValidLedgerReviewSuggestsComplete(t *testing.T) {
 	t.Parallel()
 
 	ledger := session.New("task", "now").
-		WithEntry(session.Entry{Type: "review", Status: corereview.VerdictPass, Provider: "codex", Output: corereview.EncodeDossier(passingReviewDossier("codex"))})
+		WithEntry(sessiontest.PassingReviewEntry("", "codex"))
 	out, err := Run(context.Background(), fakeSpecStore{model: spec.Model{
 		TaskID: "task",
 		Status: spec.StatusReview,
@@ -313,7 +300,7 @@ func TestStatusCompletedShowsTerminalCompletionAuthority(t *testing.T) {
 	ledger := session.New("task", "2026-05-05T00:00:00Z")
 	ledger = ledger.WithEntry(session.Entry{ID: "review-old", Type: "review", Status: corereview.VerdictFail, Provider: "codex", Output: corereview.EncodeDossier(reviewDossier("old", "old blocker"))})
 	ledger = ledger.WithEntry(session.Entry{ID: "build-repair", Type: "build", Status: string(spec.StatusReview), Reason: "review repair evidence refreshed"})
-	ledger = ledger.WithEntry(session.Entry{ID: "review-pass", Type: "review", Status: corereview.VerdictPass, Provider: "codex", Output: corereview.EncodeDossier(passingReviewDossier("codex"))})
+	ledger = ledger.WithEntry(sessiontest.PassingReviewEntry("review-pass", "codex"))
 	ledger = ledger.WithEntry(session.Entry{ID: "complete-1", Type: "complete", Status: "completed"})
 	out, err := Run(context.Background(), fakeSpecStore{model: spec.Model{
 		TaskID: "task",

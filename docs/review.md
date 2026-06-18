@@ -222,13 +222,20 @@ approved contract.
 
 scafld validates the dossier, checks whether Git-visible workspace state changed
 during review, records the review event in session, then projects the verdict
-back into the spec.
+back into the spec. Non-human review entries seal the accepted `review_packet`,
+its `canonical_response_sha256`, provider provenance (`provider_model` and
+`provider_session` when available), and the reviewed workspace fingerprint:
+`reviewed_head`, `reviewed_dirty`, and `reviewed_diff`.
 
 The authority order stays the same:
 
 - session stores evidence
 - spec shows the readable current projection
 - provider output is accepted only after validation
+
+`complete` validates the current session authority first. The spec projection is
+only a readable mirror: a Markdown edit that says the review passed is not enough
+unless the latest session review packet is present, hash-valid, and current.
 
 Invalid dossier output fails review. Task-relevant workspace changes during
 review become a blocking finding, even if the provider returned `pass`. If the
@@ -262,6 +269,8 @@ scafld complete <task-id>
 - the latest review verdict is `pass`
 - the latest review provider is `codex`, `claude`, `gemini`, `command`, or an
   audited `human` review override
+- non-human review evidence includes a valid sealed `review_packet`,
+  `canonical_response_sha256`, and reviewed workspace state
 
 If review fails, repair the work, rerun acceptance as needed, rerun review, then
 complete only after the challenger clears the finalize.

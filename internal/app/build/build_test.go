@@ -9,9 +9,9 @@ import (
 
 	"github.com/nilstate/scafld/v2/internal/core/acceptance"
 	"github.com/nilstate/scafld/v2/internal/core/execution"
-	corereview "github.com/nilstate/scafld/v2/internal/core/review"
 	"github.com/nilstate/scafld/v2/internal/core/session"
 	"github.com/nilstate/scafld/v2/internal/core/spec"
+	"github.com/nilstate/scafld/v2/internal/testkit/sessiontest"
 )
 
 type fakeSpecs struct {
@@ -115,17 +115,7 @@ func TestBuildRefusesCompletedTaskWithCompletionAuthority(t *testing.T) {
 	t.Parallel()
 
 	ledger := session.New("task", "now")
-	ledger = ledger.WithEntry(session.Entry{Type: "review", Status: corereview.VerdictPass, Provider: "codex", Output: corereview.EncodeDossier(corereview.Dossier{
-		Verdict:  corereview.VerdictPass,
-		Mode:     corereview.ModeVerify,
-		Provider: "codex",
-		Summary:  "review passed",
-		AttackLog: []corereview.AttackLogEntry{{
-			Target: "diff",
-			Attack: "scan",
-			Result: corereview.AttackResultClean,
-		}},
-	})})
+	ledger = ledger.WithEntry(sessiontest.PassingReviewEntry("", "codex"))
 	ledger = ledger.WithEntry(session.Entry{Type: "complete", Status: "completed"})
 	_, err := Run(context.Background(), &fakeSpecs{model: spec.Model{TaskID: "task", Status: spec.StatusCompleted}}, &fakeSessions{ledger: ledger}, nil, &fakeRunner{}, fakeBuildClock{}, Input{TaskID: "task"})
 	if !errors.Is(err, ErrSpecNotBuildable) {

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/nilstate/scafld/v2/internal/core/reviewevidence"
 	"github.com/nilstate/scafld/v2/internal/core/session"
 	"github.com/nilstate/scafld/v2/internal/core/spec"
 	coreworkspace "github.com/nilstate/scafld/v2/internal/core/workspace"
@@ -37,26 +38,11 @@ func taskBaseline(ctx context.Context, sessions SessionStore, taskID string, fal
 }
 
 func reviewComparisonSnapshot(snapshot []string) []string {
-	var kept []string
-	for _, raw := range snapshot {
-		if reviewComparisonPath(coreworkspace.ParseChange(raw).Path) {
-			kept = append(kept, raw)
-		}
-	}
-	return kept
+	return reviewevidence.ComparisonSnapshot(snapshot)
 }
 
 func reviewComparisonPath(path string) bool {
-	normalized := strings.Trim(strings.ReplaceAll(path, "\\", "/"), "/")
-	for _, prefix := range []string{
-		".scafld/runs/",
-		".scafld/specs/",
-	} {
-		if strings.HasPrefix(normalized+"/", prefix) {
-			return false
-		}
-	}
-	return true
+	return reviewevidence.ComparisonPath(path)
 }
 
 func reviewBlockingMutations(before []string, after []string, scope []string, specPath string) []coreworkspace.Mutation {
@@ -102,6 +88,31 @@ func reviewAttemptOutput(baseline []string, taskChanges []coreworkspace.Mutation
 		fmt.Fprintf(&b, "- %s\n", line)
 	}
 	return strings.TrimRight(b.String(), "\n")
+}
+
+type reviewSessionSeal struct {
+	reviewedHead  string
+	reviewedDirty string
+	reviewedDiff  string
+}
+
+func reviewSeal(ctx context.Context, workspace WorkspaceStatus, snapshot []string) (reviewSessionSeal, error) {
+	if workspace == nil {
+		return reviewSessionSeal{}, fmt.Errorf("workspace status is required")
+	}
+	head, hasHead, err := workspace.ResolveHead(ctx)
+	if err != nil {
+		return reviewSessionSeal{}, fmt.Errorf("resolve workspace head: %w", err)
+	}
+	head = strings.TrimSpace(head)
+	if !hasHead || head == "" {
+		head = "unborn"
+	}
+	return reviewSessionSeal{
+		reviewedHead:  head,
+		reviewedDirty: reviewevidence.SnapshotDirty(snapshot),
+		reviewedDiff:  reviewevidence.SnapshotDigest(snapshot),
+	}, nil
 }
 
 func deriveReviewScope(model spec.Model, explicit []string, snapshot []string) []string {

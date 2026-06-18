@@ -14,6 +14,10 @@ Interrogate the draft spec until it is executable without invention. Hardening i
 not a formatting pass, and a clean-looking round is not valid until every row has
 a grounded, filesystem-verifiable anchor.
 
+Optimize for finding as many real spec issues as the round budget allows. Spend
+the budget on grounded blockers and useful advisories; do not pad the round with
+speculative or weak observations just to increase the count.
+
 Cover these six dimensions before polishing wording:
 
 - `path`: every named file, directory, package, and generated artifact exists now or is explicitly declared as new.
@@ -21,7 +25,7 @@ Cover these six dimensions before polishing wording:
 - `scope`: every migration, cutover, compatibility claim, and "no migration needed" statement is backed by repo evidence.
 - `timing`: every acceptance criterion can be evaluated after the phase that claims it, not before implementation creates its target.
 - `rollback`: every risky phase has a realistic repair or rollback path.
-- `design`: challenge why the plan exists, what root problem it solves, whether it is a short-sighted bandaid, and whether it creates future bloat, compatibility debt, or product confusion.
+- `design`: challenge the plan's right to exist: why it exists, what root problem it solves, whether it is a short-sighted bandaid, and whether it creates future bloat, compatibility debt, or product confusion.
 
 Manual rounds already contain the six required observation rows. Fill the
 existing `Result` and `Anchor` fields; add `Note`, `Default`, or `Status` only
@@ -87,7 +91,8 @@ Provider hardening must call `submit_harden` exactly once with the final
 HardenDossier. Do not write a verdict; scafld derives it from dimension coverage
 and unresolved `blocks` observations. Do not emit final prose or raw JSON text.
 
-Do not pad the round. `max_issues_per_round` from `.scafld/config.yaml` remains
-a cap on useful findings, not a target. The operator can end the loop by saying
-`done` or `stop`. A satisfactory round is finalized by running
+Do not pad the round. `max_issues_per_round` from `.scafld/config.yaml` is a
+budget for real findings: use as much of it as grounded issues justify, and use
+none of it for filler. The operator can end the loop by saying `done` or `stop`.
+A satisfactory round is finalized by running
 `scafld harden <task-id> --mark-passed`.

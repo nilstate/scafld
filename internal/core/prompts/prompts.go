@@ -17,6 +17,10 @@ Interrogate the draft spec until it is executable without invention. Preserve
 full detail, but record it as one observation ledger rather than separate checks
 and issues. scafld derives the verdict; do not write one manually.
 
+Optimize for finding as many real spec issues as the round budget allows. Spend
+the budget on grounded blockers and useful advisories; do not pad the round with
+speculative or weak observations just to increase the count.
+
 Cover these six dimensions:
 
 - path
@@ -25,6 +29,9 @@ Cover these six dimensions:
 - timing
 - rollback
 - design
+
+The design row is the right-to-exist challenge: why this plan should exist,
+what root problem it solves, and whether it is the smallest coherent shape.
 
 Each observation needs:
 
@@ -59,6 +66,9 @@ Use blocks only when the draft is unsafe, incoherent, non-executable, or likely
 to create a bad architectural commitment. Advisory observations may remain open
 and do not block approval. Open blocking observations keep harden not-ready until
 they are fixed, accepted_risk, or superseded.
+
+Treat max_issues_per_round as a budget for real findings: use as much of it as
+grounded issues justify, and use none of it for filler.
 
 Record observations in this exact Markdown shape under the latest harden round:
 

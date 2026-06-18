@@ -1,6 +1,9 @@
 package spec
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
@@ -373,6 +376,66 @@ func (m Model) AllCriteria() []Criterion {
 		}
 	}
 	return criteria
+}
+
+// ContractDigest returns a stable digest of the task contract under review.
+// Volatile projection fields such as lifecycle status, current state, updated
+// timestamps, and review output are intentionally excluded.
+func ContractDigest(model Model) string {
+	data, err := json.Marshal(struct {
+		Version      string            `json:"spec_version"`
+		TaskID       string            `json:"task_id"`
+		Title        string            `json:"title"`
+		Summary      string            `json:"summary"`
+		HardenStatus HardenStatus      `json:"harden_status"`
+		Size         Size              `json:"size"`
+		RiskLevel    RiskLevel         `json:"risk_level"`
+		Context      Context           `json:"context"`
+		Objectives   []string          `json:"objectives"`
+		Scope        []string          `json:"scope"`
+		Dependencies []string          `json:"dependencies"`
+		Assumptions  []string          `json:"assumptions"`
+		Touchpoints  []string          `json:"touchpoints"`
+		Risks        []Risk            `json:"risks"`
+		Acceptance   Acceptance        `json:"acceptance"`
+		Phases       []Phase           `json:"phases"`
+		Rollback     []string          `json:"rollback"`
+		SelfEval     []string          `json:"self_eval"`
+		Deviations   []string          `json:"deviations"`
+		Metadata     map[string]string `json:"metadata"`
+		Origin       Origin            `json:"origin"`
+		HardenRounds []HardenRound     `json:"harden_rounds"`
+		PlanningLog  []PlanningEvent   `json:"planning_log"`
+	}{
+		Version:      model.Version,
+		TaskID:       model.TaskID,
+		Title:        model.Title,
+		Summary:      model.Summary,
+		HardenStatus: model.HardenStatus,
+		Size:         model.Size,
+		RiskLevel:    model.RiskLevel,
+		Context:      model.Context,
+		Objectives:   model.Objectives,
+		Scope:        model.Scope,
+		Dependencies: model.Dependencies,
+		Assumptions:  model.Assumptions,
+		Touchpoints:  model.Touchpoints,
+		Risks:        model.Risks,
+		Acceptance:   model.Acceptance,
+		Phases:       model.Phases,
+		Rollback:     model.Rollback,
+		SelfEval:     model.SelfEval,
+		Deviations:   model.Deviations,
+		Metadata:     model.Metadata,
+		Origin:       model.Origin,
+		HardenRounds: model.HardenRounds,
+		PlanningLog:  model.PlanningLog,
+	})
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
 }
 
 // WithStatus returns a copy of the model with status and next state updated.

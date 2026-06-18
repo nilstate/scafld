@@ -229,11 +229,47 @@ func validateReviewEntry(ledger session.Session, idx int, entry session.Entry, c
 		auth.Actual = fmt.Sprintf("provider %q", entry.Provider)
 		return auth
 	}
-	if entry.Output != "" {
-		dossier, ok := corereview.DecodeDossier(entry.Output)
+	packet := strings.TrimSpace(entry.ReviewPacket)
+	if entry.Provider != "human" {
+		if packet == "" {
+			auth.Reason = "latest review packet is missing"
+			auth.Actual = "review entry has no review_packet"
+			return auth
+		}
+		if strings.TrimSpace(entry.Output) != "" && strings.TrimSpace(entry.Output) != packet {
+			auth.Reason = "latest review packet does not match session output"
+			auth.Actual = "review_packet differs from output"
+			return auth
+		}
+		if entry.CanonicalResponseSHA256 == "" {
+			auth.Reason = "latest review packet hash is missing"
+			auth.Actual = "review entry has no canonical_response_sha256"
+			return auth
+		}
+		if got := corereview.ResponseSHA256(packet); got != entry.CanonicalResponseSHA256 {
+			auth.Reason = "latest review packet hash mismatch"
+			auth.Actual = fmt.Sprintf("canonical_response_sha256 %s, computed %s", entry.CanonicalResponseSHA256, got)
+			return auth
+		}
+		if entry.ReviewedHead == "" || entry.ReviewedDirty == "" || entry.ReviewedDiff == "" {
+			auth.Reason = "latest review workspace seal is incomplete"
+			auth.Actual = "review entry must include reviewed_head, reviewed_dirty, and reviewed_diff"
+			return auth
+		}
+		if !durableReviewedHead(entry.ReviewedHead) {
+			auth.Reason = "latest review workspace head is not durable"
+			auth.Actual = "reviewed_head " + entry.ReviewedHead
+			return auth
+		}
+	}
+	if packet == "" {
+		packet = strings.TrimSpace(entry.Output)
+	}
+	if packet != "" {
+		dossier, ok := corereview.DecodeDossier(packet)
 		if !ok {
 			auth.Reason = "latest review dossier is invalid"
-			auth.Actual = "review entry output could not be decoded as ReviewDossier"
+			auth.Actual = "review packet could not be decoded as ReviewDossier"
 			return auth
 		}
 		auth.Dossier = dossier
@@ -256,6 +292,14 @@ func validateReviewEntry(ledger session.Session, idx int, entry session.Entry, c
 	auth.Reason = "completion authorized by " + auth.Kind()
 	auth.Actual = "review verdict pass"
 	return auth
+}
+
+func durableReviewedHead(head string) bool {
+	head = strings.TrimSpace(head)
+	if head == "" || head == "unavailable" || strings.HasPrefix(head, "error:") {
+		return false
+	}
+	return true
 }
 
 func priorBlockingReviewWithoutRepairEvidence(ledger session.Session, reviewIdx int) string {

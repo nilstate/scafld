@@ -6,21 +6,8 @@ import (
 	"github.com/nilstate/scafld/v2/internal/core/receipt"
 	corereview "github.com/nilstate/scafld/v2/internal/core/review"
 	"github.com/nilstate/scafld/v2/internal/core/session"
+	"github.com/nilstate/scafld/v2/internal/testkit/sessiontest"
 )
-
-func cleanDossier(provider string) corereview.Dossier {
-	return corereview.Dossier{
-		Verdict:  corereview.VerdictPass,
-		Mode:     corereview.ModeVerify,
-		Provider: provider,
-		Summary:  "review passed",
-		AttackLog: []corereview.AttackLogEntry{{
-			Target: "diff",
-			Attack: "scan",
-			Result: corereview.AttackResultClean,
-		}},
-	}
-}
 
 func validReceiptBody(taskID string, priorHead string) receipt.Body {
 	body := receipt.Body{
@@ -60,7 +47,7 @@ func TestTerminalAuthorityUsesLatestPassingReviewBeforeCompletion(t *testing.T) 
 	ledger := session.New("task", "now")
 	ledger = ledger.WithEntry(session.Entry{ID: "review-1", Type: "review", Status: corereview.VerdictFail, Provider: "codex"})
 	ledger = ledger.WithEntry(session.Entry{ID: "build-1", Type: "build", Status: "review", Reason: "review repair evidence refreshed"})
-	ledger = ledger.WithEntry(session.Entry{ID: "review-2", Type: "review", Status: corereview.VerdictPass, Provider: "codex", Output: corereview.EncodeDossier(cleanDossier("codex"))})
+	ledger = ledger.WithEntry(sessiontest.PassingReviewEntry("review-2", "codex"))
 	ledger = ledger.WithEntry(session.Entry{ID: "complete-1", Type: "complete", Status: "completed"})
 
 	authority := TerminalAuthority(ledger)
@@ -107,7 +94,7 @@ func TestCurrentReviewGateRequiresRepairEvidenceAfterBlockingReview(t *testing.T
 
 	ledger := session.New("task", "now")
 	ledger = ledger.WithEntry(session.Entry{ID: "review-1", Type: "review", Status: corereview.VerdictFail, Provider: "codex"})
-	ledger = ledger.WithEntry(session.Entry{ID: "review-2", Type: "review", Status: corereview.VerdictPass, Provider: "codex", Output: corereview.EncodeDossier(cleanDossier("codex"))})
+	ledger = ledger.WithEntry(sessiontest.PassingReviewEntry("review-2", "codex"))
 
 	authority := CurrentReviewGate(ledger)
 	if authority.Valid || authority.Reason != "passing review is missing repair evidence after a blocking review" {
@@ -125,7 +112,7 @@ func TestCurrentReviewGateAcceptsReviewRepairAfterChangedAttemptEvidence(t *test
 	ledger = ledger.WithEntry(session.Entry{ID: "attempt-1", Type: "review_attempt", Status: "running", Output: "task_changes_since_baseline:\n- changed file.go (old)"})
 	ledger = ledger.WithEntry(session.Entry{ID: "review-1", Type: "review", Status: corereview.VerdictFail, Provider: "codex"})
 	ledger = ledger.WithEntry(session.Entry{ID: "attempt-2", Type: "review_attempt", Status: "running", Output: "task_changes_since_baseline:\n- changed file.go (new)"})
-	ledger = ledger.WithEntry(session.Entry{ID: "review-2", Type: "review", Status: corereview.VerdictPass, Provider: "codex", Output: corereview.EncodeDossier(cleanDossier("codex"))})
+	ledger = ledger.WithEntry(sessiontest.PassingReviewEntry("review-2", "codex"))
 
 	authority := CurrentReviewGate(ledger)
 	if !authority.Valid || authority.ReviewEntry.ID != "review-2" {
@@ -141,7 +128,7 @@ func TestCurrentReviewGateRejectsReviewRerollWithSameAttemptEvidence(t *testing.
 	ledger = ledger.WithEntry(session.Entry{ID: "attempt-1", Type: "review_attempt", Status: "running", Output: output})
 	ledger = ledger.WithEntry(session.Entry{ID: "review-1", Type: "review", Status: corereview.VerdictFail, Provider: "codex"})
 	ledger = ledger.WithEntry(session.Entry{ID: "attempt-2", Type: "review_attempt", Status: "running", Output: output})
-	ledger = ledger.WithEntry(session.Entry{ID: "review-2", Type: "review", Status: corereview.VerdictPass, Provider: "codex", Output: corereview.EncodeDossier(cleanDossier("codex"))})
+	ledger = ledger.WithEntry(sessiontest.PassingReviewEntry("review-2", "codex"))
 
 	authority := CurrentReviewGate(ledger)
 	if authority.Valid || authority.Reason != "passing review is missing repair evidence after a blocking review" {
@@ -155,11 +142,27 @@ func TestCurrentReviewGateAcceptsReviewRepairAfterBuildEvidence(t *testing.T) {
 	ledger := session.New("task", "now")
 	ledger = ledger.WithEntry(session.Entry{ID: "review-1", Type: "review", Status: corereview.VerdictFail, Provider: "codex"})
 	ledger = ledger.WithEntry(session.Entry{ID: "build-1", Type: "build", Status: "review", Reason: "review repair evidence refreshed"})
-	ledger = ledger.WithEntry(session.Entry{ID: "review-2", Type: "review", Status: corereview.VerdictPass, Provider: "codex", Output: corereview.EncodeDossier(cleanDossier("codex"))})
+	ledger = ledger.WithEntry(sessiontest.PassingReviewEntry("review-2", "codex"))
 
 	authority := CurrentReviewGate(ledger)
 	if !authority.Valid || authority.ReviewEntry.ID != "review-2" {
 		t.Fatalf("authority = %+v", authority)
+	}
+}
+
+func TestCurrentReviewGateRejectsSentinelReviewedHead(t *testing.T) {
+	t.Parallel()
+
+	for _, head := range []string{"unavailable", "error: git failed"} {
+		ledger := session.New("task", "now")
+		entry := sessiontest.PassingReviewEntry("review-1", "codex")
+		entry.ReviewedHead = head
+		ledger = ledger.WithEntry(entry)
+
+		authority := CurrentReviewGate(ledger)
+		if authority.Valid || authority.Reason != "latest review workspace head is not durable" {
+			t.Fatalf("head %q authority = %+v", head, authority)
+		}
 	}
 }
 
@@ -197,7 +200,7 @@ func TestCurrentReviewGateInvalidatesStaleReviewAfterLaterBuildEvidence(t *testi
 	t.Parallel()
 
 	ledger := session.New("task", "now")
-	ledger = ledger.WithEntry(session.Entry{Type: "review", Status: corereview.VerdictPass, Provider: "codex", Output: corereview.EncodeDossier(cleanDossier("codex"))})
+	ledger = ledger.WithEntry(sessiontest.PassingReviewEntry("", "codex"))
 	ledger = ledger.WithEntry(session.Entry{Type: "build", Status: "active", Reason: "repair started"})
 
 	authority := CurrentReviewGate(ledger)
