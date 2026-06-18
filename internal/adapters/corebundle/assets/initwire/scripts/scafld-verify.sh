@@ -4,7 +4,7 @@ set -eu
 receipt="${SCAFLD_RECEIPT_PATH:-${1:-}}"
 target="${SCAFLD_VERIFY_TARGET:-${2:-}}"
 trusted_keys="${SCAFLD_TRUSTED_KEYS:-}"
-version="${SCAFLD_VERSION:-v2.4.7}"
+version="${SCAFLD_VERSION:-v2.4.8}"
 
 if [ -z "$target" ] || [ "$target" = "0000000000000000000000000000000000000000" ]; then
   echo "error: SCAFLD_VERIFY_TARGET must be a base commit sha or ref" >&2

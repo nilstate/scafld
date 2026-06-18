@@ -30,7 +30,7 @@ jobs:
 
       - name: Run scafld verify
         env:
-          SCAFLD_VERSION: v2.4.7
+          SCAFLD_VERSION: v2.4.8
           SCAFLD_RECEIPT_PATH: ${{ vars.SCAFLD_RECEIPT_PATH || '' }}
           SCAFLD_VERIFY_TARGET: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: |

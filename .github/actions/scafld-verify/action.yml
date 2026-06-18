@@ -12,7 +12,7 @@ inputs:
   scafld-version:
     description: scafld version to install if scafld is not already on PATH.
     required: false
-    default: v2.4.7
+    default: v2.4.8
 
 runs:
   using: composite
