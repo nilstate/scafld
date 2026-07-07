@@ -123,8 +123,13 @@ Risk level determines the default validation profile:
 | Risk | Default profile | What it runs |
 |------|----------------|--------------|
 | `low` | `light` | Compile check + acceptance criteria |
-| `medium` | `standard` | + full test suite, linter, typecheck, security scan |
-| `high` | `strict` | + per-phase boundary checks |
+| `medium` | `standard` | + targeted tests for changed surfaces, linter/typecheck/security checks when relevant |
+| `high` | `strict` | + broader integration, boundary, or full-suite evidence when the changed surface warrants it |
+
+Build acceptance should prove the task without turning every phase into a
+repository-wide regression run. Prefer focused commands tied to the changed
+files and workflows. Keep full-suite commands for release gates, pre-commit
+checks, shared framework changes, or explicit operator requests.
 
 ## Common mistakes
 
