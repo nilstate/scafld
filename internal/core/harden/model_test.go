@@ -3,6 +3,7 @@ package harden
 import (
 	"encoding/json"
 	"errors"
+	"reflect"
 	"testing"
 )
 
@@ -35,7 +36,7 @@ func TestParseTextDerivesNeedsRevisionFromOpenBlock(t *testing.T) {
 		t.Fatal(err)
 	}
 	observations := payload["observations"].([]any)
-	observations[5] = map[string]any{
+	observations[0] = map[string]any{
 		"dimension": "design",
 		"result":    "blocks",
 		"anchor":    "spec_gap:Summary",
@@ -61,7 +62,7 @@ func TestParseTextAllowsAdvisoryObservation(t *testing.T) {
 		t.Fatal(err)
 	}
 	observations := payload["observations"].([]any)
-	observations[4] = map[string]any{
+	observations[5] = map[string]any{
 		"dimension": "rollback",
 		"result":    "advisory",
 		"anchor":    "spec_gap:Rollback",
@@ -89,8 +90,20 @@ func TestHardenDossierSchemaIsStrictStructuredOutputCompatible(t *testing.T) {
 	assertStrictStructuredOutputSchema(t, "$", root)
 }
 
+func TestRequiredDimensionsPrioritizeArchitecture(t *testing.T) {
+	t.Parallel()
+
+	want := []string{"design", "scope", "path", "command", "timing", "rollback"}
+	if !reflect.DeepEqual(RequiredDimensions, want) {
+		t.Fatalf("RequiredDimensions = %#v, want %#v", RequiredDimensions, want)
+	}
+	if got := RequiredDimensionList(); got != "design, scope, path, command, timing, and rollback" {
+		t.Fatalf("RequiredDimensionList() = %q", got)
+	}
+}
+
 func validDossierJSON() string {
-	return `{"summary":"clean","observations":[{"dimension":"path","result":"clean","anchor":"spec_gap:Scope"},{"dimension":"command","result":"clean","anchor":"spec_gap:Acceptance"},{"dimension":"scope","result":"clean","anchor":"spec_gap:Scope"},{"dimension":"timing","result":"clean","anchor":"spec_gap:Phases"},{"dimension":"rollback","result":"n/a","anchor":"spec_gap:Rollback"},{"dimension":"design","result":"clean","anchor":"spec_gap:Summary"}]}`
+	return `{"summary":"clean","observations":[{"dimension":"design","result":"clean","anchor":"spec_gap:Summary"},{"dimension":"scope","result":"clean","anchor":"spec_gap:Scope"},{"dimension":"path","result":"clean","anchor":"spec_gap:Scope"},{"dimension":"command","result":"clean","anchor":"spec_gap:Acceptance"},{"dimension":"timing","result":"clean","anchor":"spec_gap:Phases"},{"dimension":"rollback","result":"n/a","anchor":"spec_gap:Rollback"}]}`
 }
 
 func assertStrictStructuredOutputSchema(t *testing.T, path string, node map[string]any) {

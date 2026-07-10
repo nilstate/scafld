@@ -59,9 +59,17 @@ Verdict: pass
 Provider: codex
 Model: gpt-5.5
 Output format: codex.output_file
-Summary: The draft contract survived path, command, timing, rollback, and design challenge observations.
+Summary: The draft contract survived design, scope, path, command, timing, and rollback challenge observations.
 
 Observations:
+- design
+  - Result: clean
+  - Anchor: spec_gap:Summary
+  - Note: The plan names the underlying review failure, keeps the shared context owner central, and avoids duplicating behavior across adapters.
+- scope
+  - Result: clean
+  - Anchor: spec_gap:Risks
+  - Note: No compatibility fallback, adapter-specific fork, or data migration is introduced.
 - path
   - Result: clean
   - Anchor: code:internal/app/review/context.go:30
@@ -70,10 +78,6 @@ Observations:
   - Result: clean
   - Anchor: code:Makefile:1
   - Note: `make check` is the repository validation command.
-- scope
-  - Result: clean
-  - Anchor: spec_gap:Risks
-  - Note: No compatibility fallback or data migration is introduced.
 - timing
   - Result: clean
   - Anchor: spec_gap:Phases
@@ -83,10 +87,6 @@ Observations:
   - Anchor: spec_gap:Rollback
   - Note: Rollback is credible but could name a recovery command.
   - Default: Use the package's existing repair command if already known.
-- design
-  - Result: clean
-  - Anchor: spec_gap:Summary
-  - Note: The plan names the underlying review failure, removes the escape hatch at the root, and avoids a compatibility fallback.
 ```
 
 Provider-backed hardening records one strict `HardenDossier` with summary and
@@ -108,12 +108,20 @@ output should use the same observation shape.
     "gate": "review",
     "trusted_state": "session ledger replay projected into the Markdown spec",
     "allowed_follow_up": "scafld review add-error-codes",
-    "session_ok": true
+    "session_ok": true,
+    "task_material": {
+      "scope": ["src/errors/document-error.ts"],
+      "baseline_paths": ["README.md"],
+      "task_changes": ["changed src/errors/document-error.ts (M old -> M new)"],
+      "ambient_drift": ["changed docs/index.md (M old -> M new)"],
+      "material_status": "unreviewed"
+    }
   }
 }
 ```
 
-Agents should use this instead of scraping Markdown.
+Agents should use this instead of scraping Markdown or inventing task-owned
+change manifests.
 
 ## Failed Gate
 

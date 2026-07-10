@@ -47,12 +47,12 @@ scafld harden add-auth
 The command enters HARDEN MODE and records a hardening round in the spec. Use
 the printed prompt to attack the plan before execution:
 
-- whether paths and commands are real
+- why the plan exists and which shared core/app contract owns the behavior
+- whether API/MCP/CLI/provider/docs surfaces stay light adapters
 - whether scope, migration, and cutover claims are honest
+- whether paths and commands are real
 - whether acceptance criteria run at the right phase
 - whether rollback or repair is realistic
-- why the plan exists, whether it solves the underlying problem, and whether it
-  is a short-sighted bandaid, future bloat, or the wrong abstraction
 
 When the answers are worked into the spec:
 

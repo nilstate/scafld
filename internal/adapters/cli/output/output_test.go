@@ -1,6 +1,7 @@
 package output
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -11,6 +12,21 @@ import (
 	corereview "github.com/nilstate/scafld/v2/internal/core/review"
 	"github.com/nilstate/scafld/v2/internal/core/spec"
 )
+
+func TestStatusCommandExitMapsCompleteGateFailureToValidation(t *testing.T) {
+	t.Parallel()
+
+	gateErr := gate.New(errors.New("blocked"), gate.Failure{Gate: "complete"})
+	if got := StatusCommandExit("complete", gateErr, 1, 3); got != 3 {
+		t.Fatalf("complete gate exit = %d, want validation", got)
+	}
+	if got := StatusCommandExit("fail", gateErr, 1, 3); got != 1 {
+		t.Fatalf("fail gate exit = %d, want generic", got)
+	}
+	if got := StatusCommandExit("complete", errors.New("boom"), 1, 3); got != 1 {
+		t.Fatalf("complete runtime exit = %d, want generic", got)
+	}
+}
 
 func TestReportPrintsReviewDossierMetrics(t *testing.T) {
 	t.Parallel()
@@ -113,6 +129,27 @@ func TestStatusPrintsRepairContractBeforeStaleReviewVerdict(t *testing.T) {
 		},
 	})
 	for _, want := range []string{"gate: review", "reason: review provider failed", "/tmp/scafld-review.txt", "expected: valid ReviewDossier submitted by an external reviewer", "actual: provider produced no submission", "blockers:", "review: pass"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("status output missing %q:\n%s", want, text)
+		}
+	}
+}
+
+func TestStatusPrintsTaskMaterial(t *testing.T) {
+	t.Parallel()
+
+	text := Status(appstatus.Output{
+		TaskID: "task",
+		Status: spec.StatusReview,
+		Next:   "scafld review task",
+		TaskMaterial: &appstatus.TaskMaterial{
+			MaterialStatus: "unreviewed",
+			Scope:          []string{"api/handler.go"},
+			TaskChanges:    []string{"changed api/handler.go (old -> new)"},
+			AmbientDrift:   []string{"changed docs/index.md (old -> new)"},
+		},
+	})
+	for _, want := range []string{"task material: unreviewed", "scope: api/handler.go", "task changes:", "ambient drift:"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("status output missing %q:\n%s", want, text)
 		}

@@ -75,6 +75,9 @@ func (s SessionStore) List(ctx context.Context) ([]session.Session, error) {
 	for _, taskID := range ids {
 		ledger, err := s.loadMetadata(ctx, taskID)
 		if err != nil {
+			if errors.Is(err, ErrSessionNotFound) {
+				continue
+			}
 			return nil, err
 		}
 		ledgers = append(ledgers, ledger)
@@ -101,8 +104,20 @@ func (s SessionStore) Save(ctx context.Context, ledger session.Session) error {
 
 // Append appends one evidence entry and atomically writes the replayed ledger.
 func (s SessionStore) Append(ctx context.Context, taskID string, entry session.Entry, now string) (session.Session, error) {
+	return s.AppendTransaction(ctx, taskID, now, func(session.Session) ([]session.Entry, error) {
+		return []session.Entry{entry}, nil
+	})
+}
+
+// AppendTransaction derives and appends zero or more entries while holding the
+// session file lock. Use it when the decision to append depends on the current
+// ledger head and must not race another scafld process.
+func (s SessionStore) AppendTransaction(ctx context.Context, taskID string, now string, derive func(session.Session) ([]session.Entry, error)) (session.Session, error) {
 	if err := ctx.Err(); err != nil {
 		return session.Session{}, err
+	}
+	if derive == nil {
+		return session.Session{}, errors.New("append transaction requires derive function")
 	}
 	path := s.path(taskID)
 	mutex := pathLock(path)
@@ -122,20 +137,26 @@ func (s SessionStore) Append(ctx context.Context, taskID string, entry session.E
 	} else {
 		ledger = s.prepareForAppend(ledger)
 	}
-	if entry.RecordedAt == "" {
-		entry.RecordedAt = now
-	}
-	if entry.ID == "" {
-		entry.ID = fmt.Sprintf("entry-%d", len(ledger.Entries)+1)
+	entries, err := derive(ledger)
+	if err != nil {
+		return session.Session{}, err
 	}
 	priorValid := ledger.LedgerValid
-	ledger = session.AppendEntryWithOptions(ledger, entry, session.ReplayOptions{ReceiptTrustChecker: s.TrustChecker})
-	// Fail closed without persisting when this entry breaks a previously valid
-	// receipt chain (e.g. a stale or concurrently minted receipt whose ledger_head
-	// does not chain from the current head). Leaving the entry out keeps the durable
-	// ledger a valid chain and stops a mismatched receipt being reported as anchored.
-	if priorValid && !ledger.LedgerValid {
-		return session.Session{}, fmt.Errorf("append rejected: entry breaks ledger chain: %s", ledger.LedgerError)
+	for _, entry := range entries {
+		if entry.RecordedAt == "" {
+			entry.RecordedAt = now
+		}
+		if entry.ID == "" {
+			entry.ID = fmt.Sprintf("entry-%d", len(ledger.Entries)+1)
+		}
+		ledger = session.AppendEntryWithOptions(ledger, entry, session.ReplayOptions{ReceiptTrustChecker: s.TrustChecker})
+		// Fail closed without persisting when this entry breaks a previously valid
+		// receipt chain (e.g. a stale or concurrently minted receipt whose ledger_head
+		// does not chain from the current head). Leaving the entry out keeps the durable
+		// ledger a valid chain and stops a mismatched receipt being reported as anchored.
+		if priorValid && !ledger.LedgerValid {
+			return session.Session{}, fmt.Errorf("append rejected: entry breaks ledger chain: %s", ledger.LedgerError)
+		}
 	}
 	if now != "" {
 		ledger.UpdatedAt = now

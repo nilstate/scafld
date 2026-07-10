@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -526,6 +527,14 @@ func TestRunHardenLifecycle(t *testing.T) {
 		t.Fatalf("spec was not opened for hardening:\n%s", text)
 	}
 	observations := `Observations:
+- design
+  - Result: clean
+  - Anchor: spec_gap:Summary
+  - Note: Fixture exercises the harden lifecycle without adding adapter behavior.
+- scope
+  - Result: n/a
+  - Anchor: spec_gap:Scope
+  - Note: Fixture task has no migration or cutover claim.
 - path
   - Result: clean
   - Anchor: spec_gap:Scope
@@ -534,10 +543,6 @@ func TestRunHardenLifecycle(t *testing.T) {
   - Result: clean
   - Anchor: spec_gap:Acceptance
   - Note: go version is available from the test shell.
-- scope
-  - Result: n/a
-  - Anchor: spec_gap:Scope
-  - Note: Fixture task has no migration or cutover claim.
 - timing
   - Result: clean
   - Anchor: spec_gap:Phases
@@ -546,10 +551,6 @@ func TestRunHardenLifecycle(t *testing.T) {
   - Result: n/a
   - Anchor: spec_gap:Rollback
   - Note: Fixture task makes no runtime changes.
-- design
-  - Result: clean
-  - Anchor: spec_gap:Summary
-  - Note: Fixture exercises the harden lifecycle without adding compatibility behavior.
 `
 	observationStart := strings.Index(text, "Observations:\n")
 	if observationStart < 0 {
@@ -641,7 +642,7 @@ func TestRunLifecycleMovesSpecsByState(t *testing.T) {
 	}
 	runCLI(t, []string{"build", "--root", root, "lifecycle-task"})
 
-	command := `printf '{"verdict":"pass","mode":"discover","summary":"clean","findings":[],"attack_log":[{"target":"diff","attack":"scan","result":"clean"}],"budget":{"actual_attack_angles":1}}'`
+	command := commandProviderPrintf(passingReviewDossierJSON(6))
 	runCLI(t, []string{"review", "--root", root, "lifecycle-task", "--provider", "command", "--provider-command", command})
 	runCLI(t, []string{"complete", "--root", root, "lifecycle-task"})
 	if _, err := os.Stat(activePath); !os.IsNotExist(err) {
@@ -742,7 +743,7 @@ func TestRunReviewSurfacesFindingsInReviewStatusAndHandoff(t *testing.T) {
 	runCLI(t, []string{"approve", "--root", root, "review-task"})
 	runCLI(t, []string{"build", "--root", root, "review-task"})
 	runCLI(t, []string{"build", "--root", root, "review-task"})
-	command := `printf '{"verdict":"fail","mode":"discover","summary":"bug found","findings":[{"id":"f1","severity":"high","blocks_completion":true,"location":{"path":"file.go"},"evidence":"bug","impact":"breaks behavior","validation":"rerun tests","summary":"bug"}],"attack_log":[{"target":"diff","attack":"scan","result":"finding"}],"budget":{"actual_findings":1,"actual_attack_angles":1}}'`
+	command := commandProviderPrintf(failingReviewDossierJSON(6))
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	code := Run(context.Background(), []string{"review", "--root", root, "review-task", "--provider", "command", "--provider-command", command}, &stdout, &stderr)
@@ -817,7 +818,7 @@ func TestReviewHelpIncludesContextFlags(t *testing.T) {
 	if code != ExitSuccess {
 		t.Fatalf("review help exit = %d stderr=%q", code, stderr.String())
 	}
-	for _, want := range []string{"--print-context", "--review-scope", "--provider", "--model", "--human-reviewed"} {
+	for _, want := range []string{"--print-context", "--review-scope", "--provider", "--model", "--force", "--human-reviewed", "ReviewDossier JSON"} {
 		if !strings.Contains(stdout.String(), want) {
 			t.Fatalf("review help missing %q:\n%s", want, stdout.String())
 		}
@@ -835,6 +836,11 @@ func TestExecCommandIsNotPublicSurface(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), `unknown command "exec"`) {
 		t.Fatalf("exec stderr = %q", stderr.String())
+	}
+	for _, want := range []string{"scafld build <task_id>", "scafld review <task_id> --print-context"} {
+		if !strings.Contains(stderr.String(), want) {
+			t.Fatalf("exec stderr missing %q: %q", want, stderr.String())
+		}
 	}
 }
 
@@ -864,6 +870,26 @@ func TestExitCodeTable(t *testing.T) {
 			t.Fatalf("%s exit code = %d, want %d", name, got[name], wantCode)
 		}
 	}
+}
+
+func commandProviderPrintf(payload string) string {
+	return "printf '" + payload + "'"
+}
+
+func passingReviewDossierJSON(attackCount int) string {
+	return fmt.Sprintf(`{"verdict":"pass","mode":"discover","summary":"clean","findings":[],"attack_log":[%s],"budget":{"actual_attack_angles":%d}}`, reviewAttackLogJSON(attackCount, "clean"), attackCount)
+}
+
+func failingReviewDossierJSON(attackCount int) string {
+	return fmt.Sprintf(`{"verdict":"fail","mode":"discover","summary":"bug found","findings":[{"id":"f1","severity":"high","blocks_completion":true,"location":{"path":"file.go"},"evidence":"bug","impact":"breaks behavior","validation":"rerun tests","summary":"bug"}],"attack_log":[%s],"budget":{"actual_findings":1,"actual_attack_angles":%d}}`, reviewAttackLogJSON(attackCount, "finding"), attackCount)
+}
+
+func reviewAttackLogJSON(attackCount int, result string) string {
+	entries := make([]string, 0, attackCount)
+	for i := 0; i < attackCount; i++ {
+		entries = append(entries, fmt.Sprintf(`{"target":"diff","attack":"scan-%d","result":"%s"}`, i+1, result))
+	}
+	return strings.Join(entries, ",")
 }
 
 func runCLI(t *testing.T, args []string) string {

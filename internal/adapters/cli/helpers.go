@@ -47,7 +47,7 @@ var valueFlags = map[string]bool{
 	"review-depth":      true,
 }
 
-var boolFlags = map[string]bool{"human-reviewed": true, "mark-passed": true, "no-agent-docs": true, "print-context": true, "ci": true}
+var boolFlags = map[string]bool{"force": true, "human-reviewed": true, "mark-passed": true, "no-agent-docs": true, "print-context": true, "ci": true}
 
 func parseOptions(args []string) (options, error) {
 	opts := options{Values: map[string]string{}, Flags: map[string]bool{}}
@@ -231,7 +231,7 @@ func statusCommand(ctx context.Context, args []string, stdout io.Writer, stderr 
 		result, err = cancel.Run(ctx, store, sessions, clock.System{}, opts.Positionals[0], reason)
 	}
 	if err != nil {
-		return failOut(stderr, err, ExitGeneric, opts.JSON)
+		return failOut(stderr, err, output.StatusCommandExit(command, err, ExitGeneric, ExitValidation), opts.JSON)
 	}
 	return okOut(stdout, command, result, fmt.Sprintf("%s: %s\n", command, opts.Positionals[0]), opts.JSON)
 }
@@ -240,11 +240,4 @@ func statusHandler(command string) commandHandler {
 	return func(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer) int {
 		return statusCommand(ctx, args, stdout, stderr, command)
 	}
-}
-
-func coalesce(err error, fallback error) error {
-	if err != nil {
-		return err
-	}
-	return fallback
 }

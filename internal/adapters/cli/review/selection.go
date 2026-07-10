@@ -35,6 +35,8 @@ type Options struct {
 // Selection is the provider and review agenda chosen for a review run.
 type Selection struct {
 	Provider        appreview.Provider
+	ProviderName    string
+	ProviderModel   string
 	Passes          []appreview.Pass
 	Invariants      map[string]string
 	ContextSections []reviewcontext.Section
@@ -86,7 +88,25 @@ func Select(ctx context.Context, opts Options) (Selection, error) {
 		return Selection{}, output.ReviewProviderGateError(err)
 	}
 	selection.Provider = provider
+	selection.ProviderName, selection.ProviderModel = providerFacts(provider)
 	return selection, nil
+}
+
+func providerFacts(provider appreview.Provider) (string, string) {
+	switch p := provider.(type) {
+	case providers.CommandProvider:
+		return "command", ""
+	case providers.LocalProvider:
+		return "local", ""
+	case providers.CodexProvider:
+		return "codex", p.Model
+	case providers.ClaudeProvider:
+		return "claude", p.Model
+	case providers.GeminiProvider:
+		return "gemini", p.Model
+	default:
+		return "", ""
+	}
 }
 
 func progressLabel(opts Options, external configadapter.ExternalReviewConfig) string {

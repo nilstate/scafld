@@ -61,7 +61,10 @@ Criterion and phase state is replayed into `criterion_states` and
 finding payload in `output`, the accepted `review_packet`, the
 `canonical_response_sha256`, the provider in `provider`, provider provenance in
 `provider_model` and `provider_session` when available, and the reviewed
-workspace seal in `reviewed_head`, `reviewed_dirty`, and `reviewed_diff`.
+workspace seal in `reviewed_head`, `reviewed_dirty`, and `reviewed_diff`. When
+task material scope is available, review entries also store `reviewed_scope` and
+`reviewed_material_digest`; completion then checks scoped content freshness
+instead of treating commit-only or unrelated workspace drift as stale authority.
 Human-reviewed overrides record a `review_override` entry with the operator
 reason before the passing `review` entry with provider `human`.
 
@@ -101,6 +104,8 @@ Minimal session excerpt:
       "reviewed_head": "a1b2c3d4",
       "reviewed_dirty": "true",
       "reviewed_diff": "9f8e7d6c5b4a...",
+      "reviewed_scope": ["internal/cache/store.go"],
+      "reviewed_material_digest": "2e1d8c7b6a5f...",
       "output": "{\"verdict\":\"fail\",\"mode\":\"discover\",\"summary\":\"Review found one open completion blocker.\",\"findings\":[{\"id\":\"cache-tenant-leak\",\"severity\":\"high\",\"blocks_completion\":true,\"location\":{\"path\":\"internal/cache/store.go\",\"line\":88},\"evidence\":\"invalidation keys omit tenant id\",\"impact\":\"cross-tenant cache state can leak\",\"validation\":\"go test ./internal/cache\",\"summary\":\"tenant id omitted from cache key\"}],\"attack_log\":[{\"target\":\"cache invalidation\",\"attack\":\"trace tenant key construction\",\"result\":\"finding\"}],\"budget\":{\"actual_findings\":1,\"actual_attack_angles\":1}}"
     }
   ]
@@ -182,13 +187,37 @@ For completed tasks, scafld derives a terminal completion authority from the
 session ledger:
 
 - latest passing external review before `complete`, with sealed review packet,
-  matching canonical hash, and reviewed workspace state
+  matching canonical hash, reviewed workspace state, and scoped material seal
+  when present
 - audited human-reviewed override before `complete`
 - integrity error when a completed ledger has no valid terminal authority
 
 Historical failed reviews remain in the ledger. They are evidence, not current
 state, once a later passing review or audited human-reviewed override has
 authorized completion.
+
+## Review Attempts
+
+`review_attempt` entries are the lifecycle record around provider review spend.
+New entries include:
+
+- `attempt_id`
+- `lease_expires_at`
+- `review_mode`
+- `review_pass_count`
+- `provider` and `provider_model` when known before invocation
+
+Statuses are:
+
+- `running`: the provider attempt is active and blocks concurrent review
+- `accepted`: scafld accepted a dossier and is about to record the review entry
+- `failed`: provider transport or dossier validation failed
+- `abandoned`: a later review recovered an expired running attempt
+
+Old ledgers without `lease_expires_at` are still recoverable: scafld treats a
+parseable `recorded_at` plus the default lease window as the deadline. The next
+mutating `scafld review` appends `abandoned` for an expired running attempt
+before it starts a new leased attempt.
 
 `scafld status --json` exposes this under `completion_authority`:
 

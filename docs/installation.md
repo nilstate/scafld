@@ -73,9 +73,9 @@ instead of a copied compiled binary:
 ./bin/scafld status my-task
 ```
 
-The wrapper runs the current Go source with `go run ./cmd/scafld` and preserves
-the caller's workspace root when `--root` is not supplied. That keeps dogfood
-runs from reading stale lifecycle code.
+The wrapper builds and execs the current Go source, preserving the caller's
+workspace root when `--root` is not supplied. That keeps dogfood runs from
+reading stale lifecycle code while preserving normal scafld exit codes.
 
 ## Initialize a Project
 

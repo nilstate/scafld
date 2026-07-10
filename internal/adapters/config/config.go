@@ -28,13 +28,13 @@ var legacyCodexDefaultModels = map[string]string{
 	"gpt-5.2-codex": DefaultCodexModel,
 }
 
-var legacyClaudeDefaultModels = map[string]string{
-	"claude-opus-4-6": DefaultClaudeModel,
-	"claude-opus-4-7": DefaultClaudeModel,
-	"claude-opus-4-8": DefaultClaudeModel,
-	"claude-opus-4.7": DefaultClaudeModel,
-	"claude-opus-4.8": DefaultClaudeModel,
+var claudeLatestAliases = map[string]string{
+	"opus":   "opus",
+	"sonnet": "sonnet",
+	"haiku":  "haiku",
 }
+
+var claudeLatestFamilies = []string{"opus", "sonnet", "haiku"}
 
 // Config is the merged runtime configuration for a scafld workspace.
 type Config struct {
@@ -546,20 +546,43 @@ func withDefaults(cfg Config) Config {
 	cfg.Review.AdversarialPasses = overlayPasses(defaults.Review.AdversarialPasses, cfg.Review.AdversarialPasses)
 	cfg.Review.Context = overlayReviewContext(defaults.Review.Context, cfg.Review.Context)
 	cfg.Review.Dossier = overlayReviewDossier(defaults.Review.Dossier, cfg.Review.Dossier)
-	cfg.Harden.External = normalizeLegacyDefaultModels(cfg.Harden.External)
-	cfg.Review.External = normalizeLegacyDefaultModels(cfg.Review.External)
+	cfg.Harden.External = normalizeProviderLatestModels(cfg.Harden.External)
+	cfg.Review.External = normalizeProviderLatestModels(cfg.Review.External)
 	return cfg
 }
 
-func normalizeLegacyDefaultModels(cfg ExternalReviewConfig) ExternalReviewConfig {
-	cfg.Codex.Model = normalizeLegacyDefaultModel(cfg.Codex.Model, legacyCodexDefaultModels)
-	cfg.Claude.Model = normalizeLegacyDefaultModel(cfg.Claude.Model, legacyClaudeDefaultModels)
+func normalizeProviderLatestModels(cfg ExternalReviewConfig) ExternalReviewConfig {
+	cfg.Codex.Model = normalizeCodexLatestModel(cfg.Codex.Model)
+	cfg.Claude.Model = normalizeClaudeLatestModel(cfg.Claude.Model)
 	return cfg
 }
 
-func normalizeLegacyDefaultModel(model string, legacy map[string]string) string {
-	if current, ok := legacy[strings.ToLower(strings.TrimSpace(model))]; ok {
+func normalizeCodexLatestModel(model string) string {
+	return normalizeMappedModel(model, legacyCodexDefaultModels)
+}
+
+func normalizeMappedModel(model string, aliases map[string]string) string {
+	if current, ok := aliases[strings.ToLower(strings.TrimSpace(model))]; ok {
 		return current
+	}
+	return model
+}
+
+func normalizeClaudeLatestModel(model string) string {
+	normalized := strings.ToLower(strings.TrimSpace(model))
+	if normalized == "" {
+		return model
+	}
+	if alias, ok := claudeLatestAliases[normalized]; ok {
+		return alias
+	}
+	for _, family := range claudeLatestFamilies {
+		if strings.HasPrefix(normalized, family+"-") || strings.HasPrefix(normalized, family+".") ||
+			(strings.HasPrefix(normalized, "claude-") &&
+				(strings.HasPrefix(normalized, "claude-"+family+"-") || strings.HasPrefix(normalized, "claude-"+family+".") ||
+					strings.Contains(normalized, "-"+family+"-") || strings.Contains(normalized, "-"+family+"."))) {
+			return claudeLatestAliases[family]
+		}
 	}
 	return model
 }

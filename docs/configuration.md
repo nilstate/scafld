@@ -322,9 +322,13 @@ This affects only `provider: auto` ordering.
 `local` exists for tests and smoke runs; it is not a substitute for adversarial
 review and cannot satisfy `scafld complete`.
 
-Named `automated_passes` and `adversarial_passes` are included in the review
-prompt in `order` sequence. They are the configurable review agenda; they do
-not create additional local execution steps or mutate the workspace.
+Named `automated_passes` and `adversarial_passes` are rendered in `order` as
+review focus inside one provider brief. scafld does not fan them out into
+multiple provider subprocesses; one `scafld review` records one ReviewDossier
+for the configured finding and attack-angle budget. The accepted dossier must
+honor that budget: too few `attack_log` entries or too many findings fails the
+attempt before recording a review. Review remains read-only and must not mutate
+the workspace.
 
 `review.context.files` is the bounded product-contract context included in the
 reviewer brief. scafld skips private/local paths such as
@@ -337,11 +341,11 @@ Hardening is operator-driven. `scafld approve` does not force
 hardened before approval.
 
 The active harden prompt asks the agent to record evidence-backed observations
-under the latest `## Harden Rounds` entry. Required dimensions are `path`,
-`command`, `scope`, `timing`, `rollback`, and `design`. The design dimension
-asks why the plan exists, what deeper product or system problem it solves,
-whether the proposed change is a short-sighted bandaid over an endemic issue,
-and whether a different abstraction would remove the root cause more cleanly.
+under the latest `## Harden Rounds` entry. Required dimensions are `design`,
+`scope`, `path`, `command`, `timing`, and `rollback`. The design dimension asks
+why the plan exists, what deeper product or system problem it solves, which
+shared core/app contract owns the behavior, and whether API/MCP/CLI/provider/docs
+surfaces stay light adapters instead of separate implementations.
 
 `harden.max_issues_per_round` is read from config and injected into the prompt
 as a cap on useful findings, not a target. `--mark-passed` verifies dimension

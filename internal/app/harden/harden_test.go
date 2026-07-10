@@ -40,7 +40,7 @@ func TestRunOpensHardenRound(t *testing.T) {
 			t.Fatalf("observation skeleton[%d] = %+v", i, observation)
 		}
 	}
-	if store.model.CurrentState.AllowedFollowUp != out.NextCommand {
+	if store.model.CurrentState.Blockers != manualHardenBlocker() || !strings.Contains(store.model.CurrentState.AllowedFollowUp, "fill harden observations in") || !strings.Contains(store.model.CurrentState.AllowedFollowUp, out.NextCommand) {
 		t.Fatalf("current state = %+v", store.model.CurrentState)
 	}
 }
@@ -128,6 +128,9 @@ func TestRunMarkPassedRejectsInvalidObservationAnchors(t *testing.T) {
 	if !errors.As(err, &gateErr) || gateErr.Failure.Gate != "harden" || gateErr.Failure.Expected == "" {
 		t.Fatalf("gate error = %#v", gateErr)
 	}
+	if !strings.Contains(gateErr.Failure.Actual, "harden evidence issue") || len(gateErr.Failure.Blockers) <= len(out.Warnings) {
+		t.Fatalf("gate failure did not summarize warnings: %#v", gateErr.Failure)
+	}
 	joined := strings.Join(out.Warnings, "\n")
 	if !strings.Contains(joined, "missing.go") ||
 		!strings.Contains(joined, "missing anchor") ||
@@ -187,7 +190,7 @@ func TestRunMarkPassedRejectsOpenBlockingObservation(t *testing.T) {
 	model := fixtureModel()
 	model.HardenStatus = spec.HardenInProgress
 	observations := passingObservations()
-	observations[5] = spec.HardenObservation{
+	observations[0] = spec.HardenObservation{
 		Dimension: "design",
 		Result:    coreharden.ResultBlocks,
 		Anchor:    "spec_gap:Summary",
@@ -215,7 +218,7 @@ func TestRunMarkPassedAllowsAdvisoryObservation(t *testing.T) {
 	model := fixtureModel()
 	model.HardenStatus = spec.HardenInProgress
 	observations := passingObservations()
-	observations[4] = spec.HardenObservation{
+	observations[5] = spec.HardenObservation{
 		Dimension: "rollback",
 		Result:    coreharden.ResultAdvisory,
 		Anchor:    "spec_gap:Rollback",
@@ -261,7 +264,7 @@ func TestRunProviderHardenRecordsNeedsRevision(t *testing.T) {
 	t.Parallel()
 
 	dossier := passingHardenDossier()
-	dossier.Observations[5] = coreharden.Observation{
+	dossier.Observations[0] = coreharden.Observation{
 		Dimension: "design",
 		Result:    coreharden.ResultBlocks,
 		Anchor:    "spec_gap:Summary",
@@ -293,7 +296,7 @@ func TestRunProviderHardenAdvisoryObservationsDoNotBlock(t *testing.T) {
 	t.Parallel()
 
 	dossier := passingHardenDossier()
-	dossier.Observations[4] = coreharden.Observation{
+	dossier.Observations[5] = coreharden.Observation{
 		Dimension: "rollback",
 		Result:    coreharden.ResultAdvisory,
 		Anchor:    "spec_gap:Rollback",
@@ -421,12 +424,12 @@ func TestRunProviderHardenReportsFailureRecordingError(t *testing.T) {
 
 func passingObservations() []spec.HardenObservation {
 	return []spec.HardenObservation{
+		{Dimension: "design", Result: coreharden.ResultClean, Anchor: "spec_gap:Summary", Note: "Shared owner and adapter boundaries are checked."},
+		{Dimension: "scope", Result: coreharden.ResultClean, Anchor: "spec_gap:Risks", Note: "Migration claims checked."},
 		{Dimension: "path", Result: coreharden.ResultClean, Anchor: "spec_gap:Scope", Note: "Paths checked."},
 		{Dimension: "command", Result: coreharden.ResultClean, Anchor: "spec_gap:Validation", Note: "Commands checked."},
-		{Dimension: "scope", Result: coreharden.ResultClean, Anchor: "spec_gap:Risks", Note: "Migration claims checked."},
 		{Dimension: "timing", Result: coreharden.ResultClean, Anchor: "spec_gap:Phases", Note: "Criteria timing checked."},
 		{Dimension: "rollback", Result: coreharden.ResultNotApplicable, Anchor: "spec_gap:Rollback", Note: "Docs-only change has no runtime rollback."},
-		{Dimension: "design", Result: coreharden.ResultClean, Anchor: "spec_gap:Summary", Note: "Plan is not a bandaid or future compatibility layer."},
 	}
 }
 

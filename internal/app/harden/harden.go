@@ -231,8 +231,8 @@ func openRound(ctx context.Context, store SpecStore, path string, model spec.Mod
 	model.Updated = now
 	model.CurrentState.Next = "harden"
 	model.CurrentState.Reason = "hardening round in progress"
-	model.CurrentState.Blockers = "none"
-	model.CurrentState.AllowedFollowUp = "scafld harden " + model.TaskID + " --mark-passed"
+	model.CurrentState.Blockers = manualHardenBlocker()
+	model.CurrentState.AllowedFollowUp = manualHardenFollowUp(path, model.TaskID)
 	if err := store.Save(ctx, path, model); err != nil {
 		return Output{}, fmt.Errorf("save harden round: %w", err)
 	}
@@ -241,7 +241,7 @@ func openRound(ctx context.Context, store SpecStore, path string, model spec.Mod
 		Path:         path,
 		HardenStatus: model.HardenStatus,
 		RoundID:      roundID,
-		NextCommand:  model.CurrentState.AllowedFollowUp,
+		NextCommand:  markPassedCommand(model.TaskID),
 		Prompt:       prompt,
 	}, nil
 }
@@ -254,6 +254,18 @@ func hardenObservationSkeleton() []spec.HardenObservation {
 	return observations
 }
 
+func markPassedCommand(taskID string) string {
+	return "scafld harden " + taskID + " --mark-passed"
+}
+
+func manualHardenBlocker() string {
+	return "fill harden observations with Result and Anchor before marking passed"
+}
+
+func manualHardenFollowUp(path string, taskID string) string {
+	return "fill harden observations in " + path + ", then run " + markPassedCommand(taskID)
+}
+
 func markPassed(ctx context.Context, store SpecStore, path string, model spec.Model, now string, root string) (Output, error) {
 	if len(model.HardenRounds) == 0 {
 		return Output{}, ErrNoHardenRound
@@ -261,6 +273,7 @@ func markPassed(ctx context.Context, store SpecStore, path string, model spec.Mo
 	latest := len(model.HardenRounds) - 1
 	warnings := verifyHardenRoundEvidence(root, model, model.HardenRounds[latest])
 	if len(warnings) > 0 {
+		summary := hardenEvidenceSummary(warnings)
 		out := Output{TaskID: model.TaskID, Path: path, HardenStatus: model.HardenStatus, RoundID: model.HardenRounds[latest].ID, Warnings: warnings}
 		return out, gate.New(ErrInvalidHardenEvidence, gate.Failure{
 			Gate:     "harden",
@@ -268,8 +281,8 @@ func markPassed(ctx context.Context, store SpecStore, path string, model spec.Mo
 			Reason:   "hardening evidence is incomplete",
 			Evidence: warnings,
 			Expected: "required harden observations with verified anchors and no unresolved blocking observations",
-			Actual:   strings.Join(warnings, "; "),
-			Blockers: warnings,
+			Actual:   summary,
+			Blockers: hardenEvidenceBlockers(warnings),
 			Next:     "fix the harden observations, then run scafld harden " + model.TaskID + " --mark-passed",
 		})
 	}
@@ -293,6 +306,17 @@ func markPassed(ctx context.Context, store SpecStore, path string, model spec.Mo
 		NextCommand:  model.CurrentState.AllowedFollowUp,
 		Warnings:     warnings,
 	}, nil
+}
+
+func hardenEvidenceSummary(warnings []string) string {
+	return fmt.Sprintf("%d harden evidence issue(s): every required observation needs a valid Result and Anchor before --mark-passed", len(warnings))
+}
+
+func hardenEvidenceBlockers(warnings []string) []string {
+	blockers := make([]string, 0, len(warnings)+1)
+	blockers = append(blockers, hardenEvidenceSummary(warnings))
+	blockers = append(blockers, warnings...)
+	return blockers
 }
 
 func roundFromDossier(round spec.HardenRound, dossier coreharden.Dossier, now string) spec.HardenRound {
@@ -365,7 +389,7 @@ func verifyHardenRoundShape(root string, model spec.Model, round spec.HardenRoun
 func verifyHardenObservations(root string, model spec.Model, observations []spec.HardenObservation, allowOpenBlocks bool) []string {
 	var warnings []string
 	if len(observations) == 0 {
-		return []string{"missing harden observations: record path, command, scope, timing, rollback, and design observations before marking hardening passed"}
+		return []string{"missing harden observations: record " + coreharden.RequiredDimensionList() + " observations before marking hardening passed"}
 	}
 	seen := map[string]bool{}
 	for i, observation := range observations {

@@ -17,7 +17,7 @@ func Run(ctx context.Context, stdin io.Reader, stdout io.Writer, stderr io.Write
 		ServerName:      "scafld-harden-submit",
 		ToolName:        "submit_harden",
 		ToolTitle:       "Submit scafld hardening",
-		ToolDescription: "Submit the final scafld HardenDossier. Call exactly once after stress-testing the draft spec. The observations array must cover path, command, scope, timing, rollback, and design; fill result, anchor, and note/default/status where applicable.",
+		ToolDescription: "Submit the final scafld HardenDossier. Call exactly once after stress-testing the draft spec. The observations array must cover " + coreharden.RequiredDimensionList() + "; fill result, anchor, and note/default/status where applicable. The design observation must challenge shared architecture and keep API/MCP/CLI/provider/docs surfaces as light adapters over common core/app behavior.",
 		SchemaJSON:      coreharden.DossierSchemaJSON(),
 		ParseAndEncode: func(text string) (mcpsubmit.Accepted, error) {
 			dossier, err := coreharden.ParseText(text)

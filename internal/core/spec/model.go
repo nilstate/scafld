@@ -333,7 +333,7 @@ func validateCriterion(c Criterion, seen map[string]bool) []string {
 		errs = append(errs, "criterion "+c.ID+" command is required")
 	}
 	if !acceptance.ValidExpectedKind(c.ExpectedKind) {
-		errs = append(errs, "criterion "+c.ID+" expected_kind is invalid")
+		errs = append(errs, fmt.Sprintf("criterion %s expected_kind %q is invalid; supported values: %s%s", c.ID, c.ExpectedKind, expectedKindList(), expectedKindHint(c.ExpectedKind)))
 	}
 	if c.Type == "browser" && c.ExpectedKind != acceptance.ExpectedBrowserEvidence {
 		errs = append(errs, "criterion "+c.ID+" browser type requires expected_kind browser_evidence")
@@ -342,6 +342,24 @@ func validateCriterion(c Criterion, seen map[string]bool) []string {
 		errs = append(errs, "criterion "+c.ID+" browser_evidence expected_kind requires browser type")
 	}
 	return errs
+}
+
+func expectedKindList() string {
+	values := acceptance.ExpectedKindValues()
+	names := make([]string, 0, len(values))
+	for _, value := range values {
+		names = append(names, string(value))
+	}
+	return strings.Join(names, ", ")
+}
+
+func expectedKindHint(kind acceptance.ExpectedKind) string {
+	switch strings.TrimSpace(string(kind)) {
+	case "stdout_empty", "empty_stdout":
+		return "; use no_matches when stdout must be empty"
+	default:
+		return ""
+	}
 }
 
 // ValidStatus reports whether status is a supported lifecycle status.

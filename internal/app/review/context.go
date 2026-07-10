@@ -11,7 +11,7 @@ import (
 	coreworkspace "github.com/nilstate/scafld/v2/internal/core/workspace"
 )
 
-func reviewContextPacket(model spec.Model, specPath string, passes []Pass, invariants map[string]string, reviewScope []string, baseline []string, taskChanges []coreworkspace.Mutation, scopeDrift []coreworkspace.Mutation, extra []reviewcontext.Section, mode review.Mode, maxFindings int, minAttackAngles int, depth string, rerunPolicy string) reviewcontext.Packet {
+func reviewContextPacket(model spec.Model, specPath string, passes []Pass, invariants map[string]string, reviewScope []string, baseline []string, taskChanges []coreworkspace.Mutation, scopeDrift []coreworkspace.Mutation, knownFindings []review.Finding, extra []reviewcontext.Section, mode review.Mode, maxFindings int, minAttackAngles int, depth string, rerunPolicy string) reviewcontext.Packet {
 	sourcePath := currentSpecReviewPath(specPath)
 	if sourcePath == "" {
 		sourcePath = strings.TrimSpace(specPath)
@@ -22,6 +22,11 @@ func reviewContextPacket(model spec.Model, specPath string, passes []Pass, invar
 	sections := []reviewcontext.Section{
 		contextSection("task_contract", "Task Contract", 10, taskContractBody(model), "spec", sourcePath),
 		contextSection("review_request", "Review Request", 12, reviewRequestBody(mode, maxFindings, minAttackAngles, depth, rerunPolicy), "scafld", "review"),
+	}
+	if len(knownFindings) > 0 {
+		sections = append(sections, contextSection("known_findings", "Known Findings To Verify", 13, knownFindingsBody(knownFindings), "session", model.TaskID))
+	}
+	sections = append(sections,
 		contextSection("configured_invariants", "Configured Invariants", 15, configuredInvariantsBody(invariants), "config", ".scafld/config.yaml"),
 		contextSection("review_focus", "Review Focus", 18, reviewFocusBody(passes), "config", ".scafld/config.yaml"),
 		contextSection("task_scope", "Task Scope", 20, taskScopeBody(model, reviewScope), "spec", sourcePath),
@@ -31,7 +36,7 @@ func reviewContextPacket(model spec.Model, specPath string, passes []Pass, invar
 		contextSection("ambient_drift", "Ambient Workspace Drift Outside Task Scope", 50, workspaceChangesBody("Ambient Workspace Drift Outside Task Scope", scopeDrift), "session", model.TaskID),
 		contextSection("acceptance_evidence", "Acceptance Criteria", 60, acceptanceBody(model), "session", model.TaskID),
 		contextSection("provider_instruction", "Provider Instruction", 90, providerInstructionBody(), "scafld", "review"),
-	}
+	)
 	sections = append(sections, extra...)
 	return reviewcontext.Packet{TaskID: model.TaskID, Title: model.Title, Status: string(model.Status), Sections: sections}
 }
@@ -109,6 +114,35 @@ func acceptanceBody(model spec.Model) string {
 	return b.String()
 }
 
+func knownFindingsBody(findings []review.Finding) string {
+	if len(findings) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("Open completion blockers from the latest accepted review:\n")
+	for _, finding := range findings {
+		summary := strings.TrimSpace(finding.Summary)
+		if summary == "" {
+			summary = finding.ID
+		}
+		fmt.Fprintf(&b, "- %s [%s]: %s\n", finding.ID, finding.Severity, summary)
+		if finding.Location != nil && strings.TrimSpace(finding.Location.Path) != "" {
+			if finding.Location.Line > 0 {
+				fmt.Fprintf(&b, "  - Location: `%s:%d`\n", finding.Location.Path, finding.Location.Line)
+			} else {
+				fmt.Fprintf(&b, "  - Location: `%s`\n", finding.Location.Path)
+			}
+		}
+		if strings.TrimSpace(finding.Evidence) != "" {
+			fmt.Fprintf(&b, "  - Evidence: %s\n", finding.Evidence)
+		}
+		if strings.TrimSpace(finding.Validation) != "" {
+			fmt.Fprintf(&b, "  - Validation: %s\n", finding.Validation)
+		}
+	}
+	return b.String()
+}
+
 func reviewFocusBody(passes []Pass) string {
 	var b strings.Builder
 	writeReviewPasses(&b, passes)
@@ -153,7 +187,7 @@ func reviewRequestBody(mode review.Mode, maxFindings int, minAttackAngles int, d
 	}
 	if minAttackAngles > 0 {
 		fmt.Fprintf(&b, "Minimum attack angles: %d\n", minAttackAngles)
-		b.WriteString("Attack budget: attempt distinct meaningful attacks when applicable; record skipped angles instead of inventing findings.\n")
+		b.WriteString("Attack budget: complete distinct meaningful attacks before submitting, even when an early attack finds a blocker; record skipped angles instead of inventing findings.\n")
 	}
 	if strings.TrimSpace(depth) != "" {
 		normalizedDepth := strings.ToLower(strings.TrimSpace(depth))

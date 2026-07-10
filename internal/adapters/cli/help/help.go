@@ -50,17 +50,18 @@ host provider is available unless fallback_policy is relaxed or a provider is
 selected explicitly.
 
 Required observation dimensions:
+  design
+  scope
   path
   command
-  scope
   timing
   rollback
-  design
 
 Each observation needs Result and Anchor. Result must be clean, advisory, blocks,
 or n/a. Open blocks keep the round from passing until fixed, accepted_risk, or
-superseded. The design dimension must question why the plan exists, whether it solves the
-underlying problem, and whether it is a short-sighted bandaid or future bloat.
+superseded. The design dimension must question why the plan exists, which
+shared core/app contract owns the behavior, and whether API/MCP/CLI/provider/docs
+surfaces stay light adapters instead of separate implementations.
 Anchor accepts spec_gap:<section>, archive:<task-id>, or a single-line code
 citation such as code:src/file.go:42. Line ranges are rejected.
 Advisory observations keep full detail but do not block.

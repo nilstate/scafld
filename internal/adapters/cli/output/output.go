@@ -47,6 +47,15 @@ func CodeName(exit int) string {
 	}
 }
 
+// StatusCommandExit maps complete/fail/cancel wrapper errors onto the public
+// exit-code table without making the top-level CLI adapter interpret gate data.
+func StatusCommandExit(command string, err error, generic int, validation int) int {
+	if command == "complete" && GateFailure(err) != nil {
+		return validation
+	}
+	return generic
+}
+
 // GateFailure extracts a deterministic gate payload from err when present.
 func GateFailure(err error) *gate.Failure {
 	var gateErr gate.Error
@@ -222,6 +231,24 @@ func Status(out appstatus.Output) string {
 	if out.Repair != nil {
 		b.WriteString(Gate(out.Repair))
 	}
+	if out.TaskMaterial != nil {
+		fmt.Fprintf(&b, "task material: %s\n", fallback(out.TaskMaterial.MaterialStatus, "projected"))
+		if len(out.TaskMaterial.Scope) > 0 {
+			fmt.Fprintf(&b, "scope: %s\n", strings.Join(out.TaskMaterial.Scope, ", "))
+		}
+		if len(out.TaskMaterial.TaskChanges) > 0 {
+			fmt.Fprintf(&b, "task changes:\n")
+			for _, change := range out.TaskMaterial.TaskChanges {
+				fmt.Fprintf(&b, "- %s\n", change)
+			}
+		}
+		if len(out.TaskMaterial.AmbientDrift) > 0 {
+			fmt.Fprintf(&b, "ambient drift:\n")
+			for _, change := range out.TaskMaterial.AmbientDrift {
+				fmt.Fprintf(&b, "- %s\n", change)
+			}
+		}
+	}
 	if out.Completion != nil {
 		fmt.Fprintf(&b, "completion authority: %s", out.Completion.Status)
 		if out.Completion.Kind != "" {
@@ -275,6 +302,13 @@ func Status(out appstatus.Output) string {
 		}
 	}
 	return b.String()
+}
+
+func fallback(value string, fallback string) string {
+	if strings.TrimSpace(value) != "" {
+		return value
+	}
+	return fallback
 }
 
 // Report formats workspace reporting metrics.

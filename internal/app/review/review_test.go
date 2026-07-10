@@ -7,8 +7,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nilstate/scafld/v2/internal/core/gate"
 	corereview "github.com/nilstate/scafld/v2/internal/core/review"
 	"github.com/nilstate/scafld/v2/internal/core/reviewcontext"
+	"github.com/nilstate/scafld/v2/internal/core/reviewevidence"
 	"github.com/nilstate/scafld/v2/internal/core/session"
 	"github.com/nilstate/scafld/v2/internal/core/spec"
 	coreworkspace "github.com/nilstate/scafld/v2/internal/core/workspace"
@@ -43,6 +45,23 @@ func (f *fakeSessions) Append(_ context.Context, taskID string, entry session.En
 		entry.RecordedAt = now
 	}
 	f.ledger = f.ledger.WithEntry(entry)
+	return f.ledger, nil
+}
+
+func (f *fakeSessions) AppendTransaction(_ context.Context, taskID string, now string, derive func(session.Session) ([]session.Entry, error)) (session.Session, error) {
+	if f.ledger.TaskID == "" {
+		f.ledger = session.New(taskID, now)
+	}
+	entries, err := derive(f.ledger)
+	if err != nil {
+		return session.Session{}, err
+	}
+	for _, entry := range entries {
+		if entry.RecordedAt == "" {
+			entry.RecordedAt = now
+		}
+		f.ledger = f.ledger.WithEntry(entry)
+	}
 	return f.ledger, nil
 }
 
@@ -86,6 +105,34 @@ func (f *fakeWorkspace) ResolveHead(context.Context) (string, bool, error) {
 	return f.head, true, nil
 }
 
+func (f *fakeWorkspace) MaterialSeal(_ context.Context, scope []string) (reviewevidence.MaterialSeal, error) {
+	normalized := coreworkspace.NormalizeScope(scope)
+	if len(normalized) == 0 {
+		return reviewevidence.MaterialSeal{}, nil
+	}
+	var snapshot []string
+	switch {
+	case len(f.snapshots) == 0:
+		snapshot = nil
+	case f.calls == 0:
+		snapshot = f.snapshots[0]
+	case f.calls-1 < len(f.snapshots):
+		snapshot = f.snapshots[f.calls-1]
+	default:
+		snapshot = f.snapshots[len(f.snapshots)-1]
+	}
+	filtered := coreworkspace.Filter(reviewComparisonSnapshot(snapshot), normalized)
+	files := make([]reviewevidence.MaterialFile, 0, len(filtered))
+	for _, raw := range filtered {
+		change := coreworkspace.ParseChange(raw)
+		if change.Path == "" || change.Fingerprint == "" {
+			continue
+		}
+		files = append(files, reviewevidence.MaterialFile{Path: change.Path, SHA256: change.Fingerprint})
+	}
+	return reviewevidence.MaterialSeal{Scope: normalized, Digest: reviewevidence.MaterialDigest(normalized, files)}, nil
+}
+
 func cleanWorkspace() *fakeWorkspace {
 	return &fakeWorkspace{snapshots: [][]string{{}, {}}}
 }
@@ -98,15 +145,30 @@ func passingDossier() corereview.Dossier {
 	return passingDossierWithMode(corereview.ModeDiscover)
 }
 
+func passingDossierWithAttackCount(count int) corereview.Dossier {
+	dossier := passingDossier()
+	dossier.AttackLog = attackLogEntries(count)
+	dossier.Budget.ActualAttackAngles = count
+	return dossier
+}
+
 func passingDossierWithMode(mode corereview.Mode) corereview.Dossier {
 	return corereview.Dossier{
 		Verdict:   corereview.VerdictPass,
 		Mode:      mode,
 		Summary:   "No open completion blockers.",
 		Findings:  []corereview.Finding{},
-		AttackLog: []corereview.AttackLogEntry{{Target: "task diff", Attack: "test attack", Result: "clean"}},
+		AttackLog: attackLogEntries(1),
 		Budget:    corereview.Budget{ActualAttackAngles: 1, Depth: "test"},
 	}
+}
+
+func attackLogEntries(count int) []corereview.AttackLogEntry {
+	entries := make([]corereview.AttackLogEntry, 0, count)
+	for i := 0; i < count; i++ {
+		entries = append(entries, corereview.AttackLogEntry{Target: "task diff", Attack: "test attack", Result: corereview.AttackResultClean})
+	}
+	return entries
 }
 
 func blockingDossier(id string, summary string) corereview.Dossier {
@@ -133,7 +195,7 @@ func blockingDossier(id string, summary string) corereview.Dossier {
 func TestProviderVerdictDrivesReviewState(t *testing.T) {
 	t.Parallel()
 
-	specs := &fakeSpecs{model: spec.Model{TaskID: "task", Title: "Task", Status: spec.StatusReview}}
+	specs := &fakeSpecs{model: spec.Model{TaskID: "task", Status: spec.StatusReview}}
 	sessions := &fakeSessions{}
 	out, err := Run(context.Background(), specs, sessions, cleanWorkspace(), fakeProvider{packet: blockingDossier("f1", "bug")}, fakeClock{}, "task")
 	if err != nil {
@@ -148,11 +210,13 @@ func TestProviderVerdictDrivesReviewState(t *testing.T) {
 	if specs.model.CurrentState.AllowedFollowUp != "scafld handoff task" {
 		t.Fatalf("next action = %q", specs.model.CurrentState.AllowedFollowUp)
 	}
-	if len(sessions.ledger.Entries) != 2 ||
+	if len(sessions.ledger.Entries) != 3 ||
 		sessions.ledger.Entries[0].Type != "review_attempt" ||
 		sessions.ledger.Entries[0].Status != "running" ||
-		sessions.ledger.Entries[1].Type != "review" ||
-		!strings.Contains(sessions.ledger.Entries[1].Output, "bug") {
+		sessions.ledger.Entries[1].Type != "review_attempt" ||
+		sessions.ledger.Entries[1].Status != "accepted" ||
+		sessions.ledger.Entries[2].Type != "review" ||
+		!strings.Contains(sessions.ledger.Entries[2].Output, "bug") {
 		t.Fatalf("review findings were not recorded in session: %+v", sessions.ledger.Entries)
 	}
 }
@@ -177,7 +241,7 @@ func TestReviewRefusesCompletedTaskWithCompletionAuthority(t *testing.T) {
 func TestReviewPreservesRequestedBudgetWhenProviderOmitsCaps(t *testing.T) {
 	t.Parallel()
 
-	specs := &fakeSpecs{model: spec.Model{TaskID: "task", Title: "Task", Status: spec.StatusReview}}
+	specs := &fakeSpecs{model: spec.Model{TaskID: "task", Status: spec.StatusReview}}
 	sessions := &fakeSessions{}
 	provider := providerFunc(func(context.Context, corereview.Request) (corereview.Dossier, error) {
 		return corereview.Dossier{
@@ -185,8 +249,8 @@ func TestReviewPreservesRequestedBudgetWhenProviderOmitsCaps(t *testing.T) {
 			Mode:      corereview.ModeDiscover,
 			Summary:   "No open completion blockers.",
 			Findings:  []corereview.Finding{},
-			AttackLog: []corereview.AttackLogEntry{{Target: "diff", Attack: "scan", Result: corereview.AttackResultClean}},
-			Budget:    corereview.Budget{ActualAttackAngles: 1},
+			AttackLog: attackLogEntries(6),
+			Budget:    corereview.Budget{ActualAttackAngles: 6},
 		}, nil
 	})
 	out, err := RunWithInput(context.Background(), specs, sessions, cleanWorkspace(), provider, fakeClock{}, Input{TaskID: "task", MaxFindings: 12, MinAttackAngles: 6, ReviewDepth: "standard"})
@@ -202,6 +266,111 @@ func TestReviewPreservesRequestedBudgetWhenProviderOmitsCaps(t *testing.T) {
 	}
 	if recorded.Budget.MaxFindings != 12 || recorded.Budget.MinAttackAngles != 6 || recorded.Budget.Depth != "standard" {
 		t.Fatalf("recorded budget = %+v", recorded.Budget)
+	}
+}
+
+func TestReviewRejectsUnderBudgetAttackLog(t *testing.T) {
+	t.Parallel()
+
+	specs := &fakeSpecs{model: spec.Model{TaskID: "task", Status: spec.StatusReview}}
+	sessions := &fakeSessions{}
+	_, err := RunWithInput(context.Background(), specs, sessions, cleanWorkspace(), fakeProvider{packet: passingDossier()}, fakeClock{}, Input{TaskID: "task", MinAttackAngles: 3})
+	if !errors.Is(err, corereview.ErrInvalidDossier) {
+		t.Fatalf("error = %v, want %v", err, corereview.ErrInvalidDossier)
+	}
+	for _, want := range []string{"attack_log has 1 entries", "requested at least 3"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error missing %q: %v", want, err)
+		}
+	}
+	if len(sessions.ledger.Entries) != 2 ||
+		sessions.ledger.Entries[0].Type != "review_attempt" ||
+		sessions.ledger.Entries[0].Status != "running" ||
+		sessions.ledger.Entries[1].Type != "review_attempt" ||
+		sessions.ledger.Entries[1].Status != "failed" {
+		t.Fatalf("session entries = %+v", sessions.ledger.Entries)
+	}
+}
+
+func TestReviewSendsConfiguredPassesInSingleProviderCall(t *testing.T) {
+	t.Parallel()
+
+	specs := &fakeSpecs{model: spec.Model{TaskID: "task", Title: "Task", Status: spec.StatusReview}}
+	sessions := &fakeSessions{}
+	var prompt string
+	calls := 0
+	provider := providerFunc(func(_ context.Context, req corereview.Request) (corereview.Dossier, error) {
+		calls++
+		prompt = req.Prompt
+		return corereview.Dossier{
+			Verdict: corereview.VerdictFail,
+			Mode:    corereview.ModeDiscover,
+			Summary: "review found a regression blocker and one advisory",
+			Findings: []corereview.Finding{{
+				ID:               "regression-bug",
+				Severity:         corereview.SeverityHigh,
+				BlocksCompletion: true,
+				ReviewPass:       "regression_hunt",
+				Location:         &corereview.Location{Path: "api/handler.go", Line: 10},
+				Evidence:         "regression evidence",
+				Impact:           "breaks callers",
+				Validation:       "rerun caller test",
+				Summary:          "regression bug",
+			}, {
+				ID:               "naming-advisory",
+				Severity:         corereview.SeverityLow,
+				BlocksCompletion: false,
+				ReviewPass:       "convention_check",
+				Location:         &corereview.Location{Path: "api/handler.go", Line: 20},
+				Evidence:         "advisory evidence",
+				Impact:           "minor clarity issue",
+				Validation:       "optional inspection",
+				Summary:          "naming advisory",
+			}},
+			AttackLog: []corereview.AttackLogEntry{
+				{Target: "api/handler.go", Attack: "trace callers", Result: corereview.AttackResultFinding},
+				{Target: "api/handler.go", Attack: "check conventions", Result: corereview.AttackResultFinding},
+				{Target: "api/handler.go", Attack: "check invariants", Result: corereview.AttackResultClean},
+			},
+			Budget: corereview.Budget{ActualFindings: 2, ActualAttackAngles: 3, Depth: "standard"},
+		}, nil
+	})
+	out, err := RunWithInput(context.Background(), specs, sessions, cleanWorkspace(), provider, fakeClock{}, Input{
+		TaskID:          "task",
+		MaxFindings:     5,
+		MinAttackAngles: 3,
+		ReviewDepth:     "standard",
+		Passes: []Pass{
+			{ID: "regression_hunt", Category: "adversarial", Order: 30, Title: "Regression Hunt", Description: "Trace callers"},
+			{ID: "convention_check", Category: "adversarial", Order: 40, Title: "Convention Check", Description: "Check conventions"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Fatalf("provider calls = %d, want 1", calls)
+	}
+	if sessions.ledger.Entries[0].ReviewPassCount != 1 {
+		t.Fatalf("review attempt pass count = %d, want 1", sessions.ledger.Entries[0].ReviewPassCount)
+	}
+	for _, want := range []string{"Regression Hunt", "Convention Check", "Max findings: 5", "Minimum attack angles: 3"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("prompt missing %q:\n%s", want, prompt)
+		}
+	}
+	if out.Verdict != corereview.VerdictFail || len(out.Findings) != 2 || len(out.AttackLog) != 3 {
+		t.Fatalf("review output = %+v", out)
+	}
+	if out.Findings[0].ReviewPass != "regression_hunt" || out.Findings[1].ReviewPass != "convention_check" {
+		t.Fatalf("review pass stamps missing: %+v", out.Findings)
+	}
+	if out.Budget.MaxFindings != 5 || out.Budget.MinAttackAngles != 3 || out.Budget.ActualFindings != 2 || out.Budget.ActualAttackAngles != 3 {
+		t.Fatalf("budget = %+v", out.Budget)
+	}
+	recorded, ok := corereview.DecodeDossier(sessions.ledger.Entries[len(sessions.ledger.Entries)-1].Output)
+	if !ok || len(recorded.Findings) != 2 || recorded.Findings[1].ID != "naming-advisory" {
+		t.Fatalf("recorded review = %+v ok=%v", recorded, ok)
 	}
 }
 
@@ -229,7 +398,7 @@ func TestReviewRecordsPacketProvenanceAndWorkspaceSeal(t *testing.T) {
 	if entry.ProviderModel != "gpt-5.5" || entry.ProviderSession != "session-123" {
 		t.Fatalf("provider provenance = model %q session %q", entry.ProviderModel, entry.ProviderSession)
 	}
-	if entry.ReviewedHead == "" || entry.ReviewedDirty != "true" || entry.ReviewedDiff == "" || entry.ReviewedSpec == "" {
+	if entry.ReviewedHead == "" || entry.ReviewedDirty != "true" || entry.ReviewedDiff == "" || entry.ReviewedSpec == "" || entry.ReviewedMaterialDigest == "" || len(entry.ReviewedScope) != 1 || entry.ReviewedScope[0] != "api/handler.go" {
 		t.Fatalf("review seal = head %q dirty %q diff %q spec %q", entry.ReviewedHead, entry.ReviewedDirty, entry.ReviewedDiff, entry.ReviewedSpec)
 	}
 }
@@ -380,6 +549,99 @@ func TestReviewProviderFailureRecordsDiagnosticPath(t *testing.T) {
 	}
 }
 
+func TestReviewAutoAbandonsStaleRunningAttemptBeforeStarting(t *testing.T) {
+	t.Parallel()
+
+	staleRecordedAt := fakeClock{}.Now().Add(-3 * time.Hour).UTC().Format(time.RFC3339)
+	ledger := session.New("task", "now").WithEntry(session.Entry{
+		Type:       "review_attempt",
+		Status:     "running",
+		RecordedAt: staleRecordedAt,
+		Reason:     "previous provider wedged",
+	})
+	specs := &fakeSpecs{model: spec.Model{TaskID: "task", Title: "Task", Status: spec.StatusReview}}
+	sessions := &fakeSessions{ledger: ledger}
+	if _, err := Run(context.Background(), specs, sessions, cleanWorkspace(), fakeProvider{packet: passingDossier()}, fakeClock{}, "task"); err != nil {
+		t.Fatal(err)
+	}
+	entries := sessions.ledger.Entries
+	if len(entries) < 5 || entries[1].Type != "review_attempt" || entries[1].Status != "abandoned" || entries[2].Status != "running" || entries[3].Status != "accepted" || entries[4].Type != "review" {
+		t.Fatalf("stale attempt was not abandoned before new review: %+v", entries)
+	}
+}
+
+func TestReviewBlocksUnexpiredRunningAttempt(t *testing.T) {
+	t.Parallel()
+
+	now := fakeClock{}.Now().UTC()
+	ledger := session.New("task", "now").WithEntry(session.Entry{
+		Type:           "review_attempt",
+		Status:         "running",
+		RecordedAt:     now.Format(time.RFC3339),
+		LeaseExpiresAt: now.Add(time.Hour).Format(time.RFC3339),
+		Reason:         "provider still running",
+	})
+	specs := &fakeSpecs{model: spec.Model{TaskID: "task", Title: "Task", Status: spec.StatusReview}}
+	sessions := &fakeSessions{ledger: ledger}
+	provider := providerFunc(func(context.Context, corereview.Request) (corereview.Dossier, error) {
+		t.Fatal("provider should not run while an attempt lease is active")
+		return corereview.Dossier{}, nil
+	})
+	_, err := Run(context.Background(), specs, sessions, cleanWorkspace(), provider, fakeClock{}, "task")
+	if !errors.Is(err, ErrReviewStartBlocked) {
+		t.Fatalf("err = %v, want %v", err, ErrReviewStartBlocked)
+	}
+	if len(sessions.ledger.Entries) != 1 {
+		t.Fatalf("blocked review should not append entries: %+v", sessions.ledger.Entries)
+	}
+}
+
+func TestReviewBlocksFailedReviewRerunUntilBuildEvidence(t *testing.T) {
+	t.Parallel()
+
+	ledger := session.New("task", "now").WithEntry(session.Entry{Type: "review", Status: corereview.VerdictFail, Output: corereview.EncodeDossier(blockingDossier("f1", "bug"))})
+	specs := &fakeSpecs{model: spec.Model{TaskID: "task", Title: "Task", Status: spec.StatusReview}}
+	sessions := &fakeSessions{ledger: ledger}
+	provider := providerFunc(func(context.Context, corereview.Request) (corereview.Dossier, error) {
+		t.Fatal("provider should not run before build evidence refreshes a failed review")
+		return corereview.Dossier{}, nil
+	})
+	_, err := Run(context.Background(), specs, sessions, cleanWorkspace(), provider, fakeClock{}, "task")
+	if !errors.Is(err, ErrReviewStartBlocked) {
+		t.Fatalf("err = %v, want %v", err, ErrReviewStartBlocked)
+	}
+	var gateErr gate.Error
+	if !errors.As(err, &gateErr) || gateErr.Failure.Next != "scafld handoff task" || !strings.Contains(strings.Join(gateErr.Failure.Blockers, "\n"), "scafld build task") {
+		t.Fatalf("err should point to repair/build/review: %#v", err)
+	}
+	if len(sessions.ledger.Entries) != 1 {
+		t.Fatalf("blocked rerun should not append entries: %+v", sessions.ledger.Entries)
+	}
+}
+
+func TestReviewDoesNotRerunPassingReviewWithoutForce(t *testing.T) {
+	t.Parallel()
+
+	ledger := session.New("task", "now").WithEntry(sessiontest.PassingReviewEntry("review-pass", "codex"))
+	specs := &fakeSpecs{model: spec.Model{TaskID: "task", Status: spec.StatusReview}}
+	sessions := &fakeSessions{ledger: ledger}
+	provider := providerFunc(func(context.Context, corereview.Request) (corereview.Dossier, error) {
+		t.Fatal("provider should not run when review already passed")
+		return corereview.Dossier{}, nil
+	})
+	_, err := Run(context.Background(), specs, sessions, cleanWorkspace(), provider, fakeClock{}, "task")
+	if !errors.Is(err, ErrReviewStartBlocked) {
+		t.Fatalf("err = %v, want %v", err, ErrReviewStartBlocked)
+	}
+
+	provider = providerFunc(func(context.Context, corereview.Request) (corereview.Dossier, error) {
+		return passingDossier(), nil
+	})
+	if _, err := RunWithInput(context.Background(), specs, sessions, cleanWorkspace(), provider, fakeClock{}, Input{TaskID: "task", ForceReview: true}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestReviewRejectsTaskBeforeBuildReviewState(t *testing.T) {
 	t.Parallel()
 
@@ -441,7 +703,7 @@ func TestHumanReviewedRequiresReason(t *testing.T) {
 func TestReviewPromptCarriesTaskContractToProvider(t *testing.T) {
 	t.Parallel()
 
-	provider := &promptProvider{packet: passingDossier()}
+	provider := &promptProvider{packet: passingDossierWithAttackCount(3)}
 	workspace := &fakeWorkspace{snapshots: [][]string{{" M root-hash README.md", " M api-hash api/handler.go"}, {" M api-hash api/handler.go"}}}
 	specs := &fakeSpecs{model: spec.Model{
 		TaskID:     "task",
@@ -595,7 +857,9 @@ func TestReviewModeSelection(t *testing.T) {
 
 	specs := &fakeSpecs{model: spec.Model{TaskID: "task", Title: "Task", Status: spec.StatusReview}}
 	sessions := &fakeSessions{}
-	sessions.ledger = session.New("task", "now").WithEntry(session.Entry{Type: "review", Status: corereview.VerdictFail, Output: corereview.EncodeDossier(blockingDossier("f1", "bug"))})
+	sessions.ledger = session.New("task", "now").
+		WithEntry(session.Entry{Type: "review", Status: corereview.VerdictFail, Output: corereview.EncodeDossier(blockingDossier("f1", "bug"))}).
+		WithEntry(session.Entry{Type: "build", Status: string(spec.StatusReview), Reason: "review repair evidence refreshed"})
 	provider := &promptProvider{packet: passingDossierWithMode(corereview.ModeVerify)}
 	out, err := RunWithInput(context.Background(), specs, sessions, cleanWorkspace(), provider, fakeClock{}, Input{TaskID: "task"})
 	if err != nil {
@@ -604,9 +868,14 @@ func TestReviewModeSelection(t *testing.T) {
 	if out.Mode != corereview.ModeVerify || provider.req.Context.Sections[1].Body == "" || !strings.Contains(provider.req.Prompt, "Mode: verify") {
 		t.Fatalf("expected verify mode after open blockers: out=%+v prompt=%s", out, provider.req.Prompt)
 	}
+	for _, want := range []string{"## Known Findings To Verify", "f1 [high]: bug", "Validation: rerun the test"} {
+		if !strings.Contains(provider.req.Prompt, want) {
+			t.Fatalf("verify prompt missing %q:\n%s", want, provider.req.Prompt)
+		}
+	}
 
 	provider = &promptProvider{packet: passingDossier()}
-	out, err = RunWithInput(context.Background(), specs, sessions, cleanWorkspace(), provider, fakeClock{}, Input{TaskID: "task", Mode: corereview.ModeDiscover, ForceMode: true})
+	out, err = RunWithInput(context.Background(), specs, sessions, cleanWorkspace(), provider, fakeClock{}, Input{TaskID: "task", Mode: corereview.ModeDiscover, ForceMode: true, ForceReview: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -831,8 +1100,10 @@ func TestReviewReportsAmbientDriftWithoutBlockingProvider(t *testing.T) {
 	}
 	entries := sessions.ledger.Entries
 	if len(entries) < 3 ||
+		entries[len(entries)-3].Type != "review_attempt" ||
+		entries[len(entries)-3].Status != "running" ||
 		entries[len(entries)-2].Type != "review_attempt" ||
-		entries[len(entries)-2].Status != "running" ||
+		entries[len(entries)-2].Status != "accepted" ||
 		entries[len(entries)-1].Type != "review" ||
 		entries[len(entries)-1].Provider == "scafld" {
 		t.Fatalf("ambient drift should be recorded while still spending provider review: %+v", sessions.ledger.Entries)

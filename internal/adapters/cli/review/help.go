@@ -22,6 +22,7 @@ Flags:
   --max-findings N         Bound provider output volume
   --min-attack-angles N    Request at least N attack-log entries
   --review-depth TEXT      Review depth: light, standard, or deep
+  --force                  Rerun even when the current review already passed
   --print-context          Print the exact provider context and exit
   --human-reviewed         Record an audited human review instead of invoking a provider
   --reason TEXT            Required reason for --human-reviewed
@@ -52,6 +53,11 @@ Provider auto:
 Context:
   Print the deterministic reviewer brief without spending provider tokens:
     scafld review email-contracts --print-context
+
+Command provider contract:
+  --provider command runs --provider-command and expects one complete
+  ReviewDossier JSON object on stdout. Progress and diagnostics belong on
+  stderr; a non-zero exit or malformed stdout fails the review attempt.
 
 Cost control:
   For small diffs, keep the same gate but request a tighter review budget:

@@ -79,6 +79,11 @@ For small diffs, keep the same finalize but tighten the review budget:
 scafld review <task-id> --review-depth light --max-findings 4 --min-attack-angles 3
 ```
 
+The budget is enforced at acceptance time. A provider packet with fewer
+`attack_log` entries than `min_attack_angles`, or more findings than
+`max_findings`, is an invalid ReviewDossier and closes the attempt as failed
+instead of recording a review.
+
 `review_depth` is a contract, not just a label:
 
 - `light`: completion blockers and regression risk; avoid advisory churn.
@@ -103,7 +108,9 @@ Provider meanings:
   authenticated locally, through its settings or supported Google credential
   environment variables.
 - `command`: custom reviewer command. It receives the review prompt on stdin and
-  must emit a ReviewDossier-compatible response.
+  must emit one complete ReviewDossier JSON object on stdout. Progress and
+  diagnostics belong on stderr. A non-zero exit, malformed stdout, or
+  under-budget dossier fails the review attempt.
 - `local`: deterministic local pass-through provider for development and smoke
   tests. It is not an adversarial review and cannot satisfy `complete`.
 - `--human-reviewed`: audited operator override. It does not invoke a model
@@ -132,6 +139,14 @@ reviewer, and includes new changes outside declared scope as ambient workspace
 drift. Unchanged baseline dirt and ambient drift are context, not findings by
 themselves. This keeps dirty monorepos cheap: unrelated active work from another
 task should not force a stash, commit, human override, or extra provider run.
+`scafld status --json` exposes the same derived scope under `task_material` for
+wrappers and agents that need to stage, inspect, or explain the task-owned
+surface without scraping handoff prose.
+
+For search-based acceptance or review checks, use `rg --hidden` with explicit
+excludes for runtime/generated directories when untracked files matter. Avoid
+`git grep` for public-surface, stale-spec, or legacy-shape gates unless the
+check is intentionally limited to tracked files.
 
 The read-only mutation guard is task-relevant rather than global. Changes inside
 review scope still fail closed because the provider judged moving code.
@@ -170,6 +185,11 @@ Review modes change the attack shape, not the completion standard:
   introduced by the fix.
 
 Both modes use the same ReviewDossier schema and the same pass/fail finalize.
+
+Configured `review.automated_passes` and `review.adversarial_passes` are not
+just prompt labels. scafld renders them into one provider brief and makes one
+provider invocation. The reviewer attacks every configured focus area within
+the requested finding and attack-angle budget, then records one ReviewDossier.
 
 The prompt tells the challenger not to mutate the workspace, not to emit
 placeholder output while investigating, and to submit one final ReviewDossier.
@@ -227,6 +247,26 @@ its `canonical_response_sha256`, provider provenance (`provider_model` and
 `provider_session` when available), and the reviewed workspace fingerprint:
 `reviewed_head`, `reviewed_dirty`, and `reviewed_diff`.
 
+When scafld can derive a task material scope, review entries also store
+`reviewed_scope` and `reviewed_material_digest`. `status` and `complete`
+recompute that scoped content digest before trusting the pass. A dirty-to-commit
+transition of the same reviewed bytes remains valid, and unrelated workspace
+drift outside the reviewed scope does not burn another provider review. Changes
+to the scoped material make the pass stale and require a new review.
+
+Provider invocations are wrapped in a leased `review_attempt` lifecycle:
+
+- `running`: a provider attempt is active and has a lease deadline
+- `accepted`: scafld accepted a ReviewDossier and is recording the review entry
+- `failed`: provider transport, timeout, or dossier validation failed
+- `abandoned`: a later `scafld review` recovered an expired running attempt
+
+Only `scafld review` mutates stale attempts. Read-only surfaces such as
+`status`, `handoff`, and `complete` project the same state but do not repair the
+ledger themselves. This keeps recovery deterministic: an unexpired running
+attempt blocks duplicate provider spend, while an expired running attempt is
+abandoned automatically before the next review starts.
+
 The authority order stays the same:
 
 - session stores evidence
@@ -254,6 +294,13 @@ When review fails:
 - the session review entry stores the accepted dossier.
 - the spec projects the latest verdict and findings under `## Review`.
 
+Do not rerun review immediately after a failed verdict. Repair the blockers,
+run `scafld build` so the ledger has fresh evidence, then run `scafld review`.
+scafld enforces this to avoid review churn where each provider call returns one
+more finding against unchanged evidence. Provider failures are different: they
+can be retried after the provider issue is fixed. A passing review is not rerun
+unless the operator passes `--force`.
+
 Diagnostics remain for provider transport failures, invalid dossiers, timeouts,
 and other cases where scafld could not accept normal review output.
 
@@ -271,6 +318,8 @@ scafld complete <task-id>
   audited `human` review override
 - non-human review evidence includes a valid sealed `review_packet`,
   `canonical_response_sha256`, and reviewed workspace state
+- when `reviewed_scope` and `reviewed_material_digest` are present, the current
+  scoped material still matches the reviewed content
 
 If review fails, repair the work, rerun acceptance as needed, rerun review, then
 complete only after the challenger clears the finalize.
@@ -301,10 +350,11 @@ protection. Provider failures and timeouts write diagnostics under:
 .scafld/runs/<task-id>/diagnostics/
 ```
 
-`status --json` and `handoff` show the accepted blocker summary first. Use
-diagnostics as supporting evidence when paid model output could not be accepted
-as a valid review dossier. For Claude and Gemini, final prose and fenced JSON
-are ignored: the provider must call the `submit_review` tool exactly once.
+`status --json` and `handoff` show the accepted blocker summary and task material
+projection first. Use diagnostics as supporting evidence when paid model output
+could not be accepted as a valid review dossier. For Claude and Gemini, final
+prose and fenced JSON are ignored: the provider must call the `submit_review`
+tool exactly once.
 
 During a running external review, the terminal shows summary progress only:
 start, periodic running heartbeat, structured provider events when available,

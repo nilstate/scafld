@@ -33,30 +33,36 @@ type Session struct {
 
 // Entry is one append-only evidence event in a session ledger.
 type Entry struct {
-	ID                      string `json:"id,omitempty"`
-	Type                    string `json:"type"`
-	RecordedAt              string `json:"recorded_at"`
-	CriterionID             string `json:"criterion_id,omitempty"`
-	PhaseID                 string `json:"phase_id,omitempty"`
-	Status                  string `json:"status,omitempty"`
-	Reason                  string `json:"reason,omitempty"`
-	Provider                string `json:"provider,omitempty"`
-	Command                 string `json:"command,omitempty"`
-	ExitCode                int    `json:"exit_code,omitempty"`
-	Output                  string `json:"output,omitempty"`
-	Path                    string `json:"path,omitempty"`
-	ReceiptDigest           string `json:"receipt_digest,omitempty"`
-	LedgerHead              string `json:"ledger_head,omitempty"`
-	TrustStatus             string `json:"trust_status,omitempty"`
-	TrustReason             string `json:"trust_reason,omitempty"`
-	ReviewPacket            string `json:"review_packet,omitempty"`
-	CanonicalResponseSHA256 string `json:"canonical_response_sha256,omitempty"`
-	ProviderModel           string `json:"provider_model,omitempty"`
-	ProviderSession         string `json:"provider_session,omitempty"`
-	ReviewedHead            string `json:"reviewed_head,omitempty"`
-	ReviewedDirty           string `json:"reviewed_dirty,omitempty"`
-	ReviewedDiff            string `json:"reviewed_diff,omitempty"`
-	ReviewedSpec            string `json:"reviewed_spec,omitempty"`
+	ID                      string   `json:"id,omitempty"`
+	Type                    string   `json:"type"`
+	RecordedAt              string   `json:"recorded_at"`
+	CriterionID             string   `json:"criterion_id,omitempty"`
+	PhaseID                 string   `json:"phase_id,omitempty"`
+	Status                  string   `json:"status,omitempty"`
+	Reason                  string   `json:"reason,omitempty"`
+	Provider                string   `json:"provider,omitempty"`
+	Command                 string   `json:"command,omitempty"`
+	ExitCode                int      `json:"exit_code,omitempty"`
+	Output                  string   `json:"output,omitempty"`
+	Path                    string   `json:"path,omitempty"`
+	ReceiptDigest           string   `json:"receipt_digest,omitempty"`
+	LedgerHead              string   `json:"ledger_head,omitempty"`
+	TrustStatus             string   `json:"trust_status,omitempty"`
+	TrustReason             string   `json:"trust_reason,omitempty"`
+	ReviewPacket            string   `json:"review_packet,omitempty"`
+	CanonicalResponseSHA256 string   `json:"canonical_response_sha256,omitempty"`
+	ProviderModel           string   `json:"provider_model,omitempty"`
+	ProviderSession         string   `json:"provider_session,omitempty"`
+	AttemptID               string   `json:"attempt_id,omitempty"`
+	LeaseExpiresAt          string   `json:"lease_expires_at,omitempty"`
+	ReviewMode              string   `json:"review_mode,omitempty"`
+	ReviewPassCount         int      `json:"review_pass_count,omitempty"`
+	ReviewedHead            string   `json:"reviewed_head,omitempty"`
+	ReviewedDirty           string   `json:"reviewed_dirty,omitempty"`
+	ReviewedDiff            string   `json:"reviewed_diff,omitempty"`
+	ReviewedSpec            string   `json:"reviewed_spec,omitempty"`
+	ReviewedScope           []string `json:"reviewed_scope,omitempty"`
+	ReviewedMaterialDigest  string   `json:"reviewed_material_digest,omitempty"`
 }
 
 // StateRecord is the replayed state for a criterion or phase.

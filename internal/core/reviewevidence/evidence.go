@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"path"
+	"sort"
 	"strings"
 
 	coreworkspace "github.com/nilstate/scafld/v2/internal/core/workspace"
@@ -35,6 +36,19 @@ type Provenance struct {
 	Status      string `json:"status"`
 	SHA256      string `json:"sha256"`
 	ScratchPath string `json:"scratch_path"`
+}
+
+// MaterialSeal records the reviewed task material independent of Git status.
+// Scope is the normalized path set used to recompute Digest.
+type MaterialSeal struct {
+	Scope  []string
+	Digest string
+}
+
+// MaterialFile records one present file's content hash under a material scope.
+type MaterialFile struct {
+	Path   string
+	SHA256 string
 }
 
 // NormalizePath returns a slash-separated repository-relative path.
@@ -145,4 +159,42 @@ func SnapshotDirty(snapshot []string) string {
 		return "false"
 	}
 	return "true"
+}
+
+// MaterialDigest returns a content digest for the reviewed material. It ignores
+// Git dirty status so dirty-to-committed transitions preserve authority when
+// scoped file bytes are unchanged.
+func MaterialDigest(scope []string, files []MaterialFile) string {
+	normalizedScope := coreworkspace.NormalizeScope(scope)
+	normalizedFiles := make([]MaterialFile, 0, len(files))
+	for _, file := range files {
+		path := strings.Trim(strings.ReplaceAll(strings.TrimSpace(file.Path), "\\", "/"), "/")
+		path = strings.TrimPrefix(path, "./")
+		sum := strings.ToLower(strings.TrimSpace(file.SHA256))
+		if path == "" || sum == "" {
+			continue
+		}
+		normalizedFiles = append(normalizedFiles, MaterialFile{Path: path, SHA256: sum})
+	}
+	sort.Slice(normalizedFiles, func(i, j int) bool {
+		if normalizedFiles[i].Path == normalizedFiles[j].Path {
+			return normalizedFiles[i].SHA256 < normalizedFiles[j].SHA256
+		}
+		return normalizedFiles[i].Path < normalizedFiles[j].Path
+	})
+	var b strings.Builder
+	b.WriteString("scafld-reviewed-material-v1\n")
+	b.WriteString("scope:\n")
+	for _, item := range normalizedScope {
+		b.WriteString(item)
+		b.WriteByte('\n')
+	}
+	b.WriteString("files:\n")
+	for _, file := range normalizedFiles {
+		b.WriteString(file.Path)
+		b.WriteByte('\t')
+		b.WriteString(file.SHA256)
+		b.WriteByte('\n')
+	}
+	return SHA256Hex([]byte(b.String()))
 }

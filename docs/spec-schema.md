@@ -79,7 +79,11 @@ Supported values:
 - `exit_code_zero`
 - `exit_code_nonzero`
 - `no_matches`
+- `manual`
 - `browser_evidence`
+
+Validation errors include the invalid value and supported values. For empty
+stdout checks, use `no_matches`, not `stdout_empty`.
 
 The current executable fields are `Command` and `Expected kind`. Criteria with
 type `browser` use `browser_evidence`; the command owns the browser runner and
@@ -109,6 +113,16 @@ Output format: codex.output_file
 Summary: The draft needs one ownership decision before approval.
 
 Observations:
+- design
+  - Result: blocks
+  - Anchor: code:src/auth/session.ts:84
+  - Note: The draft may add a second session cleanup path instead of using the shared owner.
+  - Default: Reuse the existing owner or explicitly justify the split.
+  - Status: open
+- scope
+  - Result: clean
+  - Anchor: spec_gap:Risks
+  - Note: No migration or compatibility fallback is introduced.
 - path
   - Result: clean
   - Anchor: code:src/auth/session.ts:84
@@ -117,10 +131,6 @@ Observations:
   - Result: n/a
   - Anchor: spec_gap:Acceptance
   - Note: Docs-only change has no runnable command beyond final validation.
-- scope
-  - Result: clean
-  - Anchor: spec_gap:Risks
-  - Note: No migration or compatibility fallback is introduced.
 - timing
   - Result: clean
   - Anchor: spec_gap:Phases
@@ -129,12 +139,6 @@ Observations:
   - Result: n/a
   - Anchor: spec_gap:Rollback
   - Note: No runtime rollback is required for the documented change.
-- design
-  - Result: blocks
-  - Anchor: code:src/auth/session.ts:84
-  - Note: The draft may add a second session cleanup path.
-  - Default: Reuse the existing owner or explicitly justify the split.
-  - Status: open
 ````
 
 Each observation should carry one `Anchor` value matching `spec_gap:<field>`,

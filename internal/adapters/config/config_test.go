@@ -293,7 +293,7 @@ func TestConfigDefaultWhenMissing(t *testing.T) {
 	}
 }
 
-func TestLegacyGeneratedProviderModelsUpgradeToCurrentDefaults(t *testing.T) {
+func TestProviderModelsUpgradeToLatestAliasesWhenPossible(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
@@ -309,7 +309,7 @@ review:
     codex:
       model: "gpt-5-codex"
     claude:
-      model: "claude-opus-4-8"
+      model: "claude-3-5-sonnet-20241022"
 `)
 
 	cfg, err := Load(context.Background(), root)
@@ -317,18 +317,38 @@ review:
 		t.Fatal(err)
 	}
 	if cfg.Harden.External.Codex.Model != DefaultCodexModel || cfg.Harden.External.Claude.Model != DefaultClaudeModel {
-		t.Fatalf("harden legacy defaults were not upgraded: %+v", cfg.Harden.External)
+		t.Fatalf("harden provider models were not upgraded: %+v", cfg.Harden.External)
 	}
-	if cfg.Review.External.Codex.Model != DefaultCodexModel || cfg.Review.External.Claude.Model != DefaultClaudeModel {
-		t.Fatalf("review legacy defaults were not upgraded: %+v", cfg.Review.External)
+	if cfg.Review.External.Codex.Model != DefaultCodexModel || cfg.Review.External.Claude.Model != "sonnet" {
+		t.Fatalf("review provider models were not upgraded: %+v", cfg.Review.External)
 	}
 
 	base, err := LoadBase(context.Background(), root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if base.Review.External.Codex.Model != DefaultCodexModel || base.Review.External.Claude.Model != DefaultClaudeModel {
-		t.Fatalf("base legacy defaults were not upgraded: %+v", base.Review.External)
+	if base.Review.External.Codex.Model != DefaultCodexModel || base.Review.External.Claude.Model != "sonnet" {
+		t.Fatalf("base provider models were not upgraded: %+v", base.Review.External)
+	}
+}
+
+func TestClaudeConcreteModelsNormalizeToLatestAliases(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]string{
+		"claude-opus-4-7":            "opus",
+		"claude-opus-4.8":            "opus",
+		"opus-4.7":                   "opus",
+		"claude-3-5-sonnet-20241022": "sonnet",
+		"claude-haiku-4-5-20251001":  "haiku",
+		" OPUS ":                     "opus",
+		"claude-config":              "claude-config",
+		"custom-sonnet-model":        "custom-sonnet-model",
+	}
+	for model, want := range tests {
+		if got := normalizeClaudeLatestModel(model); got != want {
+			t.Fatalf("normalizeClaudeLatestModel(%q) = %q, want %q", model, got, want)
+		}
 	}
 }
 

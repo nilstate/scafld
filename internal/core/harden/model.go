@@ -42,12 +42,18 @@ var ErrInvalidDossier = errors.New("invalid harden dossier")
 
 // RequiredDimensions are the hardening dimensions every round must cover.
 var RequiredDimensions = []string{
+	"design",
+	"scope",
 	"path",
 	"command",
-	"scope",
 	"timing",
 	"rollback",
-	"design",
+}
+
+// RequiredDimensionList formats the canonical dimension order for user-facing
+// instructions and errors.
+func RequiredDimensionList() string {
+	return humanList(RequiredDimensions)
 }
 
 // Observation records one grounded hardening claim.
@@ -275,4 +281,17 @@ func normalizeResult(value string) string {
 
 func normalize(value string) string {
 	return strings.Join(strings.Fields(strings.ToLower(strings.TrimSpace(value))), " ")
+}
+
+func humanList(values []string) string {
+	switch len(values) {
+	case 0:
+		return ""
+	case 1:
+		return values[0]
+	case 2:
+		return values[0] + " and " + values[1]
+	default:
+		return strings.Join(values[:len(values)-1], ", ") + ", and " + values[len(values)-1]
+	}
 }

@@ -1,7 +1,18 @@
 #!/usr/bin/env sh
 set -eu
 
-repo_root="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+script="$0"
+while [ -L "$script" ]; do
+  script_dir="$(CDPATH= cd -- "$(dirname -- "$script")" && pwd)"
+  link="$(readlink "$script")"
+  case "$link" in
+    /*) script="$link" ;;
+    *) script="$script_dir/$link" ;;
+  esac
+done
+
+script="$(CDPATH= cd -- "$(dirname -- "$script")" && pwd)/$(basename -- "$script")"
+repo_root="$(CDPATH= cd -- "$(dirname -- "$script")/.." && pwd)"
 caller_root="$(pwd)"
 
 has_root=0
@@ -15,8 +26,29 @@ done
 
 cd "$repo_root"
 
+version="dev"
+if command -v git >/dev/null 2>&1 && git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  sha="$(git rev-parse --short HEAD 2>/dev/null || true)"
+  if [ -n "$sha" ]; then
+    version="dev-$sha"
+    if [ -n "$(git status --porcelain --untracked-files=all 2>/dev/null)" ]; then
+      version="$version-dirty"
+    fi
+  fi
+fi
+ldflags="-X github.com/nilstate/scafld/v2/internal/adapters/cli.version=$version"
+
+cache_dir="${SCAFLD_DEV_CACHE_DIR:-$repo_root/.tools/scafld-dev/current}"
+mkdir -p "$cache_dir"
+binary="$cache_dir/scafld-dev"
+if [ "$(CDPATH= cd -- "$(dirname -- "$binary")" && pwd)/$(basename -- "$binary")" = "$script" ]; then
+  echo "scafld: refusing to overwrite dev launcher at $script" >&2
+  exit 1
+fi
+go build -ldflags "$ldflags" -o "$binary" ./cmd/scafld
+
 if [ "$has_root" = "1" ]; then
-  exec go run ./cmd/scafld "$@"
+  exec "$binary" "$@"
 fi
 
-exec go run ./cmd/scafld "$@" --root "$caller_root"
+exec "$binary" "$@" --root "$caller_root"

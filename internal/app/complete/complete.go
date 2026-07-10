@@ -7,11 +7,11 @@ import (
 	"strings"
 	"time"
 
-	corecompletion "github.com/nilstate/scafld/v2/internal/core/completion"
 	"github.com/nilstate/scafld/v2/internal/core/gate"
 	"github.com/nilstate/scafld/v2/internal/core/reconcile"
 	corereview "github.com/nilstate/scafld/v2/internal/core/review"
 	"github.com/nilstate/scafld/v2/internal/core/reviewevidence"
+	"github.com/nilstate/scafld/v2/internal/core/reviewgate"
 	"github.com/nilstate/scafld/v2/internal/core/session"
 	"github.com/nilstate/scafld/v2/internal/core/spec"
 )
@@ -38,6 +38,10 @@ type WorkspaceStatus interface {
 	ResolveHead(context.Context) (string, bool, error)
 }
 
+type workspaceMaterialStatus interface {
+	MaterialSeal(context.Context, []string) (reviewevidence.MaterialSeal, error)
+}
+
 // Clock supplies completion timestamps.
 type Clock interface{ Now() time.Time }
 
@@ -51,21 +55,34 @@ func Run(ctx context.Context, specs SpecStore, sessions SessionStore, workspace 
 	if err != nil {
 		return spec.Model{}, reviewGateError(model, "session ledger could not be loaded", "missing review evidence")
 	}
-	authority := corecompletion.CurrentReviewGate(ledger)
-	if !authority.Valid {
-		return spec.Model{}, reviewGateError(model, authority.Reason, authority.Actual)
+	nowTime := clock.Now().UTC()
+	now := nowTime.Format(time.RFC3339)
+	opts := reviewgate.Options{Now: nowTime}
+	if workspace != nil {
+		seal, err := currentWorkspaceSeal(ctx, workspace)
+		if err != nil {
+			return spec.Model{}, reviewGateError(model, "latest review is stale against current workspace", err.Error())
+		}
+		opts.WorkspaceSeal = seal
+		opts.HasWorkspaceSeal = true
+		authority := reviewgate.CurrentReviewGate(ledger)
+		if authority.Valid && strings.TrimSpace(authority.ReviewEntry.ReviewedMaterialDigest) != "" && reviewedScopePresent(authority.ReviewEntry.ReviewedScope) {
+			material, err := currentMaterialSeal(ctx, workspace, authority.ReviewEntry.ReviewedScope)
+			if err != nil {
+				return spec.Model{}, reviewGateError(model, "latest review is stale against current task material", err.Error())
+			}
+			opts.MaterialSeal = material
+			opts.HasMaterialSeal = true
+		}
 	}
-	if err := validateCurrentSpecSeal(model, authority); err != nil {
-		return spec.Model{}, reviewGateError(model, "latest review is stale against current spec", err.Error())
-	}
-	if err := validateCurrentWorkspaceSeal(ctx, workspace, authority); err != nil {
-		return spec.Model{}, reviewGateError(model, "latest review is stale against current workspace", err.Error())
+	state := reviewgate.Project(ledger, model, opts)
+	if state.Kind != reviewgate.KindReviewPassed {
+		return spec.Model{}, reviewGateErrorWithNext(model, state.Reason, state.Actual, state.Next)
 	}
 	model = reconcile.FromSession(model, ledger)
 	if !projectedReviewPassed(model) {
 		return spec.Model{}, reviewGateError(model, "projected spec is not at a passing review gate", fmt.Sprintf("status %s verdict %s", model.Status, model.Review.Verdict))
 	}
-	now := clock.Now().UTC().Format(time.RFC3339)
 	ledger, err = sessions.Append(ctx, model.TaskID, session.Entry{Type: "complete", Status: "completed", Reason: "task completed"}, now)
 	if err != nil {
 		return spec.Model{}, err
@@ -88,55 +105,34 @@ func projectedReviewPassed(model spec.Model) bool {
 	return model.Status == spec.StatusReview && model.Review.Verdict == corereview.VerdictPass
 }
 
-func validateCurrentSpecSeal(model spec.Model, authority corecompletion.Authority) error {
-	if !authority.Valid || authority.HumanReviewed || authority.ReviewEntry.Type != "review" {
-		return nil
-	}
-	recorded := strings.TrimSpace(authority.ReviewEntry.ReviewedSpec)
-	if recorded == "" {
-		return fmt.Errorf("reviewed_spec is missing")
-	}
-	current := spec.ContractDigest(model)
-	if recorded != current {
-		return fmt.Errorf("reviewed_spec %s, current %s", recorded, current)
-	}
-	return nil
-}
-
-func validateCurrentWorkspaceSeal(ctx context.Context, workspace WorkspaceStatus, authority corecompletion.Authority) error {
-	if workspace == nil || !authority.Valid || authority.HumanReviewed || authority.ReviewEntry.Type != "review" {
-		return nil
-	}
+func currentWorkspaceSeal(ctx context.Context, workspace WorkspaceStatus) (reviewgate.WorkspaceSeal, error) {
 	snapshot, err := workspace.ChangedFiles(ctx)
 	if err != nil {
-		return fmt.Errorf("current workspace snapshot failed: %w", err)
+		return reviewgate.WorkspaceSeal{}, fmt.Errorf("current workspace snapshot failed: %w", err)
 	}
-	current := reviewSeal{
-		head:  currentHead(ctx, workspace),
-		dirty: reviewevidence.SnapshotDirty(reviewevidence.ComparisonSnapshot(snapshot)),
-		diff:  reviewevidence.SnapshotDigest(reviewevidence.ComparisonSnapshot(snapshot)),
-	}
-	recorded := reviewSeal{
-		head:  authority.ReviewEntry.ReviewedHead,
-		dirty: authority.ReviewEntry.ReviewedDirty,
-		diff:  authority.ReviewEntry.ReviewedDiff,
-	}
-	if recorded.head != current.head {
-		return fmt.Errorf("reviewed_head %s, current %s", recorded.head, current.head)
-	}
-	if recorded.dirty != current.dirty {
-		return fmt.Errorf("reviewed_dirty %s, current %s", recorded.dirty, current.dirty)
-	}
-	if recorded.diff != current.diff {
-		return fmt.Errorf("reviewed_diff %s, current %s", recorded.diff, current.diff)
-	}
-	return nil
+	comparison := reviewevidence.ComparisonSnapshot(snapshot)
+	return reviewgate.WorkspaceSeal{
+		Head:  currentHead(ctx, workspace),
+		Dirty: reviewevidence.SnapshotDirty(comparison),
+		Diff:  reviewevidence.SnapshotDigest(comparison),
+	}, nil
 }
 
-type reviewSeal struct {
-	head  string
-	dirty string
-	diff  string
+func currentMaterialSeal(ctx context.Context, workspace WorkspaceStatus, scope []string) (reviewevidence.MaterialSeal, error) {
+	material, ok := workspace.(workspaceMaterialStatus)
+	if !ok {
+		return reviewevidence.MaterialSeal{}, fmt.Errorf("workspace material seal is unavailable")
+	}
+	return material.MaterialSeal(ctx, scope)
+}
+
+func reviewedScopePresent(scope []string) bool {
+	for _, item := range scope {
+		if strings.TrimSpace(item) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func currentHead(ctx context.Context, workspace WorkspaceStatus) string {
@@ -157,7 +153,14 @@ func singleLine(value string) string {
 }
 
 func reviewGateError(model spec.Model, reason string, actual string) error {
+	return reviewGateErrorWithNext(model, reason, actual, "")
+}
+
+func reviewGateErrorWithNext(model spec.Model, reason string, actual string, projectedNext string) error {
 	next := model.CurrentState.AllowedFollowUp
+	if projectedNext != "" {
+		next = projectedNext
+	}
 	if next == "scafld complete "+model.TaskID {
 		next = "scafld handoff " + model.TaskID
 	}

@@ -11,6 +11,7 @@ import (
 
 	adaptercli "github.com/nilstate/scafld/v2/internal/adapters/cli/adapter"
 	configcli "github.com/nilstate/scafld/v2/internal/adapters/cli/config"
+	"github.com/nilstate/scafld/v2/internal/adapters/cli/fallback"
 	finalizecli "github.com/nilstate/scafld/v2/internal/adapters/cli/finalize"
 	finalizestdiocli "github.com/nilstate/scafld/v2/internal/adapters/cli/finalizestdio"
 	hardencli "github.com/nilstate/scafld/v2/internal/adapters/cli/harden"
@@ -111,6 +112,10 @@ func Run(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer)
 	if handler := commandHandlers[args[0]]; handler != nil {
 		return handler(ctx, args[1:], stdout, stderr)
 	}
+	if args[0] == "exec" {
+		fmt.Fprintln(stderr, `error: unknown command "exec"; acceptance commands are recorded by "scafld build <task_id>" after approval. To inspect reviewer context use "scafld review <task_id> --print-context".`)
+		return ExitInvalid
+	}
 	fmt.Fprintf(stderr, "error: unknown command %q\n", args[0])
 	return ExitInvalid
 }
@@ -195,7 +200,7 @@ func runConfig(ctx context.Context, args []string, stdout io.Writer, stderr io.W
 func runPlan(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer) int {
 	opts, err := parseOptions(args)
 	if err != nil || len(opts.Positionals) != 1 {
-		return failOut(stderr, coalesce(err, errors.New("plan requires task_id")), ExitInvalid, opts.JSON)
+		return failOut(stderr, fallback.Error(err, errors.New("plan requires task_id")), ExitInvalid, opts.JSON)
 	}
 	root, err := commandRoot(ctx, opts, true)
 	if err != nil {
@@ -214,7 +219,7 @@ func runPlan(ctx context.Context, args []string, stdout io.Writer, stderr io.Wri
 func runValidate(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer) int {
 	opts, err := parseOptions(args)
 	if err != nil || len(opts.Positionals) != 1 {
-		return failOut(stderr, coalesce(err, errors.New("validate requires task_id")), ExitInvalid, opts.JSON)
+		return failOut(stderr, fallback.Error(err, errors.New("validate requires task_id")), ExitInvalid, opts.JSON)
 	}
 	store, _, code, err := stores(ctx, opts)
 	if err != nil {
@@ -355,6 +360,9 @@ func runReview(ctx context.Context, args []string, stdout io.Writer, stderr io.W
 		MinAttackAngles: reviewcli.PositiveOrDefault(reviewcli.PositiveInt(opts.Values["min-attack-angles"]), selected.Dossier.MinAttackAngles),
 		ReviewDepth:     reviewcli.FirstNonEmpty(opts.Values["review-depth"], selected.Dossier.ReviewDepth),
 		RerunPolicy:     selected.Dossier.RerunPolicy,
+		ForceReview:     opts.Flags["force"],
+		ProviderName:    selected.ProviderName,
+		ProviderModel:   selected.ProviderModel,
 		PrintContext:    opts.Flags["print-context"],
 		HumanReviewed:   opts.Flags["human-reviewed"],
 		Reason:          opts.Values["reason"],
@@ -385,7 +393,7 @@ func runStatus(ctx context.Context, args []string, stdout io.Writer, stderr io.W
 	if err != nil {
 		return failOut(stderr, err, code, opts.JSON)
 	}
-	out, err := status.Run(ctx, store, sessions, opts.Positionals[0])
+	out, err := status.Run(ctx, store, sessions, opts.Positionals[0], git.Adapter{Root: store.Root})
 	if err != nil {
 		return failOut(stderr, err, ExitGeneric, opts.JSON)
 	}
@@ -439,7 +447,7 @@ func runHandoff(ctx context.Context, args []string, stdout io.Writer, stderr io.
 	if err != nil {
 		return failOut(stderr, err, code, opts.JSON)
 	}
-	out, err := handoff.Run(ctx, store, sessions, opts.Positionals[0])
+	out, err := handoff.Run(ctx, store, sessions, opts.Positionals[0], git.Adapter{Root: store.Root})
 	if err != nil {
 		return failOut(stderr, err, ExitGeneric, opts.JSON)
 	}

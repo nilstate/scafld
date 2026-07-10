@@ -3,8 +3,10 @@ package status
 import (
 	"context"
 	"testing"
+	"time"
 
 	corereview "github.com/nilstate/scafld/v2/internal/core/review"
+	"github.com/nilstate/scafld/v2/internal/core/reviewevidence"
 	"github.com/nilstate/scafld/v2/internal/core/session"
 	"github.com/nilstate/scafld/v2/internal/core/spec"
 	"github.com/nilstate/scafld/v2/internal/testkit/sessiontest"
@@ -20,6 +22,27 @@ type fakeSessionStore struct{ ledger session.Session }
 
 func (f fakeSessionStore) Load(context.Context, string) (session.Session, error) {
 	return f.ledger, nil
+}
+
+type fakeWorkspace struct {
+	snapshot []string
+	head     string
+	material reviewevidence.MaterialSeal
+}
+
+func (f fakeWorkspace) ChangedFiles(context.Context) ([]string, error) {
+	return append([]string(nil), f.snapshot...), nil
+}
+
+func (f fakeWorkspace) ResolveHead(context.Context) (string, bool, error) {
+	if f.head == "" {
+		return "", false, nil
+	}
+	return f.head, true, nil
+}
+
+func (f fakeWorkspace) MaterialSeal(context.Context, []string) (reviewevidence.MaterialSeal, error) {
+	return f.material, nil
 }
 
 func reviewDossier(id string, summary string) corereview.Dossier {
@@ -53,6 +76,47 @@ func TestStatusIncludesLatestReviewFindings(t *testing.T) {
 	}
 	if out.Review.Verdict != corereview.VerdictFail || len(out.Review.Findings) != 1 || out.Review.Findings[0].Summary != "bug" {
 		t.Fatalf("review info = %+v", out.Review)
+	}
+}
+
+func TestStatusIncludesTaskMaterialProjection(t *testing.T) {
+	t.Parallel()
+
+	reviewEntry := sessiontest.PassingReviewEntry("review-pass", "codex")
+	reviewEntry.ReviewedScope = []string{"api"}
+	reviewEntry.ReviewedMaterialDigest = "same-material"
+	ledger := session.New("task", "2026-05-05T00:00:00Z").
+		WithEntry(session.Entry{ID: "baseline", Type: session.EntryWorkspaceBaseline, Status: "captured", Output: " M old api/handler.go\n M old docs/index.md\n"}).
+		WithEntry(reviewEntry)
+	model := spec.Model{
+		TaskID: "task",
+		Status: spec.StatusReview,
+		Context: spec.Context{
+			FilesImpacted: []string{"`api/handler.go`"},
+		},
+	}
+	out, err := Run(context.Background(), fakeSpecStore{model: model}, fakeSessionStore{ledger: ledger}, "task", fakeWorkspace{
+		snapshot: []string{" M new api/handler.go", " M new docs/index.md"},
+		head:     "head",
+		material: reviewevidence.MaterialSeal{Scope: []string{"api"}, Digest: "same-material"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.TaskMaterial == nil {
+		t.Fatal("task material missing")
+	}
+	if out.TaskMaterial.MaterialStatus != "unchanged" || out.TaskMaterial.CurrentMaterialDigest != "same-material" {
+		t.Fatalf("material status = %+v", out.TaskMaterial)
+	}
+	if len(out.TaskMaterial.Scope) != 1 || out.TaskMaterial.Scope[0] != "api/handler.go" {
+		t.Fatalf("scope = %+v", out.TaskMaterial.Scope)
+	}
+	if len(out.TaskMaterial.TaskChanges) != 1 || out.TaskMaterial.TaskChanges[0] != "changed api/handler.go (M old -> M new)" {
+		t.Fatalf("task changes = %+v", out.TaskMaterial.TaskChanges)
+	}
+	if len(out.TaskMaterial.AmbientDrift) != 1 || out.TaskMaterial.AmbientDrift[0] != "changed docs/index.md (M old -> M new)" {
+		t.Fatalf("ambient drift = %+v", out.TaskMaterial.AmbientDrift)
 	}
 }
 
@@ -119,6 +183,27 @@ func TestStatusReviewAttemptFailureCreatesRepairContract(t *testing.T) {
 	}
 	if out.Next != "scafld handoff task" {
 		t.Fatalf("next = %q, want handoff", out.Next)
+	}
+}
+
+func TestStatusReviewStaleAttemptCreatesRecoveryContract(t *testing.T) {
+	t.Parallel()
+
+	recordedAt := time.Now().UTC().Add(-3 * time.Hour).Format(time.RFC3339)
+	ledger := session.New("task", "2026-05-05T00:00:00Z")
+	ledger = ledger.WithEntry(session.Entry{Type: "review_attempt", Status: "running", RecordedAt: recordedAt, Reason: "provider stopped reporting"})
+	out, err := Run(context.Background(), fakeSpecStore{model: spec.Model{
+		TaskID: "task",
+		Status: spec.StatusReview,
+	}}, fakeSessionStore{ledger: ledger}, "task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Repair == nil || out.Repair.Next != "scafld review task" || out.Review.AttemptStatus != "stale" {
+		t.Fatalf("stale repair = %+v review=%+v", out.Repair, out.Review)
+	}
+	if out.NextAction.Action != "recover_stale_review_attempt" || out.NextAction.Command != "scafld review task" {
+		t.Fatalf("next action = %+v", out.NextAction)
 	}
 }
 
@@ -241,6 +326,62 @@ func TestStatusReviewWithValidLedgerReviewSuggestsComplete(t *testing.T) {
 	}
 	if out.Next != "scafld complete task" || out.NextAction.Action != "complete" || out.NextAction.Command != "scafld complete task" {
 		t.Fatalf("status = %+v", out)
+	}
+}
+
+func TestStatusMaterialSealKeepsCompleteActionDespiteAmbientDrift(t *testing.T) {
+	t.Parallel()
+
+	material := reviewevidence.MaterialSeal{Scope: []string{"api/handler.go"}, Digest: "same-material"}
+	entry := sessiontest.PassingReviewEntry("", "codex")
+	entry.ReviewedScope = append([]string(nil), material.Scope...)
+	entry.ReviewedMaterialDigest = material.Digest
+	ledger := session.New("task", "now").WithEntry(entry)
+	out, err := Run(context.Background(), fakeSpecStore{model: spec.Model{
+		TaskID: "task",
+		Status: spec.StatusReview,
+		CurrentState: spec.CurrentState{
+			AllowedFollowUp: "scafld complete task",
+		},
+	}}, fakeSessionStore{ledger: ledger}, "task", fakeWorkspace{
+		head:     "different-head",
+		snapshot: []string{" M adjacent docs/readme.md"},
+		material: material,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Next != "scafld complete task" || out.NextAction.Action != "complete" {
+		t.Fatalf("status = %+v", out)
+	}
+}
+
+func TestStatusMaterialSealStaleReviewSuggestsReview(t *testing.T) {
+	t.Parallel()
+
+	entry := sessiontest.PassingReviewEntry("", "codex")
+	entry.ReviewedScope = []string{"api/handler.go"}
+	entry.ReviewedMaterialDigest = "reviewed-material"
+	ledger := session.New("task", "now").WithEntry(entry)
+	out, err := Run(context.Background(), fakeSpecStore{model: spec.Model{
+		TaskID: "task",
+		Status: spec.StatusReview,
+		CurrentState: spec.CurrentState{
+			AllowedFollowUp: "scafld complete task",
+		},
+	}}, fakeSessionStore{ledger: ledger}, "task", fakeWorkspace{
+		head:     "head",
+		snapshot: []string{" M changed api/handler.go"},
+		material: reviewevidence.MaterialSeal{Scope: []string{"api/handler.go"}, Digest: "changed-material"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Next != "scafld review task" || out.Repair == nil || out.Repair.Reason != "latest review is stale against current task material" {
+		t.Fatalf("status = %+v", out)
+	}
+	if out.NextAction.Role != "reviewer" || out.NextAction.Action != "run_review" || out.NextAction.Command != "scafld review task" {
+		t.Fatalf("next action = %+v", out.NextAction)
 	}
 }
 

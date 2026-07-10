@@ -70,6 +70,9 @@ within the requested budget.
 - explain the failure mode, not just the symptom
 - ground findings in code you actually read
 - do not invent violations you did not verify
+- use `rg --hidden` for repository-wide checks that must include untracked
+  files; do not use `git grep` for public-surface or legacy-shape gates unless
+  the check is intentionally limited to tracked files
 - if a test is missing, say what behavior is unprotected and why it matters
 
 Required finding format:

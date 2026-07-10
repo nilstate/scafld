@@ -12,6 +12,7 @@ import (
 	"github.com/nilstate/scafld/v2/internal/core/reviewevidence"
 	"github.com/nilstate/scafld/v2/internal/core/session"
 	"github.com/nilstate/scafld/v2/internal/core/spec"
+	coreworkspace "github.com/nilstate/scafld/v2/internal/core/workspace"
 	"github.com/nilstate/scafld/v2/internal/testkit/sessiontest"
 )
 
@@ -51,6 +52,7 @@ func (fakeClock) Now() time.Time { return time.Date(2026, 5, 1, 0, 0, 0, 0, time
 type fakeWorkspace struct {
 	snapshot []string
 	head     string
+	material reviewevidence.MaterialSeal
 }
 
 func (f fakeWorkspace) ChangedFiles(context.Context) ([]string, error) {
@@ -64,6 +66,23 @@ func (f fakeWorkspace) ResolveHead(context.Context) (string, bool, error) {
 	return f.head, true, nil
 }
 
+func (f fakeWorkspace) MaterialSeal(_ context.Context, scope []string) (reviewevidence.MaterialSeal, error) {
+	if f.material.Digest != "" {
+		return f.material, nil
+	}
+	normalized := coreworkspace.NormalizeScope(scope)
+	filtered := coreworkspace.Filter(reviewevidence.ComparisonSnapshot(f.snapshot), normalized)
+	files := make([]reviewevidence.MaterialFile, 0, len(filtered))
+	for _, raw := range filtered {
+		change := coreworkspace.ParseChange(raw)
+		if change.Path == "" || change.Fingerprint == "" {
+			continue
+		}
+		files = append(files, reviewevidence.MaterialFile{Path: change.Path, SHA256: change.Fingerprint})
+	}
+	return reviewevidence.MaterialSeal{Scope: normalized, Digest: reviewevidence.MaterialDigest(normalized, files)}, nil
+}
+
 func sealedExternalReviewEntryForWorkspace(id string, provider string, workspace fakeWorkspace) session.Entry {
 	entry := sessiontest.PassingReviewEntry(id, provider)
 	snapshot := reviewevidence.ComparisonSnapshot(workspace.snapshot)
@@ -74,6 +93,13 @@ func sealedExternalReviewEntryForWorkspace(id string, provider string, workspace
 	}
 	entry.ReviewedDirty = reviewevidence.SnapshotDirty(snapshot)
 	entry.ReviewedDiff = reviewevidence.SnapshotDigest(snapshot)
+	return entry
+}
+
+func sealedExternalReviewEntryForMaterial(id string, provider string, workspace fakeWorkspace, material reviewevidence.MaterialSeal) session.Entry {
+	entry := sealedExternalReviewEntryForWorkspace(id, provider, workspace)
+	entry.ReviewedScope = append([]string(nil), material.Scope...)
+	entry.ReviewedMaterialDigest = material.Digest
 	return entry
 }
 
@@ -148,6 +174,42 @@ func TestCompleteRejectsReviewSealWhenWorkspaceChangedAfterReview(t *testing.T) 
 	}
 	var gateErr gate.Error
 	if !errors.As(err, &gateErr) || gateErr.Failure.Reason != "latest review is stale against current workspace" || gateErr.Failure.Actual == "" {
+		t.Fatalf("gate error = %#v, ok=%v", gateErr, errors.As(err, &gateErr))
+	}
+}
+
+func TestCompleteAcceptsMaterialSealDespiteAmbientWorkspaceChange(t *testing.T) {
+	t.Parallel()
+
+	material := reviewevidence.MaterialSeal{Scope: []string{"api/handler.go"}, Digest: "same-material"}
+	specs := &fakeSpecs{model: spec.Model{TaskID: "task", Status: spec.StatusReview, Review: spec.ReviewState{Status: "completed", Verdict: "pass"}}}
+	reviewWorkspace := fakeWorkspace{head: "head", snapshot: []string{" M reviewed api/handler.go"}}
+	currentWorkspace := fakeWorkspace{head: "new-head", snapshot: []string{" M adjacent docs/readme.md"}, material: material}
+	ledger := session.New("task", "now").WithEntry(sealedExternalReviewEntryForMaterial("", "codex", reviewWorkspace, material))
+	model, err := Run(context.Background(), specs, &fakeSessions{ledger: ledger}, currentWorkspace, fakeClock{}, "task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if model.Status != spec.StatusCompleted {
+		t.Fatalf("model status = %s, want completed", model.Status)
+	}
+}
+
+func TestCompleteRejectsReviewSealWhenTaskMaterialChanged(t *testing.T) {
+	t.Parallel()
+
+	reviewedMaterial := reviewevidence.MaterialSeal{Scope: []string{"api/handler.go"}, Digest: "reviewed-material"}
+	currentMaterial := reviewevidence.MaterialSeal{Scope: []string{"api/handler.go"}, Digest: "changed-material"}
+	specs := &fakeSpecs{model: spec.Model{TaskID: "task", Status: spec.StatusReview, Review: spec.ReviewState{Status: "completed", Verdict: "pass"}}}
+	reviewWorkspace := fakeWorkspace{head: "head", snapshot: []string{" M reviewed api/handler.go"}}
+	currentWorkspace := fakeWorkspace{head: "head", snapshot: []string{" M changed api/handler.go"}, material: currentMaterial}
+	ledger := session.New("task", "now").WithEntry(sealedExternalReviewEntryForMaterial("", "codex", reviewWorkspace, reviewedMaterial))
+	_, err := Run(context.Background(), specs, &fakeSessions{ledger: ledger}, currentWorkspace, fakeClock{}, "task")
+	if !errors.Is(err, ErrReviewGate) {
+		t.Fatalf("error = %v, want %v", err, ErrReviewGate)
+	}
+	var gateErr gate.Error
+	if !errors.As(err, &gateErr) || gateErr.Failure.Reason != "latest review is stale against current task material" {
 		t.Fatalf("gate error = %#v, ok=%v", gateErr, errors.As(err, &gateErr))
 	}
 }
@@ -294,6 +356,24 @@ func TestCompleteRejectsStaleReviewAfterLaterReviewAttempt(t *testing.T) {
 	_, err := Run(context.Background(), specs, &fakeSessions{ledger: ledger}, nil, fakeClock{}, "task")
 	if !errors.Is(err, ErrReviewGate) {
 		t.Fatalf("error = %v, want %v", err, ErrReviewGate)
+	}
+}
+
+func TestCompleteRejectsOlderPassAfterStaleRunningReviewAttempt(t *testing.T) {
+	t.Parallel()
+
+	recordedAt := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC).Add(-3 * time.Hour).Format(time.RFC3339)
+	specs := &fakeSpecs{model: spec.Model{TaskID: "task", Status: spec.StatusReview, Review: spec.ReviewState{Status: "completed", Verdict: "pass"}}}
+	ledger := session.New("task", "now").
+		WithEntry(sessiontest.PassingReviewEntry("", "codex")).
+		WithEntry(session.Entry{Type: "review_attempt", Status: "running", RecordedAt: recordedAt, Reason: "provider wedged"})
+	_, err := Run(context.Background(), specs, &fakeSessions{ledger: ledger}, nil, fakeClock{}, "task")
+	if !errors.Is(err, ErrReviewGate) {
+		t.Fatalf("error = %v, want %v", err, ErrReviewGate)
+	}
+	var gateErr gate.Error
+	if !errors.As(err, &gateErr) || gateErr.Failure.Next != "scafld review task" || gateErr.Failure.Reason != "running review attempt lease expired" {
+		t.Fatalf("gate error = %#v", gateErr)
 	}
 }
 

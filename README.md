@@ -193,6 +193,11 @@ Status exposes the same state without scraping Markdown:
   "review": {
     "running": true,
     "attempt_status": "running",
+    "attempt": {
+      "running": true,
+      "status": "running",
+      "lease_expires_at": "2026-05-07T11:15:00Z"
+    },
     "reason": "review provider running"
   }
 }
@@ -360,8 +365,8 @@ citations such as `spec_gap:scope`, `code:internal/app/build/build.go:42`, or
 `archive:previous-cutover`. The second command verifies those citations and
 refuses to close the round when they do not resolve. Provider-backed hardening
 uses the same read-only provider transport as review, but writes a
-`HardenDossier`: verdict, required checks, questions, design objections, and
-recommended spec edits. Approval is still an explicit operator decision, but a
+`HardenDossier`: summary plus the fixed design, scope, path, command, timing,
+and rollback observation ledger. Approval is still an explicit operator decision, but a
 complete plan spec should be hardened when the task is ambiguous, high-risk,
 cross-cutting, or likely to outlive one agent turn.
 
@@ -369,7 +374,8 @@ A hardened spec should answer:
 
 - What is the real product goal, not just the requested implementation?
 - What is authoritative when two artifacts contain the same fact?
-- What are the ownership boundaries?
+- What shared core/app contract owns the behavior?
+- Are API, MCP, CLI, provider, and docs surfaces light adapters over that contract?
 - What fails halfway, and how is it repaired?
 - What invariants must be testable?
 - What hidden cutovers are bundled?
@@ -427,7 +433,10 @@ uses the spec's packages, impacted files, and phase changes to derive task
 scope. Unrelated drift outside that task scope is visible in the review brief as
 ambient workspace context, not a local pre-flight blocker. Use `--review-scope`
 only when a dirty monorepo needs an explicit path boundary. Unrelated workspace
-churn from another task should not make you pay for another review run.
+churn from another task should not make you pay for another review run: passing
+reviews seal `reviewed_scope` plus `reviewed_material_digest` when task material
+is known, so `status` and `complete` accept commit-only transitions and
+out-of-scope drift while rejecting changed reviewed bytes.
 
 ```bash
 scafld review add-cache --provider claude
@@ -436,6 +445,7 @@ scafld review add-cache --provider gemini
 scafld review add-cache --provider command --provider-command "./reviewer"
 scafld review add-cache --review-depth light --max-findings 4 --min-attack-angles 3
 scafld review add-cache --review-scope api,cli/packages/mcp
+scafld review add-cache --force
 scafld review add-cache --print-context
 scafld review add-cache --human-reviewed --reason "operator reviewed PR 123"
 ```
@@ -447,6 +457,14 @@ prioritize completion blockers and regression risk instead of advisory churn.
 `--print-context` renders the exact deterministic review brief without invoking
 a provider, so agents can debug what the challenger will see before spending a
 review run.
+
+Review attempts are leased. If a provider process dies and leaves
+`review_attempt: running` behind, the next `scafld review` automatically records
+the stale attempt as abandoned before starting a new leased attempt. An active,
+unexpired attempt blocks concurrent reviews. A failed review with completion
+blockers cannot be re-reviewed until fresh build evidence appears; repair from
+`scafld handoff`, run `scafld build`, then run `scafld review`. A passing review
+is not rerun unless `--force` is explicit.
 
 `--human-reviewed` is the audited escape hatch. It belongs to `review`, not
 `complete`: it records a `review_override` event and a passing human review
@@ -490,8 +508,10 @@ Old scafld-generated model defaults are upgraded while loading config. Custom
 model values remain pinned.
 
 The review agenda is configurable too. `review.automated_passes` and
-`review.adversarial_passes` are included in the challenger prompt in explicit
-order, so the project can state what "adversarial" means without changing code.
+`review.adversarial_passes` are rendered into one reviewer brief for one
+provider invocation. The reviewer attacks every configured focus area within the
+same finding and attack-angle budget, then returns one ReviewDossier so the
+repair loop receives the batch instead of one issue at a time.
 
 The local provider is useful for development and smoke tests only; local
 verdicts cannot satisfy `scafld complete`. The product value comes from an

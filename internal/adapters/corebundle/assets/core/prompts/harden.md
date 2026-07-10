@@ -18,14 +18,14 @@ Optimize for finding as many real spec issues as the round budget allows. Spend
 the budget on grounded blockers and useful advisories; do not pad the round with
 speculative or weak observations just to increase the count.
 
-Cover these six dimensions before polishing wording:
+Cover these six dimensions in this order before polishing wording:
 
+- `design`: challenge the plan's right to exist and architecture: why it exists, what root problem it solves, whether shared behavior belongs in a common core/app contract, whether API/MCP/CLI/provider/docs surfaces stay light adapters, and whether it creates future bloat, compatibility debt, or product confusion.
+- `scope`: every migration, cutover, compatibility claim, shared behavior boundary, adapter-specific responsibility, and "no migration needed" statement is backed by repo evidence.
 - `path`: every named file, directory, package, and generated artifact exists now or is explicitly declared as new.
 - `command`: every validation command is runnable from the declared working directory with the configured toolchain.
-- `scope`: every migration, cutover, compatibility claim, and "no migration needed" statement is backed by repo evidence.
 - `timing`: every acceptance criterion can be evaluated after the phase that claims it, not before implementation creates its target.
 - `rollback`: every risky phase has a realistic repair or rollback path.
-- `design`: challenge the plan's right to exist: why it exists, what root problem it solves, whether it is a short-sighted bandaid, and whether it creates future bloat, compatibility debt, or product confusion.
 
 Manual rounds already contain the six required observation rows. Fill the
 existing `Result` and `Anchor` fields; add `Note`, `Default`, or `Status` only
@@ -34,6 +34,16 @@ spec was edited by hand, restore this exact shape under the latest harden round:
 
 ```markdown
 Observations:
+- design
+  - Result: blocks
+  - Anchor: spec_gap:Summary
+  - Note: The summary names the patch but not the underlying workflow, shared owner, or adapter boundary.
+  - Default: Rewrite the summary/objectives to address the root cause and name the shared behavior owner, or shrink the plan to the honest local fix.
+  - Status: open
+- scope
+  - Result: advisory
+  - Anchor: spec_gap:Risks
+  - Note: Migration-free claim is plausible but could name the affected deployment path and adapter surfaces.
 - path
   - Result: clean
   - Anchor: code:src/auth/session.ts:84
@@ -42,10 +52,6 @@ Observations:
   - Result: clean
   - Anchor: code:Makefile:12
   - Note: `make test` is declared from the repository root.
-- scope
-  - Result: advisory
-  - Anchor: spec_gap:Risks
-  - Note: Migration-free claim is plausible but could name the affected deployment path.
 - timing
   - Result: clean
   - Anchor: spec_gap:Phases
@@ -54,12 +60,6 @@ Observations:
   - Result: n/a
   - Anchor: spec_gap:Rollback
   - Note: Docs-only change has no runtime rollback.
-- design
-  - Result: blocks
-  - Anchor: spec_gap:Summary
-  - Note: The summary names the patch but not the underlying workflow or product problem.
-  - Default: Rewrite the summary/objectives to address the root cause, or shrink the plan to the honest local fix.
-  - Status: open
 ```
 
 Use these result values:

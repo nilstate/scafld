@@ -14,6 +14,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/nilstate/scafld/v2/internal/core/reviewevidence"
 )
 
 // State is the fingerprinted set of Git-visible workspace changes.
@@ -177,6 +179,27 @@ func (a Adapter) Snapshot(ctx context.Context, input SnapshotInput) (Snapshot, e
 		FileDigests:       digests,
 		DeletedPaths:      deleted,
 		IgnoredUnreviewed: ignored,
+	}, nil
+}
+
+// MaterialSeal returns a content digest for the current working tree under
+// scope, independent of whether the bytes are dirty or committed.
+func (a Adapter) MaterialSeal(ctx context.Context, scope []string) (reviewevidence.MaterialSeal, error) {
+	normalized := normalizeScope(scope)
+	if len(normalized) == 0 {
+		return reviewevidence.MaterialSeal{}, fmt.Errorf("material seal scope is empty")
+	}
+	snapshot, err := a.Snapshot(ctx, SnapshotInput{Scope: normalized})
+	if err != nil {
+		return reviewevidence.MaterialSeal{}, err
+	}
+	files := make([]reviewevidence.MaterialFile, 0, len(snapshot.FileDigests))
+	for _, file := range snapshot.FileDigests {
+		files = append(files, reviewevidence.MaterialFile{Path: file.Path, SHA256: file.SHA256})
+	}
+	return reviewevidence.MaterialSeal{
+		Scope:  normalized,
+		Digest: reviewevidence.MaterialDigest(normalized, files),
 	}, nil
 }
 

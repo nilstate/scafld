@@ -171,7 +171,7 @@ if [ -z "$out" ]; then
   echo "missing --output-last-message" >&2
   exit 2
 fi
-printf '%s\n' '{"verdict":"pass","mode":"discover","summary":"clean","findings":[],"attack_log":[{"target":"headline path","attack":"review evidence","result":"clean"}],"budget":{"actual_attack_angles":1}}' > "$out"
+` + reviewCommandPrintf(passingReviewDossierJSON("discover", "clean", "headline path", 6)) + ` > "$out"
 `
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
@@ -216,7 +216,7 @@ if [ ! -e "$1" ] || [ "$#" -lt 2 ]; then
   echo "timed out waiting for concurrent reviewer" >&2
   exit 3
 fi
-printf '%s\n' '{"verdict":"pass","mode":"discover","summary":"clean","findings":[],"attack_log":[{"target":"race path","attack":"review evidence","result":"clean"}],"budget":{"actual_attack_angles":1}}' > "$out"
+` + reviewCommandPrintf(passingReviewDossierJSON("discover", "clean", "race path", 6)) + ` > "$out"
 `
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatal(err)

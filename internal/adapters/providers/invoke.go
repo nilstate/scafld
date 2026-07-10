@@ -307,13 +307,13 @@ func hardenSubmitTool() SubmitTool {
 	return SubmitTool{
 		Name:        "submit_harden",
 		Title:       "Submit scafld hardening",
-		Description: "Submit the final scafld HardenDossier. Call exactly once after stress-testing the draft spec. The observations array must cover path, command, scope, timing, rollback, and design with result, anchor, and any note/default/status.",
+		Description: "Submit the final scafld HardenDossier. Call exactly once after stress-testing the draft spec. The observations array must cover " + coreharden.RequiredDimensionList() + " with result, anchor, and any note/default/status. The design observation must challenge shared architecture and keep API/MCP/CLI/provider/docs surfaces as light adapters over common core/app behavior.",
 		Command:     "harden-submit-stdio",
 	}
 }
 
 func localHardenDossier() string {
-	return `{"summary":"Local provider smoke hardening passed.","observations":[{"dimension":"path","result":"clean","anchor":"spec_gap:Context","note":"Local smoke provider records required harden observations."},{"dimension":"command","result":"clean","anchor":"spec_gap:Acceptance","note":"Local smoke provider records required harden observations."},{"dimension":"scope","result":"clean","anchor":"spec_gap:Scope","note":"Local smoke provider records required harden observations."},{"dimension":"timing","result":"clean","anchor":"spec_gap:Acceptance","note":"Local smoke provider records required harden observations."},{"dimension":"rollback","result":"clean","anchor":"spec_gap:Rollback","note":"Local smoke provider records required harden observations."},{"dimension":"design","result":"clean","anchor":"spec_gap:Summary","note":"Local smoke provider records required harden observations."}]}`
+	return `{"summary":"Local provider smoke hardening passed.","observations":[{"dimension":"design","result":"clean","anchor":"spec_gap:Summary","note":"Local smoke provider records required harden observations."},{"dimension":"scope","result":"clean","anchor":"spec_gap:Scope","note":"Local smoke provider records required harden observations."},{"dimension":"path","result":"clean","anchor":"spec_gap:Context","note":"Local smoke provider records required harden observations."},{"dimension":"command","result":"clean","anchor":"spec_gap:Acceptance","note":"Local smoke provider records required harden observations."},{"dimension":"timing","result":"clean","anchor":"spec_gap:Acceptance","note":"Local smoke provider records required harden observations."},{"dimension":"rollback","result":"clean","anchor":"spec_gap:Rollback","note":"Local smoke provider records required harden observations."}]}`
 }
 
 func safeSchemaName(value string) string {

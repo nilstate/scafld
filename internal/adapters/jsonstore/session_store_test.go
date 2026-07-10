@@ -70,6 +70,26 @@ func TestListSessionsSorted(t *testing.T) {
 	}
 }
 
+func TestListSkipsEmptyRunDirectories(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	store := SessionStore{Root: root}
+	if err := os.MkdirAll(filepath.Join(root, ".scafld", "runs", "stale-empty-run"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Save(context.Background(), session.New("task", "now")); err != nil {
+		t.Fatal(err)
+	}
+	ledgers, err := store.List(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ledgers) != 1 || ledgers[0].TaskID != "task" {
+		t.Fatalf("ledgers = %+v", ledgers)
+	}
+}
+
 func TestAppendFallsBackWhenCachedLedgerHeadMismatch(t *testing.T) {
 	t.Parallel()
 
@@ -95,6 +115,34 @@ func TestAppendFallsBackWhenCachedLedgerHeadMismatch(t *testing.T) {
 	}
 	if len(got.Entries) != 2 {
 		t.Fatalf("entries = %d, want 2", len(got.Entries))
+	}
+}
+
+func TestAppendTransactionDerivesEntriesUnderCurrentLedger(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	store := SessionStore{Root: root}
+	if _, err := store.Append(context.Background(), "task", session.Entry{Type: "build", Status: "review"}, "first"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.AppendTransaction(context.Background(), "task", "second", func(current session.Session) ([]session.Entry, error) {
+		if len(current.Entries) != 1 || current.Entries[0].Type != "build" {
+			t.Fatalf("transaction did not see current ledger: %+v", current.Entries)
+		}
+		return []session.Entry{
+			{Type: "review_attempt", Status: "abandoned"},
+			{Type: "review_attempt", Status: "running"},
+		}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Entries) != 3 || got.Entries[1].Status != "abandoned" || got.Entries[2].Status != "running" {
+		t.Fatalf("transaction entries = %+v", got.Entries)
+	}
+	if got.Entries[1].ID != "entry-2" || got.Entries[2].ID != "entry-3" || got.Entries[2].RecordedAt != "second" {
+		t.Fatalf("transaction metadata = %+v", got.Entries)
 	}
 }
 

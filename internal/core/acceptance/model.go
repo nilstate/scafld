@@ -28,6 +28,11 @@ func ValidExpectedKind(kind ExpectedKind) bool {
 	}
 }
 
+// ExpectedKindValues returns the supported expected_kind values in display order.
+func ExpectedKindValues() []ExpectedKind {
+	return []ExpectedKind{ExpectedExitCodeZero, ExpectedExitCodeNonzero, ExpectedNoMatches, ExpectedManual, ExpectedBrowserEvidence}
+}
+
 // Evidence is the command output used to evaluate an acceptance criterion.
 type Evidence struct {
 	ExitCode   int

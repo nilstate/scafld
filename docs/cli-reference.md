@@ -136,7 +136,9 @@ commands.
 
 Without flags, `harden` appends a round, sets `harden_status: in_progress`, and
 prints the active prompt from `.scafld/prompts/harden.md`, falling back to
-`.scafld/core/prompts/harden.md` and then the built-in prompt.
+`.scafld/core/prompts/harden.md` and then the built-in prompt. The current
+state records a blocker until each required observation has a `Result` and
+`Anchor`.
 
 With `--mark-passed`, it verifies the latest round's harden observations and
 `Anchor` citations, closes the round, and sets `harden_status: passed`.
@@ -158,11 +160,12 @@ Code citations must use an existing workspace-relative path and a real line
 number. Line ranges are rejected; cite the single line that anchors the
 evidence.
 
-Required dimensions are `path`, `command`, `scope`, `timing`, `rollback`, and
-`design`. Each observation must record `Result: clean`, `advisory`, `blocks`, or
-`n/a` plus an `Anchor`. The design dimension is not a style preference: it must
-challenge why the plan exists, whether it solves the underlying problem, and
-whether it is a short-sighted bandaid or future bloat.
+Required dimensions are `design`, `scope`, `path`, `command`, `timing`, and
+`rollback`. Each observation must record `Result: clean`, `advisory`, `blocks`,
+or `n/a` plus an `Anchor`. The design dimension is not a style preference: it
+must challenge why the plan exists, which shared core/app contract owns the
+behavior, and whether API/MCP/CLI/provider/docs surfaces stay light adapters
+instead of separate implementations.
 
 ## validate
 
@@ -216,7 +219,7 @@ status.
 ## review
 
 ```bash
-scafld review <task-id> [--provider auto|codex|claude|gemini|command|local] [--provider-command CMD] [--provider-binary PATH] [--model MODEL] [--review-scope PATH[,PATH...]] [--print-context] [--human-reviewed --reason TEXT] [--json]
+scafld review <task-id> [--provider auto|codex|claude|gemini|command|local] [--provider-command CMD] [--provider-binary PATH] [--model MODEL] [--review-scope PATH[,PATH...]] [--force] [--print-context] [--human-reviewed --reason TEXT] [--json]
 ```
 
 `review` is the adversarial completion gate. Defaults come from
@@ -243,6 +246,8 @@ Provider modes:
   settings file; the verdict must be submitted through the `submit_review` MCP
   tool and final text is ignored.
 - `command`: run a custom reviewer command; requires `--provider-command`.
+  The command receives the review prompt on stdin and must emit one complete
+  ReviewDossier JSON object on stdout. Progress belongs on stderr.
 - `local`: deterministic pass-through provider for development and tests only;
   its verdict cannot satisfy `complete`.
 - `--human-reviewed`: record an audited operator review instead of invoking a
@@ -254,8 +259,12 @@ Provider-specific model defaults come from
 `--provider-binary`, and `--model` override config for one invocation.
 
 `--review-depth`, `--max-findings`, and `--min-attack-angles` override the
-review dossier budget for one run. For small diffs, keep the same gate but
-request a cheaper blocker-focused review:
+review dossier budget for one run. Configured review passes are rendered into
+the same provider brief; scafld still makes one provider invocation and records
+one ReviewDossier. The accepted dossier must satisfy the budget: too few
+`attack_log` entries or too many findings fails the attempt before any review is
+recorded. For small diffs, keep the same gate but request a cheaper
+blocker-focused review:
 
 ```bash
 scafld review <task-id> --review-depth light --max-findings 4 --min-attack-angles 3
@@ -264,6 +273,14 @@ scafld review <task-id> --review-depth light --max-findings 4 --min-attack-angle
 `--print-context` prints the exact deterministic review-context packet without
 invoking a provider. Use it when an agent needs to see why a reviewer is
 under-informed or why a gate is likely to block before spending a model run.
+
+Each provider run starts with a leased `review_attempt`. An unexpired running
+attempt blocks another review. If the process died and the lease has expired,
+the next `scafld review` records the old attempt as `abandoned` and starts a new
+one automatically. Provider failures are retryable. Review verdict failures are
+not: repair from `scafld handoff`, run `scafld build` to record fresh evidence,
+then run `scafld review` again. A current passing review is a no-op unless
+`--force` is set.
 
 scafld derives review scope from spec packages, impacted files, and phase
 changes. Use `--review-scope` only when a dirty monorepo or workspace needs an
@@ -280,6 +297,12 @@ and includes changes outside declared scope as ambient workspace drift.
 Unchanged baseline dirt and ambient drift are context, not findings by
 themselves. Task-relevant files changed during review still fail closed;
 unrelated workspace churn does not discard a valid review.
+
+After a passing review, scafld seals the reviewed task material when it has a
+scope. `status` and `complete` compare that scoped content digest, not the whole
+worktree, so committing the reviewed files or having another agent touch
+unrelated paths does not require a second review. If the reviewed material
+changes, the next action becomes `scafld review <task-id>`.
 
 The provider returns a ReviewDossier. scafld validates it, rejects workspace
 mutation in the review-relevant surface, writes the review event to session, and
@@ -329,6 +352,10 @@ Archives completed work only after the latest session review event has a
 `pass` verdict from `codex`, `claude`, `gemini`, `command`, or an audited human
 review.
 
+For current review entries with `reviewed_scope` and
+`reviewed_material_digest`, completion ignores commit-only and unrelated
+workspace drift but refuses if scoped reviewed bytes changed.
+
 ## fail
 
 ```bash
@@ -351,8 +378,10 @@ Records the cancellation in session, then archives the spec.
 scafld status <task-id> [--json]
 ```
 
-Shows lifecycle status, the next allowed follow-up command, and latest review
-findings when present.
+Shows lifecycle status, the next allowed follow-up command, latest review
+findings when present, and `task_material` in JSON. `task_material` is the
+derived task-owned scope: baseline paths, task changes since baseline, ambient
+drift outside scope, and reviewed/current material digest status when available.
 
 ## list
 
@@ -415,7 +444,9 @@ scafld handoff <task-id>
 
 Renders model-facing context from the current spec and session state. Handoffs
 include failed or pending acceptance criteria while a task is blocked, and
-latest review findings when present. They are transport, not source of truth.
+latest review findings when present. The top section includes task material
+scope, task changes, ambient drift, and search discipline so agents can avoid
+staging or reviewing unrelated work. They are transport, not source of truth.
 
 ## adapter
 

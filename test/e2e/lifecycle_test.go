@@ -3,6 +3,7 @@ package e2e
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,6 +11,30 @@ import (
 	"strings"
 	"testing"
 )
+
+func reviewCommandPrintf(payload string) string {
+	return "printf '%s\\n' '" + payload + "'"
+}
+
+func wrappedReviewDossierJSON(dossier string) string {
+	return `{"type":"dossier","dossier":` + dossier + `}`
+}
+
+func passingReviewDossierJSON(mode string, summary string, target string, attackCount int) string {
+	return fmt.Sprintf(`{"verdict":"pass","mode":"%s","summary":"%s","findings":[],"attack_log":[%s],"budget":{"actual_attack_angles":%d}}`, mode, summary, reviewAttackLogJSON(target, "clean", attackCount), attackCount)
+}
+
+func failingReviewDossierJSON(summary string, id string, evidence string, impact string, path string, attackCount int) string {
+	return fmt.Sprintf(`{"verdict":"fail","mode":"discover","summary":"%s","findings":[{"id":"%s","severity":"high","blocks_completion":true,"location":{"path":"%s"},"evidence":"%s","impact":"%s","validation":"rerun tests","summary":"%s"}],"attack_log":[%s],"budget":{"actual_findings":1,"actual_attack_angles":%d}}`, summary, id, path, evidence, impact, summary, reviewAttackLogJSON("diff", "finding", attackCount), attackCount)
+}
+
+func reviewAttackLogJSON(target string, result string, attackCount int) string {
+	entries := make([]string, 0, attackCount)
+	for i := 0; i < attackCount; i++ {
+		entries = append(entries, fmt.Sprintf(`{"target":"%s","attack":"scan-%d","result":"%s"}`, target, i+1, result))
+	}
+	return strings.Join(entries, ",")
+}
 
 func TestLifecycleJSONContractsAgentSurfaceFailCancelReviewProviderMutationGuard(t *testing.T) {
 	t.Parallel()
@@ -24,7 +49,7 @@ func TestLifecycleJSONContractsAgentSurfaceFailCancelReviewProviderMutationGuard
 	assertSnakeEnvelope(t, run(t, bin, "build", "--root", root, "lifecycle-task", "--json"), "passed")
 	assertSnakeEnvelope(t, run(t, bin, "build", "--root", root, "lifecycle-task", "--json"), "passed")
 	assertSnakeEnvelope(t, run(t, bin, "list", "--root", root, "--json"), "task_id")
-	assertSnakeEnvelope(t, run(t, bin, "review", "--root", root, "--provider", "command", "--provider-command", `printf '{"verdict":"pass","mode":"discover","summary":"clean","findings":[],"attack_log":[{"target":"diff","attack":"scan","result":"clean"}],"budget":{"actual_attack_angles":1}}'`, "lifecycle-task", "--json"), "verdict")
+	assertSnakeEnvelope(t, run(t, bin, "review", "--root", root, "--provider", "command", "--provider-command", reviewCommandPrintf(passingReviewDossierJSON("discover", "clean", "diff", 6)), "lifecycle-task", "--json"), "verdict")
 	assertSnakeEnvelope(t, run(t, bin, "complete", "--root", root, "lifecycle-task", "--json"), "current_state")
 	assertSnakeEnvelope(t, run(t, bin, "status", "--root", root, "lifecycle-task", "--json"), "session_ok")
 	assertSnakeEnvelope(t, run(t, bin, "report", "--root", root, "--json"), "by_status")
@@ -45,6 +70,32 @@ func TestFailCancel(t *testing.T) {
 	run(t, bin, "fail", "--root", root, "fail-task", "--reason", "test failure")
 }
 
+func TestDevWrapperPreservesScafldExitCode(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("dev wrapper is a POSIX shell script")
+	}
+
+	wrapper, err := filepath.Abs(filepath.Join("..", "..", "bin", "scafld"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(wrapper, "exec", "task")
+	cmd.Dir = t.TempDir()
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errOut
+	err = cmd.Run()
+	exit, ok := err.(*exec.ExitError)
+	if !ok || exit.ExitCode() != 2 {
+		t.Fatalf("wrapper exit = %v, want exit 2\nstdout:\n%s\nstderr:\n%s", err, out.String(), errOut.String())
+	}
+	if !strings.Contains(errOut.String(), `unknown command "exec"`) || strings.Contains(errOut.String(), "exit status") {
+		t.Fatalf("wrapper stderr did not preserve scafld output:\n%s", errOut.String())
+	}
+}
+
 func TestReviewCommandProviderBlockingFindingExitsReviewFailure(t *testing.T) {
 	t.Parallel()
 
@@ -62,7 +113,7 @@ func TestReviewCommandProviderBlockingFindingExitsReviewFailure(t *testing.T) {
 		"--root",
 		root,
 		"--provider-command",
-		`grep 'provider-task' >/dev/null && printf '{"type":"dossier","dossier":{"verdict":"fail","mode":"discover","summary":"bug found","findings":[{"id":"bug","severity":"high","blocks_completion":true,"location":{"path":"file.go"},"evidence":"bug","impact":"breaks behavior","validation":"rerun tests","summary":"bug"}],"attack_log":[{"target":"diff","attack":"scan","result":"finding"}],"budget":{"actual_findings":1,"actual_attack_angles":1}}}\n'`,
+		"grep 'provider-task' >/dev/null && "+reviewCommandPrintf(wrappedReviewDossierJSON(failingReviewDossierJSON("bug found", "bug", "bug", "breaks behavior", "file.go", 6))),
 		"provider-task",
 	)
 	var out bytes.Buffer
@@ -112,7 +163,7 @@ func TestFailedReviewRequiresRepairBuildBeforeCompletion(t *testing.T) {
 		"review",
 		"--root", root,
 		"--provider-command",
-		`printf '{"type":"dossier","dossier":{"verdict":"fail","mode":"discover","summary":"repair required","findings":[{"id":"loop-bug","severity":"high","blocks_completion":true,"location":{"path":"fixed.txt"},"evidence":"missing repair","impact":"completion would ship the bug","validation":"rerun acceptance","summary":"repair required"}],"attack_log":[{"target":"diff","attack":"scan","result":"finding"}],"budget":{"actual_findings":1,"actual_attack_angles":1}}}\n'`,
+		reviewCommandPrintf(wrappedReviewDossierJSON(failingReviewDossierJSON("repair required", "loop-bug", "missing repair", "completion would ship the bug", "fixed.txt", 6))),
 		"repair-loop",
 	)
 	for _, want := range []string{"review verdict: fail", "repair required", "next: scafld handoff repair-loop"} {
@@ -142,7 +193,7 @@ func TestFailedReviewRequiresRepairBuildBeforeCompletion(t *testing.T) {
 		"--root", root,
 		"--mode", "verify",
 		"--provider-command",
-		`printf '{"type":"dossier","dossier":{"verdict":"pass","mode":"verify","summary":"repair verified","findings":[],"attack_log":[{"target":"repair","attack":"verify blocker fixed","result":"clean"}],"budget":{"actual_attack_angles":1}}}\n'`,
+		reviewCommandPrintf(wrappedReviewDossierJSON(passingReviewDossierJSON("verify", "repair verified", "repair", 6))),
 		"repair-loop",
 	)
 	run(t, bin, "complete", "--root", root, "repair-loop")
@@ -169,7 +220,7 @@ func TestReviewProviderMutationGuardFailsReview(t *testing.T) {
 		"--root",
 		root,
 		"--provider-command",
-		`touch MUTATED && printf '{"type":"dossier","dossier":{"verdict":"pass","mode":"discover","summary":"clean","findings":[],"attack_log":[{"target":"diff","attack":"scan","result":"clean"}],"budget":{"actual_attack_angles":1}}}\n'`,
+		"touch MUTATED && "+reviewCommandPrintf(wrappedReviewDossierJSON(passingReviewDossierJSON("discover", "clean", "diff", 6))),
 		"mutation-task",
 	)
 	var out bytes.Buffer
@@ -183,6 +234,72 @@ func TestReviewProviderMutationGuardFailsReview(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "review verdict: fail") {
 		t.Fatalf("stdout %q does not contain mutation failure verdict", out.String())
+	}
+}
+
+func TestCompleteAcceptsCommitOnlyAfterMaterialSealedReview(t *testing.T) {
+	t.Parallel()
+
+	bin := testBinary(t)
+	root := t.TempDir()
+	initGitWorkspace(t, root)
+	writeFile(t, root, "app.txt", "before\n")
+	gitCommitAll(t, root, "initial")
+	run(t, bin, "init", "--root", root, "--no-agent-docs")
+	run(t, bin, "plan", "--root", root, "commit-after-review", "--title", "Commit After Review", "--command", "true")
+	run(t, bin, "approve", "--root", root, "commit-after-review")
+	run(t, bin, "build", "--root", root, "commit-after-review")
+	writeFile(t, root, "app.txt", "after\n")
+	run(t, bin, "build", "--root", root, "commit-after-review")
+	run(t, bin, "review", "--root", root, "commit-after-review", "--provider", "command", "--provider-command", reviewCommandPrintf(passingReviewDossierJSON("discover", "clean", "app.txt", 6)))
+	gitCommitPaths(t, root, "commit reviewed material", "app.txt")
+	out := string(run(t, bin, "complete", "--root", root, "commit-after-review"))
+	if !strings.Contains(out, "complete: commit-after-review") {
+		t.Fatalf("complete after commit-only change failed to report completion:\n%s", out)
+	}
+}
+
+func TestCompleteAcceptsAmbientDriftOutsideMaterialScope(t *testing.T) {
+	t.Parallel()
+
+	bin := testBinary(t)
+	root := t.TempDir()
+	initGitWorkspace(t, root)
+	writeFile(t, root, "app.txt", "before\n")
+	gitCommitAll(t, root, "initial")
+	run(t, bin, "init", "--root", root, "--no-agent-docs")
+	run(t, bin, "plan", "--root", root, "ambient-after-review", "--title", "Ambient After Review", "--command", "true")
+	run(t, bin, "approve", "--root", root, "ambient-after-review")
+	run(t, bin, "build", "--root", root, "ambient-after-review")
+	writeFile(t, root, "app.txt", "after\n")
+	run(t, bin, "build", "--root", root, "ambient-after-review")
+	run(t, bin, "review", "--root", root, "ambient-after-review", "--provider", "command", "--provider-command", reviewCommandPrintf(passingReviewDossierJSON("discover", "clean", "app.txt", 6)))
+	writeFile(t, root, "adjacent.txt", "other agent work\n")
+	out := string(run(t, bin, "complete", "--root", root, "ambient-after-review"))
+	if !strings.Contains(out, "complete: ambient-after-review") {
+		t.Fatalf("complete with ambient drift failed to report completion:\n%s", out)
+	}
+}
+
+func TestCompleteRejectsChangedMaterialAfterReview(t *testing.T) {
+	t.Parallel()
+
+	bin := testBinary(t)
+	root := t.TempDir()
+	initGitWorkspace(t, root)
+	writeFile(t, root, "app.txt", "before\n")
+	gitCommitAll(t, root, "initial")
+	run(t, bin, "init", "--root", root, "--no-agent-docs")
+	run(t, bin, "plan", "--root", root, "material-after-review", "--title", "Material After Review", "--command", "true")
+	run(t, bin, "approve", "--root", root, "material-after-review")
+	run(t, bin, "build", "--root", root, "material-after-review")
+	writeFile(t, root, "app.txt", "reviewed\n")
+	run(t, bin, "build", "--root", root, "material-after-review")
+	run(t, bin, "review", "--root", root, "material-after-review", "--provider", "command", "--provider-command", reviewCommandPrintf(passingReviewDossierJSON("discover", "clean", "app.txt", 6)))
+	writeFile(t, root, "app.txt", "changed after review\n")
+	result := runExpectExit(t, 3, bin, "complete", "--root", root, "material-after-review")
+	if !strings.Contains(result.Stderr, "latest review is stale against current task material") {
+		t.Fatalf("complete did not explain material staleness:\nstdout:\n%s\nstderr:\n%s", result.Stdout, result.Stderr)
 	}
 }
 
@@ -334,6 +451,33 @@ func initGitWorkspace(t *testing.T, root string) {
 	t.Helper()
 	if out, err := exec.Command("git", "init", root).CombinedOutput(); err != nil {
 		t.Skipf("git init unavailable: %v\n%s", err, out)
+	}
+}
+
+func gitCommitAll(t *testing.T, root string, message string) {
+	t.Helper()
+	cmd := exec.Command("git", "-C", root, "add", ".")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git add failed: %v\n%s", err, out)
+	}
+	gitCommit(t, root, message)
+}
+
+func gitCommitPaths(t *testing.T, root string, message string, paths ...string) {
+	t.Helper()
+	args := append([]string{"-C", root, "add", "--"}, paths...)
+	cmd := exec.Command("git", args...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git add paths failed: %v\n%s", err, out)
+	}
+	gitCommit(t, root, message)
+}
+
+func gitCommit(t *testing.T, root string, message string) {
+	t.Helper()
+	cmd := exec.Command("git", "-C", root, "-c", "user.email=scafld@example.invalid", "-c", "user.name=scafld tests", "commit", "-m", message)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git commit failed: %v\n%s", err, out)
 	}
 }
 

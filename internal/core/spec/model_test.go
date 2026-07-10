@@ -2,6 +2,7 @@ package spec
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/nilstate/scafld/v2/internal/core/acceptance"
@@ -71,6 +72,32 @@ func TestBrowserCriterionRequiresBrowserEvidenceExpectedKind(t *testing.T) {
 	}
 	if !containsValidationError(validation.Errors, "criterion ac1 browser_evidence expected_kind requires browser type") {
 		t.Fatalf("validation errors = %+v", validation.Errors)
+	}
+}
+
+func TestInvalidExpectedKindNamesSupportedValuesAndHint(t *testing.T) {
+	t.Parallel()
+
+	model := Model{
+		Version: "2.0",
+		TaskID:  "task",
+		Title:   "Task",
+		Status:  StatusDraft,
+		Phases: []Phase{{ID: "phase1", Name: "Phase", Acceptance: []Criterion{{
+			ID:           "ac1",
+			Command:      "rg forbidden",
+			ExpectedKind: acceptance.ExpectedKind("stdout_empty"),
+		}}}},
+	}
+	validation := Validate(model)
+	if validation.Valid {
+		t.Fatal("invalid expected_kind accepted")
+	}
+	joined := strings.Join(validation.Errors, "\n")
+	for _, want := range []string{`expected_kind "stdout_empty" is invalid`, "supported values: exit_code_zero, exit_code_nonzero, no_matches, manual, browser_evidence", "use no_matches when stdout must be empty"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("validation errors missing %q: %+v", want, validation.Errors)
+		}
 	}
 }
 

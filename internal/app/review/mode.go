@@ -2,6 +2,7 @@ package review
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/nilstate/scafld/v2/internal/core/review"
@@ -31,22 +32,43 @@ func reviewMode(ctx context.Context, sessions SessionStore, taskID string, input
 }
 
 func latestReviewHasOpenBlockers(ctx context.Context, sessions SessionStore, taskID string) bool {
+	dossier, ok := latestReviewDossier(ctx, sessions, taskID)
+	return ok && review.OpenBlockerCount(dossier.Findings) > 0
+}
+
+func latestReviewDossier(ctx context.Context, sessions SessionStore, taskID string) (review.Dossier, bool) {
 	if sessions == nil {
-		return false
+		return review.Dossier{}, false
 	}
 	ledger, err := sessions.Load(ctx, taskID)
 	if err != nil {
-		return false
+		return review.Dossier{}, false
 	}
 	for i := len(ledger.Entries) - 1; i >= 0; i-- {
 		entry := ledger.Entries[i]
 		if entry.Type != "review" {
 			continue
 		}
-		dossier, ok := review.DecodeDossier(entry.Output)
-		return ok && review.OpenBlockerCount(dossier.Findings) > 0
+		return review.DecodeDossier(entry.Output)
 	}
-	return false
+	return review.Dossier{}, false
+}
+
+func knownFindingsForMode(ctx context.Context, sessions SessionStore, taskID string, mode review.Mode) []review.Finding {
+	if mode != review.ModeVerify {
+		return nil
+	}
+	dossier, ok := latestReviewDossier(ctx, sessions, taskID)
+	if !ok {
+		return nil
+	}
+	findings := make([]review.Finding, 0, len(dossier.Findings))
+	for _, finding := range dossier.Findings {
+		if review.BlocksCompletion(finding) {
+			findings = append(findings, finding)
+		}
+	}
+	return findings
 }
 
 func reviewBudget(input Input, findings int, attacks int) review.Budget {
@@ -72,4 +94,14 @@ func applyRequestedBudget(dossier review.Dossier, requested review.Budget) revie
 	dossier.Budget.ActualFindings = len(dossier.Findings)
 	dossier.Budget.ActualAttackAngles = len(dossier.AttackLog)
 	return dossier
+}
+
+func validateRequestedBudget(dossier review.Dossier) error {
+	if dossier.Budget.MinAttackAngles > 0 && len(dossier.AttackLog) < dossier.Budget.MinAttackAngles {
+		return fmt.Errorf("%w: attack_log has %d entries, requested at least %d", review.ErrInvalidDossier, len(dossier.AttackLog), dossier.Budget.MinAttackAngles)
+	}
+	if dossier.Budget.MaxFindings > 0 && len(dossier.Findings) > dossier.Budget.MaxFindings {
+		return fmt.Errorf("%w: findings has %d entries, requested at most %d", review.ErrInvalidDossier, len(dossier.Findings), dossier.Budget.MaxFindings)
+	}
+	return nil
 }

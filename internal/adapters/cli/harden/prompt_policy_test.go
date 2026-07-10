@@ -26,6 +26,8 @@ harden:
 		"finding as many real spec issues",
 		"budget for real findings, not filler",
 		"right-to-exist",
+		"shared core/app contract",
+		"API, MCP, CLI",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("prompt missing %q:\n%s", want, prompt)

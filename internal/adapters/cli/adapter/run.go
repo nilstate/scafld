@@ -7,9 +7,11 @@ import (
 	"io"
 	"strings"
 
+	errorfallback "github.com/nilstate/scafld/v2/internal/adapters/cli/fallback"
 	"github.com/nilstate/scafld/v2/internal/adapters/cli/output"
 	clisessionstore "github.com/nilstate/scafld/v2/internal/adapters/cli/sessionstore"
 	"github.com/nilstate/scafld/v2/internal/adapters/filesystem"
+	"github.com/nilstate/scafld/v2/internal/adapters/git"
 	"github.com/nilstate/scafld/v2/internal/adapters/markdown"
 	"github.com/nilstate/scafld/v2/internal/app/envelope"
 	"github.com/nilstate/scafld/v2/internal/app/handoff"
@@ -41,7 +43,7 @@ func Handler(invalid int, workspace int, generic int) func(context.Context, []st
 	return func(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer) int {
 		opts, err := parseArgs(args)
 		if err != nil || len(opts.positionals) != 3 {
-			return fail(stderr, coalesce(err, errors.New("adapter requires provider, mode, and task_id")), invalid, opts.json)
+			return fail(stderr, errorfallback.Error(err, errors.New("adapter requires provider, mode, and task_id")), invalid, opts.json)
 		}
 		root, err := filesystem.ResolveRoot(ctx, opts.root, filesystem.Discovery{})
 		if err != nil {
@@ -78,11 +80,11 @@ func Run(ctx context.Context, opts Options) (Output, error) {
 	}
 	specs := markdown.Store{Root: root}
 	sessions := clisessionstore.New(ctx, root)
-	statusOut, err := appstatus.Run(ctx, specs, sessions, taskID)
+	statusOut, err := appstatus.Run(ctx, specs, sessions, taskID, git.Adapter{Root: root})
 	if err != nil {
 		return Output{}, err
 	}
-	handoffOut, err := handoff.Run(ctx, specs, sessions, taskID)
+	handoffOut, err := handoff.Run(ctx, specs, sessions, taskID, git.Adapter{Root: root})
 	if err != nil {
 		return Output{}, err
 	}
@@ -140,13 +142,6 @@ func fail(w io.Writer, err error, exit int, asJSON bool) int {
 	}
 	fmt.Fprintf(w, "error: %v\n", err)
 	return exit
-}
-
-func coalesce(err error, fallback error) error {
-	if err != nil {
-		return err
-	}
-	return fallback
 }
 
 func render(out Output) string {

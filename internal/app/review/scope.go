@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/nilstate/scafld/v2/internal/core/reviewevidence"
+	"github.com/nilstate/scafld/v2/internal/core/reviewscope"
 	"github.com/nilstate/scafld/v2/internal/core/session"
 	"github.com/nilstate/scafld/v2/internal/core/spec"
 	coreworkspace "github.com/nilstate/scafld/v2/internal/core/workspace"
@@ -96,6 +97,10 @@ type reviewSessionSeal struct {
 	reviewedDiff  string
 }
 
+type workspaceMaterialStatus interface {
+	MaterialSeal(context.Context, []string) (reviewevidence.MaterialSeal, error)
+}
+
 func reviewSeal(ctx context.Context, workspace WorkspaceStatus, snapshot []string) (reviewSessionSeal, error) {
 	if workspace == nil {
 		return reviewSessionSeal{}, fmt.Errorf("workspace status is required")
@@ -115,116 +120,36 @@ func reviewSeal(ctx context.Context, workspace WorkspaceStatus, snapshot []strin
 	}, nil
 }
 
+func reviewMaterialScope(scope []string, reviewedSnapshot []string) []string {
+	return reviewscope.MaterialScope(scope, reviewedSnapshot)
+}
+
+func reviewMaterialSeal(ctx context.Context, workspace WorkspaceStatus, scope []string) (reviewevidence.MaterialSeal, bool, error) {
+	scope = coreworkspace.NormalizeScope(scope)
+	if len(scope) == 0 {
+		return reviewevidence.MaterialSeal{}, false, nil
+	}
+	material, ok := workspace.(workspaceMaterialStatus)
+	if !ok {
+		return reviewevidence.MaterialSeal{}, false, nil
+	}
+	seal, err := material.MaterialSeal(ctx, scope)
+	if err != nil {
+		return reviewevidence.MaterialSeal{}, false, err
+	}
+	if strings.TrimSpace(seal.Digest) == "" {
+		return reviewevidence.MaterialSeal{}, false, nil
+	}
+	if len(seal.Scope) == 0 {
+		seal.Scope = append([]string(nil), scope...)
+	}
+	return seal, true, nil
+}
+
 func deriveReviewScope(model spec.Model, explicit []string, snapshot []string) []string {
-	if normalized := coreworkspace.NormalizeScope(explicit); len(normalized) > 0 {
-		return normalized
-	}
-	var scope []string
-	for _, pkg := range model.Context.Packages {
-		if looksLikePath(pkg) || packageMatchesWorkspace(pkg, snapshot) {
-			scope = append(scope, pkg)
-		}
-	}
-	scope = append(scope, pathishItems(model.Context.FilesImpacted)...)
-	scope = append(scope, pathishItems(model.Context.RelatedDocs)...)
-	scope = append(scope, pathishItems(model.Scope)...)
-	scope = append(scope, pathishItems(model.Touchpoints)...)
-	for _, phase := range model.Phases {
-		scope = append(scope, pathishItems(phase.Changes)...)
-	}
-	return filterReviewScope(coreworkspace.NormalizeScope(scope))
+	return reviewscope.Derive(model, explicit, snapshot)
 }
 
 func filterReviewScope(scope []string) []string {
-	filtered := make([]string, 0, len(scope))
-	for _, item := range scope {
-		if reviewScopePathAllowed(item) {
-			filtered = append(filtered, item)
-		}
-	}
-	return filtered
-}
-
-func reviewScopePathAllowed(path string) bool {
-	normalized := strings.Trim(strings.ReplaceAll(path, "\\", "/"), "/")
-	if normalized == "" {
-		return false
-	}
-	for _, segment := range strings.Split(normalized, "/") {
-		if strings.HasPrefix(segment, ".env") {
-			return false
-		}
-	}
-	for _, denied := range []string{
-		".git",
-		".priv",
-		".scafld/config.local.yaml",
-	} {
-		if normalized == denied || strings.HasPrefix(normalized+"/", denied+"/") {
-			return false
-		}
-	}
-	return true
-}
-
-func packageMatchesWorkspace(pkg string, snapshot []string) bool {
-	prefixes := coreworkspace.NormalizeScope([]string{pkg})
-	if len(prefixes) == 0 {
-		return false
-	}
-	for _, raw := range snapshot {
-		if coreworkspace.PathInScope(coreworkspace.ParseChange(raw).Path, prefixes) {
-			return true
-		}
-	}
-	return false
-}
-
-func pathishItems(values []string) []string {
-	var paths []string
-	for _, value := range values {
-		paths = append(paths, pathishTokens(value)...)
-	}
-	return paths
-}
-
-func pathishTokens(value string) []string {
-	var tokens []string
-	text := strings.TrimSpace(value)
-	for {
-		start := strings.Index(text, "`")
-		if start < 0 {
-			break
-		}
-		rest := text[start+1:]
-		end := strings.Index(rest, "`")
-		if end < 0 {
-			break
-		}
-		token := strings.TrimSpace(rest[:end])
-		if looksLikePath(token) {
-			tokens = append(tokens, token)
-		}
-		text = rest[end+1:]
-	}
-	if len(tokens) > 0 {
-		return tokens
-	}
-	first := strings.Fields(strings.TrimLeft(value, "-* "))
-	if len(first) == 0 {
-		return nil
-	}
-	token := strings.Trim(first[0], "`:,;")
-	if looksLikePath(token) {
-		return []string{token}
-	}
-	return nil
-}
-
-func looksLikePath(value string) bool {
-	text := strings.TrimSpace(value)
-	if text == "" || strings.Contains(text, "://") {
-		return false
-	}
-	return strings.Contains(text, "/") || strings.HasPrefix(text, ".") || strings.Contains(text, ".")
+	return reviewscope.FilterAllowed(scope)
 }

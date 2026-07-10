@@ -12,6 +12,8 @@ import (
 	"github.com/nilstate/scafld/v2/internal/core/reconcile"
 	"github.com/nilstate/scafld/v2/internal/core/review"
 	"github.com/nilstate/scafld/v2/internal/core/reviewcontext"
+	"github.com/nilstate/scafld/v2/internal/core/reviewevidence"
+	"github.com/nilstate/scafld/v2/internal/core/reviewgate"
 	"github.com/nilstate/scafld/v2/internal/core/session"
 	"github.com/nilstate/scafld/v2/internal/core/spec"
 	coreworkspace "github.com/nilstate/scafld/v2/internal/core/workspace"
@@ -19,6 +21,10 @@ import (
 
 // ErrSpecNotReviewable is returned when review is attempted before build reaches the review gate.
 var ErrSpecNotReviewable = errors.New("review requires task status review")
+
+// ErrReviewStartBlocked is returned when the current review gate state forbids
+// starting a new provider attempt.
+var ErrReviewStartBlocked = errors.New("review attempt cannot start")
 
 // SpecStore is the spec persistence port used by review.
 type SpecStore interface {
@@ -29,6 +35,7 @@ type SpecStore interface {
 // SessionStore is the session evidence port used by review.
 type SessionStore interface {
 	Append(context.Context, string, session.Entry, string) (session.Session, error)
+	AppendTransaction(context.Context, string, string, func(session.Session) ([]session.Entry, error)) (session.Session, error)
 	Load(context.Context, string) (session.Session, error)
 }
 
@@ -81,6 +88,9 @@ type Input struct {
 	MinAttackAngles int
 	ReviewDepth     string
 	RerunPolicy     string
+	ForceReview     bool
+	ProviderName    string
+	ProviderModel   string
 	PrintContext    bool
 	HumanReviewed   bool
 	Reason          string
@@ -126,7 +136,8 @@ func RunWithInput(ctx context.Context, specs SpecStore, sessions SessionStore, w
 	baselineScoped := coreworkspace.Filter(baselineComparison, scope)
 	taskChanges, scopeDrift := coreworkspace.PartitionMutations(coreworkspace.Diff(baselineComparison, beforeComparison), scope)
 	mode := reviewMode(ctx, sessions, model.TaskID, input)
-	contextPacket := reviewContextPacket(model, path, input.Passes, input.Invariants, scope, baselineScoped, taskChanges, scopeDrift, input.ContextSections, mode, input.MaxFindings, input.MinAttackAngles, input.ReviewDepth, input.RerunPolicy)
+	knownFindings := knownFindingsForMode(ctx, sessions, model.TaskID, mode)
+	contextPacket := reviewContextPacket(model, path, input.Passes, input.Invariants, scope, baselineScoped, taskChanges, scopeDrift, knownFindings, input.ContextSections, mode, input.MaxFindings, input.MinAttackAngles, input.ReviewDepth, input.RerunPolicy)
 	prompt := reviewcontext.RenderMarkdown(contextPacket, reviewcontext.Options{MaxBytes: input.ContextMaxBytes})
 	if input.PrintContext {
 		return Output{TaskID: model.TaskID, Verdict: "not_run", Next: "scafld review " + model.TaskID, Context: prompt}, nil
@@ -135,26 +146,22 @@ func RunWithInput(ctx context.Context, specs SpecStore, sessions SessionStore, w
 	if err != nil {
 		return Output{}, reviewGateError(model, err, "review workspace head unavailable", err.Error())
 	}
-	now := clock.Now().UTC().Format(time.RFC3339)
-	if _, err := sessions.Append(ctx, model.TaskID, session.Entry{
-		Type:   "review_attempt",
-		Status: "running",
-		Reason: fmt.Sprintf("review provider running; baseline %d changed path(s), %d task change(s), %d ambient drift change(s)", len(coreworkspace.Paths(baselineScoped)), len(taskChanges), len(scopeDrift)),
-		Output: reviewAttemptOutput(baselineScoped, taskChanges, scopeDrift),
-	}, now); err != nil {
+	nowTime := clock.Now().UTC()
+	now := nowTime.Format(time.RFC3339)
+	attempt, err := startReviewAttempt(ctx, sessions, model, input, mode, baselineScoped, taskChanges, scopeDrift, nowTime)
+	if err != nil {
 		return Output{}, err
 	}
-	dossier, err := provider.Invoke(ctx, review.Request{TaskID: model.TaskID, Prompt: prompt, Context: contextPacket})
+	dossier, err := invokeReviewProvider(ctx, provider, providerReviewInput{
+		taskID: model.TaskID,
+		prompt: prompt,
+		packet: contextPacket,
+	})
 	postReviewCtx, cancelPostReview := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
 	defer cancelPostReview()
 	afterFull, mutationErr := workspaceSnapshot(postReviewCtx, workspace)
 	if mutationErr != nil {
-		_, _ = sessions.Append(context.WithoutCancel(ctx), model.TaskID, session.Entry{
-			Type:   "review_attempt",
-			Status: "failed",
-			Reason: "review workspace snapshot failed: " + mutationErr.Error(),
-			Path:   diagnosticPath(mutationErr),
-		}, now)
+		_ = appendFailedReviewAttempt(context.WithoutCancel(ctx), sessions, model.TaskID, attempt, "review workspace snapshot failed: "+mutationErr.Error(), diagnosticPath(mutationErr), now)
 		return Output{}, reviewGateError(model, mutationErr, "review workspace snapshot failed", mutationErr.Error())
 	}
 	if mutated := coreworkspace.MutationStrings(reviewBlockingMutations(beforeFull, afterFull, scope, path)); len(mutated) > 0 {
@@ -172,34 +179,28 @@ func RunWithInput(ctx context.Context, specs SpecStore, sessions SessionStore, w
 	}
 	dossier = applyRequestedBudget(dossier, reviewBudget(input, 0, 0))
 	if err != nil {
-		_, _ = sessions.Append(context.WithoutCancel(ctx), model.TaskID, session.Entry{
-			Type:   "review_attempt",
-			Status: "failed",
-			Reason: "review provider failed: " + err.Error(),
-			Path:   diagnosticPath(err),
-		}, now)
+		_ = appendFailedReviewAttempt(context.WithoutCancel(ctx), sessions, model.TaskID, attempt, "review provider failed: "+err.Error(), diagnosticPath(err), now)
 		return Output{}, reviewGateError(model, err, "review provider failed", err.Error())
 	}
 	if dossier.Mode != mode {
 		err := fmt.Errorf("%w: mode %q does not match requested mode %q", review.ErrInvalidDossier, dossier.Mode, mode)
-		_, _ = sessions.Append(context.WithoutCancel(ctx), model.TaskID, session.Entry{
-			Type:   "review_attempt",
-			Status: "failed",
-			Reason: fmt.Sprintf("review dossier invalid: mode %q does not match requested mode %q", dossier.Mode, mode),
-			Path:   diagnosticPath(err),
-		}, now)
+		_ = appendFailedReviewAttempt(context.WithoutCancel(ctx), sessions, model.TaskID, attempt, fmt.Sprintf("review dossier invalid: mode %q does not match requested mode %q", dossier.Mode, mode), diagnosticPath(err), now)
 		return Output{}, reviewGateError(model, err, "review dossier invalid", err.Error())
 	}
 	if err := review.ValidateDossier(dossier); err != nil {
-		_, _ = sessions.Append(context.WithoutCancel(ctx), model.TaskID, session.Entry{
-			Type:   "review_attempt",
-			Status: "failed",
-			Reason: "review dossier invalid: " + err.Error(),
-			Path:   diagnosticPath(err),
-		}, now)
+		_ = appendFailedReviewAttempt(context.WithoutCancel(ctx), sessions, model.TaskID, attempt, "review dossier invalid: "+err.Error(), diagnosticPath(err), now)
 		return Output{}, reviewGateError(model, err, "review dossier invalid", err.Error())
 	}
-	return recordReviewDossier(postReviewCtx, specs, sessions, model, path, dossier, now, seal)
+	if err := validateRequestedBudget(dossier); err != nil {
+		_ = appendFailedReviewAttempt(context.WithoutCancel(ctx), sessions, model.TaskID, attempt, "review dossier budget invalid: "+err.Error(), diagnosticPath(err), now)
+		return Output{}, reviewGateError(model, err, "review dossier budget invalid", err.Error())
+	}
+	material, hasMaterial, materialErr := reviewMaterialSeal(postReviewCtx, workspace, reviewMaterialScope(scope, beforeComparison))
+	if materialErr != nil {
+		_ = appendFailedReviewAttempt(context.WithoutCancel(ctx), sessions, model.TaskID, attempt, "review material seal failed: "+materialErr.Error(), diagnosticPath(materialErr), now)
+		return Output{}, reviewGateError(model, materialErr, "review material seal failed", materialErr.Error())
+	}
+	return recordReviewDossier(postReviewCtx, specs, sessions, model, path, dossier, now, seal, material, hasMaterial, attempt)
 }
 
 func reviewCompletionSuffix(ctx context.Context, sessions SessionStore, taskID string) string {
@@ -241,13 +242,99 @@ func diagnosticPath(err error) string {
 	return ""
 }
 
-func recordReviewDossier(ctx context.Context, specs SpecStore, sessions SessionStore, model spec.Model, path string, dossier review.Dossier, now string, seal reviewSessionSeal) (Output, error) {
+func startReviewAttempt(ctx context.Context, sessions SessionStore, model spec.Model, input Input, mode review.Mode, baselineScoped []string, taskChanges []coreworkspace.Mutation, scopeDrift []coreworkspace.Mutation, now time.Time) (reviewgate.Attempt, error) {
+	reason := fmt.Sprintf("review provider running; baseline %d changed path(s), %d task change(s), %d ambient drift change(s)", len(coreworkspace.Paths(baselineScoped)), len(taskChanges), len(scopeDrift))
+	attemptEntry := reviewgate.RunningAttemptEntry(reviewgate.AttemptEntryInput{
+		AttemptID:      reviewgate.NewAttemptID(model.TaskID, now),
+		LeaseExpiresAt: now.Add(reviewgate.DefaultAttemptLease),
+		Mode:           mode,
+		Provider:       input.ProviderName,
+		Model:          input.ProviderModel,
+		PassCount:      1,
+		Reason:         reason,
+		Output:         reviewAttemptOutput(baselineScoped, taskChanges, scopeDrift),
+	})
+	ledger, err := sessions.AppendTransaction(ctx, model.TaskID, now.Format(time.RFC3339), func(current session.Session) ([]session.Entry, error) {
+		state := reviewgate.Project(current, model, reviewgate.Options{Now: now})
+		switch state.Kind {
+		case reviewgate.KindAttemptStale:
+			return []session.Entry{
+				reviewgate.AbandonedAttemptEntry(state.LatestAttempt, "stale running review attempt abandoned before starting a new review"),
+				attemptEntry,
+			}, nil
+		case reviewgate.KindAttemptRunning, reviewgate.KindReviewFailed, reviewgate.KindReviewPassed:
+			if state.Kind == reviewgate.KindReviewPassed && input.ForceReview {
+				return []session.Entry{attemptEntry}, nil
+			}
+			return nil, reviewStartError(model, state)
+		default:
+			return []session.Entry{attemptEntry}, nil
+		}
+	})
+	if err != nil {
+		return reviewgate.Attempt{}, err
+	}
+	state := reviewgate.Project(ledger, model, reviewgate.Options{Now: now})
+	if !state.HasAttempt || state.LatestAttempt.Status != reviewgate.AttemptStatusRunning {
+		return reviewgate.Attempt{}, errors.New("review attempt start did not record a running attempt")
+	}
+	return state.LatestAttempt, nil
+}
+
+func reviewStartError(model spec.Model, state reviewgate.State) error {
+	reason := state.Reason
+	if reason == "" {
+		reason = string(state.Kind)
+	}
+	next := state.Next
+	if next == "" {
+		next = "scafld review " + model.TaskID
+	}
+	expected := "review gate ready for a new provider attempt"
+	blockers := append([]string(nil), state.Blockers...)
+	if len(blockers) == 0 {
+		blockers = []string{reason}
+	}
+	switch state.Kind {
+	case reviewgate.KindAttemptRunning:
+		expected = "no unexpired running review attempt"
+	case reviewgate.KindReviewFailed:
+		expected = "fresh build evidence after repairing review findings"
+		blockers = append(blockers,
+			"run scafld handoff "+model.TaskID+" to read the findings",
+			"after repair run scafld build "+model.TaskID,
+			"then rerun scafld review "+model.TaskID,
+		)
+	case reviewgate.KindReviewPassed:
+		expected = "no current passing review or an explicit --force rerun"
+	}
+	return gate.New(ErrReviewStartBlocked, gate.Failure{
+		Gate:     "review",
+		Status:   string(model.Status),
+		Reason:   reason,
+		Evidence: nonEmptyStrings(state.Evidence, "session review entries"),
+		Expected: expected,
+		Actual:   fallbackString(state.Actual, reason),
+		Blockers: blockers,
+		Next:     next,
+	})
+}
+
+func appendFailedReviewAttempt(ctx context.Context, sessions SessionStore, taskID string, attempt reviewgate.Attempt, reason string, diagnosticPath string, now string) error {
+	_, err := sessions.Append(ctx, taskID, reviewgate.FailedAttemptEntry(attempt, reason, diagnosticPath), now)
+	return err
+}
+
+func recordReviewDossier(ctx context.Context, specs SpecStore, sessions SessionStore, model spec.Model, path string, dossier review.Dossier, now string, seal reviewSessionSeal, material reviewevidence.MaterialSeal, hasMaterial bool, attempt reviewgate.Attempt) (Output, error) {
 	if err := review.ValidateDossier(dossier); err != nil {
 		return Output{}, err
 	}
 	next, command := nextForVerdict(model.TaskID, dossier.Verdict)
 	packet := review.EncodeDossier(dossier)
-	ledger, err := sessions.Append(ctx, model.TaskID, session.Entry{
+	if _, err := sessions.Append(ctx, model.TaskID, reviewgate.AcceptedAttemptEntry(attempt, "review dossier accepted for recording"), now); err != nil {
+		return Output{}, err
+	}
+	entry := session.Entry{
 		Type:                    "review",
 		Status:                  dossier.Verdict,
 		Reason:                  reviewReason(dossier),
@@ -261,7 +348,12 @@ func recordReviewDossier(ctx context.Context, specs SpecStore, sessions SessionS
 		ReviewedDirty:           seal.reviewedDirty,
 		ReviewedDiff:            seal.reviewedDiff,
 		ReviewedSpec:            spec.ContractDigest(model),
-	}, now)
+	}
+	if hasMaterial {
+		entry.ReviewedScope = append([]string(nil), material.Scope...)
+		entry.ReviewedMaterialDigest = material.Digest
+	}
+	ledger, err := sessions.Append(ctx, model.TaskID, entry, now)
 	if err != nil {
 		return Output{}, err
 	}
@@ -276,6 +368,26 @@ func recordReviewDossier(ctx context.Context, specs SpecStore, sessions SessionS
 		return Output{}, err
 	}
 	return Output{TaskID: model.TaskID, Verdict: dossier.Verdict, Mode: dossier.Mode, Summary: dossier.Summary, Provider: dossier.Provider, Model: dossier.Model, OutputFormat: dossier.OutputFormat, Normalizations: dossier.Normalizations, Findings: dossier.Findings, AttackLog: dossier.AttackLog, Budget: dossier.Budget, Next: command, Repair: reviewRepair(model, dossier, command, latestReviewEvidence(ledger))}, nil
+}
+
+func nonEmptyStrings(values []string, fallback string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			out = append(out, value)
+		}
+	}
+	if len(out) == 0 && strings.TrimSpace(fallback) != "" {
+		return []string{fallback}
+	}
+	return out
+}
+
+func fallbackString(value string, fallback string) string {
+	if strings.TrimSpace(value) != "" {
+		return value
+	}
+	return fallback
 }
 
 func runHumanReviewed(ctx context.Context, specs SpecStore, sessions SessionStore, clock Clock, model spec.Model, path string, reason string) (Output, error) {

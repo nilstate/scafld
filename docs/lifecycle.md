@@ -105,8 +105,10 @@ the projected state from session evidence.
 
 `scafld harden <task-id>` appends a harden round while the spec is still a
 draft. The active prompt asks the agent to record evidence-backed observations
-for paths, commands, scope and migration claims, acceptance timing, rollback or
-repair shape, and design quality. `scafld harden <task-id>
+for design, scope, paths, commands, acceptance timing, and rollback or repair
+shape. Design comes first: the round should challenge shared ownership and keep
+API/MCP/CLI/provider/docs surfaces as light adapters over common behavior.
+`scafld harden <task-id>
 --mark-passed` verifies dimension coverage, anchors, and unresolved blocking
 observations before recording that the draft survived hardening. Missing
 dimensions, open blocking observations, and unresolved citations keep approval
@@ -133,5 +135,6 @@ scafld report
 ```
 
 `status --json` is the right integration surface for wrappers. It reports the
-current lifecycle state and the next allowed follow-up command without requiring
-the wrapper to scrape Markdown.
+current lifecycle state, next allowed follow-up command, and task material
+projection without requiring the wrapper to scrape Markdown or invent a separate
+change manifest.
