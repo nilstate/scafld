@@ -129,7 +129,7 @@ func TestReceiptGradeClaudeSandboxMemoryReadRoot(t *testing.T) {
 	}
 	assertReceiptGradeSandboxProvider(t, claude.CWD, claude.ReadRoots, claude.MemoryAutoloadDisabled, claude.SandboxPolicy, facts)
 	args := ClaudeArgs(claude.Binary, claude.Model, "00000000-0000-4000-8000-000000000000", "{}", SubmitTool{Name: "submit_review"}, claude.ReadRoots)
-	for _, want := range []string{"--no-session-persistence", "--disable-slash-commands", "--permission-mode", "dontAsk", "--setting-sources", "user", "--disallowedTools", "Agent,Task,Bash,Edit,MultiEdit,Write,NotebookEdit", "--add-dir", claude.CWD} {
+	for _, want := range []string{"--no-session-persistence", "--disable-slash-commands", "--permission-mode", "dontAsk", "--setting-sources", "user", "--disallowedTools", "Agent,Task,Bash,Edit,Write,NotebookEdit", "--add-dir", claude.CWD} {
 		if !containsArg(args, want) {
 			t.Fatalf("claude args missing %q: %v", want, args)
 		}

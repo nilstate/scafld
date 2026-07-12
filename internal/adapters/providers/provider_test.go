@@ -869,7 +869,7 @@ func TestClaudeProviderBuildsRestrictedStreamJSONArgsAndExtractsStructuredOutput
 		"--no-session-persistence", "--disable-slash-commands", "--no-chrome",
 		"--permission-mode", "dontAsk", "--setting-sources", "user", "--tools", "Read,Grep,Glob",
 		"--allowedTools", "Read,Grep,Glob,mcp__scafld__submit_review",
-		"--disallowedTools", "Agent,Task,Bash,Edit,MultiEdit,Write,NotebookEdit",
+		"--disallowedTools", "Agent,Task,Bash,Edit,Write,NotebookEdit",
 		"--mcp-config",
 	}
 	if len(runner.req.Args) < len(wantPrefix) || !reflect.DeepEqual(runner.req.Args[:len(wantPrefix)], wantPrefix) || runner.req.Input != "prompt" || runner.req.CWD != "/tmp/work" {
