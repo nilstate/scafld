@@ -117,8 +117,14 @@ func renderContext(b *strings.Builder, context spec.Context) {
 	if context.CWD != "" {
 		fmt.Fprintf(b, "CWD: `%s`\n\n", context.CWD)
 	}
+	fmt.Fprintf(b, "Packages:\n")
 	renderBullets(b, context.Packages)
-	fmt.Fprintf(b, "\n")
+	fmt.Fprintf(b, "\nFiles Impacted:\n")
+	renderBullets(b, context.FilesImpacted)
+	fmt.Fprintf(b, "\nInvariants:\n")
+	renderBullets(b, context.Invariants)
+	fmt.Fprintf(b, "\nRelated Docs:\n")
+	renderBullets(b, context.RelatedDocs)
 }
 
 func renderRisks(b *strings.Builder, risks []spec.Risk) {

@@ -66,7 +66,8 @@ type parser struct {
 	hardenRound       *spec.HardenRound
 	hardenObservation *spec.HardenObservation
 	phaseField        string
-	hardenField       string
+	hardenField        string
+	contextField       string
 	listTarget        *([]string)
 	phaseIDs          map[string]bool
 }
@@ -156,6 +157,7 @@ func (p *parser) startSection(section string) {
 	p.hardenObservation = nil
 	p.phaseField = ""
 	p.hardenField = ""
+	p.contextField = ""
 	p.listTarget = listForSection(&p.model, section)
 }
 
@@ -168,6 +170,7 @@ func (p *parser) handleLine(line string) {
 	case p.handleMetadata(line):
 	case p.handleOrigin(line):
 	case p.handleHardenLine(line):
+	case p.handleContext(line):
 	case p.handleListItem(line):
 	case p.handlePhaseLine(line):
 	case p.handleCriterionStart(line):
@@ -300,6 +303,60 @@ func (p *parser) handleOrigin(line string) bool {
 		return false
 	}
 	return true
+}
+
+func (p *parser) handleContext(line string) bool {
+	if p.section != "context" {
+		return false
+	}
+	trimmed := strings.TrimSpace(line)
+	// Section header lines like "Packages:" have no value; they switch the
+	// active context sub-list so following bullets route to the right field.
+	if !strings.HasPrefix(line, "- ") && strings.HasSuffix(trimmed, ":") {
+		header := normalizeSpecKey(strings.TrimSuffix(trimmed, ":"))
+		switch header {
+		case "packages":
+			p.contextField = "packages"
+		case "files impacted", "files_impacted":
+			p.contextField = "files_impacted"
+		case "invariants":
+			p.contextField = "invariants"
+		case "related docs", "related_docs":
+			p.contextField = "related_docs"
+		default:
+			return false
+		}
+		return true
+	}
+	if strings.HasPrefix(line, "- ") {
+		if p.contextField == "" {
+			return false
+		}
+		value := strings.TrimSpace(strings.TrimPrefix(line, "- "))
+		if value == "" || value == "none" {
+			return true
+		}
+		switch p.contextField {
+		case "packages":
+			p.model.Context.Packages = append(p.model.Context.Packages, value)
+		case "files_impacted":
+			p.model.Context.FilesImpacted = append(p.model.Context.FilesImpacted, value)
+		case "invariants":
+			p.model.Context.Invariants = append(p.model.Context.Invariants, value)
+		case "related_docs":
+			p.model.Context.RelatedDocs = append(p.model.Context.RelatedDocs, value)
+		}
+		return true
+	}
+	key, value, ok := parseSpecKeyValue(line)
+	if !ok {
+		return false
+	}
+	if normalizeSpecKey(key) == "cwd" {
+		p.model.Context.CWD = strings.Trim(value, "`")
+		return true
+	}
+	return false
 }
 
 func (p *parser) handleHardenLine(line string) bool {
