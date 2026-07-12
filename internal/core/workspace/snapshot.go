@@ -153,9 +153,15 @@ func NormalizeScope(scope []string) []string {
 }
 
 // PathInScope reports whether path is equal to or under one of the scope prefixes.
+// A "." prefix denotes the workspace root and matches every path, mirroring the
+// git adapter's scope handling.
 func PathInScope(path string, scope []string) bool {
-	candidate := strings.Trim(strings.ReplaceAll(strings.TrimSpace(path), "\\", "/"), "/")
+	candidate := strings.TrimPrefix(strings.TrimSpace(strings.ReplaceAll(path, "\\", "/")), "./")
+	candidate = strings.Trim(candidate, "/")
 	for _, prefix := range scope {
+		if prefix == "." {
+			return true
+		}
 		if candidate == prefix || strings.HasPrefix(candidate, prefix+"/") {
 			return true
 		}

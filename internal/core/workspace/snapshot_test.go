@@ -39,3 +39,27 @@ func TestFilterAndPartitionUsePathPrefixes(t *testing.T) {
 		t.Fatalf("inside=%+v outside=%+v", inside, outside)
 	}
 }
+
+func TestPathInScopeRootScopeMatchesEveryPath(t *testing.T) {
+	scope := NormalizeScope([]string{"."})
+	for _, path := range []string{"cmd/main.go", "internal/core/workspace/snapshot.go", "README.md"} {
+		if !PathInScope(path, scope) {
+			t.Fatalf("PathInScope(%q, %q) = false, want true: a \".\" scope denotes the workspace root", path, scope)
+		}
+	}
+}
+
+func TestFilterRootScopeKeepsEveryEntry(t *testing.T) {
+	snapshot := []string{"M cmd/main.go", "A internal/core/x.go"}
+	filtered := Filter(snapshot, NormalizeScope([]string{"."}))
+	if len(filtered) != len(snapshot) {
+		t.Fatalf("Filter(%q, [\".\"]) = %q, want every entry retained", snapshot, filtered)
+	}
+}
+
+func TestPathInScopeIgnoresLeadingDotSlashOnCandidate(t *testing.T) {
+	scope := NormalizeScope([]string{"./cmd"})
+	if !PathInScope("./cmd/main.go", scope) {
+		t.Fatalf("PathInScope(\"./cmd/main.go\", %q) = false, want true: candidate normalization must match NormalizeScope", scope)
+	}
+}
