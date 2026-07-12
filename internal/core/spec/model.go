@@ -423,7 +423,6 @@ func ContractDigest(model Model) string {
 		Metadata     map[string]string `json:"metadata"`
 		Origin       Origin            `json:"origin"`
 		HardenRounds []HardenRound     `json:"harden_rounds"`
-		PlanningLog  []PlanningEvent   `json:"planning_log"`
 	}{
 		Version:      model.Version,
 		TaskID:       model.TaskID,
@@ -447,7 +446,6 @@ func ContractDigest(model Model) string {
 		Metadata:     model.Metadata,
 		Origin:       model.Origin,
 		HardenRounds: model.HardenRounds,
-		PlanningLog:  model.PlanningLog,
 	})
 	if err != nil {
 		return ""
