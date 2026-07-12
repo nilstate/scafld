@@ -2,9 +2,11 @@ package providers
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -147,7 +149,15 @@ func TestReceiptGradeGeminiSandboxSettingsMemoryReadRoot(t *testing.T) {
 	}
 	assertReceiptGradeSandboxProvider(t, gemini.CWD, gemini.ReadRoots, gemini.MemoryAutoloadDisabled, gemini.SandboxPolicy, facts)
 	settings := GeminiSettingsJSON("scafld-bin", "/tmp/out.json", SubmitTool{Name: "submit_review"}, gemini.SandboxPolicy)
-	if !strings.Contains(settings, gemini.CWD) || !strings.Contains(settings, `"includeDirectories"`) {
+	var decoded struct {
+		Context struct {
+			IncludeDirectories []string `json:"includeDirectories"`
+		} `json:"context"`
+	}
+	if err := json.Unmarshal([]byte(settings), &decoded); err != nil {
+		t.Fatalf("decode Gemini settings: %v", err)
+	}
+	if !reflect.DeepEqual(decoded.Context.IncludeDirectories, []string{gemini.CWD}) {
 		t.Fatalf("gemini settings missing read-scope: %s", settings)
 	}
 }
@@ -319,6 +329,13 @@ func evidenceFile(path string, status string, text string) reviewevidence.Eviden
 
 func writeExecutable(t *testing.T, name string) string {
 	t.Helper()
+	if runtime.GOOS == "windows" {
+		path, err := os.Executable()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
 	path := filepath.Join(t.TempDir(), name)
 	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
 		t.Fatal(err)

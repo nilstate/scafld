@@ -521,8 +521,16 @@ func TestReceiptGradeBinaryPinnedAbsolute(t *testing.T) {
 	t.Parallel()
 
 	path := filepath.Join(t.TempDir(), "codex-reviewer")
-	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
-		t.Fatal(err)
+	if runtime.GOOS == "windows" {
+		var err error
+		path, err = os.Executable()
+		if err != nil {
+			t.Fatal(err)
+		}
+	} else {
+		if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
 	}
 	got, err := ResolveReceiptGradeBinary(path)
 	if err != nil {
@@ -565,8 +573,16 @@ func TestReceiptGradeAgentUsesExactEnvAndRuntimeFacts(t *testing.T) {
 	t.Parallel()
 
 	path := filepath.Join(t.TempDir(), "codex-reviewer")
-	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
-		t.Fatal(err)
+	if runtime.GOOS == "windows" {
+		var err error
+		path, err = os.Executable()
+		if err != nil {
+			t.Fatal(err)
+		}
+	} else {
+		if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
 	}
 	agent, facts, err := SelectReceiptGradeAgent(Selection{
 		Provider:          "codex",

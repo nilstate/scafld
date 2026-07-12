@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -100,7 +101,7 @@ func ResolveReceiptGradeBinary(path string) (ReceiptGradeBinary, error) {
 	if info.IsDir() {
 		return ReceiptGradeBinary{}, fmt.Errorf("receipt-grade reviewer binary is a directory: %s", path)
 	}
-	if info.Mode().Perm()&0o111 == 0 {
+	if _, err := exec.LookPath(path); err != nil {
 		return ReceiptGradeBinary{}, fmt.Errorf("receipt-grade reviewer binary is not executable: %s", path)
 	}
 	data, err := os.ReadFile(path)
