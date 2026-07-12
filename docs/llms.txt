@@ -1,0 +1,27 @@
+# scafld
+
+> Sourcey-oriented llms.txt reference for agent readers, generated from the pinned source at commit b7052022c0ec7af2b22c8140be27cfa39f6ac97d.
+
+## Project
+scafld is a governed agent-work lifecycle tool. It helps agents and operators run a task through plan, harden, approve, build, review, complete, finalize, and verify stages.
+
+## Core commands
+- `scafld init` — initialize `.scafld/`
+- `scafld plan <task-id>` — create or open a task spec
+- `scafld harden <task-id>` — adversarially check the spec
+- `scafld approve <task-id>` — approve a hardened spec
+- `scafld build <task-id>` — run/track the build phase
+- `scafld review <task-id>` — review the implemented work
+- `scafld complete <task-id>` — mark task complete
+- `scafld finalize <task-id> --json` — produce a sealed receipt
+- `scafld verify <receipt.json>` — verify a sealed receipt
+
+## Agent usage map
+- Use scafld before external delivery when work needs a public governance trail.
+- Record harden-gate findings as evidence when a bounty/review asks what changed.
+- Keep receipts and evidence public when a third party needs to verify the work.
+
+## Source pin
+- Repository: https://github.com/nilstate/scafld
+- Pinned source commit used for this reference: b7052022c0ec7af2b22c8140be27cfa39f6ac97d
+- Tooling observed: Sourcey 3.6.5, runx-cli 0.6.14

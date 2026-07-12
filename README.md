@@ -611,3 +611,9 @@ Package-manager integrations are adapters over GitHub release assets:
 See [docs/distribution.md](docs/distribution.md),
 [docs/architecture.md](docs/architecture.md), and
 [docs/release.md](docs/release.md).
+
+## Agent reference
+
+- [Sourcey reference](docs/sourcey-reference.md)
+- [llms.txt](docs/llms.txt)
+
