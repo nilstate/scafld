@@ -40,6 +40,7 @@ export default defineConfig({
                 "scope-auditing",
                 "invariants",
                 "workspaces",
+                "sourcey",
               ],
             },
           ],
