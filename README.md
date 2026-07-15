@@ -1,7 +1,7 @@
 # scafld
 
 [![CI](https://github.com/nilstate/scafld/actions/workflows/ci.yml/badge.svg)](https://github.com/nilstate/scafld/actions/workflows/ci.yml)
-[![Go Report Card](https://goreportcard.com/badge/github.com/nilstate/scafld/v2)](https://goreportcard.com/report/github.com/nilstate/scafld/v2)
+[![Go](https://img.shields.io/github/go-mod/go-version/nilstate/scafld?label=go)](go.mod)
 [![Go Reference](https://pkg.go.dev/badge/github.com/nilstate/scafld/v2.svg)](https://pkg.go.dev/github.com/nilstate/scafld/v2)
 [![License](https://img.shields.io/github/license/nilstate/scafld)](LICENSE)
 
