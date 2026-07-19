@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -140,7 +141,8 @@ func compose(ctx context.Context, req Request) (map[string]any, error) {
 		hostMarker = "unknown"
 	}
 
-	independence, reviewerRuntime, err := selectReviewer(cfg, root, hostMarker, acceptanceRunner)
+	reviewerEnv := effectiveFinalizeReviewerEnv(cfg, root, os.Environ())
+	independence, reviewerRuntime, err := selectReviewerWithEffectiveEnv(cfg, root, hostMarker, acceptanceRunner, reviewerEnv)
 	if err != nil {
 		return nil, err
 	}
@@ -171,9 +173,10 @@ func compose(ctx context.Context, req Request) (map[string]any, error) {
 	}
 
 	reviewer := &gateReviewer{
-		git:       gitAdapter,
-		selection: reviewerRuntime,
-		contract:  acceptanceContract(model),
+		git:         gitAdapter,
+		selection:   reviewerRuntime,
+		contract:    acceptanceContract(model),
+		hostEnviron: reviewerEnv,
 	}
 	out, err := appfinalize.Run(ctx,
 		gateSnapshotter{git: gitAdapter},
@@ -457,8 +460,17 @@ func selectReviewer(cfg configadapter.Config, root string, hostMarker string, ru
 }
 
 func selectReviewerWithEnv(cfg configadapter.Config, root string, hostMarker string, runner process.Runner, env []string) (providers.Independence, providers.Selection, error) {
+	return selectReviewerWithEffectiveEnv(cfg, root, hostMarker, runner, effectiveFinalizeReviewerEnv(cfg, root, env))
+}
+
+func selectReviewerWithEffectiveEnv(cfg configadapter.Config, root string, hostMarker string, runner process.Runner, reviewerEnv []string) (providers.Independence, providers.Selection, error) {
 	external := cfg.Review.External
-	external = finalizeExternalFromEnv(external, env)
+	external = finalizeExternalFromEnv(external, reviewerEnv)
+	var err error
+	external, err = resolveFinalizeReviewerBinaries(external, reviewerEnv)
+	if err != nil {
+		return providers.Independence{}, providers.Selection{}, err
+	}
 	base := providers.Selection{
 		Provider:           external.Provider,
 		Binary:             absoluteOrEmpty(external.ProviderBinary),
@@ -480,23 +492,121 @@ func selectReviewerWithEnv(cfg configadapter.Config, root string, hostMarker str
 		Idle:               time.Duration(external.IdleTimeoutSeconds) * time.Second,
 		FallbackPolicy:     external.FallbackPolicy,
 		HostAgent:          hostMarker,
-		// Receipt-grade gate availability is "a configured absolute reviewer binary
-		// exists", never a host-controlled PATH lookup, so a planted codex/claude/
-		// gemini on PATH cannot become the signed independent reviewer.
+		// Finalize resolves PATH candidates to absolute paths before selection. The
+		// receipt-grade adapter then hashes that exact file and records the digest.
 		CommandExists: func(string) bool { return false },
 	}
 	picked, err := providers.SelectGateReviewer(base)
 	if err != nil {
-		return providers.Independence{}, providers.Selection{}, fmt.Errorf("select finalize reviewer: %w; configure an absolute reviewer binary (review.external.<provider>.binary or SCAFLD_FINALIZE_<PROVIDER>_BINARY)", err)
+		return providers.Independence{}, providers.Selection{}, fmt.Errorf("select finalize reviewer: no authenticated external reviewer found; install and authenticate codex, claude, or gemini, or configure an explicit receipt-grade reviewer: %w", err)
 	}
 	if !filepath.IsAbs(picked.Binary) {
-		return providers.Independence{}, providers.Selection{}, fmt.Errorf("finalize reviewer binary for %s must be a configured absolute path (review.external.%s.binary); PATH lookup is not trusted for receipt-grade review", picked.Provider, picked.Provider)
+		return providers.Independence{}, providers.Selection{}, fmt.Errorf("finalize reviewer binary for %s did not resolve to an absolute path", picked.Provider)
 	}
 	runtime := base
 	runtime.Provider = picked.Provider
 	runtime.Binary = picked.Binary
 	runtime.Model = picked.Model
 	return picked.Independence, runtime, nil
+}
+
+func effectiveFinalizeReviewerEnv(cfg configadapter.Config, root string, env []string) []string {
+	return overlayFinalizeEnv(env, configadapter.EffectiveExecution(root, cfg.Execution).ProcessEnv())
+}
+
+func resolveFinalizeReviewerBinaries(external configadapter.ExternalReviewConfig, env []string) (configadapter.ExternalReviewConfig, error) {
+	provider := strings.ToLower(strings.TrimSpace(external.Provider))
+	auto := provider == "" || provider == "auto"
+	if auto && strings.TrimSpace(external.ProviderBinary) != "" {
+		return external, errors.New("review.external.provider_binary requires an explicit provider; use the named provider binary field with provider auto")
+	}
+
+	configs := []struct {
+		name   string
+		binary *string
+	}{
+		{name: "codex", binary: &external.Codex.Binary},
+		{name: "claude", binary: &external.Claude.Binary},
+		{name: "gemini", binary: &external.Gemini.Binary},
+	}
+	for _, candidate := range configs {
+		if !auto && provider != candidate.name {
+			continue
+		}
+		if auto && !providers.ReceiptGradeAuthAvailable(candidate.name, env) {
+			*candidate.binary = ""
+			continue
+		}
+		configured := strings.TrimSpace(*candidate.binary)
+		if configured != "" {
+			if !filepath.IsAbs(configured) {
+				return external, fmt.Errorf("finalize reviewer binary for %s must be an absolute path: %s", candidate.name, configured)
+			}
+			continue
+		}
+		if resolved, ok := resolveExecutableOnPath(candidate.name, env); ok {
+			*candidate.binary = resolved
+		}
+	}
+	if !auto && strings.TrimSpace(external.ProviderBinary) != "" && !filepath.IsAbs(strings.TrimSpace(external.ProviderBinary)) {
+		return external, fmt.Errorf("finalize reviewer binary for %s must be an absolute path: %s", provider, external.ProviderBinary)
+	}
+	return external, nil
+}
+
+func resolveExecutableOnPath(name string, env []string) (string, bool) {
+	pathValue := envValue(env, "PATH")
+	for _, dir := range filepath.SplitList(pathValue) {
+		dir = strings.TrimSpace(dir)
+		if dir == "" || !filepath.IsAbs(dir) {
+			continue
+		}
+		for _, executable := range executableNames(name, env) {
+			candidate := filepath.Join(dir, executable)
+			info, err := os.Stat(candidate)
+			if err != nil || info.IsDir() || (runtime.GOOS != "windows" && info.Mode().Perm()&0o111 == 0) {
+				continue
+			}
+			return filepath.Clean(candidate), true
+		}
+	}
+	return "", false
+}
+
+func executableNames(name string, env []string) []string {
+	if runtime.GOOS != "windows" || filepath.Ext(name) != "" {
+		return []string{name}
+	}
+	extensions := filepath.SplitList(envValue(env, "PATHEXT"))
+	if len(extensions) == 0 {
+		extensions = []string{".com", ".exe", ".bat", ".cmd"}
+	}
+	names := make([]string, 0, len(extensions)+1)
+	names = append(names, name)
+	for _, extension := range extensions {
+		names = append(names, name+strings.ToLower(strings.TrimSpace(extension)))
+	}
+	return names
+}
+
+func overlayFinalizeEnv(base, overrides []string) []string {
+	values := map[string]string{}
+	for _, entry := range append(append([]string(nil), base...), overrides...) {
+		key, value, ok := strings.Cut(entry, "=")
+		if ok && strings.TrimSpace(key) != "" {
+			values[strings.TrimSpace(key)] = value
+		}
+	}
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	result := make([]string, 0, len(keys))
+	for _, key := range keys {
+		result = append(result, key+"="+values[key])
+	}
+	return result
 }
 
 func finalizeExternalFromEnv(external configadapter.ExternalReviewConfig, env []string) configadapter.ExternalReviewConfig {
@@ -593,9 +703,10 @@ func (a gateAcceptance) Evaluate(ctx context.Context, in appacceptance.EvaluateI
 // gateReviewer materializes canonical evidence and runs the isolated,
 // receipt-grade reviewer over it.
 type gateReviewer struct {
-	git       git.Adapter
-	selection providers.Selection
-	contract  string
+	git         git.Adapter
+	selection   providers.Selection
+	contract    string
+	hostEnviron []string
 }
 
 func (r *gateReviewer) Review(ctx context.Context, in appfinalize.ReviewInput) (appfinalize.ReviewResult, error) {
@@ -608,7 +719,7 @@ func (r *gateReviewer) Review(ctx context.Context, in appfinalize.ReviewInput) (
 	}
 	dossier, facts, err := providers.InvokeReceiptGradeDossier(ctx, providers.ReceiptGradeReviewInput{
 		Selection:   r.selection,
-		HostEnviron: os.Environ(),
+		HostEnviron: r.hostEnviron,
 		Evidence:    evidence,
 	}, review.Request{TaskID: in.TaskID, Prompt: reviewPrompt(in, r.contract, evidence, ignored)})
 	if err != nil {

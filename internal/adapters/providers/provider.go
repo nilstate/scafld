@@ -217,6 +217,22 @@ func selectAutoAgent(opts Selection) (Agent, error) {
 // forfeits protection against correlated blind spots and same-model-wrong-twice.
 func SelectGateReviewer(opts Selection) (GateReviewerSelection, error) {
 	hostAgent := normalizeHostAgent(opts.HostAgent)
+	requested := strings.ToLower(strings.TrimSpace(opts.Provider))
+	if requested != "" && requested != "auto" {
+		provider := normalizeReviewerProvider(requested)
+		if provider == "" {
+			return GateReviewerSelection{}, fmt.Errorf("unknown receipt-grade reviewer provider %q", opts.Provider)
+		}
+		if !autoProviderAvailable(provider, opts) {
+			return GateReviewerSelection{}, fmt.Errorf("configured receipt-grade reviewer provider %q is unavailable", provider)
+		}
+		return GateReviewerSelection{
+			Provider:     provider,
+			Binary:       providerBinary(provider, opts),
+			Model:        autoProviderModel(provider, opts),
+			Independence: classifyIndependence(hostAgent, provider),
+		}, nil
+	}
 	var firstAvailable GateReviewerSelection
 	for _, provider := range autoProviderOrder(opts.HostAgent) {
 		if !autoProviderAvailable(provider, opts) {
@@ -358,27 +374,58 @@ func receiptGradeExtraAuthEnv(provider string, hostEnviron []string, sandboxHome
 	if hostCodexHome == "" && source == "" {
 		return nil, nil
 	}
-	codexHome := filepath.Join(sandboxHome, ".codex")
-	if err := os.MkdirAll(codexHome, 0o700); err != nil {
-		return nil, fmt.Errorf("create sandbox codex auth home: %w", err)
-	}
+	var auth []byte
 	if source != "" {
 		data, err := os.ReadFile(source)
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			return nil, fmt.Errorf("read codex auth: %w", err)
 		}
-		if err == nil {
-			// Copy ONLY auth.json; the host Codex memory, sessions, and config never
-			// enter the sandbox.
-			if err := os.WriteFile(filepath.Join(codexHome, "auth.json"), data, 0o600); err != nil {
-				return nil, fmt.Errorf("write sandbox codex auth: %w", err)
-			}
+		if errors.Is(err, os.ErrNotExist) && hostCodexHome == "" {
+			return nil, nil
+		}
+		auth = data
+	}
+	codexHome := filepath.Join(sandboxHome, ".codex")
+	if err := os.MkdirAll(codexHome, 0o700); err != nil {
+		return nil, fmt.Errorf("create sandbox codex auth home: %w", err)
+	}
+	if len(auth) > 0 {
+		// Copy ONLY auth.json; the host Codex memory, sessions, and config never
+		// enter the sandbox.
+		if err := os.WriteFile(filepath.Join(codexHome, "auth.json"), auth, 0o600); err != nil {
+			return nil, fmt.Errorf("write sandbox codex auth: %w", err)
 		}
 	}
 	// Always override CODEX_HOME with the clean sandbox home (it sorts after the
 	// host entry in ScrubProviderEnv's map merge), so the reviewer never reads the
 	// host Codex home even when the host sets CODEX_HOME directly.
 	return []string{"CODEX_HOME=" + codexHome}, nil
+}
+
+// ReceiptGradeAuthAvailable reports whether the host exposes credentials that
+// can survive the receipt-grade environment scrub. It checks presence only;
+// provider invocation remains the authority on whether credentials are valid.
+func ReceiptGradeAuthAvailable(provider string, hostEnviron []string) bool {
+	switch normalizeReviewerProvider(provider) {
+	case HostAgentCodex:
+		if hostEnvHasKey(hostEnviron, "OPENAI_API_KEY") {
+			return true
+		}
+		source := ""
+		if home := strings.TrimSpace(hostEnvValue(hostEnviron, "CODEX_HOME")); home != "" {
+			source = filepath.Join(home, "auth.json")
+		} else if home := strings.TrimSpace(hostEnvValue(hostEnviron, "HOME")); home != "" {
+			source = filepath.Join(home, ".codex", "auth.json")
+		}
+		info, err := os.Stat(source)
+		return err == nil && !info.IsDir() && info.Size() > 0
+	case HostAgentClaude:
+		return hostEnvHasKey(hostEnviron, "ANTHROPIC_API_KEY")
+	case HostAgentGemini:
+		return hostEnvHasKey(hostEnviron, "GEMINI_API_KEY") || hostEnvHasKey(hostEnviron, "GOOGLE_API_KEY")
+	default:
+		return false
+	}
 }
 
 func hostEnvHasKey(env []string, key string) bool {

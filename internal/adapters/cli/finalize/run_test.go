@@ -342,14 +342,127 @@ func TestCommittedBaseDeltaSealVerifiesAfterCommit(t *testing.T) {
 	}
 }
 
-func TestSelectReviewerRequiresConfiguredAbsoluteBinary(t *testing.T) {
-	t.Parallel()
-
-	// No configured reviewer binary: the gate must fail closed even though
-	// codex/claude/gemini may be on PATH (PATH is host-controlled).
-	if _, _, err := selectReviewerWithEnv(configadapter.Config{}, ".", "claude", process.Runner{}, nil); err == nil {
-		t.Fatal("gate must fail closed without a configured absolute reviewer binary")
+func TestSelectReviewerDiscoversAuthenticatedInstalledBinary(t *testing.T) {
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, ".codex"), 0o700); err != nil {
+		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(home, ".codex", "auth.json"), []byte(`{"token":"test"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	binDir := t.TempDir()
+	bin := filepath.Join(binDir, "codex")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	_, runtime, err := selectReviewerWithEnv(configadapter.Config{}, ".", "claude", process.Runner{}, []string{
+		"HOME=" + home,
+		"PATH=" + binDir,
+	})
+	if err != nil {
+		t.Fatalf("installed authenticated reviewer should be discovered: %v", err)
+	}
+	if runtime.Binary != bin || runtime.Provider != "codex" {
+		t.Fatalf("runtime = %q/%q, want codex %q", runtime.Provider, runtime.Binary, bin)
+	}
+}
+
+func TestSelectReviewerAutoSkipsInstalledProviderWithoutAuth(t *testing.T) {
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, ".codex"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".codex", "auth.json"), []byte(`{"token":"test"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	binDir := t.TempDir()
+	for _, name := range []string{"claude", "codex"} {
+		if err := os.WriteFile(filepath.Join(binDir, name), []byte("#!/bin/sh\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	_, runtime, err := selectReviewerWithEnv(configadapter.Config{}, ".", "codex", process.Runner{}, []string{
+		"HOME=" + home,
+		"PATH=" + binDir,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.Provider != "codex" {
+		t.Fatalf("provider = %q, want authenticated codex instead of unauthenticated claude", runtime.Provider)
+	}
+}
+
+func TestSelectReviewerRespectsExplicitProvider(t *testing.T) {
+	binDir := t.TempDir()
+	codex := filepath.Join(binDir, "codex")
+	claude := filepath.Join(binDir, "claude")
+	for _, path := range []string{codex, claude} {
+		if err := os.WriteFile(path, []byte("#!/bin/sh\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfg := configadapter.Config{Review: configadapter.ReviewConfig{External: configadapter.ExternalReviewConfig{
+		Provider: "codex",
+		Codex:    configadapter.ProviderConfig{Binary: codex},
+		Claude:   configadapter.ProviderConfig{Binary: claude},
+	}}}
+
+	_, runtime, err := selectReviewerWithEnv(cfg, ".", "codex", process.Runner{}, []string{
+		"OPENAI_API_KEY=test",
+		"ANTHROPIC_API_KEY=test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.Provider != "codex" || runtime.Binary != codex {
+		t.Fatalf("runtime = %q/%q, want explicit codex %q", runtime.Provider, runtime.Binary, codex)
+	}
+}
+
+func TestSelectReviewerUsesEffectiveExecutionEnvForInvocation(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "codex")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := configadapter.Config{
+		Execution: configadapter.ExecutionConfig{Env: map[string]string{"OPENAI_API_KEY": "configured-test-key"}},
+		Review: configadapter.ReviewConfig{External: configadapter.ExternalReviewConfig{
+			Provider: "codex",
+			Codex:    configadapter.ProviderConfig{Binary: bin},
+		}},
+	}
+	reviewerEnv := effectiveFinalizeReviewerEnv(cfg, ".", []string{"PATH=/bin"})
+	_, selection, err := selectReviewerWithEffectiveEnv(cfg, ".", "codex", process.Runner{}, reviewerEnv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reviewer := gateReviewer{selection: selection, hostEnviron: reviewerEnv}
+	if envValue(reviewer.hostEnviron, "OPENAI_API_KEY") != "configured-test-key" {
+		t.Fatalf("invocation env lost configured auth: %v", reviewer.hostEnviron)
+	}
+}
+
+func TestSelectReviewerFailsClosedWithoutAuthenticatedProvider(t *testing.T) {
+	binDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(binDir, "codex"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := selectReviewerWithEnv(configadapter.Config{}, ".", "claude", process.Runner{}, []string{"PATH=" + binDir})
+	if err == nil || !strings.Contains(err.Error(), "no authenticated external reviewer") {
+		t.Fatalf("err = %v, want authenticated-reviewer failure", err)
+	}
+
+	// A relative PATH entry is never auto-trusted for a receipt-grade reviewer.
+	if _, ok := resolveExecutableOnPath("codex", []string{"PATH=."}); ok {
+		t.Fatal("relative PATH entry must not resolve a receipt-grade reviewer")
+	}
+}
+
+func TestSelectReviewerAcceptsConfiguredAbsoluteBinary(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "test")
 
 	// A configured absolute reviewer binary is accepted and used verbatim.
 	bin := filepath.Join(t.TempDir(), "codex")
@@ -377,6 +490,7 @@ func TestSelectReviewerAcceptsFinalizeEnvBinary(t *testing.T) {
 	_, runtime, err := selectReviewerWithEnv(configadapter.Config{}, ".", "claude", process.Runner{}, []string{
 		"SCAFLD_FINALIZE_CODEX_BINARY=" + bin,
 		"SCAFLD_FINALIZE_CODEX_MODEL=gpt-finalize",
+		"OPENAI_API_KEY=test",
 	})
 	if err != nil {
 		t.Fatalf("env absolute reviewer binary should be accepted: %v", err)
@@ -402,6 +516,7 @@ func TestSelectReviewerEnvDoesNotOverrideConfiguredBinary(t *testing.T) {
 	_, runtime, err := selectReviewerWithEnv(cfg, ".", "claude", process.Runner{}, []string{
 		"SCAFLD_FINALIZE_CODEX_BINARY=" + envBin,
 		"SCAFLD_FINALIZE_CODEX_MODEL=env-model",
+		"OPENAI_API_KEY=test",
 	})
 	if err != nil {
 		t.Fatalf("configured reviewer binary should be accepted: %v", err)

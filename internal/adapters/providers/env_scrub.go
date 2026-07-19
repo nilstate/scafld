@@ -77,10 +77,24 @@ func ScrubProviderEnv(input ProviderEnvInput) (ProviderEnvResult, error) {
 		values["HOME"] = home
 		values["XDG_CONFIG_HOME"] = filepath.Join(home, ".config")
 	}
+	if endpointURL := strings.TrimSpace(input.EndpointURL); endpointURL != "" {
+		values[providerEndpointEnvKey(provider)] = endpointURL
+	}
 	if input.RequireAuth && !hasProviderAuth(provider, values) {
 		return ProviderEnvResult{}, fmt.Errorf("missing required auth env for %s", provider)
 	}
 	return ProviderEnvResult{Env: sortedEnv(values), EndpointHost: endpointHost}, nil
+}
+
+func providerEndpointEnvKey(provider string) string {
+	switch provider {
+	case HostAgentClaude:
+		return "ANTHROPIC_BASE_URL"
+	case HostAgentGemini:
+		return "GOOGLE_GEMINI_BASE_URL"
+	default:
+		return "OPENAI_BASE_URL"
+	}
 }
 
 // ResolveReceiptGradeBinary fails closed unless path is absolute, executable,
@@ -210,8 +224,17 @@ func isProviderAuthEnvKey(provider, upper string) bool {
 }
 
 func hasProviderAuth(provider string, env map[string]string) bool {
-	for key := range env {
-		if isProviderAuthEnvKey(provider, strings.ToUpper(key)) {
+	provider = normalizeReviewerProvider(provider)
+	if provider == HostAgentCodex {
+		if strings.TrimSpace(env["OPENAI_API_KEY"]) != "" {
+			return true
+		}
+		home := strings.TrimSpace(env["CODEX_HOME"])
+		info, err := os.Stat(filepath.Join(home, "auth.json"))
+		return home != "" && err == nil && !info.IsDir() && info.Size() > 0
+	}
+	for key, value := range env {
+		if strings.TrimSpace(value) != "" && isProviderAuthEnvKey(provider, strings.ToUpper(key)) {
 			return true
 		}
 	}

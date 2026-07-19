@@ -232,6 +232,57 @@ func TestReceiptGradeCodexHostCodexHomeDoesNotLeak(t *testing.T) {
 	}
 }
 
+func TestReceiptGradeAuthAvailableRequiresUsableCodexAuth(t *testing.T) {
+	home := t.TempDir()
+	if ReceiptGradeAuthAvailable("codex", []string{"HOME=" + home}) {
+		t.Fatal("empty host home must not count as Codex auth")
+	}
+	if err := os.MkdirAll(filepath.Join(home, ".codex"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".codex", "auth.json"), []byte(`{"token":"test"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if !ReceiptGradeAuthAvailable("codex", []string{"HOME=" + home}) {
+		t.Fatal("non-empty Codex auth.json should be available for sandbox copy")
+	}
+	if !ReceiptGradeAuthAvailable("claude", []string{"ANTHROPIC_API_KEY=test"}) {
+		t.Fatal("Claude API key should count as receipt-grade auth")
+	}
+}
+
+func TestReceiptGradeCodexDoesNotLeakHostCodexHomeWhenAPIKeyAuthAndNoAuthJSON(t *testing.T) {
+	hostCodex := t.TempDir()
+	sandboxHome := t.TempDir()
+	extra, err := receiptGradeExtraAuthEnv("codex", []string{
+		"CODEX_HOME=" + hostCodex,
+		"OPENAI_API_KEY=test",
+	}, sandboxHome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "CODEX_HOME=" + filepath.Join(sandboxHome, ".codex")
+	if len(extra) != 1 || extra[0] != want {
+		t.Fatalf("extra env = %v, want sandbox override %q", extra, want)
+	}
+	result, err := ScrubProviderEnv(ProviderEnvInput{
+		Provider:    "codex",
+		HostEnviron: []string{"CODEX_HOME=" + hostCodex, "OPENAI_API_KEY=test"},
+		ExtraEnv:    extra,
+		RequireAuth: true,
+		MemoryHome:  sandboxHome,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := envValue(result.Env, "CODEX_HOME"); got != filepath.Join(sandboxHome, ".codex") {
+		t.Fatalf("CODEX_HOME = %q, want sandbox path", got)
+	}
+	if strings.Contains(strings.Join(result.Env, "\n"), hostCodex) {
+		t.Fatalf("host CODEX_HOME leaked into reviewer env: %v", result.Env)
+	}
+}
+
 func TestDetectHostAgent(t *testing.T) {
 	t.Parallel()
 
@@ -312,6 +363,27 @@ func TestSelectGateReviewerUnknownHost(t *testing.T) {
 	}
 	if selected.Provider != "codex" || selected.Independence.Level != IndependenceIsolationOnly || selected.Independence.Distinct {
 		t.Fatalf("selected = %+v, want first available provider at isolation_only", selected)
+	}
+}
+
+func TestSelectGateReviewerRespectsExplicitProvider(t *testing.T) {
+	selected, err := SelectGateReviewer(Selection{
+		Provider:     "codex",
+		HostAgent:    "codex",
+		CodexBinary:  "/opt/bin/codex",
+		ClaudeBinary: "/opt/bin/claude",
+		CommandExists: func(string) bool {
+			return false
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selected.Provider != "codex" || selected.Binary != "/opt/bin/codex" {
+		t.Fatalf("selected = %+v, want explicit codex", selected)
+	}
+	if selected.Independence.Level != IndependenceIsolationOnly {
+		t.Fatalf("independence = %+v, explicit same-vendor choice must remain honest", selected.Independence)
 	}
 }
 
@@ -399,11 +471,15 @@ func TestScrubAllowsProviderAuth(t *testing.T) {
 
 func TestScrubAllowsCodexHomeAsAuth(t *testing.T) {
 	t.Parallel()
+	codexHome := t.TempDir()
+	if err := os.WriteFile(filepath.Join(codexHome, "auth.json"), []byte(`{"token":"test"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
 
 	result, err := ScrubProviderEnv(ProviderEnvInput{
 		Provider: "codex",
 		HostEnviron: []string{
-			"CODEX_HOME=/tmp/codex-auth",
+			"CODEX_HOME=" + codexHome,
 			"HOME=/Users/alice",
 			"PATH=/bin",
 		},
@@ -412,7 +488,7 @@ func TestScrubAllowsCodexHomeAsAuth(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !containsEnv(result.Env, "CODEX_HOME=/tmp/codex-auth") {
+	if !containsEnv(result.Env, "CODEX_HOME="+codexHome) {
 		t.Fatalf("codex auth home missing: %v", result.Env)
 	}
 }
@@ -514,6 +590,34 @@ func TestScrubRejectsUnpinnedEndpoint(t *testing.T) {
 	}
 	if containsEnv(result.Env, "OPENAI_BASE_URL=https://evil.invalid") {
 		t.Fatalf("unpinned endpoint env survived scrub: %v", result.Env)
+	}
+}
+
+func TestScrubProviderEnvConfiguredEndpointURLIsMaterialized(t *testing.T) {
+	tests := []struct {
+		provider string
+		auth     string
+		key      string
+	}{
+		{provider: "codex", auth: "OPENAI_API_KEY=x", key: "OPENAI_BASE_URL"},
+		{provider: "claude", auth: "ANTHROPIC_API_KEY=x", key: "ANTHROPIC_BASE_URL"},
+		{provider: "gemini", auth: "GEMINI_API_KEY=x", key: "GOOGLE_GEMINI_BASE_URL"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.provider, func(t *testing.T) {
+			got, err := ScrubProviderEnv(ProviderEnvInput{
+				Provider:    tt.provider,
+				EndpointURL: "https://proxy.example/v1",
+				HostEnviron: []string{tt.auth},
+				RequireAuth: true,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !containsEnv(got.Env, tt.key+"=https://proxy.example/v1") {
+				t.Fatalf("configured endpoint_url was not materialized for %s: %v", tt.provider, got.Env)
+			}
+		})
 	}
 }
 
