@@ -78,13 +78,13 @@ func TestFinalizeMintsReceiptVerifyAcceptsAndRejectsTamper(t *testing.T) {
 	}
 
 	// Tamper the working tree after minting: verify must fail closed on the
-	// recomputed tree fingerprint, since the receipt no longer matches reality.
+	// recomputed scoped digest, since the receipt no longer matches reality.
 	writeFile(t, root, "file.txt", "tampered\n")
 	tampered, err := appverify.Run(context.Background(), *out.Receipt, trusted, appverify.Policy{}, ports)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if tampered.Passed || !strings.Contains(tampered.Reason, "tree mismatch") {
+	if tampered.Passed || !strings.Contains(tampered.Reason, "file digest mismatch") {
 		t.Fatalf("verify accepted a tampered tree: passed=%v reason=%q", tampered.Passed, tampered.Reason)
 	}
 }

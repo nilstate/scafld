@@ -62,11 +62,21 @@ func TestRunReportsInvariantFailures(t *testing.T) {
 		ports  func() Ports
 		want   string
 	}{
-		{name: "tree mismatch", ports: func() Ports {
+		{name: "recorded path missing", ports: func() Ports {
 			p := validPorts()
-			p.Snapshotter = fakeSnapshotter{snapshot: Snapshot{TreeSHA: "different", BaseCommit: "base", FileDigests: map[string]string{"a.go": "sha"}}}
+			p.Snapshotter = fakeSnapshotter{snapshot: Snapshot{TreeSHA: "different", BaseCommit: "base", FileDigests: map[string]string{}}}
 			return p
-		}, want: "tree mismatch"},
+		}, want: "recorded in-scope path missing"},
+		{name: "new in-scope path", ports: func() Ports {
+			p := validPorts()
+			p.Snapshotter = fakeSnapshotter{snapshot: Snapshot{TreeSHA: "different", BaseCommit: "base", FileDigests: map[string]string{"a.go": "sha", "new.go": "sha"}}}
+			return p
+		}, want: "unreviewed in-scope path"},
+		{name: "ignored path mismatch", ports: func() Ports {
+			p := validPorts()
+			p.Snapshotter = fakeSnapshotter{snapshot: Snapshot{TreeSHA: "different", BaseCommit: "base", FileDigests: map[string]string{"a.go": "sha"}, Ignored: []string{"AGENTS.md"}}}
+			return p
+		}, want: "ignored_unreviewed mismatch"},
 		{name: "unknown key", ports: func() Ports {
 			p := validPorts()
 			p.SignatureVerifier = fakeSignature{err: errors.New("unknown key_id")}
@@ -117,11 +127,11 @@ func TestRunReportsInvariantFailures(t *testing.T) {
 			b.Independence = receipt.Independence{Level: receipt.IndependenceLevelCrossVendor, Distinct: true}
 			return b
 		}, policy: Policy{TargetCommit: "main", MinIndependence: receipt.IndependenceLevelCrossVendor}, want: "does not match"},
-		{name: "missing in-scope digest", ports: func() Ports {
+		{name: "unreviewed in-scope digest", ports: func() Ports {
 			p := validPorts()
 			p.Snapshotter = fakeSnapshotter{snapshot: Snapshot{TreeSHA: "tree", BaseCommit: "base", FileDigests: map[string]string{"a.go": "sha", "b.go": "sha"}}}
 			return p
-		}, want: "missing in-scope digest"},
+		}, want: "unreviewed in-scope path"},
 		{name: "base commit mismatch", ports: func() Ports {
 			p := validPorts()
 			p.Snapshotter = fakeSnapshotter{snapshot: Snapshot{TreeSHA: "tree", BaseCommit: "other", FileDigests: map[string]string{"a.go": "sha"}}}
@@ -171,7 +181,7 @@ func TestRunReportsInvariantFailures(t *testing.T) {
 	}
 }
 
-func TestRunPassesSignedSnapshotModeAndBaseRefToSnapshotter(t *testing.T) {
+func TestRunUsesSignedBaseCommitInsteadOfTargetAsSnapshotBase(t *testing.T) {
 	t.Parallel()
 
 	envelope := validEnvelope()
@@ -187,8 +197,26 @@ func TestRunPassesSignedSnapshotModeAndBaseRefToSnapshotter(t *testing.T) {
 	if !result.Passed {
 		t.Fatalf("result = %+v", result)
 	}
-	if snapshotter.input.SnapshotMode != receipt.SnapshotModeBaseDelta || snapshotter.input.BaseRef != "main" {
-		t.Fatalf("snapshot input = %+v, want CI target base-delta mode/ref", snapshotter.input)
+	if snapshotter.input.SnapshotMode != receipt.SnapshotModeBaseDelta || snapshotter.input.BaseRef != "base" {
+		t.Fatalf("snapshot input = %+v, want signed base commit; target is ancestry-only", snapshotter.input)
+	}
+}
+
+func TestRunAllowsOutOfScopeTreeChangesWhenScopedStateMatches(t *testing.T) {
+	envelope := validEnvelope()
+	snapshotter := &recordingSnapshotter{snapshot: Snapshot{
+		TreeSHA:     "different-full-tree",
+		BaseCommit:  "base",
+		FileDigests: map[string]string{"a.go": "sha"},
+	}}
+	ports := validPorts()
+	ports.Snapshotter = snapshotter
+	result, err := Run(context.Background(), envelope, trust.TrustedKeys{Version: trust.TrustedKeysVersion}, Policy{}, ports)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Passed {
+		t.Fatalf("out-of-scope tree change should not invalidate scoped receipt: %+v", result)
 	}
 }
 

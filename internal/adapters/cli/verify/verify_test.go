@@ -280,7 +280,7 @@ func TestTamperedTreeVerifyExitsNonzero(t *testing.T) {
 		SnapshotMode:              receipt.SnapshotModeWorkingTree,
 		BaseCommit:                head,
 		HeadCommit:                head,
-		Scope:                     []string{"."},
+		Scope:                     []string{"a.go"},
 		TreeSHA:                   "tampered-tree-sha",
 		FileDigests:               map[string]string{"a.go": "sha"},
 		IgnoredUnreviewed:         []string{},
@@ -316,7 +316,7 @@ func TestTamperedTreeVerifyExitsNonzero(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	exit := Handler()(context.Background(), []string{"--root", root, receiptPath, "--target", head, "--trusted-keys", filepath.Join(root, ".scafld", "trusted-keys.json")}, &stdout, &stderr)
-	if exit == 0 || !strings.Contains(stderr.String(), "tree mismatch") {
+	if exit == 0 || !strings.Contains(stderr.String(), "file digest mismatch") {
 		t.Fatalf("exit=%d stdout=%q stderr=%q", exit, stdout.String(), stderr.String())
 	}
 }

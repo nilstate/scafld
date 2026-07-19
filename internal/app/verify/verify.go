@@ -113,17 +113,20 @@ func Run(ctx context.Context, envelope receipt.Envelope, trusted trust.TrustedKe
 	if err != nil {
 		return Result{}, err
 	}
-	if snapshot.TreeSHA != body.TreeSHA {
-		return fail("tree mismatch"), nil
-	}
 	if strings.TrimSpace(snapshot.BaseCommit) != strings.TrimSpace(body.BaseCommit) {
 		return fail("base_commit mismatch"), nil
 	}
-	if missing := missingCoverage(snapshot.FileDigests, body.FileDigests); len(missing) > 0 {
-		return fail("missing in-scope digest: " + strings.Join(missing, ",")), nil
+	if missing := missingPaths(body.FileDigests, snapshot.FileDigests); len(missing) > 0 {
+		return fail("recorded in-scope path missing from target: " + strings.Join(missing, ",")), nil
+	}
+	if added := missingPaths(snapshot.FileDigests, body.FileDigests); len(added) > 0 {
+		return fail("unreviewed in-scope path in target: " + strings.Join(added, ",")), nil
 	}
 	if mismatch := digestValueMismatch(snapshot.FileDigests, body.FileDigests); len(mismatch) > 0 {
 		return fail("file digest mismatch: " + strings.Join(mismatch, ",")), nil
+	}
+	if !sameStrings(snapshot.Ignored, body.IgnoredUnreviewed) {
+		return fail("ignored_unreviewed mismatch"), nil
 	}
 	if strings.TrimSpace(policy.TargetCommit) != "" {
 		ok, err := ports.AncestryChecker.IsAncestor(ctx, body.BaseCommit, policy.TargetCommit)
@@ -144,18 +147,21 @@ func Run(ctx context.Context, envelope receipt.Envelope, trusted trust.TrustedKe
 	return Result{Passed: true, Reason: "verified"}, nil
 }
 
-func verifySnapshotBaseRef(body receipt.Body, targetCommit string) (string, bool) {
+func verifySnapshotBaseRef(body receipt.Body, _ string) (string, bool) {
 	switch body.SnapshotMode {
 	case receipt.SnapshotModeWorkingTree:
 		return "", true
 	case receipt.SnapshotModeBaseDelta:
-		if ref := strings.TrimSpace(targetCommit); ref != "" {
+		// Reconstruct the exact delta the receipt signed. TargetCommit is checked
+		// separately as an ancestry boundary; using it as the snapshot base makes a
+		// committed receipt compare its original base against the target itself.
+		if ref := strings.TrimSpace(body.BaseCommit); ref != "" {
 			return ref, true
 		}
 		if ref := strings.TrimSpace(body.BaseRef); ref != "" {
 			return ref, true
 		}
-		return strings.TrimSpace(body.BaseCommit), true
+		return "", true
 	default:
 		return "", false
 	}
@@ -244,14 +250,31 @@ func normalizeVendor(value string) string {
 	return value
 }
 
-func missingCoverage(snapshot map[string]string, recorded map[string]string) []string {
+func missingPaths(expected map[string]string, observed map[string]string) []string {
 	var missing []string
-	for path := range snapshot {
-		if _, ok := recorded[path]; !ok {
+	for path := range expected {
+		if _, ok := observed[path]; !ok {
 			missing = append(missing, path)
 		}
 	}
+	sort.Strings(missing)
 	return missing
+}
+
+func sameStrings(left, right []string) bool {
+	left = append([]string(nil), left...)
+	right = append([]string(nil), right...)
+	sort.Strings(left)
+	sort.Strings(right)
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // digestValueMismatch returns in-scope paths whose recomputed digest differs from
