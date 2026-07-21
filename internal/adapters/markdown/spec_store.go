@@ -54,27 +54,38 @@ func (s Store) Save(ctx context.Context, path string, model spec.Model) error {
 // disagrees with its frontmatter status, Load relocates it to the status-implied
 // directory before returning. Relocation failures are non-fatal.
 func (s Store) Load(ctx context.Context, taskID string) (spec.Model, string, error) {
-	if err := ctx.Err(); err != nil {
+	source, err := s.LoadSource(ctx, taskID)
+	if err != nil {
 		return spec.Model{}, "", err
+	}
+	return source.Model, source.Path, nil
+}
+
+// LoadSource finds, parses, and returns a spec together with the exact Markdown
+// bytes read from disk. If the file's directory disagrees with frontmatter
+// status, LoadSource relocates it before returning the target path.
+func (s Store) LoadSource(ctx context.Context, taskID string) (spec.Source, error) {
+	if err := ctx.Err(); err != nil {
+		return spec.Source{}, err
 	}
 	path, err := s.Find(taskID)
 	if err != nil {
-		return spec.Model{}, "", err
+		return spec.Source{}, err
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return spec.Model{}, "", fmt.Errorf("read spec %s: %w", path, err)
+		return spec.Source{}, fmt.Errorf("read spec %s: %w", path, err)
 	}
 	model, err := Parse(data)
 	if err != nil {
-		return spec.Model{}, "", err
+		return spec.Source{}, err
 	}
 	if target := targetPath(s.root(), model); !samePath(path, target) {
 		if err := writeMovedSpec(path, target, data); err == nil {
 			path = target
 		}
 	}
-	return model, path, nil
+	return spec.Source{Model: model, Path: path, Markdown: data}, nil
 }
 
 // Find returns the path for taskID across active spec directories.

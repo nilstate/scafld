@@ -514,7 +514,7 @@ func TestRunHardenLifecycle(t *testing.T) {
 	runCLI(t, []string{"plan", "--root", root, "harden-task", "--command", "go version"})
 
 	stdout := runCLI(t, []string{"harden", "--root", root, "harden-task"})
-	if !strings.Contains(stdout, "# HARDEN MODE TEMPLATE") || !strings.Contains(stdout, "when done, mark the round passed: scafld harden harden-task --mark-passed") {
+	if !strings.Contains(stdout, "## Source Spec Markdown") || !strings.Contains(stdout, "# HARDEN MODE TEMPLATE") || !strings.Contains(stdout, "when done, mark the round passed: scafld harden harden-task --mark-passed") {
 		t.Fatalf("harden stdout %q does not enter harden mode", stdout)
 	}
 	specPath := filepath.Join(root, ".scafld", "specs", "drafts", "harden-task.md")
@@ -526,7 +526,14 @@ func TestRunHardenLifecycle(t *testing.T) {
 	if !strings.Contains(text, "harden_status: in_progress") || !strings.Contains(text, "### round-1") || !strings.Contains(text, "Status: in_progress") {
 		t.Fatalf("spec was not opened for hardening:\n%s", text)
 	}
-	observations := `Observations:
+	roundEvidence := `Shape decision: keep
+True shape: Manual harden fixture validates the spec lifecycle without changing runtime behavior.
+Minimal plan: Fill shape and observation evidence, then mark the draft hardened.
+Shared owner: internal/app/harden
+Adapter boundaries: CLI prints context by default; harden app validates evidence
+Required spec edits: none
+
+Observations:
 - design
   - Result: clean
   - Anchor: spec_gap:Summary
@@ -552,15 +559,15 @@ func TestRunHardenLifecycle(t *testing.T) {
   - Anchor: spec_gap:Rollback
   - Note: Fixture task makes no runtime changes.
 `
-	observationStart := strings.Index(text, "Observations:\n")
-	if observationStart < 0 {
-		t.Fatalf("harden spec missing Observations block:\n%s", text)
+	shapeStart := strings.Index(text, "Shape decision:")
+	if shapeStart < 0 {
+		t.Fatalf("harden spec missing shape block:\n%s", text)
 	}
-	planningStart := strings.Index(text[observationStart:], "## Planning Log")
+	planningStart := strings.Index(text[shapeStart:], "## Planning Log")
 	if planningStart < 0 {
 		t.Fatalf("harden spec missing planning log:\n%s", text)
 	}
-	text = text[:observationStart] + observations + "\n" + text[observationStart+planningStart:]
+	text = text[:shapeStart] + roundEvidence + "\n" + text[shapeStart+planningStart:]
 	if err := os.WriteFile(specPath, []byte(text), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -576,6 +583,9 @@ func TestRunHardenLifecycle(t *testing.T) {
 	text = string(data)
 	if !strings.Contains(text, "harden_status: passed") || !strings.Contains(text, "### round-1") || !strings.Contains(text, "Status: passed") || !strings.Contains(text, "Ended: ") {
 		t.Fatalf("spec was not marked hardened:\n%s", text)
+	}
+	if !strings.Contains(text, "Shape decision: keep") {
+		t.Fatalf("shape decision was not preserved:\n%s", text)
 	}
 }
 
@@ -598,6 +608,7 @@ func TestRunHardenProviderLocalMarksPassed(t *testing.T) {
 	text := string(data)
 	if !strings.Contains(text, "harden_status: passed") ||
 		!strings.Contains(text, "Verdict: pass") ||
+		!strings.Contains(text, "Shape decision: keep") ||
 		!strings.Contains(text, "Provider: local") ||
 		!strings.Contains(text, "- design") {
 		t.Fatalf("provider harden was not recorded:\n%s", text)
@@ -673,6 +684,7 @@ func TestRunAdapterRendersTriggerPacket(t *testing.T) {
 		"Next action: read_handoff",
 		"Command: scafld handoff adapter-task",
 		"After command: scafld build adapter-task",
+		"## Source Spec Markdown",
 		"## Handoff",
 		"## Build Step",
 	} {

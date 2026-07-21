@@ -39,8 +39,25 @@ func TestHardenProviderContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if coreharden.VerdictFromDossier(dossier) != coreharden.VerdictPass || dossier.Provider != "local" || len(dossier.Observations) != len(coreharden.RequiredDimensions) {
+	if coreharden.VerdictFromDossier(dossier) != coreharden.VerdictPass || dossier.Provider != "local" || dossier.Shape.Decision != coreharden.DecisionKeep || len(dossier.Observations) != len(coreharden.RequiredDimensions) {
 		t.Fatalf("dossier = %+v", dossier)
+	}
+}
+
+func TestHardenSubmitToolRequiresShapeReframeWhenBetter(t *testing.T) {
+	t.Parallel()
+
+	description := hardenSubmitTool().Description
+	for _, want := range []string{
+		"draft as a hypothesis",
+		"reject/no-op",
+		"reuse-existing-behavior",
+		"materially better",
+		"instead of softening it into advisory feedback",
+	} {
+		if !strings.Contains(description, want) {
+			t.Fatalf("harden submit tool description missing %q:\n%s", want, description)
+		}
 	}
 }
 
@@ -954,6 +971,7 @@ func TestClaudeProviderBuildsRestrictedStreamJSONArgsAndExtractsStructuredOutput
 	dossier, err := (ClaudeProvider{
 		Binary:       "claude-bin",
 		Model:        "claude-model",
+		Effort:       "xhigh",
 		SessionID:    "00000000-0000-4000-8000-000000000000",
 		ScafldBinary: "scafld-bin",
 		CWD:          "/tmp/work",
@@ -978,6 +996,9 @@ func TestClaudeProviderBuildsRestrictedStreamJSONArgsAndExtractsStructuredOutput
 	}
 	if len(runner.req.Args) < len(wantPrefix) || !reflect.DeepEqual(runner.req.Args[:len(wantPrefix)], wantPrefix) || runner.req.Input != "prompt" || runner.req.CWD != "/tmp/work" {
 		t.Fatalf("request = %+v", runner.req)
+	}
+	if flagValue(runner.req.Args, "--effort") != "xhigh" {
+		t.Fatalf("claude effort missing from args: %+v", runner.req.Args)
 	}
 	command, _ := claudeSubmissionCommand(t, runner.req)
 	if command != "scafld-bin" {
@@ -1025,12 +1046,13 @@ func TestCodexProviderBuildsReadOnlyEphemeralArgsAndReadsOutputFile(t *testing.T
 		},
 	}
 	dossier, err := (CodexProvider{
-		Binary:     "codex-bin",
-		Model:      "gpt-test",
-		SchemaPath: "/tmp/schema.json",
-		OutputPath: outputPath,
-		CWD:        "/tmp/work",
-		Runner:     runner,
+		Binary:               "codex-bin",
+		Model:                "gpt-test",
+		ModelReasoningEffort: "xhigh",
+		SchemaPath:           "/tmp/schema.json",
+		OutputPath:           outputPath,
+		CWD:                  "/tmp/work",
+		Runner:               runner,
 	}).Invoke(context.Background(), review.Request{TaskID: "task", Prompt: "prompt"})
 	if err != nil {
 		t.Fatal(err)
@@ -1044,10 +1066,42 @@ func TestCodexProviderBuildsReadOnlyEphemeralArgsAndReadsOutputFile(t *testing.T
 	wantArgs := []string{
 		"codex-bin", "exec", "--sandbox", "read-only", "--skip-git-repo-check", "--cd", "/tmp/work",
 		"--ephemeral", "--ignore-user-config", "--ignore-rules", "--color", "never", "--output-last-message", outputPath,
-		"--output-schema", "/tmp/schema.json", "-m", "gpt-test",
+		"--output-schema", "/tmp/schema.json", "-c", `model_reasoning_effort="xhigh"`, "-m", "gpt-test",
 	}
 	if !reflect.DeepEqual(runner.req.Args, wantArgs) || runner.req.Input != "prompt" {
 		t.Fatalf("request = %+v", runner.req)
+	}
+}
+
+func TestCodexProviderOmitsModelArgForLatestDefault(t *testing.T) {
+	t.Parallel()
+
+	outputPath := t.TempDir() + "/dossier.json"
+	runner := &fakeRunner{
+		result: execution.Result{Stdout: "progress only"},
+		onRun: func(execution.Request) {
+			if err := os.WriteFile(outputPath, []byte(dossierJSON(review.VerdictPass)), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		},
+	}
+	if _, err := (CodexProvider{
+		Binary:               "codex-bin",
+		ModelReasoningEffort: "xhigh",
+		SchemaPath:           "/tmp/schema.json",
+		OutputPath:           outputPath,
+		CWD:                  "/tmp/work",
+		Runner:               runner,
+	}).Invoke(context.Background(), review.Request{TaskID: "task", Prompt: "prompt"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, arg := range runner.req.Args {
+		if arg == "-m" || arg == "--model" {
+			t.Fatalf("latest Codex default should omit model arg, got args: %+v", runner.req.Args)
+		}
+	}
+	if !containsArg(runner.req.Args, `model_reasoning_effort="xhigh"`) {
+		t.Fatalf("latest Codex default should still request xhigh reasoning, got args: %+v", runner.req.Args)
 	}
 }
 
@@ -1212,6 +1266,15 @@ func containsArg(args []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func flagValue(args []string, flag string) string {
+	for i, arg := range args {
+		if arg == flag && i+1 < len(args) {
+			return args[i+1]
+		}
+	}
+	return ""
 }
 
 func assertStrictStructuredOutputSchema(t *testing.T, path string, node map[string]any) {

@@ -5,7 +5,6 @@ at `.scafld/prompts/harden.md`.
 
 **Status:** ACTIVE
 **Mode:** HARDEN
-**Output:** Fill the generated observation rows under the latest `## Harden Rounds` entry in the spec; keep `harden_status: "in_progress"` until the operator runs `--mark-passed`.
 **Do NOT:** Modify code outside the spec file while hardening.
 
 ---
@@ -18,27 +17,71 @@ Optimize for finding as many real spec issues as the round budget allows. Spend
 the budget on grounded blockers and useful advisories; do not pad the round with
 speculative or weak observations just to increase the count.
 
+First answer the shape gate:
+
+Treat the draft as a hypothesis, not a conclusion. The Source Spec Markdown is
+the canonical input under review, but it is not evidence that the proposed
+shape, owner, or amount of work is right. Re-derive the root problem from the
+spec and repo evidence before accepting the plan.
+
+Before choosing `keep`, test the stronger alternatives:
+
+- `reject` / no-op: the task should not exist, or existing behavior already solves it.
+- `shrink`: the goal is valid, but a smaller change solves the same root problem.
+- `reframe`: the goal is valid, but ownership, architecture, or product framing is wrong.
+- reuse or move ownership: existing shared behavior should be used or extended instead of adding a parallel surface.
+
+If a materially better shape solves the same root problem, report shrink or
+reframe as the shape decision; do not bury it as advisory feedback.
+
+- `keep`: the draft should proceed as written.
+- `shrink`: the goal is valid, but the draft is doing too much.
+- `reframe`: the goal is valid, but the architecture or owner is wrong.
+- `reject`: the draft should not be approved.
+
+A passing harden round needs `Shape decision: keep`, a true shape, minimal plan,
+shared owner, adapter-boundary judgment, and `Required spec edits: none`. Any
+other decision or any required spec edit keeps harden in `needs_revision` until
+the Markdown spec changes.
+
+`keep` is an earned decision, not the default. A keep decision must state why
+`reject`/no-op, `shrink`, `reframe`, and reuse of existing behavior were rejected
+for this task. A clean result must say what was checked, what evidence was
+inspected, and what would have failed the check. Do not praise the approach as
+evidence.
+
 Cover these six dimensions in this order before polishing wording:
 
-- `design`: challenge the plan's right to exist and architecture: why it exists, what root problem it solves, whether shared behavior belongs in a common core/app contract, whether API/MCP/CLI/provider/docs surfaces stay light adapters, and whether it creates future bloat, compatibility debt, or product confusion.
+- `design`: challenge the plan's right-to-exist and architecture: why it exists, what root problem it solves, whether shared behavior belongs in a shared core/app contract, whether API, MCP, CLI, provider, and docs surfaces stay light adapters, and whether it creates future bloat, compatibility debt, or product confusion.
 - `scope`: every migration, cutover, compatibility claim, shared behavior boundary, adapter-specific responsibility, and "no migration needed" statement is backed by repo evidence.
 - `path`: every named file, directory, package, and generated artifact exists now or is explicitly declared as new.
 - `command`: every validation command is runnable from the declared working directory with the configured toolchain.
 - `timing`: every acceptance criterion can be evaluated after the phase that claims it, not before implementation creates its target.
 - `rollback`: every risky phase has a realistic repair or rollback path.
 
-Manual rounds already contain the six required observation rows. Fill the
-existing `Result` and `Anchor` fields; add `Note`, `Default`, or `Status` only
-when needed. Do not delete or rename dimensions. If rows are missing because the
-spec was edited by hand, restore this exact shape under the latest harden round:
+Treat scaffold boilerplate as a spec gap. Phase titles or objectives such as
+"Implementation", "Complete the requested change", or "Implement the requested
+behavior" are not executable contracts unless the surrounding spec has already
+replaced them with concrete behavior, files, and acceptance evidence.
+
+If harden evidence is recorded in Markdown, use this shape:
 
 ```markdown
+Shape decision: reframe
+True shape: Move shared behavior into one core contract with thin CLI/API/MCP/provider adapters.
+Minimal plan: Specify the shared contract and one adapter mapping test before implementation.
+Shared owner: internal/core/example
+Adapter boundaries: CLI renders command output; provider consumes the shared context; docs describe the same contract
+Required spec edits: Rewrite Scope to name the shared owner; Split adapter-only work out of Phase 1
+
 Observations:
 - design
   - Result: blocks
   - Anchor: spec_gap:Summary
   - Note: The summary names the patch but not the underlying workflow, shared owner, or adapter boundary.
-  - Default: Rewrite the summary/objectives to address the root cause and name the shared behavior owner, or shrink the plan to the honest local fix.
+  - Question: What root workflow and shared owner is this task actually about?
+  - Recommended answer: Rewrite the summary/objectives to address the root cause and name the shared behavior owner, or shrink the plan to the honest local fix.
+  - If unanswered: Treat this as a required spec edit before approval.
   - Status: open
 - scope
   - Result: advisory
@@ -47,7 +90,7 @@ Observations:
 - path
   - Result: clean
   - Anchor: code:src/auth/session.ts:84
-  - Note: Existing session owner and target path verified.
+  - Note: Existing session owner and target path verified; this would fail if the planned import crossed package visibility or layer boundaries.
 - command
   - Result: clean
   - Anchor: code:Makefile:12
@@ -78,21 +121,17 @@ Use these anchors:
 Use `Anchor` as audit trail, not ceremony. Do not invent citations. Do not cite
 code you have not read. Do not ask about behavior the spec already settles.
 
-Use `Default` only when the note is effectively a question and a reasonable
-default answer exists. Ask one operator question at a time when manual hardening
-needs input, then record the question in `Note` and your proposed default in
-`Default`.
+For blocking observations, prefer the fuller triplet: `Question`, `Recommended
+answer`, and `If unanswered`. The `If unanswered` line is the default action
+that prevents another round trip when the operator does not answer.
 
 If a blocking observation is resolved, set `Status: fixed`, `accepted_risk`, or
 `superseded`. Open blocking observations keep harden not-ready. Advisory
 observations may remain open and do not block approval.
 
-Provider hardening must call `submit_harden` exactly once with the final
-HardenDossier. Do not write a verdict; scafld derives it from dimension coverage
-and unresolved `blocks` observations. Do not emit final prose or raw JSON text.
+If the task has no API, MCP, CLI, provider, docs, or other adapter surface,
+leave `Adapter boundaries` empty. Do not write `none` or invent a boundary.
 
 Do not pad the round. `max_issues_per_round` from `.scafld/config.yaml` is a
 budget for real findings: use as much of it as grounded issues justify, and use
-none of it for filler. The operator can end the loop by saying `done` or `stop`.
-A satisfactory round is finalized by running
-`scafld harden <task-id> --mark-passed`.
+none of it for filler.

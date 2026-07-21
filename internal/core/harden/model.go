@@ -18,6 +18,15 @@ const (
 	// VerdictNeedsRevision means the draft needs contract edits before approval.
 	VerdictNeedsRevision = "needs_revision"
 
+	// DecisionKeep means the draft should proceed in its current shape.
+	DecisionKeep = "keep"
+	// DecisionShrink means the goal is valid but the draft is too large.
+	DecisionShrink = "shrink"
+	// DecisionReframe means the goal is valid but the architecture is wrong.
+	DecisionReframe = "reframe"
+	// DecisionReject means the draft should not be approved.
+	DecisionReject = "reject"
+
 	// ResultClean means the dimension was checked and no concern was found.
 	ResultClean = "clean"
 	// ResultAdvisory means the dimension has useful non-blocking feedback.
@@ -58,17 +67,33 @@ func RequiredDimensionList() string {
 
 // Observation records one grounded hardening claim.
 type Observation struct {
-	Dimension string `json:"dimension"`
-	Result    string `json:"result"`
-	Anchor    string `json:"anchor"`
-	Note      string `json:"note,omitempty"`
-	Default   string `json:"default,omitempty"`
-	Status    string `json:"status,omitempty"`
+	Dimension    string `json:"dimension"`
+	Result       string `json:"result"`
+	Anchor       string `json:"anchor"`
+	Note         string `json:"note,omitempty"`
+	Question     string `json:"question,omitempty"`
+	Recommended  string `json:"recommended,omitempty"`
+	IfUnanswered string `json:"if_unanswered,omitempty"`
+	Default      string `json:"default,omitempty"`
+	Status       string `json:"status,omitempty"`
+}
+
+// Shape records the design gate's answer to whether the draft should exist.
+type Shape struct {
+	Decision    string `json:"decision"`
+	TrueShape   string `json:"true_shape"`
+	MinimalPlan string `json:"minimal_plan"`
+	SharedOwner string `json:"shared_owner"`
+	// AdapterBoundaries names adapter surfaces only when the task crosses one.
+	// Empty is valid for tasks fully owned by one core/app surface.
+	AdapterBoundaries []string `json:"adapter_boundaries"`
+	RequiredSpecEdits []string `json:"required_spec_edits"`
 }
 
 // Dossier is the normalized harden-provider payload consumed by scafld.
 type Dossier struct {
 	Summary      string         `json:"summary"`
+	Shape        Shape          `json:"shape"`
 	Observations []Observation  `json:"observations"`
 	Provider     string         `json:"provider,omitempty"`
 	Model        string         `json:"model,omitempty"`
@@ -133,9 +158,21 @@ func decodeDossierStrict(data []byte, raw string) (Dossier, error) {
 
 // NormalizeDossier fills derived defaults without hiding invalid provider shape.
 func NormalizeDossier(dossier Dossier) Dossier {
+	dossier.Shape.Decision = normalize(dossier.Shape.Decision)
+	dossier.Shape.TrueShape = strings.TrimSpace(dossier.Shape.TrueShape)
+	dossier.Shape.MinimalPlan = strings.TrimSpace(dossier.Shape.MinimalPlan)
+	dossier.Shape.SharedOwner = strings.TrimSpace(dossier.Shape.SharedOwner)
+	dossier.Shape.AdapterBoundaries = cleanStrings(dossier.Shape.AdapterBoundaries)
+	dossier.Shape.RequiredSpecEdits = cleanStrings(dossier.Shape.RequiredSpecEdits)
 	for i := range dossier.Observations {
 		dossier.Observations[i].Dimension = normalize(dossier.Observations[i].Dimension)
 		dossier.Observations[i].Result = normalizeResult(dossier.Observations[i].Result)
+		dossier.Observations[i].Anchor = strings.TrimSpace(dossier.Observations[i].Anchor)
+		dossier.Observations[i].Note = strings.TrimSpace(dossier.Observations[i].Note)
+		dossier.Observations[i].Question = strings.TrimSpace(dossier.Observations[i].Question)
+		dossier.Observations[i].Recommended = strings.TrimSpace(dossier.Observations[i].Recommended)
+		dossier.Observations[i].IfUnanswered = strings.TrimSpace(dossier.Observations[i].IfUnanswered)
+		dossier.Observations[i].Default = strings.TrimSpace(dossier.Observations[i].Default)
 		if dossier.Observations[i].Result == ResultBlocks && strings.TrimSpace(dossier.Observations[i].Status) == "" {
 			dossier.Observations[i].Status = StatusOpen
 		}
@@ -148,6 +185,9 @@ func NormalizeDossier(dossier Dossier) Dossier {
 func ValidateDossier(dossier Dossier) error {
 	if strings.TrimSpace(dossier.Summary) == "" {
 		return fmt.Errorf("%w: summary is required", ErrInvalidDossier)
+	}
+	if err := ValidateShape(dossier.Shape); err != nil {
+		return err
 	}
 	if len(dossier.Observations) == 0 {
 		return fmt.Errorf("%w: observations must cover required harden dimensions", ErrInvalidDossier)
@@ -178,6 +218,9 @@ func ValidateDossier(dossier Dossier) error {
 
 // VerdictFromDossier derives harden verdict from coverage and unresolved blocks.
 func VerdictFromDossier(dossier Dossier) string {
+	if ShapeRequiresRevision(dossier.Shape) {
+		return VerdictNeedsRevision
+	}
 	if len(MissingDimensions(dossier.Observations)) > 0 {
 		return VerdictNeedsRevision
 	}
@@ -187,6 +230,41 @@ func VerdictFromDossier(dossier Dossier) string {
 		}
 	}
 	return VerdictPass
+}
+
+// ValidateShape verifies the harden design-shape decision.
+func ValidateShape(shape Shape) error {
+	if !ValidShapeDecision(shape.Decision) {
+		return fmt.Errorf("%w: invalid or missing shape decision %q", ErrInvalidDossier, shape.Decision)
+	}
+	if strings.TrimSpace(shape.TrueShape) == "" {
+		return fmt.Errorf("%w: shape true_shape is required", ErrInvalidDossier)
+	}
+	if strings.TrimSpace(shape.MinimalPlan) == "" {
+		return fmt.Errorf("%w: shape minimal_plan is required", ErrInvalidDossier)
+	}
+	if strings.TrimSpace(shape.SharedOwner) == "" {
+		return fmt.Errorf("%w: shape shared_owner is required", ErrInvalidDossier)
+	}
+	return nil
+}
+
+// ShapeRequiresRevision reports whether the shape decision blocks approval.
+func ShapeRequiresRevision(shape Shape) bool {
+	if normalize(shape.Decision) != DecisionKeep {
+		return true
+	}
+	return len(cleanStrings(shape.RequiredSpecEdits)) > 0
+}
+
+// ValidShapeDecision reports whether a shape decision is supported.
+func ValidShapeDecision(decision string) bool {
+	switch normalize(decision) {
+	case DecisionKeep, DecisionShrink, DecisionReframe, DecisionReject:
+		return true
+	default:
+		return false
+	}
 }
 
 // MissingDimensions returns required dimensions not covered by the observations.
@@ -227,6 +305,17 @@ func ValidVerdict(verdict string) bool {
 	default:
 		return false
 	}
+}
+
+func cleanStrings(values []string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" && value != "none" {
+			out = append(out, value)
+		}
+	}
+	return out
 }
 
 // ValidDimension reports whether a harden dimension is supported.

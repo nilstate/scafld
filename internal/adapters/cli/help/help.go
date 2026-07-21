@@ -20,7 +20,7 @@ func Print(w io.Writer, commands []Command) {
 	for _, cmd := range commands {
 		fmt.Fprintf(w, "  %-10s %s\n", cmd.Name, cmd.Summary)
 	}
-	fmt.Fprint(w, "\nFlags:\n  --root PATH    Workspace root\n  --json         Print JSON envelope\n  -h, --help     Show help\n  --version      Show version\n")
+	fmt.Fprint(w, "\nFlags:\n  --root PATH    Workspace root\n  --json         Print JSON envelope\n  --no-context   Suppress source context where supported\n  -h, --help     Show help\n  --version      Show version\n")
 }
 
 // PrintCommand writes command-specific help.
@@ -36,14 +36,17 @@ Usage:
   scafld harden <task_id> [--provider auto|codex|claude|gemini|command|local] [--root PATH] [--json]
   scafld harden <task_id> --mark-passed [--root PATH] [--json]
 
-Without flags, opens a harden round and prints the active prompt. The agent
-attacks the draft contract before build.
+Without flags, opens a harden round and prints the source-backed harden context
+by default. The embedded Source Spec Markdown section is the canonical draft
+contract; derived sections are indexes only. Use --no-context only for scripts
+that intentionally need terse output.
 
 With --provider, scafld delegates hardening to a separate read-only provider.
 The provider must submit one HardenDossier through the structured channel.
-scafld derives pass or needs_revision from the submitted observations. Provider
-transport, invalid dossier, or unverified anchor problems are recorded as
-harden_status error. Advisory observations remain recorded.
+scafld derives pass or needs_revision from the submitted shape decision,
+required spec edits, and observations. Provider transport, invalid dossier, or
+unverified anchor problems are recorded as harden_status error. Advisory
+observations remain recorded.
 Provider auto prefers the other installed agent when the host is detected, can
 use Gemini as an additional external challenger, and fails closed when only the
 host provider is available unless fallback_policy is relaxed or a provider is
@@ -56,6 +59,9 @@ Required observation dimensions:
   command
   timing
   rollback
+
+Each harden round needs a shape decision: keep, shrink, reframe, or reject. A
+passing round must use keep and leave Required spec edits empty.
 
 Each observation needs Result and Anchor. Result must be clean, advisory, blocks,
 or n/a. Open blocks keep the round from passing until fixed, accepted_risk, or
@@ -72,6 +78,7 @@ Flags:
   --provider-binary P   Selected provider binary override
   --model NAME          Selected provider model override
   --mark-passed         Verify manual harden evidence and close the latest round
+  --no-context          Suppress source context in human/JSON output
   --root PATH           Workspace root
   --json                Print JSON envelope
 `)
@@ -98,8 +105,9 @@ Usage:
   scafld adapter claude review <task_id> [--root PATH] [--json]
 
 The adapter command renders current status, deterministic next-action fields,
-and the scafld handoff for external trigger wrappers. It does not execute an
-agent runtime and does not advance lifecycle state.
+and the scafld handoff for external trigger wrappers. Source context is included
+by default; use --no-context only for intentionally terse script output. It does
+not execute an agent runtime and does not advance lifecycle state.
 `)
 		return
 	}

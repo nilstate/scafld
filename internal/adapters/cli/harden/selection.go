@@ -30,20 +30,22 @@ type Options struct {
 
 // Selection is the provider and context budget chosen for a harden run.
 type Selection struct {
-	Provider        appharden.Provider
-	ContextMaxBytes int
+	Provider                appharden.Provider
+	ContextMaxBytes         int
+	RequiredContextMaxBytes int
 }
 
 // RunOptions configures the app harden input assembled by the CLI adapter.
 type RunOptions struct {
-	Root           string
-	TaskID         string
-	MarkPassed     bool
-	Provider       string
-	Command        string
-	ProviderBinary string
-	Model          string
-	Progress       io.Writer
+	Root            string
+	TaskID          string
+	MarkPassed      bool
+	Provider        string
+	Command         string
+	ProviderBinary  string
+	Model           string
+	SuppressContext bool
+	Progress        io.Writer
 }
 
 // BuildInput returns the app-layer harden input for CLI execution.
@@ -60,13 +62,20 @@ func BuildInput(ctx context.Context, opts RunOptions) (appharden.Input, error) {
 	if err != nil {
 		return appharden.Input{}, err
 	}
+	contract, err := Contract(ctx, opts.Root)
+	if err != nil {
+		return appharden.Input{}, err
+	}
 	return appharden.Input{
-		TaskID:          opts.TaskID,
-		MarkPassed:      opts.MarkPassed,
-		Root:            opts.Root,
-		Prompt:          Prompt(ctx, opts.Root),
-		Provider:        selected.Provider,
-		ContextMaxBytes: selected.ContextMaxBytes,
+		TaskID:                  opts.TaskID,
+		MarkPassed:              opts.MarkPassed,
+		Root:                    opts.Root,
+		Prompt:                  Prompt(ctx, opts.Root),
+		Contract:                contract,
+		Provider:                selected.Provider,
+		ContextMaxBytes:         selected.ContextMaxBytes,
+		RequiredContextMaxBytes: selected.RequiredContextMaxBytes,
+		SuppressContext:         opts.SuppressContext,
 	}, nil
 }
 
@@ -85,7 +94,11 @@ func ResultText(stderr io.Writer, out appharden.Output) (string, bool) {
 		}
 		return fmt.Sprintf("harden %s: %s\nnext: %s\n", out.Verdict, out.TaskID, out.NextCommand), true
 	}
-	return out.Prompt + fmt.Sprintf("\n---\nspec: %s\nround: %s\nwhen done, mark the round passed: %s\n", out.Path, out.RoundID, out.NextCommand), false
+	body := out.Context
+	if strings.TrimSpace(body) == "" {
+		body = out.Prompt
+	}
+	return body + fmt.Sprintf("\n---\nspec: %s\nround: %s\nwhen done, mark the round passed: %s\n", out.Path, out.RoundID, out.NextCommand), false
 }
 
 // Select loads config, applies CLI overrides, and returns a harden provider.
@@ -94,7 +107,7 @@ func Select(ctx context.Context, opts Options) (Selection, error) {
 	if err != nil {
 		return Selection{}, output.ConfigGateError(fmt.Errorf("load config: %w", err))
 	}
-	selection := Selection{ContextMaxBytes: cfg.Harden.ContextMaxBytes}
+	selection := Selection{ContextMaxBytes: cfg.Harden.ContextMaxBytes, RequiredContextMaxBytes: cfg.Harden.RequiredContextMaxBytes}
 	external := cfg.Harden.External
 	if !hardenProviderRequested(opts, external) {
 		return selection, nil
@@ -104,22 +117,24 @@ func Select(ctx context.Context, opts Options) (Selection, error) {
 		diagnosticsPath = opts.Root + "/.scafld/runs/" + opts.TaskID + "/diagnostics"
 	}
 	provider, err := providers.SelectHarden(providers.Selection{
-		Provider:       providerinfo.First(opts.Provider, external.Provider),
-		Command:        providerinfo.First(opts.Command, external.Command),
-		Binary:         providerinfo.First(opts.ProviderBinary, external.ProviderBinary),
-		Model:          opts.Model,
-		CodexModel:     external.Codex.Model,
-		ClaudeModel:    external.Claude.Model,
-		GeminiModel:    external.Gemini.Model,
-		CodexBinary:    external.Codex.Binary,
-		ClaudeBinary:   external.Claude.Binary,
-		GeminiBinary:   external.Gemini.Binary,
-		CWD:            opts.Root,
-		Runner:         process.Runner{DiagnosticsDir: diagnosticsPath, Progress: opts.Progress, ProgressLabel: progressLabel(opts, external)},
-		Timeout:        time.Duration(external.AbsoluteMaxSeconds) * time.Second,
-		Idle:           time.Duration(external.IdleTimeoutSeconds) * time.Second,
-		FallbackPolicy: external.FallbackPolicy,
-		HostAgent:      providers.DetectHostAgent(os.Environ()),
+		Provider:                  providerinfo.First(opts.Provider, external.Provider),
+		Command:                   providerinfo.First(opts.Command, external.Command),
+		Binary:                    providerinfo.First(opts.ProviderBinary, external.ProviderBinary),
+		Model:                     opts.Model,
+		CodexModel:                external.Codex.Model,
+		CodexModelReasoningEffort: external.Codex.ModelReasoningEffort,
+		ClaudeModel:               external.Claude.Model,
+		ClaudeEffort:              external.Claude.Effort,
+		GeminiModel:               external.Gemini.Model,
+		CodexBinary:               external.Codex.Binary,
+		ClaudeBinary:              external.Claude.Binary,
+		GeminiBinary:              external.Gemini.Binary,
+		CWD:                       opts.Root,
+		Runner:                    process.Runner{DiagnosticsDir: diagnosticsPath, Progress: opts.Progress, ProgressLabel: progressLabel(opts, external)},
+		Timeout:                   time.Duration(external.AbsoluteMaxSeconds) * time.Second,
+		Idle:                      time.Duration(external.IdleTimeoutSeconds) * time.Second,
+		FallbackPolicy:            external.FallbackPolicy,
+		HostAgent:                 providers.DetectHostAgent(os.Environ()),
 	})
 	if err != nil {
 		return Selection{}, output.ReviewProviderGateError(err)

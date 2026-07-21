@@ -45,9 +45,11 @@ review:
     provider: "auto"
     fallback_policy: "disable"
     codex:
-      model: "gpt-5.5"
+      model: "latest"
+      model_reasoning_effort: "xhigh"
     claude:
       model: "opus"
+      effort: "xhigh"
     gemini:
       # model: "" # leave empty to use Gemini CLI's configured default
   dossier:
@@ -58,8 +60,9 @@ review:
 ```
 
 Use `.scafld/config.local.yaml` for local-only provider or model overrides.
-Old scafld-generated model defaults are upgraded while loading config; explicit
-custom model values stay pinned.
+Scafld resolves `latest` and old generated Codex defaults to its current Codex
+model path at load time. For Codex, that means scafld omits `-m` and lets Codex
+CLI use its own current default. Explicit custom model values stay pinned.
 
 Explicit providers:
 

@@ -6,8 +6,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/nilstate/scafld/v2/internal/app/specsource"
 	"github.com/nilstate/scafld/v2/internal/core/gate"
 	corereview "github.com/nilstate/scafld/v2/internal/core/review"
+	"github.com/nilstate/scafld/v2/internal/core/reviewcontext"
 	"github.com/nilstate/scafld/v2/internal/core/reviewevidence"
 	"github.com/nilstate/scafld/v2/internal/core/reviewgate"
 	"github.com/nilstate/scafld/v2/internal/core/reviewmaterial"
@@ -47,10 +49,19 @@ type Output struct {
 	TrustedState    string          `json:"trusted_state,omitempty"`
 	AllowedFollowUp string          `json:"allowed_follow_up,omitempty"`
 	SessionOK       bool            `json:"session_ok"`
+	SpecSource      *SpecSource     `json:"spec_source,omitempty"`
 	Repair          *gate.Failure   `json:"repair,omitempty"`
 	Review          ReviewInfo      `json:"review,omitempty"`
 	Completion      *CompletionInfo `json:"completion_authority,omitempty"`
 	TaskMaterial    *TaskMaterial   `json:"task_material,omitempty"`
+}
+
+// SpecSource describes the canonical Markdown contract behind status.
+type SpecSource struct {
+	Path     string `json:"path"`
+	SHA256   string `json:"sha256"`
+	Bytes    int    `json:"bytes"`
+	Markdown string `json:"markdown"`
 }
 
 // NextAction gives wrappers and trigger agents the next deterministic role and
@@ -114,10 +125,11 @@ type TaskMaterial = reviewmaterial.Projection
 
 // Run reads status for taskID.
 func Run(ctx context.Context, specs SpecStore, sessions SessionStore, taskID string, workspaces ...WorkspaceStatus) (Output, error) {
-	model, _, err := specs.Load(ctx, taskID)
+	source, err := specsource.Load(ctx, specs, taskID)
 	if err != nil {
 		return Output{}, err
 	}
+	model := source.Model
 	out := Output{
 		TaskID:          model.TaskID,
 		Status:          model.Status,
@@ -126,6 +138,7 @@ func Run(ctx context.Context, specs SpecStore, sessions SessionStore, taskID str
 		Gate:            currentGate(model),
 		TrustedState:    "session ledger replay projected into the Markdown spec",
 		AllowedFollowUp: model.CurrentState.AllowedFollowUp,
+		SpecSource:      statusSpecSource(source),
 	}
 	reviewGateValid := false
 	if sessions != nil {
@@ -153,6 +166,16 @@ func Run(ctx context.Context, specs SpecStore, sessions SessionStore, taskID str
 	}
 	out.NextAction = nextAction(model, out.Repair, out.Review, out.Next, reviewGateValid)
 	return out, nil
+}
+
+func statusSpecSource(source spec.Source) *SpecSource {
+	provenance := reviewcontext.SourceForContent("file", source.Path, source.Markdown)
+	return &SpecSource{
+		Path:     provenance.Path,
+		SHA256:   provenance.SHA256,
+		Bytes:    provenance.Bytes,
+		Markdown: string(source.Markdown),
+	}
 }
 
 func taskMaterialInfo(ctx context.Context, model spec.Model, ledger session.Session, workspace WorkspaceStatus, authority reviewgate.Authority) *TaskMaterial {

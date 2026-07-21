@@ -4,12 +4,20 @@ package reviewcontext
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
 )
 
-const defaultMaxBytes = 16 * 1024
+const (
+	defaultMaxBytes         = 16 * 1024
+	defaultRequiredMaxBytes = 128 * 1024
+)
+
+// ErrRequiredContextTooLarge is returned when required provider context cannot
+// fit the configured packet budget.
+var ErrRequiredContextTooLarge = errors.New("required context exceeds budget")
 
 // Packet is the deterministic reviewer brief before provider-specific transport.
 type Packet struct {
@@ -21,11 +29,12 @@ type Packet struct {
 
 // Section is one ordered part of the reviewer brief.
 type Section struct {
-	Key     string
-	Title   string
-	Order   int
-	Body    string
-	Sources []Source
+	Key      string
+	Title    string
+	Order    int
+	Body     string
+	Required bool
+	Sources  []Source
 }
 
 // Source identifies material used to construct a section.
@@ -38,8 +47,9 @@ type Source struct {
 
 // Options controls packet rendering.
 type Options struct {
-	MaxBytes int
-	Title    string
+	MaxBytes         int
+	RequiredMaxBytes int
+	Title            string
 }
 
 // SourceForContent returns stable provenance for source text.
@@ -53,13 +63,42 @@ func SourceForContent(kind string, path string, content []byte) Source {
 	}
 }
 
+// SourceMarkdownSection returns the canonical source-contract section for
+// agent-facing packets. Required sections must render in full.
+func SourceMarkdownSection(key string, title string, order int, path string, content []byte) Section {
+	return Section{
+		Key:      key,
+		Title:    title,
+		Order:    order,
+		Body:     strings.TrimSpace(string(content)),
+		Required: true,
+		Sources:  []Source{SourceForContent("file", path, content)},
+	}
+}
+
 // RenderMarkdown renders a packet into deterministic provider-readable Markdown.
 func RenderMarkdown(packet Packet, opts Options) string {
+	maxBytes := normalizeMaxBytes(opts.MaxBytes)
+	requiredMaxBytes := normalizeRequiredMaxBytes(opts.RequiredMaxBytes)
+	return renderMarkdown(packet, opts, normalizeSections(packet.Sections), maxBytes, requiredMaxBytes)
+}
+
+// RenderMarkdownStrict renders a provider packet after validating that the full
+// required context fits the configured packet budget.
+func RenderMarkdownStrict(packet Packet, opts Options) (string, error) {
 	maxBytes := opts.MaxBytes
 	if maxBytes <= 0 {
 		maxBytes = defaultMaxBytes
 	}
+	requiredMaxBytes := normalizeRequiredMaxBytes(opts.RequiredMaxBytes)
 	sections := normalizeSections(packet.Sections)
+	if err := validateRequiredBudget(sections, requiredMaxBytes); err != nil {
+		return "", err
+	}
+	return renderMarkdown(packet, opts, sections, maxBytes, requiredMaxBytes), nil
+}
+
+func renderMarkdown(packet Packet, opts Options, sections []Section, maxBytes int, requiredMaxBytes int) string {
 	rendered := budgetSections(sections, maxBytes)
 	var b strings.Builder
 	title := strings.TrimSpace(opts.Title)
@@ -75,7 +114,7 @@ func RenderMarkdown(packet Packet, opts Options) string {
 		fmt.Fprintf(&b, "Status: %s\n", strings.TrimSpace(packet.Status))
 	}
 	fmt.Fprintf(&b, "\n")
-	writeBudgetManifest(&b, rendered, maxBytes)
+	writeBudgetManifest(&b, rendered, maxBytes, requiredMaxBytes)
 	for _, section := range rendered {
 		if section.Omitted && section.BodyBytes > 0 {
 			continue
@@ -106,6 +145,44 @@ func RenderMarkdown(packet Packet, opts Options) string {
 	return strings.TrimRight(b.String(), "\n") + "\n"
 }
 
+func normalizeMaxBytes(maxBytes int) int {
+	if maxBytes <= 0 {
+		return defaultMaxBytes
+	}
+	return maxBytes
+}
+
+func normalizeRequiredMaxBytes(maxBytes int) int {
+	if maxBytes <= 0 {
+		return defaultRequiredMaxBytes
+	}
+	return maxBytes
+}
+
+func validateRequiredBudget(sections []Section, maxBytes int) error {
+	requiredBytes := 0
+	requiredSections := []string{}
+	for _, section := range sections {
+		if !section.Required {
+			continue
+		}
+		bodyBytes := len([]byte(strings.TrimSpace(section.Body)))
+		requiredBytes += bodyBytes
+		title := strings.TrimSpace(section.Title)
+		if title == "" {
+			title = section.Key
+		}
+		requiredSections = append(requiredSections, fmt.Sprintf("%s=%d", title, bodyBytes))
+	}
+	if requiredBytes <= maxBytes {
+		return nil
+	}
+	if len(requiredSections) == 0 {
+		requiredSections = []string{"none"}
+	}
+	return fmt.Errorf("%w: required section body bytes %d exceed max %d (%s)", ErrRequiredContextTooLarge, requiredBytes, maxBytes, strings.Join(requiredSections, ", "))
+}
+
 type renderedSection struct {
 	Section
 	RenderedBody  string
@@ -123,6 +200,12 @@ func budgetSections(sections []Section, maxBytes int) []renderedSection {
 		bodyBytes := len([]byte(bodyText))
 		item := renderedSection{Section: section, BodyBytes: bodyBytes}
 		if bodyBytes == 0 {
+			rendered = append(rendered, item)
+			continue
+		}
+		if section.Required {
+			item.RenderedBody = bodyText
+			item.RenderedBytes = bodyBytes
 			rendered = append(rendered, item)
 			continue
 		}
@@ -145,7 +228,7 @@ func budgetSections(sections []Section, maxBytes int) []renderedSection {
 	return rendered
 }
 
-func writeBudgetManifest(b *strings.Builder, sections []renderedSection, maxBytes int) {
+func writeBudgetManifest(b *strings.Builder, sections []renderedSection, maxBytes int, requiredMaxBytes int) {
 	renderedBytes := 0
 	omittedBytes := 0
 	included := []renderedSection{}
@@ -164,7 +247,8 @@ func writeBudgetManifest(b *strings.Builder, sections []renderedSection, maxByte
 		}
 	}
 	fmt.Fprintf(b, "## Context Budget Manifest\n\n")
-	fmt.Fprintf(b, "Max section body bytes: %d\n", maxBytes)
+	fmt.Fprintf(b, "Max required section body bytes: %d\n", requiredMaxBytes)
+	fmt.Fprintf(b, "Max discretionary section body bytes: %d\n", maxBytes)
 	fmt.Fprintf(b, "Rendered section body bytes: %d\n", renderedBytes)
 	fmt.Fprintf(b, "Omitted section body bytes: %d\n\n", omittedBytes)
 	writeManifestGroup(b, "Included sections", included, false)
@@ -184,6 +268,9 @@ func writeManifestGroup(b *strings.Builder, title string, sections []renderedSec
 			titleText = section.Key
 		}
 		fmt.Fprintf(b, "- `%s` (%s): rendered=%d body=%d omitted=%d", section.Key, titleText, section.RenderedBytes, section.BodyBytes, section.OmittedBytes)
+		if section.Required {
+			b.WriteString(" required=true")
+		}
 		if includeSources {
 			if paths := sourcePaths(section.Sources); len(paths) > 0 {
 				fmt.Fprintf(b, " sources=%s", strings.Join(paths, ", "))

@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nilstate/scafld/v2/internal/core/agentcontract"
 	"github.com/nilstate/scafld/v2/internal/core/gate"
 	corereview "github.com/nilstate/scafld/v2/internal/core/review"
 	"github.com/nilstate/scafld/v2/internal/core/reviewcontext"
@@ -19,8 +20,9 @@ import (
 )
 
 type fakeSpecs struct {
-	model spec.Model
-	path  string
+	model          spec.Model
+	path           string
+	sourceMarkdown []byte
 }
 
 func (f *fakeSpecs) Load(context.Context, string) (spec.Model, string, error) {
@@ -30,6 +32,19 @@ func (f *fakeSpecs) Load(context.Context, string) (spec.Model, string, error) {
 	}
 	return f.model, path, nil
 }
+
+func (f *fakeSpecs) LoadSource(context.Context, string) (spec.Source, error) {
+	model, path, err := f.Load(context.Background(), "")
+	if err != nil {
+		return spec.Source{}, err
+	}
+	markdown := f.sourceMarkdown
+	if markdown == nil {
+		markdown = []byte("# " + model.Title + "\n\n## Summary\n\n" + model.Summary + "\n")
+	}
+	return spec.Source{Model: model, Path: path, Markdown: markdown}, nil
+}
+
 func (f *fakeSpecs) Save(_ context.Context, _ string, model spec.Model) error {
 	f.model = model
 	return nil
@@ -381,7 +396,7 @@ func TestReviewRecordsPacketProvenanceAndWorkspaceSeal(t *testing.T) {
 	sessions := &fakeSessions{}
 	dossier := passingDossier()
 	dossier.Provider = "codex"
-	dossier.Model = "gpt-5.5"
+	dossier.Model = "observed-provider-model"
 	dossier.SessionID = "session-123"
 	workspace := &fakeWorkspace{snapshots: [][]string{{" M hash api/handler.go"}, {" M hash api/handler.go"}}}
 	_, err := Run(context.Background(), specs, sessions, workspace, fakeProvider{packet: dossier}, fakeClock{}, "task")
@@ -395,7 +410,7 @@ func TestReviewRecordsPacketProvenanceAndWorkspaceSeal(t *testing.T) {
 	if got := corereview.ResponseSHA256(entry.ReviewPacket); entry.CanonicalResponseSHA256 != got {
 		t.Fatalf("canonical_response_sha256 = %q, want %q", entry.CanonicalResponseSHA256, got)
 	}
-	if entry.ProviderModel != "gpt-5.5" || entry.ProviderSession != "session-123" {
+	if entry.ProviderModel != "observed-provider-model" || entry.ProviderSession != "session-123" {
 		t.Fatalf("provider provenance = model %q session %q", entry.ProviderModel, entry.ProviderSession)
 	}
 	if entry.ReviewedHead == "" || entry.ReviewedDirty != "true" || entry.ReviewedDiff == "" || entry.ReviewedSpec == "" || entry.ReviewedMaterialDigest == "" || len(entry.ReviewedScope) != 1 || entry.ReviewedScope[0] != "api/handler.go" {
@@ -530,7 +545,10 @@ func TestReviewProviderFailureRecordsDiagnosticPath(t *testing.T) {
 	specs := &fakeSpecs{model: spec.Model{TaskID: "task", Title: "Task", Status: spec.StatusReview}}
 	sessions := &fakeSessions{}
 	_, err := Run(context.Background(), specs, sessions, cleanWorkspace(), providerFunc(func(context.Context, corereview.Request) (corereview.Dossier, error) {
-		return corereview.Dossier{}, diagnosticErr{path: diagnostic, err: errors.New("provider failed")}
+		return corereview.Dossier{}, diagnosticErr{
+			path: diagnostic,
+			err:  errors.New("provider failed:\n" + strings.Repeat("WARN plugin loader noise\n", 40)),
+		}
 	}), fakeClock{}, "task")
 	if err == nil {
 		t.Fatal("expected provider failure")
@@ -541,6 +559,12 @@ func TestReviewProviderFailureRecordsDiagnosticPath(t *testing.T) {
 			found = true
 			if entry.Path != diagnostic {
 				t.Fatalf("review attempt path = %q, want %q", entry.Path, diagnostic)
+			}
+			if strings.Contains(entry.Reason, "\n") || len(entry.Reason) > 340 {
+				t.Fatalf("review attempt reason should be compact one-line text, got %d bytes:\n%s", len(entry.Reason), entry.Reason)
+			}
+			if !strings.Contains(entry.Reason, "provider failed") || !strings.Contains(entry.Reason, diagnostic) {
+				t.Fatalf("review attempt reason lost cause or diagnostic path: %s", entry.Reason)
 			}
 		}
 	}
@@ -749,6 +773,9 @@ func TestReviewPromptCarriesTaskContractToProvider(t *testing.T) {
 	if provider.req.TaskID != "task" || provider.req.Context.TaskID != "task" || !strings.Contains(provider.req.Prompt, "Review Context Packet") || !strings.Contains(provider.req.Prompt, "Review this") || !strings.Contains(provider.req.Prompt, "ac1") {
 		t.Fatalf("provider request = %+v", provider.req)
 	}
+	if !strings.Contains(provider.req.Prompt, "## Source Spec Markdown") || strings.Index(provider.req.Prompt, "## Source Spec Markdown") > strings.Index(provider.req.Prompt, "## Derived Task Contract") {
+		t.Fatalf("provider request missing source-first Markdown context:\n%s", provider.req.Prompt)
+	}
 	if !strings.Contains(provider.req.Prompt, "Evidence: exit code was 0") || !strings.Contains(provider.req.Prompt, "Do not run build, test, or mutation commands") {
 		t.Fatalf("provider request = %+v", provider.req)
 	}
@@ -775,6 +802,38 @@ func TestReviewPromptCarriesTaskContractToProvider(t *testing.T) {
 	if strings.Contains(provider.req.Prompt, "README.md") {
 		t.Fatalf("review-scope leaked unrelated baseline dirt into prompt:\n%s", provider.req.Prompt)
 	}
+}
+
+func TestReviewPromptCarriesRoleContractToProvider(t *testing.T) {
+	t.Parallel()
+
+	contract := testContract(t, agentcontract.RoleReview, "# Review Contract\n\nsenior engineer who gets paged\n\nfindings are defects only")
+	provider := &promptProvider{packet: passingDossier()}
+	specs := &fakeSpecs{model: spec.Model{TaskID: "task", Title: "Task", Status: spec.StatusReview, Summary: "Review this"}}
+	if _, err := RunWithInput(context.Background(), specs, &fakeSessions{}, cleanWorkspace(), provider, fakeClock{}, Input{TaskID: "task", Contract: contract}); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"## Review Contract", "senior engineer who gets paged", "## Review Output Contract", "## Provider Instruction"} {
+		if !strings.Contains(provider.req.Prompt, want) {
+			t.Fatalf("provider prompt missing %q:\n%s", want, provider.req.Prompt)
+		}
+	}
+	if !manifestMarksRequired(provider.req.Prompt, "provider_instruction", "Provider Instruction") {
+		t.Fatalf("provider instruction was not marked required:\n%s", provider.req.Prompt)
+	}
+	if count := strings.Count(provider.req.Prompt, "submit_review"); count != 1 {
+		t.Fatalf("provider prompt has %d submit_review mentions, want exactly one:\n%s", count, provider.req.Prompt)
+	}
+}
+
+func manifestMarksRequired(prompt string, key string, title string) bool {
+	needle := "`" + key + "` (" + title + ")"
+	for _, line := range strings.Split(prompt, "\n") {
+		if strings.Contains(line, needle) && strings.Contains(line, "required=true") {
+			return true
+		}
+	}
+	return false
 }
 
 func TestProviderInstructionUntrustedDataFence(t *testing.T) {
@@ -817,8 +876,37 @@ func TestPrintContextDoesNotInvokeProvider(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out.Verdict != "not_run" || !strings.Contains(out.Context, "Review Context Packet") || !strings.Contains(out.Context, "Context only") {
+	if out.Verdict != "not_run" || !strings.Contains(out.Context, "Review Context Packet") || !strings.Contains(out.Context, "## Source Spec Markdown") || !strings.Contains(out.Context, "Context only") {
 		t.Fatalf("print context output = %+v", out)
+	}
+}
+
+func TestReviewRejectsOversizedRequiredContextBeforeProviderAttempt(t *testing.T) {
+	t.Parallel()
+
+	specs := &fakeSpecs{
+		model:          spec.Model{TaskID: "task", Title: "Task", Status: spec.StatusReview},
+		sourceMarkdown: []byte("abcdef"),
+	}
+	sessions := &fakeSessions{}
+	providerCalled := false
+	provider := providerFunc(func(context.Context, corereview.Request) (corereview.Dossier, error) {
+		providerCalled = true
+		return passingDossier(), nil
+	})
+	_, err := RunWithInput(context.Background(), specs, sessions, cleanWorkspace(), provider, fakeClock{}, Input{TaskID: "task", ContextMaxBytes: 3, RequiredContextMaxBytes: 3})
+	if !errors.Is(err, reviewcontext.ErrRequiredContextTooLarge) {
+		t.Fatalf("error = %v, want %v", err, reviewcontext.ErrRequiredContextTooLarge)
+	}
+	if providerCalled {
+		t.Fatal("provider was invoked despite oversized required context")
+	}
+	if len(sessions.ledger.Entries) != 0 {
+		t.Fatalf("review attempt should not be recorded before context validation: %+v", sessions.ledger.Entries)
+	}
+	var gateErr gate.Error
+	if !errors.As(err, &gateErr) || gateErr.Failure.Gate != "review" || len(gateErr.Failure.Evidence) != 1 || gateErr.Failure.Evidence[0] != "review context packet" {
+		t.Fatalf("gate error = %#v", gateErr)
 	}
 }
 
@@ -850,6 +938,15 @@ func TestReviewContextBuildIsStable(t *testing.T) {
 	if first != second {
 		t.Fatalf("context render drifted:\nfirst:\n%s\nsecond:\n%s", first, second)
 	}
+}
+
+func testContract(t *testing.T, role agentcontract.Role, body string) agentcontract.Contract {
+	t.Helper()
+	contract, err := agentcontract.New(role, ".scafld/core/prompts/"+role.Filename(), []byte(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return contract
 }
 
 func TestReviewModeSelection(t *testing.T) {

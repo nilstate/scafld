@@ -23,6 +23,12 @@ harden:
 	}
 	prompt := Prompt(context.Background(), root)
 	for _, want := range []string{
+		"draft as a hypothesis",
+		"not evidence that the proposed",
+		"reject` / no-op",
+		"reuse or move ownership",
+		"materially better shape",
+		"report shrink or\nreframe",
 		"finding as many real spec issues",
 		"budget for real findings, not filler",
 		"right-to-exist",

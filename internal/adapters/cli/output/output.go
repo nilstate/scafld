@@ -249,6 +249,14 @@ func Status(out appstatus.Output) string {
 			}
 		}
 	}
+	if out.SpecSource != nil {
+		fmt.Fprintf(&b, "\n## Source Spec Markdown\n\n")
+		fmt.Fprintf(&b, "Source: `%s` sha256=%s bytes=%d\n\n", out.SpecSource.Path, out.SpecSource.SHA256, out.SpecSource.Bytes)
+		if strings.TrimSpace(out.SpecSource.Markdown) != "" {
+			b.WriteString(strings.TrimSpace(out.SpecSource.Markdown))
+			b.WriteString("\n")
+		}
+	}
 	if out.Completion != nil {
 		fmt.Fprintf(&b, "completion authority: %s", out.Completion.Status)
 		if out.Completion.Kind != "" {

@@ -23,6 +23,10 @@ func (f fakeSpecStore) Load(context.Context, string) (spec.Model, string, error)
 	return f.model, "task.md", nil
 }
 
+func (f fakeSpecStore) LoadSource(context.Context, string) (spec.Source, error) {
+	return spec.Source{Model: f.model, Path: "task.md", Markdown: []byte("# " + f.model.Title + "\n\n## Summary\n\n" + f.model.Summary + "\n")}, nil
+}
+
 type fakeSessionStore struct{ ledger session.Session }
 
 func (f fakeSessionStore) Load(context.Context, string) (session.Session, error) {
@@ -72,9 +76,10 @@ func TestHandoffShowsTaskMaterialBeforeDetailedSections(t *testing.T) {
 		WithEntry(session.Entry{ID: "baseline", Type: session.EntryWorkspaceBaseline, Status: "captured", Output: " M old api/handler.go\n M old docs/index.md\n"}).
 		WithEntry(reviewEntry)
 	model := spec.Model{
-		TaskID: "task",
-		Title:  "Task",
-		Status: spec.StatusReview,
+		TaskID:  "task",
+		Title:   "Task",
+		Status:  spec.StatusReview,
+		Summary: "Review the task contract.",
 		Context: spec.Context{
 			FilesImpacted: []string{"`api/handler.go`"},
 		},
@@ -87,6 +92,7 @@ func TestHandoffShowsTaskMaterialBeforeDetailedSections(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
+		"## Source Spec Markdown",
 		"## Task Material",
 		"Material status: changed",
 		"Scope:\n- api/handler.go",
@@ -100,6 +106,9 @@ func TestHandoffShowsTaskMaterialBeforeDetailedSections(t *testing.T) {
 	}
 	if strings.Index(out, "## Task Material") > strings.Index(out, "## Review Gate") {
 		t.Fatalf("task material should appear before detailed review gate:\n%s", out)
+	}
+	if strings.Index(out, "## Source Spec Markdown") > strings.Index(out, "## Task Contract") {
+		t.Fatalf("source spec should appear before derived task contract:\n%s", out)
 	}
 }
 

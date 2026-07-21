@@ -26,6 +26,41 @@ func TestSelectLeavesManualHardenWhenNoProviderConfigured(t *testing.T) {
 	}
 }
 
+func TestSelectUsesCodexHardenEffortFromConfig(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".scafld"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".scafld", "config.yaml"), []byte(`
+harden:
+  external:
+    provider: "codex"
+    codex:
+      model: "latest"
+      model_reasoning_effort: "xhigh"
+      binary: "codex-config"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	selected, err := Select(context.Background(), Options{Root: root, TaskID: "task"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hardenProvider, ok := selected.Provider.(providers.HardenProvider)
+	if !ok {
+		t.Fatalf("provider = %T, want providers.HardenProvider", selected.Provider)
+	}
+	codex, ok := hardenProvider.Agent.(providers.CodexProvider)
+	if !ok {
+		t.Fatalf("agent = %T, want CodexProvider", hardenProvider.Agent)
+	}
+	if codex.Model != "" || codex.ModelReasoningEffort != "xhigh" || codex.Binary != "codex-config" {
+		t.Fatalf("codex harden provider did not use config: %+v", codex)
+	}
+}
+
 func TestSelectUsesGeminiHardenProviderFromConfig(t *testing.T) {
 	t.Parallel()
 
@@ -36,6 +71,7 @@ func TestSelectUsesGeminiHardenProviderFromConfig(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, ".scafld", "config.yaml"), []byte(`
 harden:
   context_max_bytes: 2048
+  required_context_max_bytes: 65536
   external:
     provider: "gemini"
     idle_timeout_seconds: 17
@@ -51,8 +87,8 @@ harden:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if selected.ContextMaxBytes != 2048 {
-		t.Fatalf("context max bytes = %d", selected.ContextMaxBytes)
+	if selected.ContextMaxBytes != 2048 || selected.RequiredContextMaxBytes != 65536 {
+		t.Fatalf("context budgets = %d/%d", selected.ContextMaxBytes, selected.RequiredContextMaxBytes)
 	}
 	hardenProvider, ok := selected.Provider.(providers.HardenProvider)
 	if !ok {

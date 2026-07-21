@@ -99,7 +99,7 @@ Minimal session excerpt:
       "status": "fail",
       "provider": "codex",
       "canonical_response_sha256": "d6552ecb8f6b...",
-      "provider_model": "gpt-5.5",
+      "provider_model": "observed-provider-model",
       "provider_session": "session-123",
       "reviewed_head": "a1b2c3d4",
       "reviewed_dirty": "true",

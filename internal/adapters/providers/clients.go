@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -108,6 +109,7 @@ func (p CommandProvider) Invoke(ctx context.Context, req review.Request) (review
 type ClaudeProvider struct {
 	Binary                 string
 	Model                  string
+	Effort                 string
 	SessionID              string
 	ScafldBinary           string
 	SubmissionPath         string
@@ -150,7 +152,7 @@ func (p ClaudeProvider) InvokeAgent(ctx context.Context, req AgentRequest) (Agen
 		tool = reviewSubmitTool()
 	}
 	result, err := p.Runner.Run(ctx, execution.Request{
-		Args:                   ClaudeArgs(binaryOrDefault(p.Binary, "claude"), p.Model, sessionID, ClaudeMCPConfig(scafldBinaryOrDefault(p.ScafldBinary), submissionPath, tool), tool, p.ReadRoots),
+		Args:                   ClaudeArgs(binaryOrDefault(p.Binary, "claude"), p.Model, p.Effort, sessionID, ClaudeMCPConfig(scafldBinaryOrDefault(p.ScafldBinary), submissionPath, tool), tool, p.ReadRoots),
 		Input:                  req.Prompt,
 		CWD:                    p.CWD,
 		Env:                    p.Env,
@@ -193,6 +195,7 @@ func (p ClaudeProvider) Invoke(ctx context.Context, req review.Request) (review.
 type CodexProvider struct {
 	Binary                 string
 	Model                  string
+	ModelReasoningEffort   string
 	SchemaPath             string
 	OutputPath             string
 	CWD                    string
@@ -246,7 +249,7 @@ func (p CodexProvider) InvokeAgent(ctx context.Context, req AgentRequest) (Agent
 	}
 	defer cleanupSchema()
 	result, err := p.Runner.Run(ctx, execution.Request{
-		Args:                   CodexArgs(binaryOrDefault(p.Binary, "codex"), p.CWD, outputPath, p.Model, schemaPath),
+		Args:                   CodexArgs(binaryOrDefault(p.Binary, "codex"), p.CWD, outputPath, p.Model, p.ModelReasoningEffort, schemaPath),
 		Input:                  req.Prompt,
 		CWD:                    p.CWD,
 		Env:                    p.Env,
@@ -386,7 +389,7 @@ func (p GeminiProvider) Invoke(ctx context.Context, req review.Request) (review.
 // file access to the evidence sandbox via --add-dir; the reviewer also runs with
 // CWD set to that root and a sandbox HOME so no other directory or user-global
 // memory is reachable.
-func ClaudeArgs(binary string, model string, sessionID string, mcpConfig string, tool SubmitTool, readRoots []string) []string {
+func ClaudeArgs(binary string, model string, effort string, sessionID string, mcpConfig string, tool SubmitTool, readRoots []string) []string {
 	toolName := strings.TrimSpace(tool.Name)
 	if toolName == "" {
 		toolName = "submit_review"
@@ -424,6 +427,9 @@ func ClaudeArgs(binary string, model string, sessionID string, mcpConfig string,
 	}
 	if model != "" {
 		args = append(args, "--model", model)
+	}
+	if effort != "" {
+		args = append(args, "--effort", effort)
 	}
 	return args
 }
@@ -546,7 +552,7 @@ func GeminiPrompt(prompt string, tool SubmitTool) string {
 }
 
 // CodexArgs builds the argv for read-only Codex review execution.
-func CodexArgs(binary string, root string, outputPath string, model string, schemaPath string) []string {
+func CodexArgs(binary string, root string, outputPath string, model string, modelReasoningEffort string, schemaPath string) []string {
 	args := []string{
 		binary,
 		"exec",
@@ -565,6 +571,9 @@ func CodexArgs(binary string, root string, outputPath string, model string, sche
 	}
 	if schemaPath != "" {
 		args = append(args, "--output-schema", schemaPath)
+	}
+	if modelReasoningEffort != "" {
+		args = append(args, "-c", "model_reasoning_effort="+strconv.Quote(modelReasoningEffort))
 	}
 	if model != "" {
 		args = append(args, "-m", model)

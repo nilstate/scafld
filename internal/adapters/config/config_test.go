@@ -31,6 +31,7 @@ invariants:
 harden:
   max_issues_per_round: 5
   context_max_bytes: 2048
+  required_context_max_bytes: 65536
   external:
     provider: "gemini"
     idle_timeout_seconds: 21
@@ -46,15 +47,18 @@ review:
     absolute_max_seconds: 34
     codex:
       model: "gpt-config"
+      model_reasoning_effort: "high"
       endpoint_url: "https://api.openai.com"
     claude:
       model: "claude-config"
+      effort: "high"
       endpoint_host: "api.anthropic.com"
     gemini:
       model: "gemini-config"
       binary: "gemini-bin"
   context:
     max_bytes: 4096
+    required_max_bytes: 65536
     files:
       - AGENTS.md
   dossier:
@@ -85,7 +89,7 @@ review:
 	if cfg.Harden.MaxIssuesPerRound != 5 {
 		t.Fatalf("harden config = %+v", cfg.Harden)
 	}
-	if cfg.Harden.ContextMaxBytes != 2048 || cfg.Harden.External.Provider != "gemini" || cfg.Harden.External.Gemini.Model != "gemini-harden" || cfg.Harden.External.Gemini.Binary != "gemini-harden-bin" || cfg.Harden.External.Gemini.EndpointHost != "generativelanguage.googleapis.com" || cfg.Harden.External.IdleTimeoutSeconds != 21 || cfg.Harden.External.AbsoluteMaxSeconds != 43 {
+	if cfg.Harden.ContextMaxBytes != 2048 || cfg.Harden.RequiredContextMaxBytes != 65536 || cfg.Harden.External.Provider != "gemini" || cfg.Harden.External.Gemini.Model != "gemini-harden" || cfg.Harden.External.Gemini.Binary != "gemini-harden-bin" || cfg.Harden.External.Gemini.EndpointHost != "generativelanguage.googleapis.com" || cfg.Harden.External.IdleTimeoutSeconds != 21 || cfg.Harden.External.AbsoluteMaxSeconds != 43 {
 		t.Fatalf("harden external config = %+v", cfg.Harden.External)
 	}
 	if len(cfg.Execution.PathPrepend) != 1 || cfg.Execution.PathPrepend[0] != "$HOME/.rbenv/shims" || cfg.Execution.Env["BUNDLE_GEMFILE"] != "api/Gemfile" || cfg.Execution.AbsoluteTimeoutSeconds != 600 || cfg.Execution.IdleTimeoutSeconds != 90 {
@@ -94,13 +98,13 @@ review:
 	if cfg.Invariants.Canonical["tenant_isolation"] != "Do not leak data across tenants." {
 		t.Fatalf("invariants = %+v", cfg.Invariants.Canonical)
 	}
-	if cfg.Review.External.Provider != "codex" || cfg.Review.External.Codex.Model != "gpt-config" || cfg.Review.External.Codex.EndpointURL != "https://api.openai.com" || cfg.Review.External.Claude.Model != "claude-config" || cfg.Review.External.Claude.EndpointHost != "api.anthropic.com" || cfg.Review.External.Gemini.Model != "gemini-config" || cfg.Review.External.Gemini.Binary != "gemini-bin" {
+	if cfg.Review.External.Provider != "codex" || cfg.Review.External.Codex.Model != "gpt-config" || cfg.Review.External.Codex.ModelReasoningEffort != "high" || cfg.Review.External.Codex.EndpointURL != "https://api.openai.com" || cfg.Review.External.Claude.Model != "claude-config" || cfg.Review.External.Claude.Effort != "high" || cfg.Review.External.Claude.EndpointHost != "api.anthropic.com" || cfg.Review.External.Gemini.Model != "gemini-config" || cfg.Review.External.Gemini.Binary != "gemini-bin" {
 		t.Fatalf("review config = %+v", cfg.Review.External)
 	}
 	if cfg.Review.External.IdleTimeoutSeconds != 12 || cfg.Review.External.AbsoluteMaxSeconds != 34 {
 		t.Fatalf("timeouts = %+v", cfg.Review.External)
 	}
-	if cfg.Review.Context.MaxBytes != 4096 || !contains(cfg.Review.Context.Files, "AGENTS.md") {
+	if cfg.Review.Context.MaxBytes != 4096 || cfg.Review.Context.RequiredMaxBytes != 65536 || !contains(cfg.Review.Context.Files, "AGENTS.md") {
 		t.Fatalf("review context = %+v", cfg.Review.Context)
 	}
 	if cfg.Review.Dossier.MaxFindings != 9 || cfg.Review.Dossier.MinAttackAngles != 4 || cfg.Review.Dossier.ReviewDepth != "deep" || cfg.Review.Dossier.RerunPolicy != "verify_open_blockers" {
@@ -125,14 +129,17 @@ review:
     absolute_max_seconds: 34
     codex:
       model: "gpt-config"
+      model_reasoning_effort: "medium"
       endpoint_host: "api.openai.com"
     claude:
       model: "claude-config"
+      effort: "medium"
 harden:
   external:
     provider: "codex"
     codex:
       model: "gpt-harden-config"
+      model_reasoning_effort: "high"
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -146,8 +153,11 @@ execution:
 review:
   external:
     provider: "claude"
+    codex:
+      model_reasoning_effort: "xhigh"
     claude:
       model: "claude-local"
+      effort: "xhigh"
       endpoint_host: "api.anthropic.com"
   context:
     files:
@@ -171,10 +181,13 @@ harden:
 	if cfg.Review.External.Provider != "claude" || cfg.Review.External.Claude.Model != "claude-local" || cfg.Review.External.Claude.EndpointHost != "api.anthropic.com" {
 		t.Fatalf("local overlay did not apply: %+v", cfg.Review.External)
 	}
-	if cfg.Review.External.Codex.Model != "gpt-config" || cfg.Review.External.Codex.EndpointHost != "api.openai.com" || cfg.Review.External.AbsoluteMaxSeconds != 34 {
+	if cfg.Review.External.Claude.Effort != "xhigh" {
+		t.Fatalf("local claude effort did not apply: %+v", cfg.Review.External.Claude)
+	}
+	if cfg.Review.External.Codex.Model != "gpt-config" || cfg.Review.External.Codex.ModelReasoningEffort != "xhigh" || cfg.Review.External.Codex.EndpointHost != "api.openai.com" || cfg.Review.External.AbsoluteMaxSeconds != 34 {
 		t.Fatalf("base values were not preserved: %+v", cfg.Review.External)
 	}
-	if cfg.Harden.MaxIssuesPerRound != 8 || cfg.Harden.External.Provider != "gemini" || cfg.Harden.External.Codex.Model != "gpt-harden-config" || cfg.Harden.External.Gemini.Model != "gemini-harden-local" || cfg.Harden.External.Gemini.Binary != "gemini-local-bin" {
+	if cfg.Harden.MaxIssuesPerRound != 8 || cfg.Harden.External.Provider != "gemini" || cfg.Harden.External.Codex.Model != "gpt-harden-config" || cfg.Harden.External.Codex.ModelReasoningEffort != "high" || cfg.Harden.External.Gemini.Model != "gemini-harden-local" || cfg.Harden.External.Gemini.Binary != "gemini-local-bin" {
 		t.Fatalf("harden overlay/defaults not applied: %+v", cfg.Harden)
 	}
 	if !contains(cfg.Review.Context.Files, "MEMORY.md") || !contains(cfg.Review.Context.Files, "AGENTS.md") {
@@ -276,6 +289,12 @@ func TestConfigDefaultWhenMissing(t *testing.T) {
 	if cfg.Review.External.Provider != "auto" || cfg.Review.External.Codex.Model != DefaultCodexModel || cfg.Review.External.Claude.Model != DefaultClaudeModel {
 		t.Fatalf("defaults = %+v", cfg)
 	}
+	if cfg.Review.External.Codex.ModelReasoningEffort != DefaultCodexModelReasoningEffort || cfg.Harden.External.Codex.ModelReasoningEffort != DefaultCodexModelReasoningEffort {
+		t.Fatalf("codex reasoning defaults missing: review=%q harden=%q", cfg.Review.External.Codex.ModelReasoningEffort, cfg.Harden.External.Codex.ModelReasoningEffort)
+	}
+	if cfg.Review.External.Claude.Effort != DefaultClaudeEffort || cfg.Harden.External.Claude.Effort != DefaultClaudeEffort {
+		t.Fatalf("claude effort defaults missing: review=%q harden=%q", cfg.Review.External.Claude.Effort, cfg.Harden.External.Claude.Effort)
+	}
 	if cfg.Harden.External.Codex.Model != DefaultCodexModel || cfg.Harden.External.Claude.Model != DefaultClaudeModel {
 		t.Fatalf("harden defaults = %+v", cfg.Harden.External)
 	}
@@ -284,6 +303,9 @@ func TestConfigDefaultWhenMissing(t *testing.T) {
 	}
 	if cfg.Harden.MaxIssuesPerRound != 8 {
 		t.Fatalf("default harden config missing = %+v", cfg.Harden)
+	}
+	if cfg.Harden.ContextMaxBytes != 16384 || cfg.Harden.RequiredContextMaxBytes != 131072 || cfg.Review.Context.MaxBytes != 16384 || cfg.Review.Context.RequiredMaxBytes != 131072 {
+		t.Fatalf("default context budgets missing = harden:%+v review:%+v", cfg.Harden, cfg.Review.Context)
 	}
 	if cfg.Execution.AbsoluteTimeoutSeconds != 300 {
 		t.Fatalf("default execution timeout missing = %+v", cfg.Execution)
@@ -304,12 +326,14 @@ harden:
       model: "gpt-5.5"
     claude:
       model: "claude-opus-4-7"
+      effort: "default"
 review:
   external:
     codex:
       model: "gpt-5-codex"
     claude:
       model: "claude-3-5-sonnet-20241022"
+      effort: "XHIGH"
 `)
 
 	cfg, err := Load(context.Background(), root)
@@ -322,6 +346,9 @@ review:
 	if cfg.Review.External.Codex.Model != DefaultCodexModel || cfg.Review.External.Claude.Model != "sonnet" {
 		t.Fatalf("review provider models were not upgraded: %+v", cfg.Review.External)
 	}
+	if cfg.Harden.External.Claude.Effort != DefaultClaudeEffort || cfg.Review.External.Claude.Effort != "xhigh" {
+		t.Fatalf("claude efforts were not normalized: harden=%q review=%q", cfg.Harden.External.Claude.Effort, cfg.Review.External.Claude.Effort)
+	}
 
 	base, err := LoadBase(context.Background(), root)
 	if err != nil {
@@ -329,6 +356,35 @@ review:
 	}
 	if base.Review.External.Codex.Model != DefaultCodexModel || base.Review.External.Claude.Model != "sonnet" {
 		t.Fatalf("base provider models were not upgraded: %+v", base.Review.External)
+	}
+}
+
+func TestCodexLatestAliasResolvesToDefaultModel(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	writeFile(t, root, ".scafld/config.yaml", `
+harden:
+  external:
+    codex:
+      model: "latest"
+      model_reasoning_effort: "default"
+review:
+  external:
+    codex:
+      model: "current"
+      model_reasoning_effort: "XHIGH"
+`)
+
+	cfg, err := Load(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Harden.External.Codex.Model != DefaultCodexModel || cfg.Review.External.Codex.Model != DefaultCodexModel {
+		t.Fatalf("codex latest aliases were not resolved: harden=%q review=%q default=%q", cfg.Harden.External.Codex.Model, cfg.Review.External.Codex.Model, DefaultCodexModel)
+	}
+	if cfg.Harden.External.Codex.ModelReasoningEffort != DefaultCodexModelReasoningEffort || cfg.Review.External.Codex.ModelReasoningEffort != "xhigh" {
+		t.Fatalf("codex reasoning efforts were not normalized: harden=%q review=%q", cfg.Harden.External.Codex.ModelReasoningEffort, cfg.Review.External.Codex.ModelReasoningEffort)
 	}
 }
 

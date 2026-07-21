@@ -47,7 +47,7 @@ var valueFlags = map[string]bool{
 	"review-depth":      true,
 }
 
-var boolFlags = map[string]bool{"force": true, "human-reviewed": true, "mark-passed": true, "no-agent-docs": true, "print-context": true, "ci": true}
+var boolFlags = map[string]bool{"force": true, "human-reviewed": true, "mark-passed": true, "no-agent-docs": true, "no-context": true, "print-context": true, "ci": true}
 
 func parseOptions(args []string) (options, error) {
 	opts := options{Values: map[string]string{}, Flags: map[string]bool{}}
@@ -100,12 +100,8 @@ func parseFlagValue(args []string, index *int, opts *options) (bool, error) {
 }
 
 func parseBoolFlag(value string) bool {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "", "1", "true", "yes", "on":
-		return true
-	default:
-		return false
-	}
+	value = strings.ToLower(strings.TrimSpace(value))
+	return value == "" || value == "1" || value == "true" || value == "yes" || value == "on"
 }
 
 func setOptionValue(opts *options, key string, value string) {

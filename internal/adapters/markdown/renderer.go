@@ -32,10 +32,10 @@ func Render(model spec.Model) []byte {
 	renderStringList(&b, "Assumptions", model.Assumptions)
 	renderStringList(&b, "Touchpoints", model.Touchpoints)
 	renderRisks(&b, model.Risks)
-	fmt.Fprintf(&b, "## Acceptance\n\nProfile: %s\n\nValidation:\n", fallback(model.Acceptance.ValidationProfile, "standard"))
-	renderCriteria(&b, model.Acceptance.Criteria)
-	if len(model.Acceptance.Criteria) == 0 {
-		fmt.Fprintf(&b, "- none\n")
+	fmt.Fprintf(&b, "## Acceptance\n\nProfile: %s\n", fallback(model.Acceptance.ValidationProfile, "standard"))
+	if len(model.Acceptance.Criteria) > 0 {
+		fmt.Fprintf(&b, "\nValidation:\n")
+		renderCriteria(&b, model.Acceptance.Criteria)
 	}
 	fmt.Fprintf(&b, "\n")
 	for index, phase := range model.Phases {
@@ -219,6 +219,10 @@ func renderHardenRound(b *strings.Builder, round spec.HardenRound) {
 	if round.Summary != "" {
 		fmt.Fprintf(b, "Summary: %s\n", round.Summary)
 	}
+	if round.DiagnosticPath != "" {
+		fmt.Fprintf(b, "Diagnostic: `%s`\n", round.DiagnosticPath)
+	}
+	renderHardenShape(b, round.Shape)
 	fmt.Fprintf(b, "\n")
 	fmt.Fprintf(b, "Observations:\n")
 	if len(round.Observations) == 0 {
@@ -231,6 +235,15 @@ func renderHardenRound(b *strings.Builder, round spec.HardenRound) {
 			if observation.Note != "" {
 				fmt.Fprintf(b, "  - Note: %s\n", observation.Note)
 			}
+			if observation.Question != "" {
+				fmt.Fprintf(b, "  - Question: %s\n", observation.Question)
+			}
+			if observation.Recommended != "" {
+				fmt.Fprintf(b, "  - Recommended answer: %s\n", observation.Recommended)
+			}
+			if observation.IfUnanswered != "" {
+				fmt.Fprintf(b, "  - If unanswered: %s\n", observation.IfUnanswered)
+			}
 			if observation.Default != "" {
 				fmt.Fprintf(b, "  - Default: %s\n", observation.Default)
 			}
@@ -240,6 +253,15 @@ func renderHardenRound(b *strings.Builder, round spec.HardenRound) {
 		}
 		fmt.Fprintf(b, "\n")
 	}
+}
+
+func renderHardenShape(b *strings.Builder, shape spec.HardenShape) {
+	fmt.Fprintf(b, "Shape decision: %s\n", fallback(shape.Decision, ""))
+	fmt.Fprintf(b, "True shape: %s\n", fallback(shape.TrueShape, ""))
+	fmt.Fprintf(b, "Minimal plan: %s\n", fallback(shape.MinimalPlan, ""))
+	fmt.Fprintf(b, "Shared owner: %s\n", fallback(shape.SharedOwner, ""))
+	fmt.Fprintf(b, "Adapter boundaries: %s\n", fallback(strings.Join(shape.AdapterBoundaries, "; "), ""))
+	fmt.Fprintf(b, "Required spec edits: %s\n", strings.Join(shape.RequiredSpecEdits, "; "))
 }
 
 func renderBullets(b *strings.Builder, items []string) {

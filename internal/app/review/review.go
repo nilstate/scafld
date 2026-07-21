@@ -7,7 +7,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/nilstate/scafld/v2/internal/app/specsource"
+	"github.com/nilstate/scafld/v2/internal/core/agentcontract"
 	corecompletion "github.com/nilstate/scafld/v2/internal/core/completion"
+	"github.com/nilstate/scafld/v2/internal/core/diagnostics"
 	"github.com/nilstate/scafld/v2/internal/core/gate"
 	"github.com/nilstate/scafld/v2/internal/core/reconcile"
 	"github.com/nilstate/scafld/v2/internal/core/review"
@@ -76,24 +79,26 @@ func (o Output) GateFailure() *gate.Failure { return o.Repair }
 
 // Input describes the task and review agenda to run.
 type Input struct {
-	TaskID          string
-	Mode            review.Mode
-	ForceMode       bool
-	Passes          []Pass
-	Invariants      map[string]string
-	ReviewScope     []string
-	ContextSections []reviewcontext.Section
-	ContextMaxBytes int
-	MaxFindings     int
-	MinAttackAngles int
-	ReviewDepth     string
-	RerunPolicy     string
-	ForceReview     bool
-	ProviderName    string
-	ProviderModel   string
-	PrintContext    bool
-	HumanReviewed   bool
-	Reason          string
+	TaskID                  string
+	Mode                    review.Mode
+	ForceMode               bool
+	Passes                  []Pass
+	Invariants              map[string]string
+	ReviewScope             []string
+	ContextSections         []reviewcontext.Section
+	ContextMaxBytes         int
+	RequiredContextMaxBytes int
+	Contract                agentcontract.Contract
+	MaxFindings             int
+	MinAttackAngles         int
+	ReviewDepth             string
+	RerunPolicy             string
+	ForceReview             bool
+	ProviderName            string
+	ProviderModel           string
+	PrintContext            bool
+	HumanReviewed           bool
+	Reason                  string
 }
 
 // Pass describes one configured review pass included in the provider prompt.
@@ -112,10 +117,12 @@ func Run(ctx context.Context, specs SpecStore, sessions SessionStore, workspace 
 
 // RunWithInput executes the review gate using an explicit review agenda.
 func RunWithInput(ctx context.Context, specs SpecStore, sessions SessionStore, workspace WorkspaceStatus, provider Provider, clock Clock, input Input) (Output, error) {
-	model, path, err := specs.Load(ctx, input.TaskID)
+	source, err := specsource.Load(ctx, specs, input.TaskID)
 	if err != nil {
 		return Output{}, err
 	}
+	model := source.Model
+	path := source.Path
 	if model.Status != spec.StatusReview {
 		if model.Status == spec.StatusCompleted {
 			return Output{}, fmt.Errorf("%w: task is archived/completed; create a new task to continue%s", ErrSpecNotReviewable, reviewCompletionSuffix(ctx, sessions, model.TaskID))
@@ -137,10 +144,14 @@ func RunWithInput(ctx context.Context, specs SpecStore, sessions SessionStore, w
 	taskChanges, scopeDrift := coreworkspace.PartitionMutations(coreworkspace.Diff(baselineComparison, beforeComparison), scope)
 	mode := reviewMode(ctx, sessions, model.TaskID, input)
 	knownFindings := knownFindingsForMode(ctx, sessions, model.TaskID, mode)
-	contextPacket := reviewContextPacket(model, path, input.Passes, input.Invariants, scope, baselineScoped, taskChanges, scopeDrift, knownFindings, input.ContextSections, mode, input.MaxFindings, input.MinAttackAngles, input.ReviewDepth, input.RerunPolicy)
-	prompt := reviewcontext.RenderMarkdown(contextPacket, reviewcontext.Options{MaxBytes: input.ContextMaxBytes})
+	contextPacket := reviewContextPacket(source, input.Contract, input.Passes, input.Invariants, scope, baselineScoped, taskChanges, scopeDrift, knownFindings, input.ContextSections, mode, input.MaxFindings, input.MinAttackAngles, input.ReviewDepth, input.RerunPolicy)
 	if input.PrintContext {
+		prompt := reviewcontext.RenderMarkdown(contextPacket, reviewcontext.Options{MaxBytes: input.ContextMaxBytes, RequiredMaxBytes: input.RequiredContextMaxBytes})
 		return Output{TaskID: model.TaskID, Verdict: "not_run", Next: "scafld review " + model.TaskID, Context: prompt}, nil
+	}
+	prompt, err := reviewcontext.RenderMarkdownStrict(contextPacket, reviewcontext.Options{MaxBytes: input.ContextMaxBytes, RequiredMaxBytes: input.RequiredContextMaxBytes})
+	if err != nil {
+		return Output{}, reviewContextGateError(model, err)
 	}
 	seal, err := reviewSeal(ctx, workspace, beforeComparison)
 	if err != nil {
@@ -161,7 +172,8 @@ func RunWithInput(ctx context.Context, specs SpecStore, sessions SessionStore, w
 	defer cancelPostReview()
 	afterFull, mutationErr := workspaceSnapshot(postReviewCtx, workspace)
 	if mutationErr != nil {
-		_ = appendFailedReviewAttempt(context.WithoutCancel(ctx), sessions, model.TaskID, attempt, "review workspace snapshot failed: "+mutationErr.Error(), diagnosticPath(mutationErr), now)
+		reason, diagnosticPath := diagnostics.FailureReason("review workspace snapshot failed", mutationErr, 240)
+		_ = appendFailedReviewAttempt(context.WithoutCancel(ctx), sessions, model.TaskID, attempt, reason, diagnosticPath, now)
 		return Output{}, reviewGateError(model, mutationErr, "review workspace snapshot failed", mutationErr.Error())
 	}
 	if mutated := coreworkspace.MutationStrings(reviewBlockingMutations(beforeFull, afterFull, scope, path)); len(mutated) > 0 {
@@ -179,25 +191,30 @@ func RunWithInput(ctx context.Context, specs SpecStore, sessions SessionStore, w
 	}
 	dossier = applyRequestedBudget(dossier, reviewBudget(input, 0, 0))
 	if err != nil {
-		_ = appendFailedReviewAttempt(context.WithoutCancel(ctx), sessions, model.TaskID, attempt, "review provider failed: "+err.Error(), diagnosticPath(err), now)
+		reason, diagnosticPath := diagnostics.FailureReason("review provider failed", err, 240)
+		_ = appendFailedReviewAttempt(context.WithoutCancel(ctx), sessions, model.TaskID, attempt, reason, diagnosticPath, now)
 		return Output{}, reviewGateError(model, err, "review provider failed", err.Error())
 	}
 	if dossier.Mode != mode {
 		err := fmt.Errorf("%w: mode %q does not match requested mode %q", review.ErrInvalidDossier, dossier.Mode, mode)
-		_ = appendFailedReviewAttempt(context.WithoutCancel(ctx), sessions, model.TaskID, attempt, fmt.Sprintf("review dossier invalid: mode %q does not match requested mode %q", dossier.Mode, mode), diagnosticPath(err), now)
+		reason, diagnosticPath := diagnostics.FailureReason("review dossier invalid", err, 240)
+		_ = appendFailedReviewAttempt(context.WithoutCancel(ctx), sessions, model.TaskID, attempt, reason, diagnosticPath, now)
 		return Output{}, reviewGateError(model, err, "review dossier invalid", err.Error())
 	}
 	if err := review.ValidateDossier(dossier); err != nil {
-		_ = appendFailedReviewAttempt(context.WithoutCancel(ctx), sessions, model.TaskID, attempt, "review dossier invalid: "+err.Error(), diagnosticPath(err), now)
+		reason, diagnosticPath := diagnostics.FailureReason("review dossier invalid", err, 240)
+		_ = appendFailedReviewAttempt(context.WithoutCancel(ctx), sessions, model.TaskID, attempt, reason, diagnosticPath, now)
 		return Output{}, reviewGateError(model, err, "review dossier invalid", err.Error())
 	}
 	if err := validateRequestedBudget(dossier); err != nil {
-		_ = appendFailedReviewAttempt(context.WithoutCancel(ctx), sessions, model.TaskID, attempt, "review dossier budget invalid: "+err.Error(), diagnosticPath(err), now)
+		reason, diagnosticPath := diagnostics.FailureReason("review dossier budget invalid", err, 240)
+		_ = appendFailedReviewAttempt(context.WithoutCancel(ctx), sessions, model.TaskID, attempt, reason, diagnosticPath, now)
 		return Output{}, reviewGateError(model, err, "review dossier budget invalid", err.Error())
 	}
 	material, hasMaterial, materialErr := reviewMaterialSeal(postReviewCtx, workspace, reviewMaterialScope(scope, beforeComparison))
 	if materialErr != nil {
-		_ = appendFailedReviewAttempt(context.WithoutCancel(ctx), sessions, model.TaskID, attempt, "review material seal failed: "+materialErr.Error(), diagnosticPath(materialErr), now)
+		reason, diagnosticPath := diagnostics.FailureReason("review material seal failed", materialErr, 240)
+		_ = appendFailedReviewAttempt(context.WithoutCancel(ctx), sessions, model.TaskID, attempt, reason, diagnosticPath, now)
 		return Output{}, reviewGateError(model, materialErr, "review material seal failed", materialErr.Error())
 	}
 	return recordReviewDossier(postReviewCtx, specs, sessions, model, path, dossier, now, seal, material, hasMaterial, attempt)
@@ -219,7 +236,7 @@ func reviewGateError(model spec.Model, err error, reason string, actual string) 
 		err = errors.New(reason)
 	}
 	evidence := []string{"review_attempt session entry", "provider diagnostic output"}
-	if path := diagnosticPath(err); path != "" {
+	if path := diagnostics.Path(err); path != "" {
 		evidence = []string{path}
 	}
 	return gate.New(err, gate.Failure{
@@ -234,12 +251,17 @@ func reviewGateError(model spec.Model, err error, reason string, actual string) 
 	})
 }
 
-func diagnosticPath(err error) string {
-	var withDiagnostic interface{ DiagnosticPath() string }
-	if errors.As(err, &withDiagnostic) {
-		return withDiagnostic.DiagnosticPath()
-	}
-	return ""
+func reviewContextGateError(model spec.Model, err error) error {
+	return gate.New(err, gate.Failure{
+		Gate:     "review",
+		Status:   string(model.Status),
+		Reason:   "review context packet invalid",
+		Evidence: []string{"review context packet"},
+		Expected: "required source context within the configured provider packet budget",
+		Actual:   err.Error(),
+		Blockers: []string{"required source context exceeds provider packet budget"},
+		Next:     "shrink the spec or raise the review context budget, then run scafld review " + model.TaskID,
+	})
 }
 
 func startReviewAttempt(ctx context.Context, sessions SessionStore, model spec.Model, input Input, mode review.Mode, baselineScoped []string, taskChanges []coreworkspace.Mutation, scopeDrift []coreworkspace.Mutation, now time.Time) (reviewgate.Attempt, error) {

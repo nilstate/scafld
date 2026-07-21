@@ -40,6 +40,11 @@ execution:
 
 harden:
   max_issues_per_round: 8
+  # Full required source/contract section budget. Required context is rendered
+  # verbatim or provider hardening fails closed before tokens are spent.
+  required_context_max_bytes: 131072
+  # Discretionary derived-section budget. Derived sections are indexes; the
+  # Source Spec Markdown and role/output contracts are governed above.
   context_max_bytes: 16384
   external:
     # Leave provider empty for manual harden rounds. Set to auto, codex, claude,
@@ -53,15 +58,21 @@ harden:
     absolute_max_seconds: 1800
     fallback_policy: "disable"
     codex:
-      # Current strongest OpenAI model known to work through Codex CLI ChatGPT
-      # auth. Override locally to pin a snapshot or use a different Codex model.
-      model: "gpt-5.5"
+      # Scafld resolves "latest" by omitting -m so Codex CLI uses its current
+      # default. Override locally with a concrete model string only when you
+      # need a pin.
+      model: "latest"
+      # Codex-specific effort passed through -c model_reasoning_effort=...
+      # Review and harden default to xhigh because user Codex config is isolated.
+      model_reasoning_effort: "xhigh"
       # binary: "codex"
       # endpoint_host: "api.openai.com"
       # endpoint_url: "https://api.openai.com"
     claude:
       # Claude Code rolling alias for the latest Opus model.
       model: "opus"
+      # Claude Code native effort level for review and harden.
+      effort: "xhigh"
       # binary: "claude"
       # endpoint_host: "api.anthropic.com"
       # endpoint_url: "https://api.anthropic.com"
@@ -82,15 +93,21 @@ review:
     absolute_max_seconds: 1800
     fallback_policy: "disable"
     codex:
-      # Current strongest OpenAI model known to work through Codex CLI ChatGPT
-      # auth. Override locally to pin a snapshot or use a different Codex model.
-      model: "gpt-5.5"
+      # Scafld resolves "latest" by omitting -m so Codex CLI uses its current
+      # default. Override locally with a concrete model string only when you
+      # need a pin.
+      model: "latest"
+      # Codex-specific effort passed through -c model_reasoning_effort=...
+      # Review and harden default to xhigh because user Codex config is isolated.
+      model_reasoning_effort: "xhigh"
       # binary: "codex"
       # endpoint_host: "api.openai.com"
       # endpoint_url: "https://api.openai.com"
     claude:
       # Claude Code rolling alias for the latest Opus model.
       model: "opus"
+      # Claude Code native effort level for review and harden.
+      effort: "xhigh"
       # binary: "claude"
       # endpoint_host: "api.anthropic.com"
       # endpoint_url: "https://api.anthropic.com"
@@ -102,8 +119,12 @@ review:
 
   context:
     # Bounded, deterministic project files included in the provider prompt.
-    # max_bytes is the total rendered section-body budget, not a per-file cap.
+    # required_max_bytes caps required source/contract sections, which render
+    # verbatim or fail closed before provider review starts.
+    # max_bytes caps discretionary derived/project sections, not required
+    # Source Spec Markdown or role/output contracts.
     # Private/local files are excluded even if listed here.
+    required_max_bytes: 131072
     max_bytes: 16384
     files:
       - AGENTS.md

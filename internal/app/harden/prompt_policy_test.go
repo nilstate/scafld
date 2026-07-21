@@ -10,6 +10,12 @@ func TestProviderInstructionChallengesRightToExistWithoutFiller(t *testing.T) {
 
 	body := hardenProviderInstructionBody()
 	for _, want := range []string{
+		"canonical task input under review",
+		"not evidence that the proposed shape",
+		"reject/no-op",
+		"reuse-existing-behavior",
+		"materially better shape",
+		"report shrink or reframe",
 		"right to exist",
 		"as many real spec issues",
 		"do not pad the dossier",

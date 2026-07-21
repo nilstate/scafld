@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/nilstate/scafld/v2/internal/core/agentcontract"
 )
 
 const modulePath = "github.com/nilstate/scafld/v2"
@@ -181,6 +183,50 @@ func TestRepositoryHasNoTrackedGeneratedOrBinaryArtifacts(t *testing.T) {
 		}
 		if info.Size() > maxTrackedBytes {
 			t.Fatalf("tracked file %s is %d bytes; release/source artifacts must stay below %d bytes", rel, info.Size(), maxTrackedBytes)
+		}
+	}
+}
+
+func TestCorePromptAssetsMatchDeclaredAgentContracts(t *testing.T) {
+	root := repoRoot(t)
+	entries, err := os.ReadDir(filepath.Join(root, "internal", "adapters", "corebundle", "assets", "core", "prompts"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]bool{}
+	for _, role := range agentcontract.Roles() {
+		want[role.Filename()] = true
+	}
+	got := map[string]bool{}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		got[entry.Name()] = true
+		if !want[entry.Name()] {
+			t.Fatalf("core prompt %s has no declared agent contract role", entry.Name())
+		}
+	}
+	for filename := range want {
+		if !got[filename] {
+			t.Fatalf("declared agent contract %s has no core prompt asset", filename)
+		}
+	}
+}
+
+func TestNoWeakerCorePromptFallbackPackage(t *testing.T) {
+	root := repoRoot(t)
+	dir := filepath.Join(root, "internal", "core", "prompts")
+	entries, err := os.ReadDir(dir)
+	if os.IsNotExist(err) {
+		return
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if strings.HasSuffix(entry.Name(), ".go") {
+			t.Fatalf("internal/core/prompts must not contain Go fallback prompt strings; found %s", entry.Name())
 		}
 	}
 }

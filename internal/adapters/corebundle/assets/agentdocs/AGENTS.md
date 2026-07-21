@@ -32,10 +32,19 @@ scafld handoff <task-id>
 
 Use `scafld harden` to strengthen drafts before approval. Use `scafld build` to record phase evidence. Use `scafld review` when running the lifecycle directly. Use `scafld status --json` for automation.
 
+## Agent Context Hierarchy
+
+Use structured JSON for lifecycle state and gate state. Use the embedded
+`Source Spec Markdown` section as the canonical task contract when it is present
+in a scafld packet. Derived sections are projections and indexes over those
+sources, not independent contracts.
+
 ## Do Not
 
 - Close governed work without `finalize` or an explicit human decision.
 - Reconstruct lifecycle state by scraping Markdown. Use `status --json`.
+- Act from an older scafld packet when a newer status, handoff, harden, or
+  review packet is available.
 - Mutate `.scafld/core/` by hand. Use `scafld update`.
 - Treat the Stop hook as the merge wall. CI verify is the wall.
 - Cite files, commands, receipts, or review findings you have not verified.

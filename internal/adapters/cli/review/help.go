@@ -51,7 +51,9 @@ Provider auto:
   expose a recognizable host marker.
 
 Context:
-  Print the deterministic reviewer brief without spending provider tokens:
+  Provider review always receives the source-backed reviewer brief. The embedded
+  Source Spec Markdown section is canonical; derived sections are indexes only.
+  Inspect that same brief without spending provider tokens:
     scafld review email-contracts --print-context
 
 Command provider contract:

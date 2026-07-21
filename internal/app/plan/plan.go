@@ -73,14 +73,14 @@ func Run(ctx context.Context, store SpecStore, clock Clock, input Input) (Output
 		Phases: []spec.Phase{{
 			ID:        "phase1",
 			Number:    1,
-			Name:      "Implementation",
+			Name:      fallback(input.Title, "Draft "+input.TaskID),
 			Status:    "pending",
-			Objective: "Complete the requested change.",
-			Changes:   []string{"Implement the requested behavior."},
+			Objective: fallback(input.Summary, "Replace this draft objective with the concrete behavior before approval."),
+			Changes:   []string{fallback(input.Summary, "Replace this draft change list with concrete files, packages, and behavior before approval.")},
 			Acceptance: []spec.Criterion{{
 				ID:           "ac1",
 				Type:         "command",
-				Title:        "Primary validation command",
+				Title:        "Configured validation command",
 				PhaseID:      "phase1",
 				Command:      fallback(input.Command, "go version"),
 				ExpectedKind: acceptance.ExpectedExitCodeZero,

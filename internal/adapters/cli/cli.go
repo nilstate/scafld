@@ -246,14 +246,15 @@ func runHarden(ctx context.Context, args []string, stdout io.Writer, stderr io.W
 	}
 	root, _ := commandRoot(ctx, opts, false)
 	input, err := hardencli.BuildInput(ctx, hardencli.RunOptions{
-		Root:           root,
-		TaskID:         opts.Positionals[0],
-		MarkPassed:     opts.Flags["mark-passed"],
-		Provider:       opts.Values["provider"],
-		Command:        opts.Values["provider-command"],
-		ProviderBinary: opts.Values["provider-binary"],
-		Model:          opts.Values["model"],
-		Progress:       stderr,
+		Root:            root,
+		TaskID:          opts.Positionals[0],
+		MarkPassed:      opts.Flags["mark-passed"],
+		Provider:        opts.Values["provider"],
+		Command:         opts.Values["provider-command"],
+		ProviderBinary:  opts.Values["provider-binary"],
+		Model:           opts.Values["model"],
+		SuppressContext: opts.Flags["no-context"],
+		Progress:        stderr,
 	})
 	if err != nil {
 		return failOut(stderr, err, ExitReview, opts.JSON)
@@ -347,26 +348,12 @@ func runReview(ctx context.Context, args []string, stdout io.Writer, stderr io.W
 			return failOut(stderr, err, ExitInvalid, opts.JSON)
 		}
 	}
-	out, err := review.RunWithInput(ctx, store, sessions, git.Adapter{Root: root}, selected.Provider, clock.System{}, review.Input{
-		TaskID:          opts.Positionals[0],
-		Mode:            reviewcli.ModeFromValue(opts.Values["mode"]),
-		ForceMode:       strings.TrimSpace(opts.Values["mode"]) != "",
-		Passes:          selected.Passes,
-		Invariants:      selected.Invariants,
-		ReviewScope:     reviewcli.SplitScope(opts.Values["review-scope"]),
-		ContextSections: selected.ContextSections,
-		ContextMaxBytes: selected.ContextMaxBytes,
-		MaxFindings:     reviewcli.PositiveOrDefault(reviewcli.PositiveInt(opts.Values["max-findings"]), selected.Dossier.MaxFindings),
-		MinAttackAngles: reviewcli.PositiveOrDefault(reviewcli.PositiveInt(opts.Values["min-attack-angles"]), selected.Dossier.MinAttackAngles),
-		ReviewDepth:     reviewcli.FirstNonEmpty(opts.Values["review-depth"], selected.Dossier.ReviewDepth),
-		RerunPolicy:     selected.Dossier.RerunPolicy,
-		ForceReview:     opts.Flags["force"],
-		ProviderName:    selected.ProviderName,
-		ProviderModel:   selected.ProviderModel,
-		PrintContext:    opts.Flags["print-context"],
-		HumanReviewed:   opts.Flags["human-reviewed"],
-		Reason:          opts.Values["reason"],
-	})
+	input := reviewcli.BuildInput(reviewcli.InputOptions{
+		TaskID: opts.Positionals[0], Mode: opts.Values["mode"], ReviewScope: opts.Values["review-scope"],
+		MaxFindings: opts.Values["max-findings"], MinAttackAngles: opts.Values["min-attack-angles"], ReviewDepth: opts.Values["review-depth"],
+		ForceReview: opts.Flags["force"], PrintContext: opts.Flags["print-context"], HumanReviewed: opts.Flags["human-reviewed"], Reason: opts.Values["reason"],
+	}, selected)
+	out, err := review.RunWithInput(ctx, store, sessions, git.Adapter{Root: root}, selected.Provider, clock.System{}, input)
 	if err != nil {
 		return failOut(stderr, err, ExitReview, opts.JSON)
 	}
@@ -396,6 +383,9 @@ func runStatus(ctx context.Context, args []string, stdout io.Writer, stderr io.W
 	out, err := status.Run(ctx, store, sessions, opts.Positionals[0], git.Adapter{Root: store.Root})
 	if err != nil {
 		return failOut(stderr, err, ExitGeneric, opts.JSON)
+	}
+	if opts.Flags["no-context"] {
+		out.SpecSource = nil
 	}
 	return okOut(stdout, "status", out, output.Status(out), opts.JSON)
 }
@@ -447,7 +437,7 @@ func runHandoff(ctx context.Context, args []string, stdout io.Writer, stderr io.
 	if err != nil {
 		return failOut(stderr, err, code, opts.JSON)
 	}
-	out, err := handoff.Run(ctx, store, sessions, opts.Positionals[0], git.Adapter{Root: store.Root})
+	out, err := handoff.RunWithOptions(ctx, store, sessions, opts.Positionals[0], handoff.Options{SuppressContext: opts.Flags["no-context"]}, git.Adapter{Root: store.Root})
 	if err != nil {
 		return failOut(stderr, err, ExitGeneric, opts.JSON)
 	}

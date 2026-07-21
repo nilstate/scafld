@@ -11,9 +11,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/nilstate/scafld/v2/internal/app/specsource"
+	"github.com/nilstate/scafld/v2/internal/core/agentcontract"
+	"github.com/nilstate/scafld/v2/internal/core/diagnostics"
 	"github.com/nilstate/scafld/v2/internal/core/gate"
 	coreharden "github.com/nilstate/scafld/v2/internal/core/harden"
-	coreprompts "github.com/nilstate/scafld/v2/internal/core/prompts"
 	"github.com/nilstate/scafld/v2/internal/core/reviewcontext"
 	"github.com/nilstate/scafld/v2/internal/core/spec"
 )
@@ -51,12 +53,15 @@ type Provider interface {
 
 // Input describes a hardening operation.
 type Input struct {
-	TaskID          string
-	MarkPassed      bool
-	Root            string
-	Prompt          string
-	Provider        Provider
-	ContextMaxBytes int
+	TaskID                  string
+	MarkPassed              bool
+	Root                    string
+	Prompt                  string
+	Contract                agentcontract.Contract
+	Provider                Provider
+	ContextMaxBytes         int
+	RequiredContextMaxBytes int
+	SuppressContext         bool
 }
 
 // Output describes the opened or completed hardening round.
@@ -68,6 +73,7 @@ type Output struct {
 	MarkedPassed bool              `json:"marked_passed"`
 	NextCommand  string            `json:"next_command"`
 	Prompt       string            `json:"prompt"`
+	Context      string            `json:"context,omitempty"`
 	Verdict      string            `json:"verdict,omitempty"`
 	Summary      string            `json:"summary,omitempty"`
 	Provider     string            `json:"provider,omitempty"`
@@ -83,10 +89,12 @@ func Run(ctx context.Context, store SpecStore, clock Clock, input Input) (Output
 	if clock == nil {
 		clock = systemClock{}
 	}
-	model, path, err := store.Load(ctx, input.TaskID)
+	source, err := specsource.Load(ctx, store, input.TaskID)
 	if err != nil {
 		return Output{}, err
 	}
+	model := source.Model
+	path := source.Path
 	if !specPathIsDraft(path) {
 		return Output{}, fmt.Errorf("%w: %s", ErrSpecNotDraft, path)
 	}
@@ -95,12 +103,12 @@ func Run(ctx context.Context, store SpecStore, clock Clock, input Input) (Output
 		return markPassed(ctx, store, path, model, now, input.Root)
 	}
 	if input.Provider != nil {
-		return runProviderHarden(ctx, store, input.Provider, path, model, now, input.Root, fallback(input.Prompt, coreprompts.Harden), input.ContextMaxBytes)
+		return runProviderHarden(ctx, store, input.Provider, path, model, now, input.Root, input.Contract, input.ContextMaxBytes, input.RequiredContextMaxBytes)
 	}
-	return openRound(ctx, store, path, model, now, fallback(input.Prompt, coreprompts.Harden))
+	return openRound(ctx, store, path, model, now, input.Contract, input.Prompt, input.ContextMaxBytes, input.RequiredContextMaxBytes, input.SuppressContext)
 }
 
-func runProviderHarden(ctx context.Context, store SpecStore, provider Provider, path string, model spec.Model, now string, root string, prompt string, contextMaxBytes int) (Output, error) {
+func runProviderHarden(ctx context.Context, store SpecStore, provider Provider, path string, model spec.Model, now string, root string, contract agentcontract.Contract, contextMaxBytes int, requiredContextMaxBytes int) (Output, error) {
 	roundID := nextRoundID(model.HardenRounds)
 	model.HardenStatus = spec.HardenInProgress
 	model.HardenRounds = append(model.HardenRounds, spec.HardenRound{
@@ -116,17 +124,31 @@ func runProviderHarden(ctx context.Context, store SpecStore, provider Provider, 
 	if err := store.Save(ctx, path, model); err != nil {
 		return Output{}, fmt.Errorf("save harden round: %w", err)
 	}
-	packet := hardenContextPacket(model, path, prompt)
-	rendered := reviewcontext.RenderMarkdown(packet, reviewcontext.Options{MaxBytes: contextMaxBytes, Title: "Harden Context Packet"})
+	source, err := specsource.Load(ctx, store, model.TaskID)
+	if err != nil {
+		return Output{}, err
+	}
+	model = source.Model
+	packet := hardenContextPacket(source, contract, providerHardenOutputSection())
+	rendered, err := reviewcontext.RenderMarkdownStrict(packet, reviewcontext.Options{MaxBytes: contextMaxBytes, RequiredMaxBytes: requiredContextMaxBytes, Title: "Harden Context Packet"})
+	if err != nil {
+		reason, diagnosticPath := diagnostics.FailureReason("provider harden context invalid", err, 240)
+		if closeErr := closeProviderHardenFailure(ctx, store, model.TaskID, roundID, now, reason, diagnosticPath); closeErr != nil {
+			return Output{}, errors.Join(err, fmt.Errorf("record provider harden failure: %w", closeErr))
+		}
+		return Output{}, err
+	}
 	dossier, err := provider.Invoke(ctx, coreharden.Request{TaskID: model.TaskID, Prompt: rendered, Context: packet})
 	if err != nil {
-		if closeErr := closeProviderHardenFailure(ctx, store, model.TaskID, roundID, now, "provider error: "+err.Error()); closeErr != nil {
+		reason, diagnosticPath := diagnostics.FailureReason("provider error", err, 240)
+		if closeErr := closeProviderHardenFailure(ctx, store, model.TaskID, roundID, now, reason, diagnosticPath); closeErr != nil {
 			return Output{}, errors.Join(err, fmt.Errorf("record provider harden failure: %w", closeErr))
 		}
 		return Output{}, err
 	}
 	if err := coreharden.ValidateDossier(dossier); err != nil {
-		if closeErr := closeProviderHardenFailure(ctx, store, model.TaskID, roundID, now, "invalid provider dossier: "+err.Error()); closeErr != nil {
+		reason, diagnosticPath := diagnostics.FailureReason("invalid provider dossier", err, 240)
+		if closeErr := closeProviderHardenFailure(ctx, store, model.TaskID, roundID, now, reason, diagnosticPath); closeErr != nil {
 			return Output{}, errors.Join(err, fmt.Errorf("record provider harden failure: %w", closeErr))
 		}
 		return Output{}, err
@@ -198,7 +220,7 @@ func runProviderHarden(ctx context.Context, store SpecStore, provider Provider, 
 	}, nil
 }
 
-func closeProviderHardenFailure(ctx context.Context, store SpecStore, taskID string, roundID string, now string, reason string) error {
+func closeProviderHardenFailure(ctx context.Context, store SpecStore, taskID string, roundID string, now string, reason string, diagnosticPath string) error {
 	model, path, err := store.Load(ctx, taskID)
 	if err != nil {
 		return err
@@ -210,6 +232,7 @@ func closeProviderHardenFailure(ctx context.Context, store SpecStore, taskID str
 	model.HardenRounds[latest].Status = string(spec.HardenError)
 	model.HardenRounds[latest].EndedAt = now
 	model.HardenRounds[latest].Summary = reason
+	model.HardenRounds[latest].DiagnosticPath = diagnosticPath
 	model.HardenStatus = spec.HardenError
 	model.Updated = now
 	model.CurrentState.Next = "harden"
@@ -219,7 +242,7 @@ func closeProviderHardenFailure(ctx context.Context, store SpecStore, taskID str
 	return store.Save(ctx, path, model)
 }
 
-func openRound(ctx context.Context, store SpecStore, path string, model spec.Model, now string, prompt string) (Output, error) {
+func openRound(ctx context.Context, store SpecStore, path string, model spec.Model, now string, contract agentcontract.Contract, prompt string, contextMaxBytes int, requiredContextMaxBytes int, suppressContext bool) (Output, error) {
 	roundID := nextRoundID(model.HardenRounds)
 	model.HardenStatus = spec.HardenInProgress
 	model.HardenRounds = append(model.HardenRounds, spec.HardenRound{
@@ -236,6 +259,15 @@ func openRound(ctx context.Context, store SpecStore, path string, model spec.Mod
 	if err := store.Save(ctx, path, model); err != nil {
 		return Output{}, fmt.Errorf("save harden round: %w", err)
 	}
+	renderedContext := ""
+	if !suppressContext {
+		source, err := specsource.Load(ctx, store, model.TaskID)
+		if err != nil {
+			return Output{}, err
+		}
+		packet := hardenContextPacket(source, contract, manualHardenOutputSection(markPassedCommand(model.TaskID)))
+		renderedContext = reviewcontext.RenderMarkdown(packet, reviewcontext.Options{MaxBytes: contextMaxBytes, RequiredMaxBytes: requiredContextMaxBytes, Title: "Harden Context Packet"})
+	}
 	return Output{
 		TaskID:       model.TaskID,
 		Path:         path,
@@ -243,6 +275,7 @@ func openRound(ctx context.Context, store SpecStore, path string, model spec.Mod
 		RoundID:      roundID,
 		NextCommand:  markPassedCommand(model.TaskID),
 		Prompt:       prompt,
+		Context:      renderedContext,
 	}, nil
 }
 
@@ -326,15 +359,26 @@ func roundFromDossier(round spec.HardenRound, dossier coreharden.Dossier, now st
 	round.Provider = dossier.Provider
 	round.Model = dossier.Model
 	round.OutputFormat = dossier.OutputFormat
+	round.Shape = spec.HardenShape{
+		Decision:          dossier.Shape.Decision,
+		TrueShape:         dossier.Shape.TrueShape,
+		MinimalPlan:       dossier.Shape.MinimalPlan,
+		SharedOwner:       dossier.Shape.SharedOwner,
+		AdapterBoundaries: append([]string(nil), dossier.Shape.AdapterBoundaries...),
+		RequiredSpecEdits: append([]string(nil), dossier.Shape.RequiredSpecEdits...),
+	}
 	round.Observations = make([]spec.HardenObservation, 0, len(dossier.Observations))
 	for _, observation := range dossier.Observations {
 		round.Observations = append(round.Observations, spec.HardenObservation{
-			Dimension: observation.Dimension,
-			Result:    observation.Result,
-			Anchor:    observation.Anchor,
-			Note:      observation.Note,
-			Default:   observation.Default,
-			Status:    observation.Status,
+			Dimension:    observation.Dimension,
+			Result:       observation.Result,
+			Anchor:       observation.Anchor,
+			Note:         observation.Note,
+			Question:     observation.Question,
+			Recommended:  observation.Recommended,
+			IfUnanswered: observation.IfUnanswered,
+			Default:      observation.Default,
+			Status:       observation.Status,
 		})
 	}
 	return round
@@ -342,6 +386,14 @@ func roundFromDossier(round spec.HardenRound, dossier coreharden.Dossier, now st
 
 func hardenBlockers(dossier coreharden.Dossier) string {
 	var blockers []string
+	if coreharden.ShapeRequiresRevision(dossier.Shape) {
+		if dossier.Shape.Decision != coreharden.DecisionKeep {
+			blockers = append(blockers, "shape decision requires revision: "+dossier.Shape.Decision)
+		}
+		if len(dossier.Shape.RequiredSpecEdits) > 0 {
+			blockers = append(blockers, fmt.Sprintf("%d required spec edit(s)", len(dossier.Shape.RequiredSpecEdits)))
+		}
+	}
 	for _, missing := range coreharden.MissingDimensions(dossier.Observations) {
 		blockers = append(blockers, "missing observation: "+missing)
 	}
@@ -382,7 +434,33 @@ func verifyHardenRoundShape(root string, model spec.Model, round spec.HardenRoun
 		root = "."
 	}
 	var warnings []string
+	warnings = append(warnings, verifyHardenShapeDecision(round.Shape, allowOpenBlocks)...)
 	warnings = append(warnings, verifyHardenObservations(root, model, round.Observations, allowOpenBlocks)...)
+	return warnings
+}
+
+func verifyHardenShapeDecision(shape spec.HardenShape, allowRevision bool) []string {
+	coreShape := coreharden.Shape{
+		Decision:          shape.Decision,
+		TrueShape:         shape.TrueShape,
+		MinimalPlan:       shape.MinimalPlan,
+		SharedOwner:       shape.SharedOwner,
+		AdapterBoundaries: append([]string(nil), shape.AdapterBoundaries...),
+		RequiredSpecEdits: append([]string(nil), shape.RequiredSpecEdits...),
+	}
+	var warnings []string
+	if err := coreharden.ValidateShape(coreShape); err != nil {
+		warnings = append(warnings, err.Error())
+		return warnings
+	}
+	if !allowRevision && coreharden.ShapeRequiresRevision(coreShape) {
+		if coreShape.Decision != coreharden.DecisionKeep {
+			warnings = append(warnings, "shape decision requires spec revision before harden can pass: "+coreShape.Decision)
+		}
+		if len(coreShape.RequiredSpecEdits) > 0 {
+			warnings = append(warnings, fmt.Sprintf("shape has %d required spec edit(s) before harden can pass", len(coreShape.RequiredSpecEdits)))
+		}
+	}
 	return warnings
 }
 

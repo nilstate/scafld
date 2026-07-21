@@ -6,8 +6,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/nilstate/scafld/v2/internal/app/specsource"
 	corecompletion "github.com/nilstate/scafld/v2/internal/core/completion"
 	corereview "github.com/nilstate/scafld/v2/internal/core/review"
+	"github.com/nilstate/scafld/v2/internal/core/reviewcontext"
 	"github.com/nilstate/scafld/v2/internal/core/reviewevidence"
 	"github.com/nilstate/scafld/v2/internal/core/reviewgate"
 	"github.com/nilstate/scafld/v2/internal/core/reviewmaterial"
@@ -34,12 +36,23 @@ type workspaceMaterialStatus interface {
 	MaterialSeal(context.Context, []string) (reviewevidence.MaterialSeal, error)
 }
 
+// Options configures handoff rendering.
+type Options struct {
+	SuppressContext bool
+}
+
 // Run renders the model-facing handoff for taskID.
 func Run(ctx context.Context, specs SpecStore, sessions SessionStore, taskID string, workspaces ...WorkspaceStatus) (string, error) {
-	model, _, err := specs.Load(ctx, taskID)
+	return RunWithOptions(ctx, specs, sessions, taskID, Options{}, workspaces...)
+}
+
+// RunWithOptions renders the model-facing handoff for taskID.
+func RunWithOptions(ctx context.Context, specs SpecStore, sessions SessionStore, taskID string, opts Options, workspaces ...WorkspaceStatus) (string, error) {
+	source, err := specsource.Load(ctx, specs, taskID)
 	if err != nil {
 		return "", err
 	}
+	model := source.Model
 	var ledger session.Session
 	var reviewState reviewgate.State
 	haveLedger := false
@@ -53,6 +66,9 @@ func Run(ctx context.Context, specs SpecStore, sessions SessionStore, taskID str
 	next := handoffNext(model, reviewState, haveLedger)
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Handoff: %s\n\nStatus: %s\nNext: %s\n", model.Title, model.Status, next)
+	if !opts.SuppressContext {
+		writeSourceSpec(&b, source)
+	}
 	if haveLedger {
 		writeTaskMaterial(ctx, &b, model, ledger, firstWorkspace(workspaces), reviewState.Authority)
 	}
@@ -66,6 +82,14 @@ func Run(ctx context.Context, specs SpecStore, sessions SessionStore, taskID str
 		writeLatestReviewFindings(&b, reviewState)
 	}
 	return b.String(), nil
+}
+
+func writeSourceSpec(b *strings.Builder, source spec.Source) {
+	provenance := reviewcontext.SourceForContent("file", source.Path, source.Markdown)
+	b.WriteString("\n## Source Spec Markdown\n\n")
+	fmt.Fprintf(b, "Source: `%s` sha256=%s bytes=%d\n\n", provenance.Path, provenance.SHA256, provenance.Bytes)
+	b.WriteString(strings.TrimSpace(string(source.Markdown)))
+	b.WriteString("\n")
 }
 
 func firstWorkspace(workspaces []WorkspaceStatus) WorkspaceStatus {

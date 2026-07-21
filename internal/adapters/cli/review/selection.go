@@ -10,12 +10,14 @@ import (
 	"strings"
 	"time"
 
+	contractloader "github.com/nilstate/scafld/v2/internal/adapters/cli/agentcontract"
 	"github.com/nilstate/scafld/v2/internal/adapters/cli/output"
 	"github.com/nilstate/scafld/v2/internal/adapters/cli/providerinfo"
 	configadapter "github.com/nilstate/scafld/v2/internal/adapters/config"
 	"github.com/nilstate/scafld/v2/internal/adapters/process"
 	"github.com/nilstate/scafld/v2/internal/adapters/providers"
 	appreview "github.com/nilstate/scafld/v2/internal/app/review"
+	corecontract "github.com/nilstate/scafld/v2/internal/core/agentcontract"
 	"github.com/nilstate/scafld/v2/internal/core/reviewcontext"
 )
 
@@ -34,14 +36,16 @@ type Options struct {
 
 // Selection is the provider and review agenda chosen for a review run.
 type Selection struct {
-	Provider        appreview.Provider
-	ProviderName    string
-	ProviderModel   string
-	Passes          []appreview.Pass
-	Invariants      map[string]string
-	ContextSections []reviewcontext.Section
-	ContextMaxBytes int
-	Dossier         configadapter.ReviewDossierConfig
+	Provider                appreview.Provider
+	ProviderName            string
+	ProviderModel           string
+	Passes                  []appreview.Pass
+	Invariants              map[string]string
+	ContextSections         []reviewcontext.Section
+	ContextMaxBytes         int
+	RequiredContextMaxBytes int
+	Contract                corecontract.Contract
+	Dossier                 configadapter.ReviewDossierConfig
 }
 
 // Select loads config, applies CLI overrides, and returns a review provider.
@@ -51,12 +55,18 @@ func Select(ctx context.Context, opts Options) (Selection, error) {
 		return Selection{}, output.ConfigGateError(fmt.Errorf("load config: %w", err))
 	}
 	contextSections := reviewContextSections(opts.Root, cfg.Review.Context)
+	contract, err := contractloader.Load(ctx, opts.Root, corecontract.RoleReview)
+	if err != nil {
+		return Selection{}, output.ConfigGateError(fmt.Errorf("load review contract: %w", err))
+	}
 	selection := Selection{
-		Passes:          reviewPassesFromConfig(cfg.Review),
-		Invariants:      cloneStrings(cfg.Invariants.Canonical),
-		ContextSections: contextSections,
-		ContextMaxBytes: cfg.Review.Context.MaxBytes,
-		Dossier:         cfg.Review.Dossier,
+		Passes:                  reviewPassesFromConfig(cfg.Review),
+		Invariants:              cloneStrings(cfg.Invariants.Canonical),
+		ContextSections:         contextSections,
+		ContextMaxBytes:         cfg.Review.Context.MaxBytes,
+		RequiredContextMaxBytes: cfg.Review.Context.RequiredMaxBytes,
+		Contract:                contract,
+		Dossier:                 cfg.Review.Dossier,
 	}
 	if opts.PrintContext {
 		return selection, nil
@@ -67,22 +77,24 @@ func Select(ctx context.Context, opts Options) (Selection, error) {
 		diagnosticsPath = opts.Root + "/.scafld/runs/" + opts.TaskID + "/diagnostics"
 	}
 	provider, err := providers.Select(providers.Selection{
-		Provider:       providerinfo.First(opts.Provider, external.Provider),
-		Command:        providerinfo.First(opts.Command, external.Command),
-		Binary:         providerinfo.First(opts.ProviderBinary, external.ProviderBinary),
-		Model:          opts.Model,
-		CodexModel:     external.Codex.Model,
-		ClaudeModel:    external.Claude.Model,
-		GeminiModel:    external.Gemini.Model,
-		CodexBinary:    external.Codex.Binary,
-		ClaudeBinary:   external.Claude.Binary,
-		GeminiBinary:   external.Gemini.Binary,
-		CWD:            opts.Root,
-		Runner:         process.Runner{DiagnosticsDir: diagnosticsPath, Progress: opts.Progress, ProgressLabel: progressLabel(opts, external)},
-		Timeout:        time.Duration(external.AbsoluteMaxSeconds) * time.Second,
-		Idle:           time.Duration(external.IdleTimeoutSeconds) * time.Second,
-		FallbackPolicy: external.FallbackPolicy,
-		HostAgent:      providers.DetectHostAgent(os.Environ()),
+		Provider:                  providerinfo.First(opts.Provider, external.Provider),
+		Command:                   providerinfo.First(opts.Command, external.Command),
+		Binary:                    providerinfo.First(opts.ProviderBinary, external.ProviderBinary),
+		Model:                     opts.Model,
+		CodexModel:                external.Codex.Model,
+		CodexModelReasoningEffort: external.Codex.ModelReasoningEffort,
+		ClaudeModel:               external.Claude.Model,
+		ClaudeEffort:              external.Claude.Effort,
+		GeminiModel:               external.Gemini.Model,
+		CodexBinary:               external.Codex.Binary,
+		ClaudeBinary:              external.Claude.Binary,
+		GeminiBinary:              external.Gemini.Binary,
+		CWD:                       opts.Root,
+		Runner:                    process.Runner{DiagnosticsDir: diagnosticsPath, Progress: opts.Progress, ProgressLabel: progressLabel(opts, external)},
+		Timeout:                   time.Duration(external.AbsoluteMaxSeconds) * time.Second,
+		Idle:                      time.Duration(external.IdleTimeoutSeconds) * time.Second,
+		FallbackPolicy:            external.FallbackPolicy,
+		HostAgent:                 providers.DetectHostAgent(os.Environ()),
 	})
 	if err != nil {
 		return Selection{}, output.ReviewProviderGateError(err)

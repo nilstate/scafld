@@ -53,20 +53,31 @@ func TestRoundTripPreservesLiterateSpecFields(t *testing.T) {
 	model.Origin = spec.Origin{CreatedBy: "test", Source: "golden"}
 	model.HardenStatus = spec.HardenInProgress
 	model.HardenRounds = []spec.HardenRound{{
-		ID:        "round-1",
-		Status:    string(spec.HardenInProgress),
-		StartedAt: "2026-05-04T00:00:00Z",
+		ID:             "round-1",
+		Status:         string(spec.HardenInProgress),
+		StartedAt:      "2026-05-04T00:00:00Z",
+		DiagnosticPath: "/tmp/scafld-harden-diagnostic.txt",
+		Shape: spec.HardenShape{
+			Decision:          "keep",
+			TrueShape:         "Markdown-first context gate.",
+			MinimalPlan:       "Add source context and keep adapters thin.",
+			SharedOwner:       "internal/core/reviewcontext",
+			AdapterBoundaries: []string{"CLI renders context", "providers consume context"},
+		},
 		Observations: []spec.HardenObservation{{
 			Dimension: "path",
 			Result:    "clean",
 			Anchor:    "spec_gap:Scope",
 			Note:      "Scope paths checked.",
 		}, {
-			Dimension: "rollback",
-			Result:    "advisory",
-			Anchor:    "spec_gap:Rollback",
-			Note:      "Rollback could name a recovery command.",
-			Default:   "Use the existing repair command.",
+			Dimension:    "rollback",
+			Result:       "advisory",
+			Anchor:       "spec_gap:Rollback",
+			Note:         "Rollback could name a recovery command.",
+			Question:     "What recovery command should be used?",
+			Recommended:  "Use the existing repair command.",
+			IfUnanswered: "Treat rollback as advisory only.",
+			Default:      "Use the existing repair command.",
 		}},
 	}}
 	model.Review = spec.ReviewState{Status: "completed", Verdict: corereview.VerdictFail, Mode: corereview.ModeDiscover, Provider: "claude", Model: "claude-test", OutputFormat: "claude.mcp_submit_review", Summary: "Review found an open blocker.", Findings: []corereview.Finding{{ID: "f1", Severity: corereview.SeverityHigh, BlocksCompletion: true, Location: &corereview.Location{Path: "file.go"}, Evidence: "bug", Impact: "test impact", Validation: "rerun test", Summary: "bug"}}}
@@ -97,8 +108,14 @@ func TestRoundTripPreservesLiterateSpecFields(t *testing.T) {
 	if got := parsed.HardenRounds[0].Observations[0]; got.Dimension != "path" || got.Result != "clean" || got.Anchor != "spec_gap:Scope" {
 		t.Fatalf("harden observation lost: %+v", got)
 	}
-	if got := parsed.HardenRounds[0].Observations[1]; got.Dimension != "rollback" || got.Result != "advisory" || got.Default == "" {
+	if got := parsed.HardenRounds[0].Observations[1]; got.Dimension != "rollback" || got.Result != "advisory" || got.Default == "" || got.Question == "" || got.Recommended == "" || got.IfUnanswered == "" {
 		t.Fatalf("harden advisory observation lost: %+v", got)
+	}
+	if parsed.HardenRounds[0].DiagnosticPath != "/tmp/scafld-harden-diagnostic.txt" {
+		t.Fatalf("harden diagnostic path lost: %+v", parsed.HardenRounds[0])
+	}
+	if got := parsed.HardenRounds[0].Shape; got.Decision != "keep" || got.SharedOwner != "internal/core/reviewcontext" || len(got.AdapterBoundaries) != 2 {
+		t.Fatalf("harden shape lost: %+v", got)
 	}
 	if got := parsed.Phases[0].Acceptance[0]; got.Evidence != "exit code was 0" || got.SourceEvent != "entry-1" {
 		t.Fatalf("criterion evidence lost: %+v", got)
@@ -157,6 +174,18 @@ func TestParseOnlyReadsCriteriaFromAcceptanceBlocks(t *testing.T) {
 	}
 	if len(parsed.Phases[0].Changes) != 1 || !strings.Contains(parsed.Phases[0].Changes[0], "not-phase-ac") {
 		t.Fatalf("phase change bullet lost: %+v", parsed.Phases[0].Changes)
+	}
+}
+
+func TestRenderOmitsEmptyTopLevelValidationBlock(t *testing.T) {
+	t.Parallel()
+
+	rendered := string(Render(fixtureModel()))
+	if strings.Contains(rendered, "## Acceptance\n\nProfile: standard\n\nValidation:\n- none") {
+		t.Fatalf("empty top-level validation block should not render:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "## Acceptance\n\nProfile: standard\n\n## Phase 1") {
+		t.Fatalf("top-level acceptance should only render profile when no global criteria:\n%s", rendered)
 	}
 }
 
@@ -260,6 +289,9 @@ func TestRenderRoundTripsHardenObservationSkeleton(t *testing.T) {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("rendered observation skeleton missing %q:\n%s", want, rendered)
 		}
+	}
+	if strings.Contains(rendered, "Required spec edits: none") {
+		t.Fatalf("in-progress harden scaffold should not seed required spec edits as none:\n%s", rendered)
 	}
 	parsed, err := Parse([]byte(rendered))
 	if err != nil {

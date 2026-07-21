@@ -28,21 +28,36 @@ func StrictDossierSchemaJSON() string {
 func dossierSchema(strict bool) schema {
 	root := strictObject(schema{
 		"summary":      schema{"type": "string", "minLength": 1},
+		"shape":        shapeSchema(strict),
 		"observations": schema{"type": "array", "minItems": len(RequiredDimensions), "items": observationSchema(strict)},
-	}, []string{"summary", "observations"}, strict)
+	}, []string{"summary", "shape", "observations"}, strict)
 	root["$schema"] = "https://json-schema.org/draft/2020-12/schema"
 	root["title"] = "scafld HardenDossier provider response"
 	return root
 }
 
+func shapeSchema(strict bool) schema {
+	return strictObject(schema{
+		"decision":            stringEnum(DecisionKeep, DecisionShrink, DecisionReframe, DecisionReject),
+		"true_shape":          schema{"type": "string", "minLength": 1},
+		"minimal_plan":        schema{"type": "string", "minLength": 1},
+		"shared_owner":        schema{"type": "string", "minLength": 1},
+		"adapter_boundaries":  schema{"type": "array", "items": schema{"type": "string", "minLength": 1}},
+		"required_spec_edits": schema{"type": "array", "items": schema{"type": "string"}},
+	}, []string{"decision", "true_shape", "minimal_plan", "shared_owner", "adapter_boundaries", "required_spec_edits"}, strict)
+}
+
 func observationSchema(strict bool) schema {
 	return strictObject(schema{
-		"dimension": stringEnum(RequiredDimensions...),
-		"result":    stringEnum(ResultClean, ResultAdvisory, ResultBlocks, ResultNotApplicable),
-		"anchor":    schema{"type": "string", "minLength": 1},
-		"note":      nullableString(),
-		"default":   nullableString(),
-		"status":    nullableStringEnum(StatusOpen, StatusFixed, StatusAcceptedRisk, StatusSuperseded),
+		"dimension":     stringEnum(RequiredDimensions...),
+		"result":        stringEnum(ResultClean, ResultAdvisory, ResultBlocks, ResultNotApplicable),
+		"anchor":        schema{"type": "string", "minLength": 1},
+		"note":          nullableString(),
+		"question":      nullableString(),
+		"recommended":   nullableString(),
+		"if_unanswered": nullableString(),
+		"default":       nullableString(),
+		"status":        nullableStringEnum(StatusOpen, StatusFixed, StatusAcceptedRisk, StatusSuperseded),
 	}, []string{"dimension", "result", "anchor"}, strict)
 }
 

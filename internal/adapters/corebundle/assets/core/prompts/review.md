@@ -47,21 +47,21 @@ Work through the applicable angles and record what you checked.
 Do not stop after the first defect; prioritize the highest-impact real findings
 within the requested budget.
 
-- **Correctness** — is the logic right on paper? off-by-one, wrong condition,
+- **Correctness** - is the logic right on paper? off-by-one, wrong condition,
   wrong operator, inverted boolean, wrong scope?
-- **Boundary** — what happens on empty input, null, zero, negatives,
+- **Boundary** - what happens on empty input, null, zero, negatives,
   duplicates, the first call, the second call, at scale?
-- **Error paths** — what happens on failure mid-operation? swallowed
+- **Error paths** - what happens on failure mid-operation? swallowed
   exceptions, partial state, unclear errors for the next human who hits them?
-- **State** — what is mutated? who else sees the mutation? concurrent
+- **State** - what is mutated? who else sees the mutation? concurrent
   callers? stale cache across requests?
-- **Contract drift** — does the diff deliver what the spec promised, or
+- **Contract drift** - does the diff deliver what the spec promised, or
   something spec-adjacent that technically passes the criteria?
-- **Testing gaps** — what behavior is not protected by a test? would the
+- **Testing gaps** - what behavior is not protected by a test? would the
   tests still pass if the code were subtly wrong?
-- **Regression risk** — who calls this? who depends on the output shape?
+- **Regression risk** - who calls this? who depends on the output shape?
   what breaks somewhere else because of this change?
-- **Convention drift** — does this match how the codebase already does
+- **Convention drift** - does this match how the codebase already does
   things, or introduce a parallel pattern that future readers will copy?
 
 ## Evidence Discipline
@@ -75,20 +75,28 @@ within the requested budget.
   the check is intentionally limited to tracked files
 - if a test is missing, say what behavior is unprotected and why it matters
 
-Required finding format:
+Findings are defects only, blocking or not. An improvement, preference,
+nice-to-have refactor, or cleaner shape is not a finding unless it identifies a
+concrete defect in the task result.
 
-- `- **high** \`path/file.py:88\` — the exact failure mode and why it matters`
-- use one of `critical`, `high`, `medium`, or `low`
-- do not write uncited bullets in adversarial sections, blocking, or non-blocking
-- if a section is clean, write one explicit line:
-  `No issues found — checked <specific files, callers, rules, or paths attacked>`
-- generic clean notes such as `checked everything` or `checked the diff` are
-  not evidence; name the concrete target you inspected
+Dossier field discipline:
+
+- `findings[].summary` names the defect, not a broad area.
+- `findings[].location` cites the most useful real file and line for the defect.
+- `findings[].evidence` explains the verified failure mode from code or recorded
+  evidence you actually inspected.
+- `findings[].impact` explains why the defect matters if shipped.
+- `findings[].validation` names the smallest command, test, or inspection that
+  would prove the defect fixed.
+- `attack_log` clean entries name the concrete target inspected and why the
+  attack held.
+- generic clean notes such as `checked everything` or `checked the diff` are not
+  evidence; name the concrete files, callers, rules, or paths attacked.
 
 A strong finding names the defect, cites the line, describes the failure,
 and ideally gives a reproducer:
 
-> `handlers/payment.py:88` — `charge_customer` is called without the
+> `handlers/payment.py:88` - `charge_customer` is called without the
 > idempotency guard that every other write path in this module uses (see
 > `handlers/refund.py:45`). If the client retries this request, the customer
 > is charged twice. No test covers retry behavior on this endpoint.
@@ -106,24 +114,8 @@ Do not file weak findings. Sharpen them into strong ones or drop them.
 1. Read the review prompt, spec contract, acceptance evidence, changed files,
    and the surrounding code the diff touches.
 2. Work the Attack Angles. For each, say what you checked and what you found.
-3. Call `submit_review` exactly once with the final ReviewDossier. Do not write
-   files, update scaffolds, or treat diagnostics as the primary finding surface.
-
-## Output Contract
-
-- call the `submit_review` tool exactly once with the final ReviewDossier
-- do not emit a final prose or JSON text response
-- `verdict` must be `pass` or `fail`
-- `mode` must be `discover` or `verify`
-- `summary` must explain the review result
-- `findings` must be an array of typed finding objects
-- `severity` must be `critical`, `high`, `medium`, or `low`
-- `blocks_completion` is a boolean gate decision independent from severity
-- completion-blocking findings require `location`, `evidence`, `impact`, and `validation`
-- `attack_log` must record the bounded attacks you actually performed
-- each `attack_log[].result` must be `finding`, `clean`, or `skipped`
-- `budget` should record actual finding and attack counts when known
-- do not modify code, specs, prompts, review files, or session files
+3. Record only grounded defects and bounded clean attacks. Do not write files,
+   update scaffolds, or treat diagnostics as the primary finding surface.
 
 ## Verdict Rules
 
@@ -133,4 +125,4 @@ Do not file weak findings. Sharpen them into strong ones or drop them.
 
 A clean review is allowed, but it must still explain the attack that was
 attempted and why it did not land. "Nothing found" without an attack record
-is not a clean review — it is a skipped review.
+is not a clean review - it is a skipped review.

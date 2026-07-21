@@ -26,10 +26,12 @@ func installProjectConfig(ctx context.Context, root string, result *Result) erro
 #   external:
 #     provider: "codex"
 #     codex:
-#       model: "gpt-5.5"
+#       model: "latest"
+#       model_reasoning_effort: "xhigh"
 #       # endpoint_host: "api.openai.com"
 #     claude:
 #       model: "opus"
+#       effort: "xhigh"
 #       # endpoint_host: "api.anthropic.com"
 #     gemini:
 #       # model: ""
@@ -38,10 +40,12 @@ func installProjectConfig(ctx context.Context, root string, result *Result) erro
 #   external:
 #     provider: "codex"
 #     codex:
-#       model: "gpt-5.5"
+#       model: "latest"
+#       model_reasoning_effort: "xhigh"
 #       # endpoint_host: "api.openai.com"
 #     claude:
 #       model: "opus"
+#       effort: "xhigh"
 #       # endpoint_host: "api.anthropic.com"
 #     gemini:
 #       # model: ""

@@ -27,6 +27,7 @@ review:
     absolute_max_seconds: 11
     codex:
       model: "gpt-config"
+      model_reasoning_effort: "xhigh"
       binary: "codex-config"
 invariants:
   canonical:
@@ -42,7 +43,7 @@ invariants:
 	if !ok {
 		t.Fatalf("provider = %T, want codex", selected.Provider)
 	}
-	if codex.Model != "gpt-config" || codex.Binary != "codex-config" || codex.Timeout.String() != "11s" || codex.IdleTimeout.String() != "7s" {
+	if codex.Model != "gpt-config" || codex.ModelReasoningEffort != "xhigh" || codex.Binary != "codex-config" || codex.Timeout.String() != "11s" || codex.IdleTimeout.String() != "7s" {
 		t.Fatalf("codex provider did not use config: %+v", codex)
 	}
 	if len(selected.Passes) == 0 {
@@ -103,6 +104,7 @@ review:
       binary: "codex-config"
     claude:
       model: "claude-config"
+      effort: "xhigh"
       binary: "claude-config"
 `), 0o644); err != nil {
 		t.Fatal(err)
@@ -116,7 +118,7 @@ review:
 	if !ok {
 		t.Fatalf("provider = %T, want claude opposite Codex host", selected.Provider)
 	}
-	if claude.Binary != "claude-config" || claude.Model != "claude-config" {
+	if claude.Binary != "claude-config" || claude.Model != "claude-config" || claude.Effort != "xhigh" {
 		t.Fatalf("claude provider did not use config: %+v", claude)
 	}
 	runner, ok := claude.Runner.(process.Runner)
@@ -188,6 +190,7 @@ func TestSelectPrintContextLoadsConfiguredFilesAndSkipsPrivateInputs(t *testing.
 review:
   context:
     max_bytes: 4096
+    required_max_bytes: 65536
     files:
       - AGENTS.md
       - AGENT-LINK.md
@@ -233,8 +236,11 @@ review:
 	if selected.Provider != nil {
 		t.Fatalf("print context should not select a provider: %T", selected.Provider)
 	}
-	if selected.ContextMaxBytes != 4096 {
-		t.Fatalf("context max bytes = %d", selected.ContextMaxBytes)
+	if selected.ContextMaxBytes != 4096 || selected.RequiredContextMaxBytes != 65536 {
+		t.Fatalf("context budgets = %d/%d", selected.ContextMaxBytes, selected.RequiredContextMaxBytes)
+	}
+	if selected.Contract.Role != "review" || !strings.Contains(selected.Contract.Body, "senior engineer who gets paged") {
+		t.Fatalf("review contract was not loaded: %+v", selected.Contract)
 	}
 	if len(selected.ContextSections) != 1 || selected.ContextSections[0].Title != "Project Context: AGENTS.md" || !strings.Contains(selected.ContextSections[0].Body, "agent contract") {
 		t.Fatalf("context sections = %+v", selected.ContextSections)

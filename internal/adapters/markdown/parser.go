@@ -362,6 +362,41 @@ func (p *parser) handleHardenLine(line string) bool {
 				p.hardenRound.Summary = value
 			}
 			return true
+		case "diagnostic", "diagnostic path":
+			if p.hardenRound != nil {
+				p.hardenRound.DiagnosticPath = noneToEmpty(value)
+			}
+			return true
+		case "shape decision":
+			if p.hardenRound != nil {
+				p.hardenRound.Shape.Decision = noneToEmpty(value)
+			}
+			return true
+		case "true shape":
+			if p.hardenRound != nil {
+				p.hardenRound.Shape.TrueShape = noneToEmpty(value)
+			}
+			return true
+		case "minimal plan":
+			if p.hardenRound != nil {
+				p.hardenRound.Shape.MinimalPlan = noneToEmpty(value)
+			}
+			return true
+		case "shared owner":
+			if p.hardenRound != nil {
+				p.hardenRound.Shape.SharedOwner = noneToEmpty(value)
+			}
+			return true
+		case "adapter boundaries":
+			if p.hardenRound != nil {
+				p.hardenRound.Shape.AdapterBoundaries = splitSemicolon(value)
+			}
+			return true
+		case "required spec edits":
+			if p.hardenRound != nil {
+				p.hardenRound.Shape.RequiredSpecEdits = splitSemicolon(value)
+			}
+			return true
 		case "observations":
 			p.hardenField = "observations"
 			p.hardenObservation = nil
@@ -447,6 +482,12 @@ func (p *parser) handleHardenDetail(value string) bool {
 			p.hardenObservation.Anchor = body
 		case "note":
 			p.hardenObservation.Note = body
+		case "question":
+			p.hardenObservation.Question = body
+		case "recommended answer", "recommended":
+			p.hardenObservation.Recommended = body
+		case "if unanswered":
+			p.hardenObservation.IfUnanswered = body
 		case "default":
 			p.hardenObservation.Default = body
 		case "status":
@@ -747,6 +788,21 @@ func splitCSV(value string) []string {
 	for _, part := range parts {
 		part = strings.TrimSpace(part)
 		if part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
+}
+
+func splitSemicolon(value string) []string {
+	if value == "" || value == "none" {
+		return nil
+	}
+	parts := strings.Split(value, ";")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" && part != "none" {
 			out = append(out, part)
 		}
 	}

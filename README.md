@@ -482,9 +482,11 @@ review:
   external:
     provider: "auto"
     codex:
-      model: "gpt-5.5"
+      model: "latest"
+      model_reasoning_effort: "xhigh"
     claude:
       model: "opus"
+      effort: "xhigh"
     gemini:
       # model: "" # empty uses Gemini CLI's configured default
   context:

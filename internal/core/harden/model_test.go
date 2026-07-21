@@ -17,6 +17,9 @@ func TestParseTextValidatesRequiredObservationsAndDerivedVerdict(t *testing.T) {
 	if got := VerdictFromDossier(dossier); got != VerdictPass || len(dossier.Observations) != len(RequiredDimensions) {
 		t.Fatalf("verdict=%s dossier=%+v", got, dossier)
 	}
+	if dossier.Shape.Decision != DecisionKeep {
+		t.Fatalf("shape decision = %+v", dossier.Shape)
+	}
 }
 
 func TestParseTextRejectsOldSelfReportedVerdictShape(t *testing.T) {
@@ -51,6 +54,48 @@ func TestParseTextDerivesNeedsRevisionFromOpenBlock(t *testing.T) {
 	}
 	if got := VerdictFromDossier(dossier); got != VerdictNeedsRevision {
 		t.Fatalf("verdict = %s", got)
+	}
+}
+
+func TestParseTextDerivesNeedsRevisionFromShapeDecision(t *testing.T) {
+	t.Parallel()
+
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(validDossierJSON()), &payload); err != nil {
+		t.Fatal(err)
+	}
+	shape := payload["shape"].(map[string]any)
+	shape["decision"] = "reframe"
+	shape["required_spec_edits"] = []any{"Move behavior to shared core before adapter work."}
+	data, _ := json.Marshal(payload)
+	dossier, err := ParseText(string(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := VerdictFromDossier(dossier); got != VerdictNeedsRevision {
+		t.Fatalf("verdict = %s", got)
+	}
+}
+
+func TestParseTextAllowsNoAdapterBoundariesForSingleSurfaceTask(t *testing.T) {
+	t.Parallel()
+
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(validDossierJSON()), &payload); err != nil {
+		t.Fatal(err)
+	}
+	shape := payload["shape"].(map[string]any)
+	shape["adapter_boundaries"] = []any{}
+	data, _ := json.Marshal(payload)
+	dossier, err := ParseText(string(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := VerdictFromDossier(dossier); got != VerdictPass {
+		t.Fatalf("verdict = %s", got)
+	}
+	if len(dossier.Shape.AdapterBoundaries) != 0 {
+		t.Fatalf("adapter boundaries = %+v, want empty", dossier.Shape.AdapterBoundaries)
 	}
 }
 
@@ -103,7 +148,7 @@ func TestRequiredDimensionsPrioritizeArchitecture(t *testing.T) {
 }
 
 func validDossierJSON() string {
-	return `{"summary":"clean","observations":[{"dimension":"design","result":"clean","anchor":"spec_gap:Summary"},{"dimension":"scope","result":"clean","anchor":"spec_gap:Scope"},{"dimension":"path","result":"clean","anchor":"spec_gap:Scope"},{"dimension":"command","result":"clean","anchor":"spec_gap:Acceptance"},{"dimension":"timing","result":"clean","anchor":"spec_gap:Phases"},{"dimension":"rollback","result":"n/a","anchor":"spec_gap:Rollback"}]}`
+	return `{"summary":"clean","shape":{"decision":"keep","true_shape":"Shared context renderer with thin adapters.","minimal_plan":"Load raw Markdown once and render it first in agent packets.","shared_owner":"internal/core/reviewcontext","adapter_boundaries":["harden/review consume shared context","CLI surfaces render or explicitly suppress context"],"required_spec_edits":[]},"observations":[{"dimension":"design","result":"clean","anchor":"spec_gap:Summary"},{"dimension":"scope","result":"clean","anchor":"spec_gap:Scope"},{"dimension":"path","result":"clean","anchor":"spec_gap:Scope"},{"dimension":"command","result":"clean","anchor":"spec_gap:Acceptance"},{"dimension":"timing","result":"clean","anchor":"spec_gap:Phases"},{"dimension":"rollback","result":"n/a","anchor":"spec_gap:Rollback"}]}`
 }
 
 func assertStrictStructuredOutputSchema(t *testing.T, path string, node map[string]any) {

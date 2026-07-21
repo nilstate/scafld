@@ -156,6 +156,27 @@ func TestStatusPrintsTaskMaterial(t *testing.T) {
 	}
 }
 
+func TestStatusPrintsSourceSpecMarkdown(t *testing.T) {
+	t.Parallel()
+
+	text := Status(appstatus.Output{
+		TaskID: "task",
+		Status: spec.StatusReview,
+		Next:   "scafld review task",
+		SpecSource: &appstatus.SpecSource{
+			Path:     "task.md",
+			SHA256:   "abc123",
+			Bytes:    18,
+			Markdown: "# Task\n\n## Summary",
+		},
+	})
+	for _, want := range []string{"## Source Spec Markdown", "Source: `task.md` sha256=abc123 bytes=18", "# Task"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("status output missing %q:\n%s", want, text)
+		}
+	}
+}
+
 func TestStatusPrintsCompletionAuthority(t *testing.T) {
 	t.Parallel()
 

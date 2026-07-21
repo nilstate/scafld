@@ -20,10 +20,11 @@ import (
 
 // Options describes the adapter packet requested by a provider wrapper.
 type Options struct {
-	Root     string
-	Provider string
-	Mode     string
-	TaskID   string
+	Root            string
+	Provider        string
+	Mode            string
+	TaskID          string
+	SuppressContext bool
 }
 
 // Output is the structured adapter packet result.
@@ -49,7 +50,7 @@ func Handler(invalid int, workspace int, generic int) func(context.Context, []st
 		if err != nil {
 			return fail(stderr, err, workspace, opts.json)
 		}
-		out, err := Run(ctx, Options{Root: root, Provider: opts.positionals[0], Mode: opts.positionals[1], TaskID: opts.positionals[2]})
+		out, err := Run(ctx, Options{Root: root, Provider: opts.positionals[0], Mode: opts.positionals[1], TaskID: opts.positionals[2], SuppressContext: opts.noContext})
 		if err != nil {
 			return fail(stderr, err, generic, opts.json)
 		}
@@ -84,7 +85,10 @@ func Run(ctx context.Context, opts Options) (Output, error) {
 	if err != nil {
 		return Output{}, err
 	}
-	handoffOut, err := handoff.Run(ctx, specs, sessions, taskID, git.Adapter{Root: root})
+	if opts.SuppressContext {
+		statusOut.SpecSource = nil
+	}
+	handoffOut, err := handoff.RunWithOptions(ctx, specs, sessions, taskID, handoff.Options{SuppressContext: opts.SuppressContext}, git.Adapter{Root: root})
 	if err != nil {
 		return Output{}, err
 	}
@@ -104,6 +108,7 @@ func Run(ctx context.Context, opts Options) (Output, error) {
 type cliOptions struct {
 	root        string
 	json        bool
+	noContext   bool
 	positionals []string
 }
 
@@ -114,6 +119,8 @@ func parseArgs(args []string) (cliOptions, error) {
 		switch {
 		case arg == "--json":
 			opts.json = true
+		case arg == "--no-context":
+			opts.noContext = true
 		case arg == "--root" && i+1 < len(args):
 			opts.root = args[i+1]
 			i++
@@ -185,7 +192,8 @@ func writeAction(b *strings.Builder, action appstatus.NextAction) {
 
 func writeContract(b *strings.Builder, out Output) {
 	fmt.Fprintf(b, "\n## Contract\n\n")
-	fmt.Fprintf(b, "- Treat `%s` as the source of truth before acting.\n", "scafld status --json "+out.TaskID)
+	b.WriteString("- Treat the embedded `Source Spec Markdown` section as the canonical task contract before acting.\n")
+	fmt.Fprintf(b, "- Treat `%s` as the structured lifecycle projection.\n", "scafld status --json "+out.TaskID)
 	b.WriteString("- Treat this packet and the handoff as transport only; durable state lives in the spec and session ledger.\n")
 	b.WriteString("- Follow the next-action command sequence exactly unless status changes.\n")
 	b.WriteString("- Do not infer lifecycle progress from prose or from an older packet.\n")

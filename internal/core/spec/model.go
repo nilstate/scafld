@@ -121,6 +121,13 @@ type Record struct {
 	Title  string `json:"title"`
 }
 
+// Source carries the parsed model and exact Markdown bytes it came from.
+type Source struct {
+	Model    Model  `json:"model"`
+	Path     string `json:"path"`
+	Markdown []byte `json:"-"`
+}
+
 // Phase describes a numbered execution phase and its evidence-derived state.
 type Phase struct {
 	ID             string          `json:"id"`
@@ -211,26 +218,42 @@ type Origin struct {
 
 // HardenRound records one pre-approval hardening pass.
 type HardenRound struct {
-	ID           string              `json:"id"`
-	Status       string              `json:"status"`
-	StartedAt    string              `json:"started_at"`
-	EndedAt      string              `json:"ended_at"`
-	Verdict      string              `json:"verdict,omitempty"`
-	Summary      string              `json:"summary,omitempty"`
-	Provider     string              `json:"provider,omitempty"`
-	Model        string              `json:"model,omitempty"`
-	OutputFormat string              `json:"output_format,omitempty"`
-	Observations []HardenObservation `json:"observations"`
+	ID             string              `json:"id"`
+	Status         string              `json:"status"`
+	StartedAt      string              `json:"started_at"`
+	EndedAt        string              `json:"ended_at"`
+	Verdict        string              `json:"verdict,omitempty"`
+	Summary        string              `json:"summary,omitempty"`
+	DiagnosticPath string              `json:"diagnostic_path,omitempty"`
+	Provider       string              `json:"provider,omitempty"`
+	Model          string              `json:"model,omitempty"`
+	OutputFormat   string              `json:"output_format,omitempty"`
+	Shape          HardenShape         `json:"shape,omitempty"`
+	Observations   []HardenObservation `json:"observations"`
+}
+
+// HardenShape records the harden gate's answer to whether the draft should
+// exist in its current form.
+type HardenShape struct {
+	Decision          string   `json:"decision,omitempty"`
+	TrueShape         string   `json:"true_shape,omitempty"`
+	MinimalPlan       string   `json:"minimal_plan,omitempty"`
+	SharedOwner       string   `json:"shared_owner,omitempty"`
+	AdapterBoundaries []string `json:"adapter_boundaries,omitempty"`
+	RequiredSpecEdits []string `json:"required_spec_edits,omitempty"`
 }
 
 // HardenObservation records one grounded hardening observation.
 type HardenObservation struct {
-	Dimension string `json:"dimension"`
-	Result    string `json:"result"`
-	Anchor    string `json:"anchor"`
-	Note      string `json:"note,omitempty"`
-	Default   string `json:"default,omitempty"`
-	Status    string `json:"status,omitempty"`
+	Dimension    string `json:"dimension"`
+	Result       string `json:"result"`
+	Anchor       string `json:"anchor"`
+	Note         string `json:"note,omitempty"`
+	Question     string `json:"question,omitempty"`
+	Recommended  string `json:"recommended,omitempty"`
+	IfUnanswered string `json:"if_unanswered,omitempty"`
+	Default      string `json:"default,omitempty"`
+	Status       string `json:"status,omitempty"`
 }
 
 // PlanningEvent records a timestamped planning log entry.

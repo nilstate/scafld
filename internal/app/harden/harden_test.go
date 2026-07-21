@@ -9,8 +9,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nilstate/scafld/v2/internal/core/agentcontract"
 	"github.com/nilstate/scafld/v2/internal/core/gate"
 	coreharden "github.com/nilstate/scafld/v2/internal/core/harden"
+	"github.com/nilstate/scafld/v2/internal/core/reviewcontext"
 	"github.com/nilstate/scafld/v2/internal/core/spec"
 )
 
@@ -30,6 +32,9 @@ func TestRunOpensHardenRound(t *testing.T) {
 	}
 	if out.Prompt != "prompt body" {
 		t.Fatalf("prompt = %q", out.Prompt)
+	}
+	if !strings.Contains(out.Context, "## Source Spec Markdown") || !strings.Contains(out.Context, "# Fixture task") {
+		t.Fatalf("context missing source markdown:\n%s", out.Context)
 	}
 	round := store.model.HardenRounds[0]
 	if len(round.Observations) != len(requiredHardenDimensions) {
@@ -64,7 +69,7 @@ func TestRunMarkPassedClosesLatestRound(t *testing.T) {
 	model.HardenStatus = spec.HardenInProgress
 	model.HardenRounds = []spec.HardenRound{
 		{ID: "round-1", Status: string(spec.HardenNeedsRevision)},
-		{ID: "round-2", Status: string(spec.HardenInProgress), Observations: passingObservations()},
+		{ID: "round-2", Status: string(spec.HardenInProgress), Shape: passingShape(), Observations: passingObservations()},
 	}
 	store := newMemorySpecStore(model)
 	out, err := Run(context.Background(), store, fixedClock{}, Input{TaskID: "fixture-task", MarkPassed: true})
@@ -116,6 +121,7 @@ func TestRunMarkPassedRejectsInvalidObservationAnchors(t *testing.T) {
 	model.HardenRounds = []spec.HardenRound{{
 		ID:           "round-1",
 		Status:       string(spec.HardenInProgress),
+		Shape:        passingShape(),
 		Observations: observations,
 	}}
 	store := newMemorySpecStore(model)
@@ -153,6 +159,7 @@ func TestRunMarkPassedRejectsUnknownSpecGapAnchor(t *testing.T) {
 	model.HardenRounds = []spec.HardenRound{{
 		ID:           "round-1",
 		Status:       string(spec.HardenInProgress),
+		Shape:        passingShape(),
 		Observations: observations,
 	}}
 	store := newMemorySpecStore(model)
@@ -173,6 +180,7 @@ func TestRunMarkPassedRejectsMissingObservations(t *testing.T) {
 	model.HardenRounds = []spec.HardenRound{{
 		ID:     "round-1",
 		Status: string(spec.HardenInProgress),
+		Shape:  passingShape(),
 	}}
 	store := newMemorySpecStore(model)
 	out, err := Run(context.Background(), store, fixedClock{}, Input{TaskID: "fixture-task", MarkPassed: true})
@@ -200,6 +208,7 @@ func TestRunMarkPassedRejectsOpenBlockingObservation(t *testing.T) {
 	model.HardenRounds = []spec.HardenRound{{
 		ID:           "round-1",
 		Status:       string(spec.HardenInProgress),
+		Shape:        passingShape(),
 		Observations: observations,
 	}}
 	store := newMemorySpecStore(model)
@@ -227,6 +236,7 @@ func TestRunMarkPassedAllowsAdvisoryObservation(t *testing.T) {
 	model.HardenRounds = []spec.HardenRound{{
 		ID:           "round-1",
 		Status:       string(spec.HardenInProgress),
+		Shape:        passingShape(),
 		Observations: observations,
 	}}
 	store := newMemorySpecStore(model)
@@ -258,6 +268,49 @@ func TestRunProviderHardenRecordsPassingDossier(t *testing.T) {
 	if round.Status != string(spec.HardenPassed) || round.Provider != "codex" || round.Model != "gpt-test" || round.Summary == "" || len(round.Observations) != 6 {
 		t.Fatalf("round = %+v", round)
 	}
+	if round.Shape.Decision != coreharden.DecisionKeep || round.Shape.TrueShape == "" {
+		t.Fatalf("shape not recorded: %+v", round.Shape)
+	}
+}
+
+func TestRunProviderHardenUsesProviderOutputContractOnly(t *testing.T) {
+	t.Parallel()
+
+	contract := testContract(t, agentcontract.RoleHarden, "# Harden Contract\n\nA clean result must say what was checked and what would have failed it.")
+	var prompt string
+	provider := fakeHardenProvider{
+		dossier:       passingHardenDossier(),
+		capturePrompt: &prompt,
+	}
+	store := newMemorySpecStore(fixtureModel())
+	if _, err := Run(context.Background(), store, fixedClock{}, Input{
+		TaskID:   "fixture-task",
+		Contract: contract,
+		Provider: provider,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"## Harden Contract", "what was checked", "## Provider Harden Output Contract", "submit_harden", "## Provider Instruction"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("provider prompt missing %q:\n%s", want, prompt)
+		}
+	}
+	if !manifestMarksRequired(prompt, "provider_instruction", "Provider Instruction") {
+		t.Fatalf("provider instruction was not marked required:\n%s", prompt)
+	}
+	if strings.Contains(prompt, "Manual Harden Output Contract") || strings.Contains(prompt, "--mark-passed") {
+		t.Fatalf("provider prompt includes manual output contract:\n%s", prompt)
+	}
+}
+
+func manifestMarksRequired(prompt string, key string, title string) bool {
+	needle := "`" + key + "` (" + title + ")"
+	for _, line := range strings.Split(prompt, "\n") {
+		if strings.Contains(line, needle) && strings.Contains(line, "required=true") {
+			return true
+		}
+	}
+	return false
 }
 
 func TestRunProviderHardenRecordsNeedsRevision(t *testing.T) {
@@ -288,6 +341,28 @@ func TestRunProviderHardenRecordsNeedsRevision(t *testing.T) {
 		t.Fatalf("round = %+v", round)
 	}
 	if !strings.Contains(store.model.CurrentState.Blockers, "unresolved blocking observation") || !strings.Contains(store.model.CurrentState.AllowedFollowUp, "--provider <provider>") {
+		t.Fatalf("current state = %+v", store.model.CurrentState)
+	}
+}
+
+func TestRunProviderHardenShapeDecisionRequiresRevision(t *testing.T) {
+	t.Parallel()
+
+	dossier := passingHardenDossier()
+	dossier.Shape.Decision = coreharden.DecisionShrink
+	dossier.Shape.RequiredSpecEdits = []string{"Remove adapter-specific duplication before approval."}
+	store := newMemorySpecStore(fixtureModel())
+	out, err := Run(context.Background(), store, fixedClock{}, Input{
+		TaskID:   "fixture-task",
+		Provider: fakeHardenProvider{dossier: dossier},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.HardenStatus != spec.HardenNeedsRevision || out.Verdict != coreharden.VerdictNeedsRevision {
+		t.Fatalf("output = %+v", out)
+	}
+	if !strings.Contains(store.model.CurrentState.Blockers, "shape decision requires revision") || !strings.Contains(store.model.CurrentState.Blockers, "required spec edit") {
 		t.Fatalf("current state = %+v", store.model.CurrentState)
 	}
 }
@@ -383,6 +458,63 @@ func TestRunProviderHardenClosesRoundOnProviderError(t *testing.T) {
 	}
 }
 
+func TestRunProviderHardenCompactsProviderDiagnosticsInSpec(t *testing.T) {
+	t.Parallel()
+
+	store := newMemorySpecStore(fixtureModel())
+	err := hardenDiagnosticErr{
+		message: "provider failed: process idle timeout:\n" + strings.Repeat("WARN plugin loader noise\n", 40),
+		path:    "/tmp/scafld-diagnostic.txt",
+	}
+	_, runErr := Run(context.Background(), store, fixedClock{}, Input{
+		TaskID:   "fixture-task",
+		Provider: fakeHardenProvider{err: err},
+	})
+	if runErr == nil {
+		t.Fatal("expected provider error")
+	}
+	round := store.model.HardenRounds[0]
+	if strings.Contains(round.Summary, "\n") || len(round.Summary) > 340 {
+		t.Fatalf("summary should be compact one-line text, got %d bytes:\n%s", len(round.Summary), round.Summary)
+	}
+	if round.DiagnosticPath != err.path {
+		t.Fatalf("diagnostic path = %q, want %q", round.DiagnosticPath, err.path)
+	}
+	if !strings.Contains(round.Summary, "process idle timeout") || !strings.Contains(round.Summary, err.path) {
+		t.Fatalf("summary lost cause or diagnostic path: %s", round.Summary)
+	}
+	if store.model.CurrentState.Blockers != round.Summary {
+		t.Fatalf("current blockers should use compact summary: %+v", store.model.CurrentState)
+	}
+}
+
+func TestRunProviderHardenRejectsOversizedRequiredContextBeforeProvider(t *testing.T) {
+	t.Parallel()
+
+	store := newMemorySpecStore(fixtureModel())
+	store.sourceMarkdown = []byte("abcdef")
+	providerCalled := false
+	_, err := Run(context.Background(), store, fixedClock{}, Input{
+		TaskID:                  "fixture-task",
+		Provider:                fakeHardenProvider{dossier: passingHardenDossier(), called: &providerCalled},
+		ContextMaxBytes:         3,
+		RequiredContextMaxBytes: 3,
+	})
+	if !errors.Is(err, reviewcontext.ErrRequiredContextTooLarge) {
+		t.Fatalf("error = %v, want %v", err, reviewcontext.ErrRequiredContextTooLarge)
+	}
+	if providerCalled {
+		t.Fatal("provider was invoked despite oversized required context")
+	}
+	if store.model.HardenStatus != spec.HardenError {
+		t.Fatalf("harden status = %s", store.model.HardenStatus)
+	}
+	round := store.model.HardenRounds[0]
+	if round.Status != string(spec.HardenError) || round.EndedAt == "" || !strings.Contains(round.Summary, "provider harden context invalid") {
+		t.Fatalf("round = %+v", round)
+	}
+}
+
 func TestRunProviderHardenClosesRoundOnInvalidDossier(t *testing.T) {
 	t.Parallel()
 
@@ -433,10 +565,21 @@ func passingObservations() []spec.HardenObservation {
 	}
 }
 
+func passingShape() spec.HardenShape {
+	return spec.HardenShape{
+		Decision:          coreharden.DecisionKeep,
+		TrueShape:         "Shared context renderer with thin adapters.",
+		MinimalPlan:       "Render raw Markdown first and keep derived sections secondary.",
+		SharedOwner:       "internal/core/reviewcontext",
+		AdapterBoundaries: []string{"harden and review build provider packets", "CLI surfaces print context by default"},
+	}
+}
+
 type memorySpecStore struct {
-	model spec.Model
-	path  string
-	saves int
+	model          spec.Model
+	path           string
+	sourceMarkdown []byte
+	saves          int
 
 	failSaveAt int
 	saveErr    error
@@ -448,6 +591,14 @@ func newMemorySpecStore(model spec.Model) *memorySpecStore {
 
 func (s *memorySpecStore) Load(context.Context, string) (spec.Model, string, error) {
 	return s.model, s.path, nil
+}
+
+func (s *memorySpecStore) LoadSource(context.Context, string) (spec.Source, error) {
+	markdown := s.sourceMarkdown
+	if markdown == nil {
+		markdown = []byte("# " + s.model.Title + "\n\n## Summary\n\n" + s.model.Summary + "\n")
+	}
+	return spec.Source{Model: s.model, Path: s.path, Markdown: markdown}, nil
 }
 
 func (s *memorySpecStore) Save(_ context.Context, path string, model spec.Model) error {
@@ -467,13 +618,33 @@ func (fixedClock) Now() time.Time {
 }
 
 type fakeHardenProvider struct {
-	dossier coreharden.Dossier
-	err     error
+	dossier       coreharden.Dossier
+	err           error
+	called        *bool
+	capturePrompt *string
 }
 
+type hardenDiagnosticErr struct {
+	message string
+	path    string
+}
+
+func (e hardenDiagnosticErr) Error() string { return e.message }
+
+func (e hardenDiagnosticErr) DiagnosticPath() string { return e.path }
+
 func (p fakeHardenProvider) Invoke(_ context.Context, req coreharden.Request) (coreharden.Dossier, error) {
+	if p.called != nil {
+		*p.called = true
+	}
+	if p.capturePrompt != nil {
+		*p.capturePrompt = req.Prompt
+	}
 	if !strings.Contains(req.Prompt, "Harden Context Packet") && !strings.Contains(req.Prompt, "Review Context Packet") {
 		return coreharden.Dossier{}, errors.New("missing harden context")
+	}
+	if !strings.Contains(req.Prompt, "## Source Spec Markdown") {
+		return coreharden.Dossier{}, errors.New("missing source spec markdown")
 	}
 	if p.err != nil {
 		return coreharden.Dossier{}, p.err
@@ -481,10 +652,26 @@ func (p fakeHardenProvider) Invoke(_ context.Context, req coreharden.Request) (c
 	return p.dossier, nil
 }
 
+func testContract(t *testing.T, role agentcontract.Role, body string) agentcontract.Contract {
+	t.Helper()
+	contract, err := agentcontract.New(role, ".scafld/core/prompts/"+role.Filename(), []byte(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return contract
+}
+
 func passingHardenDossier() coreharden.Dossier {
 	observations := passingObservations()
 	out := coreharden.Dossier{
-		Summary:      "The draft is scoped and ready for approval.",
+		Summary: "The draft is scoped and ready for approval.",
+		Shape: coreharden.Shape{
+			Decision:          coreharden.DecisionKeep,
+			TrueShape:         "Shared context renderer with thin adapters.",
+			MinimalPlan:       "Render raw Markdown first and keep derived sections secondary.",
+			SharedOwner:       "internal/core/reviewcontext",
+			AdapterBoundaries: []string{"harden and review build provider packets", "CLI surfaces print context by default"},
+		},
 		Provider:     "codex",
 		Model:        "gpt-test",
 		OutputFormat: "codex.output_file",

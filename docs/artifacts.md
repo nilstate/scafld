@@ -57,7 +57,7 @@ Started: 2026-05-13T00:10:00Z
 Ended: 2026-05-13T00:18:00Z
 Verdict: pass
 Provider: codex
-Model: gpt-5.5
+Model: observed-provider-model
 Output format: codex.output_file
 Summary: The draft contract survived design, scope, path, command, timing, and rollback challenge observations.
 

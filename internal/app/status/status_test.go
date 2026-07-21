@@ -18,6 +18,10 @@ func (f fakeSpecStore) Load(context.Context, string) (spec.Model, string, error)
 	return f.model, "task.md", nil
 }
 
+func (f fakeSpecStore) LoadSource(context.Context, string) (spec.Source, error) {
+	return spec.Source{Model: f.model, Path: "task.md", Markdown: []byte("# " + f.model.Title + "\n\n## Summary\n\n" + f.model.Summary + "\n")}, nil
+}
+
 type fakeSessionStore struct{ ledger session.Session }
 
 func (f fakeSessionStore) Load(context.Context, string) (session.Session, error) {
@@ -76,6 +80,9 @@ func TestStatusIncludesLatestReviewFindings(t *testing.T) {
 	}
 	if out.Review.Verdict != corereview.VerdictFail || len(out.Review.Findings) != 1 || out.Review.Findings[0].Summary != "bug" {
 		t.Fatalf("review info = %+v", out.Review)
+	}
+	if out.SpecSource == nil || out.SpecSource.Path != "task.md" || out.SpecSource.Markdown == "" || out.SpecSource.SHA256 == "" {
+		t.Fatalf("spec source missing: %+v", out.SpecSource)
 	}
 }
 

@@ -15,6 +15,9 @@ A good plan:
 - defines acceptance criteria that can actually prove success
 - keeps phases small enough to challenge at review
 - records assumptions instead of hiding them
+- has no placeholder phase titles, objectives, or changes such as
+  "Implementation", "Complete the requested change", or "Implement the
+  requested behavior"
 
 ## Working Rules
 
@@ -39,6 +42,8 @@ Before you consider the plan done, make sure:
 - the scope is explicit
 - the phase list tells one coherent story
 - every phase has acceptance criteria
+- standard and deep profiles include at least one criterion that exercises the
+  built behavior end to end, not only package-level unit tests
 - rollback intent is stated
 - the review gate will have enough evidence to attack the result later
 

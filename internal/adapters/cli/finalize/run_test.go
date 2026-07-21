@@ -406,8 +406,8 @@ func TestSelectReviewerRespectsExplicitProvider(t *testing.T) {
 	}
 	cfg := configadapter.Config{Review: configadapter.ReviewConfig{External: configadapter.ExternalReviewConfig{
 		Provider: "codex",
-		Codex:    configadapter.ProviderConfig{Binary: codex},
-		Claude:   configadapter.ProviderConfig{Binary: claude},
+		Codex:    configadapter.CodexProviderConfig{ProviderConfig: configadapter.ProviderConfig{Binary: codex}},
+		Claude:   configadapter.ClaudeProviderConfig{ProviderConfig: configadapter.ProviderConfig{Binary: claude}},
 	}}}
 
 	_, runtime, err := selectReviewerWithEnv(cfg, ".", "codex", process.Runner{}, []string{
@@ -431,7 +431,7 @@ func TestSelectReviewerUsesEffectiveExecutionEnvForInvocation(t *testing.T) {
 		Execution: configadapter.ExecutionConfig{Env: map[string]string{"OPENAI_API_KEY": "configured-test-key"}},
 		Review: configadapter.ReviewConfig{External: configadapter.ExternalReviewConfig{
 			Provider: "codex",
-			Codex:    configadapter.ProviderConfig{Binary: bin},
+			Codex:    configadapter.CodexProviderConfig{ProviderConfig: configadapter.ProviderConfig{Binary: bin}},
 		}},
 	}
 	reviewerEnv := effectiveFinalizeReviewerEnv(cfg, ".", []string{"PATH=/bin"})
@@ -470,7 +470,7 @@ func TestSelectReviewerAcceptsConfiguredAbsoluteBinary(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := configadapter.Config{Review: configadapter.ReviewConfig{External: configadapter.ExternalReviewConfig{
-		Codex: configadapter.ProviderConfig{Binary: bin},
+		Codex: configadapter.CodexProviderConfig{ProviderConfig: configadapter.ProviderConfig{Binary: bin}},
 	}}}
 	_, runtime, err := selectReviewer(cfg, ".", "claude", process.Runner{})
 	if err != nil {
@@ -510,7 +510,7 @@ func TestSelectReviewerEnvDoesNotOverrideConfiguredBinary(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := configadapter.Config{Review: configadapter.ReviewConfig{External: configadapter.ExternalReviewConfig{
-		Codex: configadapter.ProviderConfig{Binary: configured, Model: "configured-model"},
+		Codex: configadapter.CodexProviderConfig{ProviderConfig: configadapter.ProviderConfig{Binary: configured, Model: "configured-model"}},
 	}}}
 
 	_, runtime, err := selectReviewerWithEnv(cfg, ".", "claude", process.Runner{}, []string{

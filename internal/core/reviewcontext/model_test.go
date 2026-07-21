@@ -1,6 +1,7 @@
 package reviewcontext
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -93,5 +94,66 @@ func TestRenderMarkdownListsOmittedSectionsWithSources(t *testing.T) {
 	}
 	if strings.Contains(got, "## Second") {
 		t.Fatalf("omitted section body rendered despite exhausted budget:\n%s", got)
+	}
+}
+
+func TestRenderMarkdownRequiredSectionDoesNotConsumeBudget(t *testing.T) {
+	t.Parallel()
+
+	got := RenderMarkdown(Packet{TaskID: "task", Sections: []Section{
+		SourceMarkdownSection("source_spec_markdown", "Source Spec Markdown", 5, "task.md", []byte("# Task\n\nfull contract")),
+		{Key: "derived", Title: "Derived", Order: 10, Body: "abc"},
+	}}, Options{MaxBytes: 2})
+	if !strings.Contains(got, "# Task\n\nfull contract") {
+		t.Fatalf("required source section was not rendered:\n%s", got)
+	}
+	if !strings.Contains(got, "ab") || strings.Contains(got, "abc\n") {
+		t.Fatalf("discretionary budget was not applied to derived section:\n%s", got)
+	}
+	if !strings.Contains(got, "`source_spec_markdown` (Source Spec Markdown):") || !strings.Contains(got, "required=true") {
+		t.Fatalf("required section was not identified in manifest:\n%s", got)
+	}
+}
+
+func TestRenderMarkdownStrictRejectsOversizedRequiredSection(t *testing.T) {
+	t.Parallel()
+
+	packet := Packet{TaskID: "task", Sections: []Section{
+		SourceMarkdownSection("source_spec_markdown", "Source Spec Markdown", 5, "task.md", []byte("abcdef")),
+		{Key: "derived", Title: "Derived", Order: 10, Body: "xy"},
+	}}
+	if got := RenderMarkdown(packet, Options{MaxBytes: 3}); !strings.Contains(got, "abcdef") {
+		t.Fatalf("non-strict rendering should keep human context visible:\n%s", got)
+	}
+	_, err := RenderMarkdownStrict(packet, Options{MaxBytes: 3, RequiredMaxBytes: 3})
+	if !errors.Is(err, ErrRequiredContextTooLarge) {
+		t.Fatalf("error = %v, want %v", err, ErrRequiredContextTooLarge)
+	}
+	for _, want := range []string{"required section body bytes 6 exceed max 3", "Source Spec Markdown=6"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error missing %q: %v", want, err)
+		}
+	}
+}
+
+func TestRenderMarkdownStrictSplitsRequiredAndDiscretionaryBudgets(t *testing.T) {
+	t.Parallel()
+
+	packet := Packet{TaskID: "task", Sections: []Section{
+		SourceMarkdownSection("source_spec_markdown", "Source Spec Markdown", 5, "task.md", []byte("abcdef")),
+		{Key: "derived", Title: "Derived", Order: 10, Body: "xyz"},
+	}}
+	got, err := RenderMarkdownStrict(packet, Options{MaxBytes: 2, RequiredMaxBytes: 6})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, "abcdef") {
+		t.Fatalf("required source was not rendered in full:\n%s", got)
+	}
+	if !strings.Contains(got, "xy") || strings.Contains(got, "xyz\n") {
+		t.Fatalf("discretionary section was not independently truncated:\n%s", got)
+	}
+	if !strings.Contains(got, "Max required section body bytes: 6") || !strings.Contains(got, "Max discretionary section body bytes: 2") {
+		t.Fatalf("manifest missing split budgets:\n%s", got)
 	}
 }

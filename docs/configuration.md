@@ -248,10 +248,12 @@ review:
     absolute_max_seconds: 1800
     fallback_policy: "disable"    # fail closed instead of using the host agent
     codex:
-      model: "gpt-5.5"
+      model: "latest"             # omit -m so Codex CLI uses its current default
+      model_reasoning_effort: "xhigh"
       binary: "codex"
     claude:
       model: "opus"
+      effort: "xhigh"
       binary: "claude"
     gemini:
       # model: ""                 # empty uses Gemini CLI's configured default

@@ -14,15 +14,23 @@ import (
 )
 
 const (
-	// DefaultCodexModel names the current strongest Codex CLI model available
-	// under ChatGPT auth. The Codex-specific API models are not always exposed
-	// through that auth path.
-	DefaultCodexModel = "gpt-5.5"
+	// DefaultCodexModel is empty by design: scafld omits -m for the "latest"
+	// Codex model path so Codex CLI can use its own current default.
+	DefaultCodexModel = ""
+	// DefaultCodexModelReasoningEffort keeps governed review/harden runs from
+	// inheriting a medium-effort CLI default after user config is isolated.
+	DefaultCodexModelReasoningEffort = "xhigh"
 	// DefaultClaudeModel uses Claude Code's rolling latest-Opus alias.
 	DefaultClaudeModel = "opus"
+	// DefaultClaudeEffort uses Claude Code's native effort control for governed
+	// review/harden runs.
+	DefaultClaudeEffort = "xhigh"
 )
 
 var legacyCodexDefaultModels = map[string]string{
+	"latest":        DefaultCodexModel,
+	"current":       DefaultCodexModel,
+	"default":       DefaultCodexModel,
 	"gpt-5.5":       DefaultCodexModel,
 	"gpt-5-codex":   DefaultCodexModel,
 	"gpt-5.2-codex": DefaultCodexModel,
@@ -79,9 +87,10 @@ type VerifyConfig struct {
 
 // HardenConfig controls hardening prompt behavior.
 type HardenConfig struct {
-	MaxIssuesPerRound int                  `yaml:"max_issues_per_round"`
-	ContextMaxBytes   int                  `yaml:"context_max_bytes"`
-	External          ExternalReviewConfig `yaml:"external"`
+	MaxIssuesPerRound       int                  `yaml:"max_issues_per_round"`
+	ContextMaxBytes         int                  `yaml:"context_max_bytes"`
+	RequiredContextMaxBytes int                  `yaml:"required_context_max_bytes"`
+	External                ExternalReviewConfig `yaml:"external"`
 }
 
 // ReviewConfig controls automated and adversarial review behavior.
@@ -103,21 +112,38 @@ type ReviewDossierConfig struct {
 
 // ReviewContextConfig controls bounded project context sent to reviewers.
 type ReviewContextConfig struct {
-	MaxBytes int      `yaml:"max_bytes"`
-	Files    []string `yaml:"files"`
+	MaxBytes         int      `yaml:"max_bytes"`
+	RequiredMaxBytes int      `yaml:"required_max_bytes"`
+	Files            []string `yaml:"files"`
 }
 
 // ExternalReviewConfig configures external model-provider review execution.
 type ExternalReviewConfig struct {
-	Provider           string         `yaml:"provider"`
-	Command            string         `yaml:"command"`
-	ProviderBinary     string         `yaml:"provider_binary"`
-	IdleTimeoutSeconds int            `yaml:"idle_timeout_seconds"`
-	AbsoluteMaxSeconds int            `yaml:"absolute_max_seconds"`
-	FallbackPolicy     string         `yaml:"fallback_policy"`
-	Codex              ProviderConfig `yaml:"codex"`
-	Claude             ProviderConfig `yaml:"claude"`
-	Gemini             ProviderConfig `yaml:"gemini"`
+	Provider           string               `yaml:"provider"`
+	Command            string               `yaml:"command"`
+	ProviderBinary     string               `yaml:"provider_binary"`
+	IdleTimeoutSeconds int                  `yaml:"idle_timeout_seconds"`
+	AbsoluteMaxSeconds int                  `yaml:"absolute_max_seconds"`
+	FallbackPolicy     string               `yaml:"fallback_policy"`
+	Codex              CodexProviderConfig  `yaml:"codex"`
+	Claude             ClaudeProviderConfig `yaml:"claude"`
+	Gemini             ProviderConfig       `yaml:"gemini"`
+}
+
+// CodexProviderConfig configures the Codex CLI adapter. ModelReasoningEffort is
+// intentionally Codex-specific; other provider thinking controls need their own
+// verified adapter fields before scafld exposes them.
+type CodexProviderConfig struct {
+	ProviderConfig `yaml:",inline"`
+
+	ModelReasoningEffort string `yaml:"model_reasoning_effort"`
+}
+
+// ClaudeProviderConfig configures the Claude Code adapter.
+type ClaudeProviderConfig struct {
+	ProviderConfig `yaml:",inline"`
+
+	Effort string `yaml:"effort"`
 }
 
 // ProviderConfig configures a named external provider implementation.
@@ -262,15 +288,22 @@ func Default() Config {
 			Policy:          "local",
 		},
 		Harden: HardenConfig{
-			MaxIssuesPerRound: 8,
-			ContextMaxBytes:   16384,
+			MaxIssuesPerRound:       8,
+			ContextMaxBytes:         16384,
+			RequiredContextMaxBytes: 131072,
 			External: ExternalReviewConfig{
 				IdleTimeoutSeconds: 180,
 				AbsoluteMaxSeconds: 1800,
 				FallbackPolicy:     "disable",
-				Codex:              ProviderConfig{Model: DefaultCodexModel},
-				Claude:             ProviderConfig{Model: DefaultClaudeModel},
-				Gemini:             ProviderConfig{},
+				Codex: CodexProviderConfig{
+					ProviderConfig:       ProviderConfig{Model: DefaultCodexModel},
+					ModelReasoningEffort: DefaultCodexModelReasoningEffort,
+				},
+				Claude: ClaudeProviderConfig{
+					ProviderConfig: ProviderConfig{Model: DefaultClaudeModel},
+					Effort:         DefaultClaudeEffort,
+				},
+				Gemini: ProviderConfig{},
 			},
 		},
 		Review: ReviewConfig{
@@ -279,12 +312,19 @@ func Default() Config {
 				IdleTimeoutSeconds: 180,
 				AbsoluteMaxSeconds: 1800,
 				FallbackPolicy:     "disable",
-				Codex:              ProviderConfig{Model: DefaultCodexModel},
-				Claude:             ProviderConfig{Model: DefaultClaudeModel},
-				Gemini:             ProviderConfig{},
+				Codex: CodexProviderConfig{
+					ProviderConfig:       ProviderConfig{Model: DefaultCodexModel},
+					ModelReasoningEffort: DefaultCodexModelReasoningEffort,
+				},
+				Claude: ClaudeProviderConfig{
+					ProviderConfig: ProviderConfig{Model: DefaultClaudeModel},
+					Effort:         DefaultClaudeEffort,
+				},
+				Gemini: ProviderConfig{},
 			},
 			Context: ReviewContextConfig{
-				MaxBytes: 16384,
+				MaxBytes:         16384,
+				RequiredMaxBytes: 131072,
 				Files: []string{
 					"AGENTS.md",
 					"CLAUDE.md",
@@ -331,6 +371,9 @@ func overlay(base Config, local Config) Config {
 	if local.Harden.ContextMaxBytes > 0 {
 		base.Harden.ContextMaxBytes = local.Harden.ContextMaxBytes
 	}
+	if local.Harden.RequiredContextMaxBytes > 0 {
+		base.Harden.RequiredContextMaxBytes = local.Harden.RequiredContextMaxBytes
+	}
 	base.Harden.External = overlayExternal(base.Harden.External, local.Harden.External)
 	base.Review.External = overlayExternal(base.Review.External, local.Review.External)
 	base.Review.Context = overlayReviewContext(base.Review.Context, local.Review.Context)
@@ -359,9 +402,25 @@ func overlayExternal(base ExternalReviewConfig, local ExternalReviewConfig) Exte
 	if local.FallbackPolicy != "" {
 		base.FallbackPolicy = local.FallbackPolicy
 	}
-	base.Codex = overlayProvider(base.Codex, local.Codex)
-	base.Claude = overlayProvider(base.Claude, local.Claude)
+	base.Codex = overlayCodexProvider(base.Codex, local.Codex)
+	base.Claude = overlayClaudeProvider(base.Claude, local.Claude)
 	base.Gemini = overlayProvider(base.Gemini, local.Gemini)
+	return base
+}
+
+func overlayCodexProvider(base CodexProviderConfig, local CodexProviderConfig) CodexProviderConfig {
+	base.ProviderConfig = overlayProvider(base.ProviderConfig, local.ProviderConfig)
+	if local.ModelReasoningEffort != "" {
+		base.ModelReasoningEffort = local.ModelReasoningEffort
+	}
+	return base
+}
+
+func overlayClaudeProvider(base ClaudeProviderConfig, local ClaudeProviderConfig) ClaudeProviderConfig {
+	base.ProviderConfig = overlayProvider(base.ProviderConfig, local.ProviderConfig)
+	if local.Effort != "" {
+		base.Effort = local.Effort
+	}
 	return base
 }
 
@@ -431,6 +490,9 @@ func validateVerifyConfig(v VerifyConfig) error {
 func overlayReviewContext(base ReviewContextConfig, local ReviewContextConfig) ReviewContextConfig {
 	if local.MaxBytes > 0 {
 		base.MaxBytes = local.MaxBytes
+	}
+	if local.RequiredMaxBytes > 0 {
+		base.RequiredMaxBytes = local.RequiredMaxBytes
 	}
 	if len(local.Files) > 0 {
 		base.Files = dedupeList(append(append([]string(nil), base.Files...), local.Files...))
@@ -523,6 +585,9 @@ func withDefaults(cfg Config) Config {
 	if cfg.Harden.ContextMaxBytes <= 0 {
 		cfg.Harden.ContextMaxBytes = defaults.Harden.ContextMaxBytes
 	}
+	if cfg.Harden.RequiredContextMaxBytes <= 0 {
+		cfg.Harden.RequiredContextMaxBytes = defaults.Harden.RequiredContextMaxBytes
+	}
 	cfg.Harden.External = overlayExternal(defaults.Harden.External, cfg.Harden.External)
 	if cfg.Review.External.Provider == "" {
 		cfg.Review.External.Provider = defaults.Review.External.Provider
@@ -553,12 +618,34 @@ func withDefaults(cfg Config) Config {
 
 func normalizeProviderLatestModels(cfg ExternalReviewConfig) ExternalReviewConfig {
 	cfg.Codex.Model = normalizeCodexLatestModel(cfg.Codex.Model)
+	cfg.Codex.ModelReasoningEffort = normalizeCodexModelReasoningEffort(cfg.Codex.ModelReasoningEffort)
 	cfg.Claude.Model = normalizeClaudeLatestModel(cfg.Claude.Model)
+	cfg.Claude.Effort = normalizeClaudeEffort(cfg.Claude.Effort)
 	return cfg
 }
 
 func normalizeCodexLatestModel(model string) string {
 	return normalizeMappedModel(model, legacyCodexDefaultModels)
+}
+
+func normalizeCodexModelReasoningEffort(effort string) string {
+	normalized := strings.ToLower(strings.TrimSpace(effort))
+	switch normalized {
+	case "", "latest", "current", "default":
+		return DefaultCodexModelReasoningEffort
+	default:
+		return normalized
+	}
+}
+
+func normalizeClaudeEffort(effort string) string {
+	normalized := strings.ToLower(strings.TrimSpace(effort))
+	switch normalized {
+	case "", "latest", "current", "default":
+		return DefaultClaudeEffort
+	default:
+		return normalized
+	}
 }
 
 func normalizeMappedModel(model string, aliases map[string]string) string {
