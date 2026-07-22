@@ -30,6 +30,7 @@ import (
 	corereconcile "github.com/nilstate/scafld/v2/internal/core/reconcile"
 	"github.com/nilstate/scafld/v2/internal/core/review"
 	"github.com/nilstate/scafld/v2/internal/core/reviewevidence"
+	"github.com/nilstate/scafld/v2/internal/core/reviewscope"
 	"github.com/nilstate/scafld/v2/internal/core/session"
 	"github.com/nilstate/scafld/v2/internal/core/spec"
 	"github.com/nilstate/scafld/v2/internal/platform/atomicfile"
@@ -241,11 +242,10 @@ type baseDiffPathser interface {
 }
 
 func deriveGateScope(ctx context.Context, diffs baseDiffPathser, model spec.Model, req Request, hasSpec bool) ([]string, error) {
-	// Spec scope/touchpoints are markdown prose, parsed leniently; scope_hint is
-	// authoritative agent-supplied paths, used literally so top-level extensionless
-	// files survive (the same reason base-diff paths are used literally below).
-	scope := mergeScope(gateScope(model, nil), literalScope(req.ScopeHint))
-	if len(scope) == 0 && !hasSpec && strings.TrimSpace(req.BaseRef) != "" {
+	// Spec scope/touchpoints are markdown prose parsed by the shared review-scope
+	// projection; scope_hint and base-diff paths are authoritative git paths.
+	scope := reviewscope.Merge(reviewscope.Derive(model, nil, nil), reviewscope.Literal(req.ScopeHint))
+	if len(scope) == 0 && strings.TrimSpace(req.BaseRef) != "" {
 		paths, err := diffs.BaseDiffPaths(ctx, req.BaseRef)
 		if err != nil {
 			return nil, fmt.Errorf("derive base diff scope: %w", err)
@@ -253,48 +253,12 @@ func deriveGateScope(ctx context.Context, diffs baseDiffPathser, model spec.Mode
 		// Base-diff paths are authoritative git paths, not spec prose, so they are
 		// used literally. Prose-style scope filtering would drop top-level
 		// extensionless changed files such as Makefile, Dockerfile, or LICENSE.
-		scope = literalScope(paths)
+		scope = reviewscope.Literal(paths)
 	}
 	if len(scope) == 0 {
 		return nil, errors.New("finalize scope is empty; provide scope_hint, a scoped spec, or a base_ref with changed paths")
 	}
 	return scope, nil
-}
-
-// mergeScope returns the sorted, de-duplicated union of two scope path lists.
-func mergeScope(a, b []string) []string {
-	seen := map[string]bool{}
-	var out []string
-	for _, list := range [][]string{a, b} {
-		for _, p := range list {
-			if p == "" || seen[p] {
-				continue
-			}
-			seen[p] = true
-			out = append(out, p)
-		}
-	}
-	sort.Strings(out)
-	return out
-}
-
-// literalScope cleans, de-duplicates, and sorts authoritative git paths (base
-// diff or scope_hint) without prose-style filtering, so real changed files keep
-// their place in the gate scope regardless of extension or directory depth.
-func literalScope(paths []string) []string {
-	seen := map[string]bool{}
-	var out []string
-	for _, p := range paths {
-		p = strings.Trim(strings.ReplaceAll(p, "\\", "/"), "/")
-		p = strings.TrimPrefix(p, "./")
-		if p == "" || seen[p] {
-			continue
-		}
-		seen[p] = true
-		out = append(out, p)
-	}
-	sort.Strings(out)
-	return out
 }
 
 func finalize(ctx context.Context, root string, taskID string, sessions jsonstore.SessionStore, model spec.Model, hasSpec bool, out appfinalize.Output) (map[string]any, error) {
@@ -386,21 +350,31 @@ func appendAcceptanceEvidence(ctx context.Context, sessions jsonstore.SessionSto
 			continue
 		}
 		_, err := sessions.Append(ctx, taskID, session.Entry{
-			Type:        "criterion",
-			CriterionID: result.ID,
-			PhaseID:     phaseByID[result.ID],
-			Status:      result.Status,
-			Reason:      result.Reason,
-			Command:     result.Command,
-			ExitCode:    result.ExitCode,
-			Output:      result.Evidence,
-			Path:        result.DiagnosticPath,
+			Type:          "criterion",
+			CriterionID:   result.ID,
+			PhaseID:       phaseByID[result.ID],
+			Status:        result.Status,
+			Reason:        result.Reason,
+			Command:       result.Command,
+			ExpectedKind:  result.ExpectedKind,
+			CriterionType: resultCriterionType(result),
+			ExitCode:      result.ExitCode,
+			Output:        result.Evidence,
+			Path:          result.DiagnosticPath,
 		}, now)
 		if err != nil {
 			return fmt.Errorf("append finalization acceptance evidence: %w", err)
 		}
 	}
 	return nil
+}
+
+func resultCriterionType(result appacceptance.CriterionResult) string {
+	value := strings.TrimSpace(result.Type)
+	if value == "" {
+		return "command"
+	}
+	return value
 }
 
 func phaseByCriterion(model spec.Model) map[string]string {
@@ -865,82 +839,6 @@ func acceptanceContract(model spec.Model) string {
 		return "Acceptance: none declared."
 	}
 	return "Acceptance criteria the work must satisfy:\n" + strings.Join(lines, "\n")
-}
-
-func gateScope(model spec.Model, hint []string) []string {
-	seen := map[string]bool{}
-	var out []string
-	add := func(value string) {
-		for _, path := range scopePathCandidates(value) {
-			if path == "" || seen[path] {
-				continue
-			}
-			seen[path] = true
-			out = append(out, path)
-		}
-	}
-	// The approved task scope lives in the spec's Scope and Touchpoints; the
-	// renderer does not populate Context.FilesImpacted for normal specs. Using
-	// those first keeps the gate diff-scoped to the governed task instead of
-	// falling back to an empty scope that git treats as the whole repository.
-	for _, p := range model.Scope {
-		add(p)
-	}
-	for _, p := range model.Touchpoints {
-		add(p)
-	}
-	for _, p := range model.Context.Packages {
-		add(p)
-	}
-	for _, p := range model.Context.FilesImpacted {
-		add(p)
-	}
-	for _, p := range hint {
-		add(p)
-	}
-	sort.Strings(out)
-	return out
-}
-
-func scopePathCandidates(value string) []string {
-	value = strings.TrimSpace(strings.ReplaceAll(value, "`", ""))
-	lower := strings.ToLower(value)
-	if strings.HasPrefix(lower, "in scope:") || strings.HasPrefix(lower, "out of scope:") {
-		return nil
-	}
-	if before, _, ok := strings.Cut(value, " - "); ok {
-		value = before
-	}
-	if before, _, ok := strings.Cut(value, ": "); ok {
-		value = before
-	}
-	// Strip a trailing " (explanatory note)" so an annotated touchpoint such as
-	// "internal/x/y.go (env construction at line 44)" still yields its path
-	// instead of being dropped for containing whitespace.
-	if before, _, ok := strings.Cut(value, " ("); ok {
-		value = before
-	}
-	var out []string
-	for _, part := range strings.Split(value, ",") {
-		part = strings.TrimSpace(part)
-		part = strings.Trim(strings.ReplaceAll(part, "\\", "/"), "/")
-		part = strings.TrimPrefix(part, "./")
-		if part == "" || !looksPathLikeScope(part) {
-			continue
-		}
-		out = append(out, part)
-	}
-	return out
-}
-
-func looksPathLikeScope(value string) bool {
-	if value == "." {
-		return true
-	}
-	if strings.ContainsAny(value, " \t\n\r") {
-		return false
-	}
-	return strings.Contains(value, "/") || strings.Contains(value, ".") || strings.ContainsAny(value, "*?[")
 }
 
 func gateCriteria(model spec.Model) []appacceptance.Criterion {

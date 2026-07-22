@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nilstate/scafld/v2/internal/core/acceptance"
 	"github.com/nilstate/scafld/v2/internal/core/agentcontract"
 	"github.com/nilstate/scafld/v2/internal/core/gate"
 	corereview "github.com/nilstate/scafld/v2/internal/core/review"
@@ -81,6 +82,64 @@ func (f *fakeSessions) AppendTransaction(_ context.Context, taskID string, now s
 }
 
 func (f *fakeSessions) Load(context.Context, string) (session.Session, error) { return f.ledger, nil }
+
+type terminalContextSessions struct {
+	fakeSessions
+	transactions     int
+	failReviewRecord bool
+}
+
+func (f *terminalContextSessions) Append(ctx context.Context, taskID string, entry session.Entry, now string) (session.Session, error) {
+	if err := requireUsableContext(ctx); err != nil {
+		return session.Session{}, err
+	}
+	if _, ok := ctx.Deadline(); !ok {
+		return session.Session{}, errors.New("terminal append requires a bounded context")
+	}
+	return f.fakeSessions.Append(ctx, taskID, entry, now)
+}
+
+func (f *terminalContextSessions) AppendTransaction(ctx context.Context, taskID string, now string, derive func(session.Session) ([]session.Entry, error)) (session.Session, error) {
+	if err := requireUsableContext(ctx); err != nil {
+		return session.Session{}, err
+	}
+	f.transactions++
+	if f.transactions > 1 {
+		if _, ok := ctx.Deadline(); !ok {
+			return session.Session{}, errors.New("terminal transaction requires a bounded context")
+		}
+		if f.failReviewRecord {
+			current := f.ledger
+			if current.TaskID == "" {
+				current = session.New(taskID, now)
+			}
+			entries, err := derive(current)
+			if err != nil {
+				return session.Session{}, err
+			}
+			for _, entry := range entries {
+				if entry.Type == "review" {
+					return session.Session{}, errors.New("review transaction failed")
+				}
+			}
+		}
+	}
+	return f.fakeSessions.AppendTransaction(ctx, taskID, now, derive)
+}
+
+func (f *terminalContextSessions) Load(ctx context.Context, taskID string) (session.Session, error) {
+	if err := requireUsableContext(ctx); err != nil {
+		return session.Session{}, err
+	}
+	return f.fakeSessions.Load(ctx, taskID)
+}
+
+func requireUsableContext(ctx context.Context) error {
+	if ctx == nil {
+		return nil
+	}
+	return ctx.Err()
+}
 
 type fakeProvider struct{ packet corereview.Dossier }
 
@@ -205,6 +264,42 @@ func blockingDossier(id string, summary string) corereview.Dossier {
 	dossier.AttackLog[0].Result = "finding"
 	dossier.Budget.ActualFindings = 1
 	return dossier
+}
+
+func staleAcceptanceReviewFixture() (*fakeSpecs, *fakeSessions) {
+	return staleAcceptanceReviewFixtureWithEntry(session.Entry{ID: "entry-old", Type: "criterion", CriterionID: "ac1", PhaseID: "phase1", Status: "pass", Reason: "exit code was 0", Command: "old check", ExpectedKind: string(acceptance.ExpectedExitCodeZero), CriterionType: "command"})
+}
+
+func staleAcceptanceReviewFixtureWithEntry(entry session.Entry) (*fakeSpecs, *fakeSessions) {
+	model := spec.Model{
+		TaskID: "task",
+		Title:  "Task",
+		Status: spec.StatusReview,
+		CurrentState: spec.CurrentState{
+			CurrentPhase:    "final",
+			Next:            "review",
+			AllowedFollowUp: "scafld review task",
+		},
+		Phases: []spec.Phase{{
+			ID:     "phase1",
+			Name:   "Phase",
+			Status: "completed",
+			Acceptance: []spec.Criterion{{
+				ID:           "ac1",
+				PhaseID:      "phase1",
+				Command:      "new check",
+				ExpectedKind: acceptance.ExpectedExitCodeZero,
+				Status:       "pass",
+				Evidence:     "exit code was 0",
+				SourceEvent:  "entry-old",
+			}},
+		}},
+	}
+	ledger := session.New("task", "now")
+	ledger = ledger.WithEntry(entry)
+	ledger = ledger.WithEntry(session.Entry{ID: "entry-phase", Type: "phase", PhaseID: "phase1", Status: "completed", Reason: "all phase criteria passed"})
+	ledger = ledger.WithEntry(session.Entry{ID: "entry-build", Type: "build", Status: string(spec.StatusReview), Reason: "build completed; ready for review"})
+	return &fakeSpecs{model: model}, &fakeSessions{ledger: ledger}
 }
 
 func TestProviderVerdictDrivesReviewState(t *testing.T) {
@@ -573,6 +668,51 @@ func TestReviewProviderFailureRecordsDiagnosticPath(t *testing.T) {
 	}
 }
 
+func TestReviewProviderFailureClosesAttemptAfterCallerContextCancel(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	specs := &fakeSpecs{model: spec.Model{TaskID: "task", Title: "Task", Status: spec.StatusReview}}
+	sessions := &terminalContextSessions{}
+	_, err := Run(ctx, specs, sessions, cleanWorkspace(), providerFunc(func(context.Context, corereview.Request) (corereview.Dossier, error) {
+		cancel()
+		return corereview.Dossier{}, context.Canceled
+	}), fakeClock{}, "task")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context canceled", err)
+	}
+	entries := sessions.ledger.Entries
+	if len(entries) != 2 ||
+		entries[0].Type != "review_attempt" ||
+		entries[0].Status != "running" ||
+		entries[1].Type != "review_attempt" ||
+		entries[1].Status != "failed" {
+		t.Fatalf("provider cancellation should close attempt as failed: %+v", entries)
+	}
+}
+
+func TestReviewDossierRecordingFailureClosesAttemptWithoutAcceptedHalfState(t *testing.T) {
+	t.Parallel()
+
+	specs := &fakeSpecs{model: spec.Model{TaskID: "task", Title: "Task", Status: spec.StatusReview}}
+	sessions := &terminalContextSessions{failReviewRecord: true}
+	_, err := Run(context.Background(), specs, sessions, cleanWorkspace(), fakeProvider{packet: passingDossier()}, fakeClock{}, "task")
+	if err == nil {
+		t.Fatal("expected review recording failure")
+	}
+	entries := sessions.ledger.Entries
+	if len(entries) != 2 ||
+		entries[0].Type != "review_attempt" ||
+		entries[0].Status != "running" ||
+		entries[1].Type != "review_attempt" ||
+		entries[1].Status != "failed" {
+		t.Fatalf("recording failure should close attempt without accepted/review entries: %+v", entries)
+	}
+	if !strings.Contains(entries[1].Reason, "review dossier recording failed") {
+		t.Fatalf("failed attempt reason = %q", entries[1].Reason)
+	}
+}
+
 func TestReviewAutoAbandonsStaleRunningAttemptBeforeStarting(t *testing.T) {
 	t.Parallel()
 
@@ -643,11 +783,143 @@ func TestReviewBlocksFailedReviewRerunUntilBuildEvidence(t *testing.T) {
 	}
 }
 
+func TestReviewBlocksPostBuildRerunWhenFailedReviewMaterialIsUnchanged(t *testing.T) {
+	t.Parallel()
+
+	model := spec.Model{
+		TaskID: "task",
+		Title:  "Task",
+		Status: spec.StatusReview,
+		Context: spec.Context{
+			FilesImpacted: []string{"`file.go`"},
+		},
+	}
+	ledger := session.New("task", "now")
+	ledger = ledger.WithEntry(session.Entry{
+		ID:                     "review-fail",
+		Type:                   "review",
+		Status:                 corereview.VerdictFail,
+		Output:                 corereview.EncodeDossier(blockingDossier("f1", "bug")),
+		ReviewedSpec:           spec.ContractDigest(model),
+		ReviewedScope:          []string{"file.go"},
+		ReviewedMaterialDigest: reviewevidence.MaterialDigest([]string{"file.go"}, []reviewevidence.MaterialFile{{Path: "file.go", SHA256: "same"}}),
+	})
+	ledger = ledger.WithEntry(session.Entry{ID: "build-1", Type: "build", Status: string(spec.StatusReview), Reason: "build completed; ready for review"})
+	specs := &fakeSpecs{model: model}
+	sessions := &fakeSessions{ledger: ledger}
+	provider := providerFunc(func(context.Context, corereview.Request) (corereview.Dossier, error) {
+		t.Fatal("provider should not run when build evidence did not change failed-review material")
+		return corereview.Dossier{}, nil
+	})
+	workspace := &fakeWorkspace{snapshots: [][]string{{" M same file.go"}, {" M same file.go"}}}
+	_, err := RunWithInput(context.Background(), specs, sessions, workspace, provider, fakeClock{}, Input{TaskID: "task", ReviewScope: []string{"file.go"}})
+	if !errors.Is(err, ErrReviewStartBlocked) {
+		t.Fatalf("err = %v, want %v", err, ErrReviewStartBlocked)
+	}
+	var gateErr gate.Error
+	if !errors.As(err, &gateErr) || gateErr.Failure.Next != "scafld handoff task" || !strings.Contains(gateErr.Failure.Expected, "operator decision") {
+		t.Fatalf("err should require handoff/operator decision: %#v", err)
+	}
+	if len(sessions.ledger.Entries) != 2 {
+		t.Fatalf("blocked churn review should not append entries: %+v", sessions.ledger.Entries)
+	}
+}
+
+func TestReviewUsesFailedReviewScopeForPostBuildRerunMaterialComparison(t *testing.T) {
+	t.Parallel()
+
+	model := spec.Model{
+		TaskID: "task",
+		Title:  "Task",
+		Status: spec.StatusReview,
+		Context: spec.Context{
+			FilesImpacted: []string{"`other.go`"},
+		},
+	}
+	oldDigest := reviewevidence.MaterialDigest([]string{"file.go"}, []reviewevidence.MaterialFile{{Path: "file.go", SHA256: "old"}})
+	newDigest := reviewevidence.MaterialDigest([]string{"file.go"}, []reviewevidence.MaterialFile{{Path: "file.go", SHA256: "new"}})
+	ledger := session.New("task", "now")
+	ledger = ledger.WithEntry(session.Entry{
+		ID:                     "review-fail",
+		Type:                   "review",
+		Status:                 corereview.VerdictFail,
+		Output:                 corereview.EncodeDossier(blockingDossier("f1", "bug")),
+		ReviewedSpec:           spec.ContractDigest(model),
+		ReviewedScope:          []string{"file.go"},
+		ReviewedMaterialDigest: oldDigest,
+	})
+	ledger = ledger.WithEntry(session.Entry{ID: "build-1", Type: "build", Status: string(spec.StatusReview), Reason: "build completed; ready for review"})
+	specs := &fakeSpecs{model: model}
+	sessions := &fakeSessions{ledger: ledger}
+	workspace := &fakeWorkspace{snapshots: [][]string{{" M new file.go"}, {" M new file.go"}}}
+	out, err := RunWithInput(context.Background(), specs, sessions, workspace, fakeProvider{packet: passingDossierWithMode(corereview.ModeVerify)}, fakeClock{}, Input{
+		TaskID:      "task",
+		ReviewScope: []string{"other.go"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Verdict != corereview.VerdictPass {
+		t.Fatalf("output = %+v, want passing review", out)
+	}
+	if seal, err := workspace.MaterialSeal(context.Background(), []string{"file.go"}); err != nil || seal.Digest != newDigest {
+		t.Fatalf("failed review scope seal = %+v err=%v", seal, err)
+	}
+}
+
+func TestReviewForceWithReasonAllowsUnchangedPostBuildRerun(t *testing.T) {
+	t.Parallel()
+
+	model := spec.Model{
+		TaskID: "task",
+		Title:  "Task",
+		Status: spec.StatusReview,
+		Context: spec.Context{
+			FilesImpacted: []string{"`file.go`"},
+		},
+	}
+	ledger := session.New("task", "now")
+	ledger = ledger.WithEntry(session.Entry{
+		ID:                     "review-fail",
+		Type:                   "review",
+		Status:                 corereview.VerdictFail,
+		Output:                 corereview.EncodeDossier(blockingDossier("f1", "bug")),
+		ReviewedSpec:           spec.ContractDigest(model),
+		ReviewedScope:          []string{"file.go"},
+		ReviewedMaterialDigest: reviewevidence.MaterialDigest([]string{"file.go"}, []reviewevidence.MaterialFile{{Path: "file.go", SHA256: "same"}}),
+	})
+	ledger = ledger.WithEntry(session.Entry{ID: "build-1", Type: "build", Status: string(spec.StatusReview), Reason: "build completed; ready for review"})
+	specs := &fakeSpecs{model: model}
+	sessions := &fakeSessions{ledger: ledger}
+	workspace := &fakeWorkspace{snapshots: [][]string{{" M same file.go"}, {" M same file.go"}}}
+	out, err := RunWithInput(context.Background(), specs, sessions, workspace, fakeProvider{packet: passingDossierWithMode(corereview.ModeVerify)}, fakeClock{}, Input{
+		TaskID:      "task",
+		ReviewScope: []string{"file.go"},
+		ForceReview: true,
+		Reason:      "operator rejects prior finding as bookkeeping after manual audit",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Verdict != corereview.VerdictPass {
+		t.Fatalf("output = %+v, want forced passing review", out)
+	}
+	entries := sessions.ledger.Entries
+	if len(entries) < 5 || entries[2].Type != "review_attempt" || !strings.Contains(entries[2].Reason, "forced review: operator rejects prior finding") {
+		t.Fatalf("forced attempt was not recorded with reason: %+v", entries)
+	}
+}
+
 func TestReviewDoesNotRerunPassingReviewWithoutForce(t *testing.T) {
 	t.Parallel()
 
-	ledger := session.New("task", "now").WithEntry(sessiontest.PassingReviewEntry("review-pass", "codex"))
-	specs := &fakeSpecs{model: spec.Model{TaskID: "task", Status: spec.StatusReview}}
+	model := spec.Model{TaskID: "task", Status: spec.StatusReview}
+	entry := sessiontest.PassingReviewEntry("review-pass", "codex")
+	entry.ReviewedSpec = spec.ContractDigest(model)
+	entry.ReviewedDirty = reviewevidence.SnapshotDirty(nil)
+	entry.ReviewedDiff = reviewevidence.SnapshotDigest(nil)
+	ledger := session.New("task", "now").WithEntry(entry)
+	specs := &fakeSpecs{model: model}
 	sessions := &fakeSessions{ledger: ledger}
 	provider := providerFunc(func(context.Context, corereview.Request) (corereview.Dossier, error) {
 		t.Fatal("provider should not run when review already passed")
@@ -678,6 +950,84 @@ func TestReviewRejectsTaskBeforeBuildReviewState(t *testing.T) {
 		if !errors.Is(err, ErrSpecNotReviewable) {
 			t.Fatalf("status %s err = %v, want %v", status, err, ErrSpecNotReviewable)
 		}
+	}
+}
+
+func TestReviewRejectsReconciledStaleAcceptanceBeforeProvider(t *testing.T) {
+	t.Parallel()
+
+	specs, sessions := staleAcceptanceReviewFixture()
+	provider := providerFunc(func(context.Context, corereview.Request) (corereview.Dossier, error) {
+		t.Fatal("provider should not run when reconciled acceptance is stale")
+		return corereview.Dossier{}, nil
+	})
+	_, err := RunWithInput(context.Background(), specs, sessions, cleanWorkspace(), provider, fakeClock{}, Input{TaskID: "task"})
+	if !errors.Is(err, ErrSpecNotReviewable) {
+		t.Fatalf("err = %v, want %v", err, ErrSpecNotReviewable)
+	}
+	var gateErr gate.Error
+	if !errors.As(err, &gateErr) || gateErr.Failure.Gate != "build" || gateErr.Failure.Next != "scafld build task" {
+		t.Fatalf("err should point back to build: %#v", err)
+	}
+	if len(sessions.ledger.Entries) != 3 {
+		t.Fatalf("blocked review should not append entries: %+v", sessions.ledger.Entries)
+	}
+}
+
+func TestReviewRejectsIncompleteLegacyAcceptanceBeforeProvider(t *testing.T) {
+	t.Parallel()
+
+	base := session.Entry{
+		ID:            "entry-old",
+		Type:          "criterion",
+		CriterionID:   "ac1",
+		PhaseID:       "phase1",
+		Status:        "pass",
+		Reason:        "exit code was 0",
+		Command:       "new check",
+		ExpectedKind:  string(acceptance.ExpectedExitCodeZero),
+		CriterionType: "command",
+	}
+	for name, mutate := range map[string]func(*session.Entry){
+		"missing expected kind":  func(entry *session.Entry) { entry.ExpectedKind = "" },
+		"missing criterion type": func(entry *session.Entry) { entry.CriterionType = "" },
+		"missing phase id":       func(entry *session.Entry) { entry.PhaseID = "" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			entry := base
+			mutate(&entry)
+			specs, sessions := staleAcceptanceReviewFixtureWithEntry(entry)
+			provider := providerFunc(func(context.Context, corereview.Request) (corereview.Dossier, error) {
+				t.Fatal("provider should not run with incomplete legacy acceptance evidence")
+				return corereview.Dossier{}, nil
+			})
+			_, err := RunWithInput(context.Background(), specs, sessions, cleanWorkspace(), provider, fakeClock{}, Input{TaskID: "task"})
+			if !errors.Is(err, ErrSpecNotReviewable) {
+				t.Fatalf("err = %v, want %v", err, ErrSpecNotReviewable)
+			}
+		})
+	}
+}
+
+func TestHumanReviewedRejectsReconciledStaleAcceptance(t *testing.T) {
+	t.Parallel()
+
+	specs, sessions := staleAcceptanceReviewFixture()
+	provider := providerFunc(func(context.Context, corereview.Request) (corereview.Dossier, error) {
+		t.Fatal("provider should not run for human-reviewed review")
+		return corereview.Dossier{}, nil
+	})
+	_, err := RunWithInput(context.Background(), specs, sessions, cleanWorkspace(), provider, fakeClock{}, Input{
+		TaskID:        "task",
+		HumanReviewed: true,
+		Reason:        "operator reviewed PR 123",
+	})
+	if !errors.Is(err, ErrSpecNotReviewable) {
+		t.Fatalf("err = %v, want %v", err, ErrSpecNotReviewable)
+	}
+	if len(sessions.ledger.Entries) != 3 {
+		t.Fatalf("blocked human review should not append entries: %+v", sessions.ledger.Entries)
 	}
 }
 
@@ -745,7 +1095,17 @@ func TestReviewPromptCarriesTaskContractToProvider(t *testing.T) {
 		Acceptance:  spec.Acceptance{Criteria: []spec.Criterion{{ID: "ac1", Command: "go test ./...", ExpectedKind: "exit_code_zero", Status: "pass", Evidence: "exit code was 0"}}},
 		Phases:      []spec.Phase{{ID: "phase1", Name: "Implementation", Changes: []string{"Update API prompt context"}}},
 	}}
-	_, err := RunWithInput(context.Background(), specs, &fakeSessions{}, workspace, provider, fakeClock{}, Input{
+	ledger := session.New("task", "now").WithEntry(session.Entry{
+		ID:            "entry-ac1",
+		Type:          "criterion",
+		CriterionID:   "ac1",
+		Status:        "pass",
+		Reason:        "exit code was 0",
+		Command:       "go test ./...",
+		ExpectedKind:  string(acceptance.ExpectedExitCodeZero),
+		CriterionType: "command",
+	})
+	_, err := RunWithInput(context.Background(), specs, &fakeSessions{ledger: ledger}, workspace, provider, fakeClock{}, Input{
 		TaskID:          "task",
 		ReviewScope:     []string{"api"},
 		Invariants:      map[string]string{"tenant_isolation": "Never leak data across tenants."},

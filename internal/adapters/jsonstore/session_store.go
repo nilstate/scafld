@@ -92,13 +92,19 @@ func (s SessionStore) Save(ctx context.Context, ledger session.Session) error {
 	}
 	path := s.path(ledger.TaskID)
 	mutex := pathLock(path)
-	mutex.Lock()
-	defer mutex.Unlock()
-	release, err := lockSessionFile(path)
+	releaseMutex, err := lockMutexContext(ctx, mutex)
+	if err != nil {
+		return err
+	}
+	defer releaseMutex()
+	release, err := lockSessionFile(ctx, path)
 	if err != nil {
 		return err
 	}
 	defer release()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	return s.writeLocked(path, s.replay(ledger))
 }
 
@@ -121,13 +127,19 @@ func (s SessionStore) AppendTransaction(ctx context.Context, taskID string, now 
 	}
 	path := s.path(taskID)
 	mutex := pathLock(path)
-	mutex.Lock()
-	defer mutex.Unlock()
-	release, err := lockSessionFile(path)
+	releaseMutex, err := lockMutexContext(ctx, mutex)
+	if err != nil {
+		return session.Session{}, err
+	}
+	defer releaseMutex()
+	release, err := lockSessionFile(ctx, path)
 	if err != nil {
 		return session.Session{}, err
 	}
 	defer release()
+	if err := ctx.Err(); err != nil {
+		return session.Session{}, err
+	}
 	ledger, err := s.loadRawUnlocked(path)
 	if err != nil {
 		if !errors.Is(err, ErrSessionNotFound) {
@@ -139,6 +151,9 @@ func (s SessionStore) AppendTransaction(ctx context.Context, taskID string, now 
 	}
 	entries, err := derive(ledger)
 	if err != nil {
+		return session.Session{}, err
+	}
+	if err := ctx.Err(); err != nil {
 		return session.Session{}, err
 	}
 	priorValid := ledger.LedgerValid
@@ -160,6 +175,9 @@ func (s SessionStore) AppendTransaction(ctx context.Context, taskID string, now 
 	}
 	if now != "" {
 		ledger.UpdatedAt = now
+	}
+	if err := ctx.Err(); err != nil {
+		return session.Session{}, err
 	}
 	if err := s.writeLocked(path, ledger); err != nil {
 		return session.Session{}, err
@@ -262,14 +280,35 @@ func pathLock(path string) *sync.Mutex {
 	return value.(*sync.Mutex)
 }
 
+func lockMutexContext(ctx context.Context, mutex *sync.Mutex) (func(), error) {
+	acquired := make(chan struct{})
+	release := make(chan struct{})
+	go func() {
+		mutex.Lock()
+		close(acquired)
+		<-release
+		mutex.Unlock()
+	}()
+	select {
+	case <-acquired:
+		return func() { close(release) }, nil
+	case <-ctx.Done():
+		go func() {
+			<-acquired
+			close(release)
+		}()
+		return nil, ctx.Err()
+	}
+}
+
 // lockSessionFile fences concurrent scafld processes (e.g. two finalize calls
 // on one task) so a read-modify-write cannot silently drop the other process's
 // ledger entry. The in-process pathLock mutex must already be held.
-func lockSessionFile(path string) (func(), error) {
+func lockSessionFile(ctx context.Context, path string) (func(), error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, fmt.Errorf("create session dir: %w", err)
 	}
-	release, err := filelock.Lock(path + ".lock")
+	release, err := filelock.LockContext(ctx, path+".lock")
 	if err != nil {
 		return nil, fmt.Errorf("lock session: %w", err)
 	}

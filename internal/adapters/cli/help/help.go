@@ -20,7 +20,7 @@ func Print(w io.Writer, commands []Command) {
 	for _, cmd := range commands {
 		fmt.Fprintf(w, "  %-10s %s\n", cmd.Name, cmd.Summary)
 	}
-	fmt.Fprint(w, "\nFlags:\n  --root PATH    Workspace root\n  --json         Print JSON envelope\n  --no-context   Suppress source context where supported\n  -h, --help     Show help\n  --version      Show version\n")
+	fmt.Fprint(w, "\nFlags:\n  --root PATH    Workspace root\n  --json         Print JSON envelope\n  --no-context   Omit source markdown where supported while keeping provenance\n  -h, --help     Show help\n  --version      Show version\n")
 }
 
 // PrintCommand writes command-specific help.
@@ -63,6 +63,13 @@ Required observation dimensions:
 Each harden round needs a shape decision: keep, shrink, reframe, or reject. A
 passing round must use keep and leave Required spec edits empty.
 
+Harden is draft-revision bound. Re-running harden while a round is in progress
+prints that same round instead of appending another. A provider needs_revision
+round blocks another provider pass against the same draft, but not operator
+approval: revise true shape blockers, or run approve with --reason when the
+finding is rejected as bookkeeping/advisory/overengineering. Advisories stay
+recorded and do not force a new round.
+
 Each observation needs Result and Anchor. Result must be clean, advisory, blocks,
 or n/a. Open blocks keep the round from passing until fixed, accepted_risk, or
 superseded. The design dimension must question why the plan exists, which
@@ -81,6 +88,79 @@ Flags:
   --no-context          Suppress source context in human/JSON output
   --root PATH           Workspace root
   --json                Print JSON envelope
+`)
+		return
+	}
+	if name == "approve" {
+		fmt.Fprint(w, `scafld approve - Approve a draft spec
+
+Usage:
+  scafld approve <task_id> [--reason TEXT] [--root PATH] [--json]
+
+Moves a draft spec into approved work and records an approval receipt. If harden
+evidence is incomplete, stale, failed, or needs operator judgment, --reason is
+required. scafld records a harden_override receipt and marks the harden state as
+overridden before approval.
+
+Use --reason to explain the operator decision, not to hide findings. Real shape
+blockers should be fixed in the draft and hardened again; bookkeeping,
+advisory, or overengineering findings can be rejected with a clear reason.
+
+Flags:
+  --reason TEXT  Operator rationale when approving over harden evidence
+  --root PATH    Workspace root
+  --json         Print JSON envelope
+`)
+		return
+	}
+	if name == "status" {
+		fmt.Fprint(w, `scafld status - Show task status and next action
+
+Usage:
+  scafld status <task_id> [--root PATH] [--json] [--no-context]
+
+Shows lifecycle status, gate state, latest review findings, task material, and
+the deterministic next action. Agent entry should read full status or handoff
+first so the source-backed contract is in context. Follow-up polling may use
+--no-context; scafld still includes spec_source path, sha256, and byte count so
+the agent can reload full context when the digest changes.
+
+Flags:
+  --no-context  Omit source markdown but keep spec_source provenance
+  --root PATH   Workspace root
+  --json        Print JSON envelope
+`)
+		return
+	}
+	if name == "verify" {
+		fmt.Fprint(w, `scafld verify - Verify a signed scafld receipt
+
+Usage:
+  scafld verify <receipt-path> --target <commit-ish> [--material-ref <commit-ish>] [--acceptance-root PATH] [--trusted-keys PATH] [--ci] [--self-check] [--root PATH] [--json]
+  scafld verify <receipt-path> --target <commit-ish> --material-ref <commit-ish> --material-only [--trusted-keys PATH] [--ci] [--root PATH]
+
+Full verify checks signature, trusted keys, material digests, target/material
+ancestry, independence, and recorded acceptance reruns.
+
+When --material-ref is supplied, full verify runs acceptance only against a
+clean checkout at that same commit. Use --acceptance-root for a detached
+pull-request head worktree; omitting it is accepted only when --root already is
+that clean material commit.
+
+--material-only is for a separate CI material lane. It verifies the signed
+receipt and material fingerprint but does not execute acceptance and is not a
+complete merge gate by itself.
+
+Flags:
+  --target REF       Protected-base commit or ref
+  --material-ref REF Verified material commit or ref
+  --material-only    Verify signature/material only; skip acceptance
+  --acceptance-root  Clean checkout used for acceptance reruns
+  --trusted-keys     Trusted keys file
+  --ci               Fail closed on missing CI policy inputs
+  --self-check       Print local verify wiring report
+  --root PATH        Workspace root
+  --json             Print JSON envelope
 `)
 		return
 	}
@@ -106,8 +186,9 @@ Usage:
 
 The adapter command renders current status, deterministic next-action fields,
 and the scafld handoff for external trigger wrappers. Source context is included
-by default; use --no-context only for intentionally terse script output. It does
-not execute an agent runtime and does not advance lifecycle state.
+by default. Use --no-context only after the same spec_source sha256 was already
+read; status keeps provenance while handoff suppresses the source markdown body.
+It does not execute an agent runtime and does not advance lifecycle state.
 `)
 		return
 	}

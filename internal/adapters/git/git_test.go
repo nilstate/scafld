@@ -220,6 +220,81 @@ func TestSnapshotRejectsEmptyScope(t *testing.T) {
 	}
 }
 
+func TestStatusMaterialSealMatchesAuthorityMaterialSeal(t *testing.T) {
+	t.Parallel()
+
+	root := initSnapshotRepo(t)
+	writeSnapshotFile(t, root, ".gitattributes", "*.txt text eol=lf\n")
+	writeSnapshotFile(t, root, ".gitignore", "*.tmp\n")
+	writeSnapshotFile(t, root, "src/keep.txt", "one\r\n")
+	writeSnapshotFile(t, root, "src/delete.txt", "delete\n")
+	writeSnapshotFile(t, root, "src/ignored.tmp", "ignored\n")
+	writeSnapshotFile(t, root, ".scafld/runs/task/session.json", "{}\n")
+	commitSnapshotAll(t, root, "base")
+
+	writeSnapshotFile(t, root, "src/keep.txt", "two\r\n")
+	writeSnapshotFile(t, root, "src/add.txt", "add\r\n")
+	writeSnapshotFile(t, root, "src/ignored.tmp", "changed ignored\n")
+	writeSnapshotFile(t, root, ".scafld/runs/task/session.json", "{\"changed\":true}\n")
+	if err := os.Remove(filepath.Join(root, "src", "delete.txt")); err != nil {
+		t.Fatal(err)
+	}
+
+	adapter := Adapter{Root: root}
+	scope := []string{"src", ".scafld/runs", "missing.path", "2.5.2"}
+	authority, err := adapter.MaterialSeal(context.Background(), scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, err := adapter.StatusMaterialSeal(context.Background(), scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(status.Scope, "\n") != strings.Join(authority.Scope, "\n") || status.Digest != authority.Digest {
+		t.Fatalf("status material seal drifted from authority seal:\nstatus=%+v\nauthority=%+v", status, authority)
+	}
+}
+
+func TestMaterialSealIncludesDirtyNestedGitWorktree(t *testing.T) {
+	t.Parallel()
+
+	root := initSnapshotRepo(t)
+	nested := filepath.Join(root, "cloud")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command("git", "init", nested).CombinedOutput(); err != nil {
+		t.Skipf("nested git init unavailable: %v\n%s", err, out)
+	}
+	gitSnapshot(t, nested, "config", "user.name", "scafld")
+	gitSnapshot(t, nested, "config", "user.email", "scafld@example.invalid")
+	writeSnapshotFile(t, nested, "README.md", "one\n")
+	commitSnapshotAll(t, nested, "nested base")
+	commitSnapshotAll(t, root, "parent tracks nested gitlink")
+
+	adapter := Adapter{Root: root}
+	clean, err := adapter.MaterialSeal(context.Background(), []string{"cloud"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeSnapshotFile(t, nested, "README.md", "two\n")
+	writeSnapshotFile(t, nested, "untracked.txt", "new\n")
+	dirty, err := adapter.MaterialSeal(context.Background(), []string{"cloud"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dirty.Digest == clean.Digest {
+		t.Fatalf("nested dirty worktree did not change material seal: clean=%+v dirty=%+v", clean, dirty)
+	}
+	status, err := adapter.StatusMaterialSeal(context.Background(), []string{"cloud"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.Digest != dirty.Digest {
+		t.Fatalf("status material seal drifted from dirty nested authority seal:\nstatus=%+v\nauthority=%+v", status, dirty)
+	}
+}
+
 func TestTreeDigestsNormalizesDirectoryScope(t *testing.T) {
 	t.Parallel()
 
@@ -264,6 +339,46 @@ func TestSnapshotBaseHeadCommitSemantics(t *testing.T) {
 	}
 	if withBase.HeadCommit != head || withBase.BaseCommit != base {
 		t.Fatalf("with BaseRef: base=%s head=%s want base=%s head=%s", withBase.BaseCommit, withBase.HeadCommit, base, head)
+	}
+}
+
+func TestSnapshotTargetRefReadsTargetCommitNotCheckout(t *testing.T) {
+	t.Parallel()
+
+	root := initSnapshotRepo(t)
+	writeSnapshotFile(t, root, "app.txt", "base\n")
+	writeSnapshotFile(t, root, ".scafld/receipts/task.json", "base receipt\n")
+	base := commitSnapshotAll(t, root, "base")
+	writeSnapshotFile(t, root, "app.txt", "head\n")
+	writeSnapshotFile(t, root, ".scafld/receipts/task.json", "head receipt\n")
+	head := commitSnapshotAll(t, root, "head")
+	gitSnapshot(t, root, "checkout", base)
+
+	adapter := Adapter{Root: root}
+	target, err := adapter.Snapshot(context.Background(), SnapshotInput{Scope: []string{"app.txt", ".scafld/receipts"}, BaseRef: base, TargetRef: head})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if target.HeadCommit != head || target.BaseCommit != base {
+		t.Fatalf("target commits = head:%s base:%s, want head:%s base:%s", target.HeadCommit, target.BaseCommit, head, base)
+	}
+	digest, ok := snapshotDigestByPath(target, "app.txt")
+	if !ok {
+		t.Fatalf("target digest missing app.txt: %+v", target.FileDigests)
+	}
+	headSum := sha256.Sum256([]byte("head\n"))
+	if digest.SHA256 != fmt.Sprintf("%x", headSum) {
+		t.Fatalf("target digest = %s, want head content %x", digest.SHA256, headSum)
+	}
+	if _, ok := snapshotDigestByPath(target, ".scafld/receipts/task.json"); ok {
+		t.Fatalf("runtime receipt leaked into target snapshot: %+v", target.FileDigests)
+	}
+	current, err := adapter.Snapshot(context.Background(), SnapshotInput{Scope: []string{"app.txt"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if currentDigest, _ := snapshotDigestByPath(current, "app.txt"); currentDigest.SHA256 == digest.SHA256 {
+		t.Fatalf("target snapshot used checkout content: current=%+v target=%+v", currentDigest, digest)
 	}
 }
 

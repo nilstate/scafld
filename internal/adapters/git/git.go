@@ -30,8 +30,9 @@ type Adapter struct {
 
 // SnapshotInput controls a commit-free Git tree snapshot.
 type SnapshotInput struct {
-	Scope   []string
-	BaseRef string
+	Scope     []string
+	BaseRef   string
+	TargetRef string
 }
 
 // Snapshot is a deterministic Git-backed workspace fingerprint.
@@ -97,6 +98,54 @@ func (a Adapter) Status(ctx context.Context) (State, error) {
 	return State{Changed: changed}, nil
 }
 
+// ExactStatus returns every Git-visible difference in the worktree, including
+// ignored files and scafld runtime paths. It is for execution roots where any
+// byte on disk may be read by a command, so the narrower mutation-guard filters
+// used by Status are intentionally not applied.
+func (a Adapter) ExactStatus(ctx context.Context) (State, error) {
+	scope := []string{"."}
+	if err := a.checkIndexFlagsExact(ctx, scope); err != nil {
+		return State{}, err
+	}
+	args := append([]string{"status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignored=matching", "--"}, scope...)
+	out, err := a.gitOutput(ctx, nil, args...)
+	if err != nil {
+		return State{}, err
+	}
+	fields := strings.Split(string(out), "\x00")
+	seen := map[string]bool{}
+	var changed []string
+	add := func(code string, path string) {
+		path = strings.Trim(strings.ReplaceAll(path, "\\", "/"), "/")
+		path = strings.TrimPrefix(path, "./")
+		if path == "" || seen[code+" "+path] {
+			return
+		}
+		seen[code+" "+path] = true
+		changed = append(changed, code+" "+path)
+	}
+	for i := 0; i < len(fields); i++ {
+		entry := fields[i]
+		if len(entry) < 4 {
+			continue
+		}
+		code := strings.TrimSpace(entry[:2])
+		if code == "" {
+			code = strings.TrimSpace(entry[:1])
+		}
+		path := entry[3:]
+		add(code, path)
+		if entry[0] == 'R' || entry[0] == 'C' || entry[1] == 'R' || entry[1] == 'C' {
+			i++
+			if i < len(fields) {
+				add(code, fields[i])
+			}
+		}
+	}
+	sort.Strings(changed)
+	return State{Changed: changed}, nil
+}
+
 // scafldRuntimePaths are scafld-owned state/output directories that are never
 // part of the reviewed work tree. They are the single source of truth for both
 // the per-file digests (ignoredRuntimePath) and the tree fingerprint
@@ -134,6 +183,9 @@ func (a Adapter) Snapshot(ctx context.Context, input SnapshotInput) (Snapshot, e
 	scope := normalizeScope(input.Scope)
 	if len(scope) == 0 {
 		return Snapshot{}, fmt.Errorf("snapshot scope is empty; refusing whole-repo fallback")
+	}
+	if strings.TrimSpace(input.TargetRef) != "" {
+		return a.snapshotRef(ctx, scope, input.BaseRef, input.TargetRef)
 	}
 	if err := a.checkIndexFlags(ctx, scope); err != nil {
 		return Snapshot{}, err
@@ -182,6 +234,40 @@ func (a Adapter) Snapshot(ctx context.Context, input SnapshotInput) (Snapshot, e
 	}, nil
 }
 
+func (a Adapter) snapshotRef(ctx context.Context, scope []string, baseRef string, targetRef string) (Snapshot, error) {
+	targetCommit, err := a.resolveCommit(ctx, targetRef)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	baseCommit := targetCommit
+	if strings.TrimSpace(baseRef) != "" {
+		out, err := a.gitOutput(ctx, nil, "merge-base", baseRef, targetCommit)
+		if err != nil {
+			return Snapshot{}, err
+		}
+		baseCommit = strings.TrimSpace(string(out))
+	}
+	treeSHA, err := a.writeRefTree(ctx, targetCommit)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	statuses, deleted, err := a.diffStatuses(ctx, baseCommit, treeSHA, scope)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	digests, err := a.fileDigests(ctx, treeSHA, statuses, scope)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	return Snapshot{
+		TreeSHA:      treeSHA,
+		BaseCommit:   baseCommit,
+		HeadCommit:   targetCommit,
+		FileDigests:  digests,
+		DeletedPaths: deleted,
+	}, nil
+}
+
 // MaterialSeal returns a content digest for the current working tree under
 // scope, independent of whether the bytes are dirty or committed.
 func (a Adapter) MaterialSeal(ctx context.Context, scope []string) (reviewevidence.MaterialSeal, error) {
@@ -195,6 +281,44 @@ func (a Adapter) MaterialSeal(ctx context.Context, scope []string) (revieweviden
 	}
 	files := make([]reviewevidence.MaterialFile, 0, len(snapshot.FileDigests))
 	for _, file := range snapshot.FileDigests {
+		files = append(files, reviewevidence.MaterialFile{Path: file.Path, SHA256: file.SHA256})
+	}
+	return reviewevidence.MaterialSeal{
+		Scope:  normalized,
+		Digest: reviewevidence.MaterialDigest(normalized, files),
+	}, nil
+}
+
+// StatusMaterialSeal returns the same material digest shape as MaterialSeal for
+// read-only status projection without rebuilding a full-repository temporary
+// tree. Review and completion still use MaterialSeal so authority evidence keeps
+// the strongest snapshot path.
+func (a Adapter) StatusMaterialSeal(ctx context.Context, scope []string) (reviewevidence.MaterialSeal, error) {
+	normalized := normalizeScope(scope)
+	if len(normalized) == 0 {
+		return reviewevidence.MaterialSeal{}, fmt.Errorf("material seal scope is empty")
+	}
+	if err := a.checkIndexFlags(ctx, normalized); err != nil {
+		return reviewevidence.MaterialSeal{}, err
+	}
+	changed, err := a.statusChangedMaterialPaths(ctx, normalized)
+	if err != nil {
+		return reviewevidence.MaterialSeal{}, err
+	}
+	_, hasHead, err := a.resolveHead(ctx)
+	if err != nil {
+		return reviewevidence.MaterialSeal{}, err
+	}
+	treeSHA, err := a.writeScopedTemporaryTree(ctx, hasHead, changed)
+	if err != nil {
+		return reviewevidence.MaterialSeal{}, err
+	}
+	digests, err := a.fileDigests(ctx, treeSHA, map[string]string{}, normalized)
+	if err != nil {
+		return reviewevidence.MaterialSeal{}, err
+	}
+	files := make([]reviewevidence.MaterialFile, 0, len(digests))
+	for _, file := range digests {
 		files = append(files, reviewevidence.MaterialFile{Path: file.Path, SHA256: file.SHA256})
 	}
 	return reviewevidence.MaterialSeal{
@@ -358,7 +482,7 @@ func (a Adapter) writeTemporaryTree(ctx context.Context, hasHead bool) (string, 
 	if _, err := a.gitOutput(ctx, env, "-c", "core.autocrlf=false", "add", "--all"); err != nil {
 		return "", err
 	}
-	rmArgs := append([]string{"-c", "core.autocrlf=false", "rm", "-r", "--cached", "--ignore-unmatch", "--"}, scafldRuntimePaths...)
+	rmArgs := append([]string{"-c", "core.autocrlf=false", "rm", "-f", "-r", "--cached", "--ignore-unmatch", "--"}, scafldRuntimePaths...)
 	if _, err := a.gitOutput(ctx, env, rmArgs...); err != nil {
 		return "", err
 	}
@@ -367,6 +491,71 @@ func (a Adapter) writeTemporaryTree(ctx context.Context, hasHead bool) (string, 
 		return "", err
 	}
 	return strings.TrimSpace(string(out)), nil
+}
+
+func (a Adapter) writeScopedTemporaryTree(ctx context.Context, hasHead bool, paths []string) (string, error) {
+	dir, err := os.MkdirTemp("", "scafld-git-index-")
+	if err != nil {
+		return "", err
+	}
+	defer os.RemoveAll(dir)
+	indexPath := filepath.Join(dir, "index")
+	env := []string{"GIT_INDEX_FILE=" + indexPath}
+	if hasHead {
+		if _, err := a.gitOutput(ctx, env, "-c", "core.autocrlf=false", "read-tree", "HEAD"); err != nil {
+			return "", err
+		}
+	} else if _, err := a.gitOutput(ctx, env, "-c", "core.autocrlf=false", "read-tree", "--empty"); err != nil {
+		return "", err
+	}
+	if err := a.addAllScoped(ctx, env, paths); err != nil {
+		return "", err
+	}
+	out, err := a.gitOutput(ctx, env, "-c", "core.autocrlf=false", "write-tree")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+func (a Adapter) writeRefTree(ctx context.Context, ref string) (string, error) {
+	dir, err := os.MkdirTemp("", "scafld-git-index-")
+	if err != nil {
+		return "", err
+	}
+	defer os.RemoveAll(dir)
+	indexPath := filepath.Join(dir, "index")
+	env := []string{"GIT_INDEX_FILE=" + indexPath}
+	if _, err := a.gitOutput(ctx, env, "-c", "core.autocrlf=false", "read-tree", ref); err != nil {
+		return "", err
+	}
+	rmArgs := append([]string{"-c", "core.autocrlf=false", "rm", "-f", "-r", "--cached", "--ignore-unmatch", "--"}, scafldRuntimePaths...)
+	if _, err := a.gitOutput(ctx, env, rmArgs...); err != nil {
+		return "", err
+	}
+	out, err := a.gitOutput(ctx, env, "-c", "core.autocrlf=false", "write-tree")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+func (a Adapter) addAllScoped(ctx context.Context, env []string, paths []string) error {
+	if len(paths) == 0 {
+		return nil
+	}
+	const chunkSize = 200
+	for start := 0; start < len(paths); start += chunkSize {
+		end := start + chunkSize
+		if end > len(paths) {
+			end = len(paths)
+		}
+		args := append([]string{"-c", "core.autocrlf=false", "add", "--all", "--"}, paths[start:end]...)
+		if _, err := a.gitOutput(ctx, env, args...); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (a Adapter) resolveHead(ctx context.Context) (string, bool, error) {
@@ -378,6 +567,19 @@ func (a Adapter) resolveHead(ctx context.Context) (string, bool, error) {
 		return "", false, err
 	}
 	return strings.TrimSpace(string(out)), true, nil
+}
+
+func (a Adapter) resolveCommit(ctx context.Context, ref string) (string, error) {
+	out, err := a.gitOutput(ctx, nil, "rev-parse", "--verify", strings.TrimSpace(ref)+"^{commit}")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// ResolveCommit returns the commit object identified by ref.
+func (a Adapter) ResolveCommit(ctx context.Context, ref string) (string, error) {
+	return a.resolveCommit(ctx, ref)
 }
 
 // ResolveHead returns the checked-out HEAD commit when the worktree has one.
@@ -421,6 +623,14 @@ func (a Adapter) gitOutput(ctx context.Context, env []string, args ...string) ([
 }
 
 func (a Adapter) checkIndexFlags(ctx context.Context, scope []string) error {
+	return a.checkIndexFlagsFiltered(ctx, scope, true)
+}
+
+func (a Adapter) checkIndexFlagsExact(ctx context.Context, scope []string) error {
+	return a.checkIndexFlagsFiltered(ctx, scope, false)
+}
+
+func (a Adapter) checkIndexFlagsFiltered(ctx context.Context, scope []string, ignoreRuntime bool) error {
 	// git ls-files -v marks skip-worktree as 'S' and lowercases the tag whenever
 	// assume-unchanged is set; both hide local edits from review. -z keeps paths
 	// raw so a quoted unicode/special filename cannot slip past the scope match
@@ -439,7 +649,7 @@ func (a Adapter) checkIndexFlags(ctx context.Context, scope []string) error {
 		path := entry[2:]
 		// Fail closed on skip-worktree (S) or any assume-unchanged (lowercase)
 		// tag. Normal cached files report uppercase H and are left alone.
-		if (flag == 'S' || (flag >= 'a' && flag <= 'z')) && pathInScope(path, scope) && !ignoredRuntimePath(path) {
+		if (flag == 'S' || (flag >= 'a' && flag <= 'z')) && pathInScope(path, scope) && (!ignoreRuntime || !ignoredRuntimePath(path)) {
 			flagged = append(flagged, path)
 		}
 	}
@@ -448,6 +658,40 @@ func (a Adapter) checkIndexFlags(ctx context.Context, scope []string) error {
 		return EvidenceIntegrityError{Paths: flagged}
 	}
 	return nil
+}
+
+func (a Adapter) statusChangedMaterialPaths(ctx context.Context, scope []string) ([]string, error) {
+	args := append([]string{"status", "--porcelain=v1", "-z", "--untracked-files=all", "--"}, scope...)
+	out, err := a.gitOutput(ctx, nil, args...)
+	if err != nil {
+		return nil, err
+	}
+	fields := strings.Split(string(out), "\x00")
+	seen := map[string]bool{}
+	var paths []string
+	add := func(path string) {
+		normalized := strings.Trim(strings.ReplaceAll(path, "\\", "/"), "/")
+		normalized = strings.TrimPrefix(normalized, "./")
+		if normalized == "" || ignoredRuntimePath(normalized) || !pathInScope(normalized, scope) || seen[normalized] {
+			return
+		}
+		seen[normalized] = true
+		paths = append(paths, normalized)
+	}
+	for i := 0; i < len(fields); i++ {
+		entry := fields[i]
+		if len(entry) < 4 {
+			continue
+		}
+		code := entry[:2]
+		path := entry[3:]
+		add(path)
+		if code[0] == 'R' || code[0] == 'C' || code[1] == 'R' || code[1] == 'C' {
+			i++
+		}
+	}
+	sort.Strings(paths)
+	return paths, nil
 }
 
 func (a Adapter) diffStatuses(ctx context.Context, baseCommit string, treeSHA string, scope []string) (map[string]string, []DeletedPath, error) {
@@ -551,8 +795,11 @@ func (a Adapter) fileDigests(ctx context.Context, treeSHA string, statuses map[s
 	for _, entry := range entries {
 		sum := ""
 		if entry.gitlink {
-			h := sha256.Sum256([]byte("gitlink\x00" + entry.oid))
-			sum = fmt.Sprintf("%x", h)
+			var err error
+			sum, err = a.gitlinkMaterialDigest(ctx, entry.path, entry.oid)
+			if err != nil {
+				return nil, err
+			}
 		} else {
 			sum = blobSums[entry.oid]
 			if sum == "" {
@@ -565,6 +812,28 @@ func (a Adapter) fileDigests(ctx context.Context, treeSHA string, statuses map[s
 		return digests[i].Path < digests[j].Path
 	})
 	return digests, nil
+}
+
+func (a Adapter) gitlinkMaterialDigest(ctx context.Context, rel string, oid string) (string, error) {
+	h := sha256.New()
+	_, _ = io.WriteString(h, "gitlink\x00"+strings.TrimSpace(oid)+"\n")
+	path := filepath.Join(a.Root, filepath.FromSlash(rel))
+	if _, err := exec.CommandContext(ctx, "git", "-C", path, "rev-parse", "--git-dir").Output(); err != nil {
+		return fmt.Sprintf("%x", h.Sum(nil)), nil
+	}
+	headOut, err := exec.CommandContext(ctx, "git", "-C", path, "rev-parse", "HEAD").Output()
+	if err != nil {
+		return "", fmt.Errorf("read nested git head for %s: %w", rel, err)
+	}
+	_, _ = io.WriteString(h, "nested-head\x00"+strings.TrimSpace(string(headOut))+"\n")
+	stateOut, err := exec.CommandContext(ctx, "git", "-C", path, "status", "--porcelain=v1").Output()
+	if err != nil {
+		return "", fmt.Errorf("read nested git status for %s: %w", rel, err)
+	}
+	for _, fp := range a.gitWorktreeChangedFingerprints(ctx, rel, path, string(stateOut)) {
+		_, _ = io.WriteString(h, "nested-change\x00"+fp+"\n")
+	}
+	return fmt.Sprintf("%x", h.Sum(nil)), nil
 }
 
 // blobDigests hashes blobs through one `git cat-file --batch` process instead

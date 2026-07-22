@@ -135,6 +135,27 @@ func TestStatusPrintsRepairContractBeforeStaleReviewVerdict(t *testing.T) {
 	}
 }
 
+func TestStatusPrintsNextAction(t *testing.T) {
+	t.Parallel()
+
+	text := Status(appstatus.Output{
+		TaskID: "task",
+		Status: spec.StatusDraft,
+		Next:   "scafld approve task --reason <reason>",
+		NextAction: appstatus.NextAction{
+			Role:    "operator",
+			Action:  "decide_harden_findings",
+			Command: "scafld approve task --reason <reason>",
+			Reason:  "hardening found draft findings requiring operator judgment",
+		},
+	})
+	for _, want := range []string{"next action: decide_harden_findings (operator)", "next reason: hardening found draft findings requiring operator judgment", "command: scafld approve task --reason <reason>"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("status output missing %q:\n%s", want, text)
+		}
+	}
+}
+
 func TestStatusPrintsTaskMaterial(t *testing.T) {
 	t.Parallel()
 
@@ -174,6 +195,30 @@ func TestStatusPrintsSourceSpecMarkdown(t *testing.T) {
 		if !strings.Contains(text, want) {
 			t.Fatalf("status output missing %q:\n%s", want, text)
 		}
+	}
+}
+
+func TestStatusPrintsOmittedSourceSpecProvenance(t *testing.T) {
+	t.Parallel()
+
+	text := Status(appstatus.Output{
+		TaskID: "task",
+		Status: spec.StatusReview,
+		Next:   "scafld review task",
+		SpecSource: &appstatus.SpecSource{
+			Path:            "task.md",
+			SHA256:          "abc123",
+			Bytes:           18,
+			MarkdownOmitted: true,
+		},
+	})
+	for _, want := range []string{"## Source Spec Markdown", "Source: `task.md` sha256=abc123 bytes=18", "Source markdown omitted by --no-context"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("status output missing %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "# Task") {
+		t.Fatalf("status output should not print markdown body:\n%s", text)
 	}
 }
 

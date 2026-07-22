@@ -45,13 +45,13 @@ review:
     provider: "auto"
     fallback_policy: "disable"
     codex:
-      model: "latest"
+      # model: "" # omitted/default lets Codex CLI use its current model
       model_reasoning_effort: "xhigh"
     claude:
-      model: "opus"
+      # model: "" # omitted/default lets Claude Code use its current model
       effort: "xhigh"
     gemini:
-      # model: "" # leave empty to use Gemini CLI's configured default
+      # model: "" # omitted/default lets Gemini CLI use its current model
   dossier:
     max_findings: 12
     min_attack_angles: 6
@@ -94,6 +94,14 @@ instead of recording a review.
   non-blocking findings.
 - `deep`: broader adversarial pass across callers, invariants, edge cases, and
   operational risks within the requested budget.
+
+Review is not a marginal-surface compliance matrix. A reviewer should not fail
+the built artifact because the spec or tests did not enumerate every adjacent
+consumer, fallback, adapter, or call site. That becomes a finding only when the
+reviewer verifies a concrete defect, a violated shared invariant, or a broken
+adapter boundary. If one shared owner, read model, chokepoint, or invariant test
+proves behavior by construction, omitted per-surface bookkeeping is context, not
+a blocker.
 
 Provider meanings:
 
@@ -241,6 +249,10 @@ and the completion finalize are deliberately separate: a high-severity accepted 
 can be non-blocking, while a medium defect can still block if it violates the
 approved contract.
 
+Findings are defects only, blocking or not. Preferences, broad "add more
+coverage" requests, marginal-surface enumeration, and cleaner-shape suggestions
+must be dropped unless they identify a verified defect in the completed task.
+
 ## What scafld Trusts
 
 scafld validates the dossier, checks whether Git-visible workspace state changed
@@ -300,9 +312,13 @@ When review fails:
 Do not rerun review immediately after a failed verdict. Repair the blockers,
 run `scafld build` so the ledger has fresh evidence, then run `scafld review`.
 scafld enforces this to avoid review churn where each provider call returns one
-more finding against unchanged evidence. Provider failures are different: they
-can be retried after the provider issue is fixed. A passing review is not rerun
-unless the operator passes `--force`.
+more finding against unchanged evidence. If the build is newer but the reviewed
+spec and task material are unchanged, scafld still blocks another provider call
+and routes the operator to `handoff`. Use
+`scafld review <task-id> --force --reason <reason>` only when the operator
+rejects the prior blocker as advisory, bookkeeping, or overengineering.
+Provider failures are different: they can be retried after the provider issue is
+fixed. A passing review is not rerun unless the operator passes `--force`.
 
 Diagnostics remain for provider transport failures, invalid dossiers, timeouts,
 and other cases where scafld could not accept normal review output.

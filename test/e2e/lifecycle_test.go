@@ -162,6 +162,7 @@ func TestFailedReviewRequiresRepairBuildBeforeCompletion(t *testing.T) {
 	failedReview := runExpectExit(t, 4, bin,
 		"review",
 		"--root", root,
+		"--review-scope", "fixed.txt",
 		"--provider-command",
 		reviewCommandPrintf(wrappedReviewDossierJSON(failingReviewDossierJSON("repair required", "loop-bug", "missing repair", "completion would ship the bug", "fixed.txt", 6))),
 		"repair-loop",
@@ -187,11 +188,13 @@ func TestFailedReviewRequiresRepairBuildBeforeCompletion(t *testing.T) {
 		}
 	}
 
+	writeFile(t, root, "fixed.txt", "repair applied\n")
 	run(t, bin, "build", "--root", root, "repair-loop")
 	run(t, bin,
 		"review",
 		"--root", root,
 		"--mode", "verify",
+		"--review-scope", "fixed.txt",
 		"--provider-command",
 		reviewCommandPrintf(wrappedReviewDossierJSON(passingReviewDossierJSON("verify", "repair verified", "repair", 6))),
 		"repair-loop",

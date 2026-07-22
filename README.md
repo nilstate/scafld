@@ -132,11 +132,14 @@ only wants local attestation is never pushed into a PR-blocking shape.
 
 The CI merge gate is an additive upgrade. Opt in with `scafld init --ci` to
 install `.github/workflows/scafld-verify.yml`, which re-verifies committed
-receipts on pull requests. Declare intent with the `verify.policy` config field
-(`local` default, `advisory`, `required`) and run `scafld verify --self-check`
-for an offline report of what is wired. Requiring the check before a merge is a
-GitHub branch-protection setting the operator owns; scafld scaffolds and reports
-it, never claiming an enforcement that is not there. See
+receipts on pull requests. The installed workflow splits PR verification into a
+trusted-base `pull_request_target` material lane and a separate sanitized
+acceptance lane, then exposes an aggregate gate for branch protection. Declare
+intent with the `verify.policy` config field (`local` default, `advisory`,
+`required`) and run `scafld verify --self-check` for an offline report of what
+is wired. Requiring the check before a merge is a GitHub branch-protection
+setting the operator owns; scafld scaffolds and reports it, never claiming an
+enforcement that is not there. See
 [docs/threat-model.md](docs/threat-model.md) for the exact guarantees and
 limits of signed receipts, trusted keys, and independence detection.
 
@@ -172,7 +175,7 @@ Started: 2026-05-07T09:15:00Z
 Ended: none
 
 Issues:
-- [high/blocks approval] `harden-1` question - Cache invalidation lacks a tenant safety invariant.
+- [high/blocks harden pass] `harden-1` question - Cache invalidation lacks a tenant safety invariant.
   - Status: fixed
   - Grounded in: spec_gap:Context
   - Evidence: Context did not name a tenant isolation invariant.
@@ -210,7 +213,6 @@ Review failure is structured, not a vibe:
   "verdict": "fail",
   "mode": "discover",
   "provider": "claude",
-  "model": "opus",
   "output_format": "claude.mcp_submit_review",
   "summary": "Review found one open completion blocker.",
   "findings": [
@@ -235,7 +237,7 @@ Review failure is structured, not a vibe:
 ```text
 review verdict: fail
 review mode: discover
-review provider: claude:opus
+review provider: claude
 review output: claude.mcp_submit_review
 summary: Review found one open completion blocker.
 findings:
@@ -340,6 +342,12 @@ Wrapper intent:
 - `handoff`: render model-facing repair or execution material
 - `update`: refresh managed core assets, prompts, root agent docs, and config shape
 
+Agent entry should read full `scafld status <task-id> --json` or
+`scafld handoff <task-id>` before acting. Follow-up polling can use
+`scafld status <task-id> --json --no-context` after the same
+`spec_source.sha256` has been read; the response keeps source provenance and
+omits only the markdown body.
+
 ## Hardening
 
 Hardening is pre-build adversarial thinking. It asks whether the agent is about
@@ -360,14 +368,20 @@ scafld harden add-cache --provider claude
 ```
 
 The first command enters HARDEN MODE, prints the active harden prompt, and
-records a round in the spec. Questions in that round carry `Grounded in`
+records a round for the current draft revision. Re-running harden while that
+round is open reprints the same context instead of appending another round.
+Questions in that round carry `Grounded in`
 citations such as `spec_gap:scope`, `code:internal/app/build/build.go:42`, or
 `archive:previous-cutover`. The second command verifies those citations and
 refuses to close the round when they do not resolve. Provider-backed hardening
 uses the same read-only provider transport as review, but writes a
 `HardenDossier`: summary plus the fixed design, scope, path, command, timing,
-and rollback observation ledger. Approval is still an explicit operator decision, but a
-complete plan spec should be hardened when the task is ambiguous, high-risk,
+and rollback observation ledger. A provider `needs_revision` round blocks
+another provider pass against the same draft until the draft changes. Approval
+is still an explicit operator decision: revise true shape blockers, or approve
+with `scafld approve <task-id> --reason <reason>` when the operator rejects a
+finding as bookkeeping, advisory, or overengineering. A complete plan spec
+should be hardened when the task is ambiguous, high-risk,
 cross-cutting, or likely to outlive one agent turn.
 
 A hardened spec should answer:
@@ -463,8 +477,11 @@ Review attempts are leased. If a provider process dies and leaves
 the stale attempt as abandoned before starting a new leased attempt. An active,
 unexpired attempt blocks concurrent reviews. A failed review with completion
 blockers cannot be re-reviewed until fresh build evidence appears; repair from
-`scafld handoff`, run `scafld build`, then run `scafld review`. A passing review
-is not rerun unless `--force` is explicit.
+`scafld handoff`, run `scafld build`, then run `scafld review`. If that build
+does not change the reviewed spec or task material, `review` blocks another
+provider call until the operator either repairs the blocker or explicitly
+rejects it with `scafld review <task-id> --force --reason <reason>`. A passing
+review is not rerun unless `--force` is explicit.
 
 `--human-reviewed` is the audited escape hatch. It belongs to `review`, not
 `complete`: it records a `review_override` event and a passing human review
@@ -482,13 +499,13 @@ review:
   external:
     provider: "auto"
     codex:
-      model: "latest"
+      # model: "" # omitted/default lets Codex CLI use its current model
       model_reasoning_effort: "xhigh"
     claude:
-      model: "opus"
+      # model: "" # omitted/default lets Claude Code use its current model
       effort: "xhigh"
     gemini:
-      # model: "" # empty uses Gemini CLI's configured default
+      # model: "" # omitted/default lets Gemini CLI use its current model
   context:
     # Aggregate rendered section-body budget for the provider brief.
     max_bytes: 16384

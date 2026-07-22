@@ -16,6 +16,8 @@ import (
 	"github.com/nilstate/scafld/v2/internal/core/diagnostics"
 	"github.com/nilstate/scafld/v2/internal/core/gate"
 	coreharden "github.com/nilstate/scafld/v2/internal/core/harden"
+	"github.com/nilstate/scafld/v2/internal/core/hardengate"
+	"github.com/nilstate/scafld/v2/internal/core/lifecycle"
 	"github.com/nilstate/scafld/v2/internal/core/reviewcontext"
 	"github.com/nilstate/scafld/v2/internal/core/spec"
 )
@@ -29,6 +31,10 @@ var (
 	ErrSpecNotDraft = errors.New("harden only operates on drafts")
 	// ErrInvalidHardenEvidence is returned when a hardening round has unverified citations.
 	ErrInvalidHardenEvidence = errors.New("invalid harden evidence")
+	// ErrHardenRoundOpen is returned when another harden round is still open.
+	ErrHardenRoundOpen = errors.New("harden round already in progress")
+	// ErrHardenRevisionRequired is returned when a provider harden rerun is attempted without draft edits.
+	ErrHardenRevisionRequired = errors.New("harden revision required before rerun")
 )
 
 const anchorShape = `expected "Anchor: spec_gap:<field>", "Anchor: code:<path>:<line>", or "Anchor: archive:<task-id>"`
@@ -78,6 +84,7 @@ type Output struct {
 	Summary      string            `json:"summary,omitempty"`
 	Provider     string            `json:"provider,omitempty"`
 	Model        string            `json:"model,omitempty"`
+	SpecDigest   string            `json:"spec_digest,omitempty"`
 	Warnings     []string          `json:"warnings"`
 }
 
@@ -102,19 +109,103 @@ func Run(ctx context.Context, store SpecStore, clock Clock, input Input) (Output
 	if input.MarkPassed {
 		return markPassed(ctx, store, path, model, now, input.Root)
 	}
-	if input.Provider != nil {
-		return runProviderHarden(ctx, store, input.Provider, path, model, now, input.Root, input.Contract, input.ContextMaxBytes, input.RequiredContextMaxBytes)
+	specDigest := spec.HardenContractDigest(model)
+	state := hardengate.Project(model)
+	if out, err, handled := guardExistingHardenRound(ctx, store, path, model, input, state); handled {
+		return out, err
 	}
-	return openRound(ctx, store, path, model, now, input.Contract, input.Prompt, input.ContextMaxBytes, input.RequiredContextMaxBytes, input.SuppressContext)
+	if input.Provider != nil {
+		return runProviderHarden(ctx, store, input.Provider, path, model, now, input.Root, input.Contract, input.ContextMaxBytes, input.RequiredContextMaxBytes, specDigest)
+	}
+	return openRound(ctx, store, path, model, now, input.Contract, input.Prompt, input.ContextMaxBytes, input.RequiredContextMaxBytes, input.SuppressContext, specDigest)
 }
 
-func runProviderHarden(ctx context.Context, store SpecStore, provider Provider, path string, model spec.Model, now string, root string, contract agentcontract.Contract, contextMaxBytes int, requiredContextMaxBytes int) (Output, error) {
+func guardExistingHardenRound(ctx context.Context, store SpecStore, path string, model spec.Model, input Input, state hardengate.State) (Output, error, bool) {
+	if !state.HasRound {
+		return Output{}, nil, false
+	}
+	round := state.LatestRound
+	if state.Kind == hardengate.KindRoundOpen {
+		if input.Provider != nil {
+			out := Output{TaskID: model.TaskID, Path: path, HardenStatus: spec.HardenInProgress, RoundID: round.ID, NextCommand: hardengate.MarkPassedCommand(model.TaskID), SpecDigest: round.SpecDigest}
+			return out, gate.New(ErrHardenRoundOpen, gate.Failure{
+				Gate:     "harden",
+				Status:   string(model.Status),
+				Reason:   "a harden round is already in progress",
+				Expected: "finish the current harden round before starting another provider pass",
+				Actual:   round.ID + " is in_progress",
+				Blockers: []string{"current harden round is still in_progress"},
+				Next:     hardengate.MarkPassedCommand(model.TaskID),
+			}), true
+		}
+		out, err := existingOpenRoundOutput(ctx, store, path, model, round, input.Contract, input.Prompt, input.ContextMaxBytes, input.RequiredContextMaxBytes, input.SuppressContext)
+		return out, err, true
+	}
+	switch state.Kind {
+	case hardengate.KindPassed:
+		return Output{
+			TaskID:       model.TaskID,
+			Path:         path,
+			HardenStatus: spec.HardenPassed,
+			RoundID:      round.ID,
+			NextCommand:  hardengate.ApproveCommand(model.TaskID),
+			Verdict:      coreharden.VerdictPass,
+			Summary:      "hardening already passed for this draft revision",
+			Provider:     round.Provider,
+			Model:        round.Model,
+			SpecDigest:   state.CurrentDigest,
+		}, nil, true
+	case hardengate.KindNeedsOperatorDecision:
+		if !state.ProviderRerunBlocked {
+			return Output{}, nil, false
+		}
+		next := hardengate.NeedsRevisionFollowUp(model.TaskID, input.Provider != nil)
+		out := Output{TaskID: model.TaskID, Path: path, HardenStatus: spec.HardenNeedsRevision, RoundID: round.ID, NextCommand: next, Verdict: coreharden.VerdictNeedsRevision, Summary: "latest harden round already covers this draft revision", Provider: round.Provider, Model: round.Model, SpecDigest: state.CurrentDigest}
+		return out, gate.New(ErrHardenRevisionRequired, gate.Failure{
+			Gate:     "harden",
+			Status:   string(model.Status),
+			Reason:   "latest harden round already covers this draft revision",
+			Evidence: state.Evidence,
+			Expected: "edit the draft contract before rerunning harden, or approve if the operator rejects the finding as bookkeeping",
+			Actual:   "draft spec digest unchanged since " + round.ID,
+			Blockers: state.Blockers,
+			Next:     next,
+		}), true
+	default:
+		return Output{}, nil, false
+	}
+}
+
+func existingOpenRoundOutput(ctx context.Context, store SpecStore, path string, model spec.Model, round spec.HardenRound, contract agentcontract.Contract, prompt string, contextMaxBytes int, requiredContextMaxBytes int, suppressContext bool) (Output, error) {
+	renderedContext := ""
+	if !suppressContext {
+		source, err := specsource.Load(ctx, store, model.TaskID)
+		if err != nil {
+			return Output{}, err
+		}
+		packet := hardenContextPacket(source, contract, manualHardenOutputSection(hardengate.MarkPassedCommand(model.TaskID)))
+		renderedContext = reviewcontext.RenderMarkdown(packet, reviewcontext.Options{MaxBytes: contextMaxBytes, RequiredMaxBytes: requiredContextMaxBytes, Title: "Harden Context Packet"})
+	}
+	return Output{
+		TaskID:       model.TaskID,
+		Path:         path,
+		HardenStatus: spec.HardenInProgress,
+		RoundID:      round.ID,
+		NextCommand:  hardengate.MarkPassedCommand(model.TaskID),
+		Prompt:       prompt,
+		Context:      renderedContext,
+		SpecDigest:   round.SpecDigest,
+	}, nil
+}
+
+func runProviderHarden(ctx context.Context, store SpecStore, provider Provider, path string, model spec.Model, now string, root string, contract agentcontract.Contract, contextMaxBytes int, requiredContextMaxBytes int, specDigest string) (Output, error) {
 	roundID := nextRoundID(model.HardenRounds)
 	model.HardenStatus = spec.HardenInProgress
 	model.HardenRounds = append(model.HardenRounds, spec.HardenRound{
-		ID:        roundID,
-		Status:    string(spec.HardenInProgress),
-		StartedAt: now,
+		ID:         roundID,
+		Status:     string(spec.HardenInProgress),
+		StartedAt:  now,
+		SpecDigest: specDigest,
 	})
 	model.Updated = now
 	model.CurrentState.Next = "harden"
@@ -126,6 +217,10 @@ func runProviderHarden(ctx context.Context, store SpecStore, provider Provider, 
 	}
 	source, err := specsource.Load(ctx, store, model.TaskID)
 	if err != nil {
+		reason, diagnosticPath := diagnostics.FailureReason("provider harden source reload failed", err, 240)
+		if closeErr := closeProviderHardenRound(ctx, store, model.TaskID, roundID, now, reason, diagnosticPath, "external hardening setup error", "fix local spec access, then run scafld harden "+model.TaskID+" --provider <provider>"); closeErr != nil {
+			return Output{}, errors.Join(err, fmt.Errorf("record provider harden failure: %w", closeErr))
+		}
 		return Output{}, err
 	}
 	model = source.Model
@@ -153,10 +248,17 @@ func runProviderHarden(ctx context.Context, store SpecStore, provider Provider, 
 		}
 		return Output{}, err
 	}
-	model, _, err = store.Load(ctx, model.TaskID)
+	recordCtx, cancelRecord := lifecycle.TerminalEvidenceContext(ctx)
+	defer cancelRecord()
+	taskID := model.TaskID
+	reloaded, _, err := store.Load(recordCtx, taskID)
 	if err != nil {
+		if closeErr := closeProviderHardenTerminalRecordFailure(ctx, store, taskID, roundID, now, "load harden round after provider", err); closeErr != nil {
+			return Output{}, closeErr
+		}
 		return Output{}, err
 	}
+	model = reloaded
 	if len(model.HardenRounds) == 0 || model.HardenRounds[len(model.HardenRounds)-1].ID != roundID {
 		return Output{}, fmt.Errorf("harden round changed while provider was running")
 	}
@@ -172,8 +274,8 @@ func runProviderHarden(ctx context.Context, store SpecStore, provider Provider, 
 		model.CurrentState.Reason = "external hardening provider evidence error"
 		model.CurrentState.Blockers = reason
 		model.CurrentState.AllowedFollowUp = "fix provider harden evidence, then run scafld harden " + model.TaskID + " --provider <provider>"
-		if err := store.Save(ctx, path, model); err != nil {
-			return Output{}, fmt.Errorf("save harden evidence failure: %w", err)
+		if err := store.Save(recordCtx, path, model); err != nil {
+			return Output{}, closeProviderHardenTerminalRecordFailure(ctx, store, model.TaskID, roundID, now, "save harden evidence failure", err)
 		}
 		out := Output{TaskID: model.TaskID, Path: path, HardenStatus: model.HardenStatus, RoundID: roundID, Warnings: warnings, Summary: reason, Provider: dossier.Provider, Model: dossier.Model}
 		return out, gate.New(ErrInvalidHardenEvidence, gate.Failure{
@@ -199,13 +301,13 @@ func runProviderHarden(ctx context.Context, store SpecStore, provider Provider, 
 	} else {
 		model.HardenStatus = spec.HardenNeedsRevision
 		model.HardenRounds[latest].Status = string(spec.HardenNeedsRevision)
-		model.CurrentState.Next = "harden"
-		model.CurrentState.Reason = "hardening found draft contract issues"
+		model.CurrentState.Next = "operator_decision"
+		model.CurrentState.Reason = "hardening found draft shape findings requiring operator judgment"
 		model.CurrentState.Blockers = hardenBlockers(dossier)
-		model.CurrentState.AllowedFollowUp = "edit the draft, then run scafld harden " + model.TaskID + " --provider <provider>"
+		model.CurrentState.AllowedFollowUp = hardengate.NeedsRevisionFollowUp(model.TaskID, true)
 	}
-	if err := store.Save(ctx, path, model); err != nil {
-		return Output{}, fmt.Errorf("save harden dossier: %w", err)
+	if err := store.Save(recordCtx, path, model); err != nil {
+		return Output{}, closeProviderHardenTerminalRecordFailure(ctx, store, model.TaskID, roundID, now, "save harden dossier", err)
 	}
 	return Output{
 		TaskID:       model.TaskID,
@@ -217,11 +319,18 @@ func runProviderHarden(ctx context.Context, store SpecStore, provider Provider, 
 		Summary:      dossier.Summary,
 		Provider:     dossier.Provider,
 		Model:        dossier.Model,
+		SpecDigest:   specDigest,
 	}, nil
 }
 
 func closeProviderHardenFailure(ctx context.Context, store SpecStore, taskID string, roundID string, now string, reason string, diagnosticPath string) error {
-	model, path, err := store.Load(ctx, taskID)
+	return closeProviderHardenRound(ctx, store, taskID, roundID, now, reason, diagnosticPath, "external hardening provider error", "fix provider availability/output, then run scafld harden "+taskID+" --provider <provider>")
+}
+
+func closeProviderHardenRound(ctx context.Context, store SpecStore, taskID string, roundID string, now string, reason string, diagnosticPath string, stateReason string, followUp string) error {
+	writeCtx, cancel := lifecycle.TerminalEvidenceContext(ctx)
+	defer cancel()
+	model, path, err := store.Load(writeCtx, taskID)
 	if err != nil {
 		return err
 	}
@@ -236,19 +345,29 @@ func closeProviderHardenFailure(ctx context.Context, store SpecStore, taskID str
 	model.HardenStatus = spec.HardenError
 	model.Updated = now
 	model.CurrentState.Next = "harden"
-	model.CurrentState.Reason = "external hardening provider error"
+	model.CurrentState.Reason = stateReason
 	model.CurrentState.Blockers = reason
-	model.CurrentState.AllowedFollowUp = "fix provider availability/output, then run scafld harden " + model.TaskID + " --provider <provider>"
-	return store.Save(ctx, path, model)
+	model.CurrentState.AllowedFollowUp = followUp
+	return store.Save(writeCtx, path, model)
 }
 
-func openRound(ctx context.Context, store SpecStore, path string, model spec.Model, now string, contract agentcontract.Contract, prompt string, contextMaxBytes int, requiredContextMaxBytes int, suppressContext bool) (Output, error) {
+func closeProviderHardenTerminalRecordFailure(ctx context.Context, store SpecStore, taskID string, roundID string, now string, label string, cause error) error {
+	recordErr := fmt.Errorf("%s: %w", label, cause)
+	reason, diagnosticPath := diagnostics.FailureReason("provider harden terminal recording failed", recordErr, 240)
+	if closeErr := closeProviderHardenRound(ctx, store, taskID, roundID, now, reason, diagnosticPath, "external hardening terminal recording error", "fix local spec storage, then run scafld harden "+taskID+" --provider <provider>"); closeErr != nil {
+		return errors.Join(recordErr, fmt.Errorf("record provider harden failure: %w", closeErr))
+	}
+	return recordErr
+}
+
+func openRound(ctx context.Context, store SpecStore, path string, model spec.Model, now string, contract agentcontract.Contract, prompt string, contextMaxBytes int, requiredContextMaxBytes int, suppressContext bool, specDigest string) (Output, error) {
 	roundID := nextRoundID(model.HardenRounds)
 	model.HardenStatus = spec.HardenInProgress
 	model.HardenRounds = append(model.HardenRounds, spec.HardenRound{
 		ID:           roundID,
 		Status:       string(spec.HardenInProgress),
 		StartedAt:    now,
+		SpecDigest:   specDigest,
 		Observations: hardenObservationSkeleton(),
 	})
 	model.Updated = now
@@ -265,7 +384,7 @@ func openRound(ctx context.Context, store SpecStore, path string, model spec.Mod
 		if err != nil {
 			return Output{}, err
 		}
-		packet := hardenContextPacket(source, contract, manualHardenOutputSection(markPassedCommand(model.TaskID)))
+		packet := hardenContextPacket(source, contract, manualHardenOutputSection(hardengate.MarkPassedCommand(model.TaskID)))
 		renderedContext = reviewcontext.RenderMarkdown(packet, reviewcontext.Options{MaxBytes: contextMaxBytes, RequiredMaxBytes: requiredContextMaxBytes, Title: "Harden Context Packet"})
 	}
 	return Output{
@@ -273,9 +392,10 @@ func openRound(ctx context.Context, store SpecStore, path string, model spec.Mod
 		Path:         path,
 		HardenStatus: model.HardenStatus,
 		RoundID:      roundID,
-		NextCommand:  markPassedCommand(model.TaskID),
+		NextCommand:  hardengate.MarkPassedCommand(model.TaskID),
 		Prompt:       prompt,
 		Context:      renderedContext,
+		SpecDigest:   specDigest,
 	}, nil
 }
 
@@ -287,16 +407,12 @@ func hardenObservationSkeleton() []spec.HardenObservation {
 	return observations
 }
 
-func markPassedCommand(taskID string) string {
-	return "scafld harden " + taskID + " --mark-passed"
-}
-
 func manualHardenBlocker() string {
 	return "fill harden observations with Result and Anchor before marking passed"
 }
 
 func manualHardenFollowUp(path string, taskID string) string {
-	return "fill harden observations in " + path + ", then run " + markPassedCommand(taskID)
+	return "fill harden observations in " + path + ", then run " + hardengate.MarkPassedCommand(taskID)
 }
 
 func markPassed(ctx context.Context, store SpecStore, path string, model spec.Model, now string, root string) (Output, error) {

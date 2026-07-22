@@ -47,6 +47,8 @@ const (
 	HardenPassed HardenStatus = "passed"
 	// HardenNeedsRevision means hardening identified draft contract work before approval.
 	HardenNeedsRevision HardenStatus = "needs_revision"
+	// HardenOverridden means the operator approved the draft despite incomplete or rejected harden evidence.
+	HardenOverridden HardenStatus = "overridden"
 	// HardenError means the hardening provider or recorded harden evidence could not be accepted.
 	HardenError HardenStatus = "error"
 )
@@ -222,6 +224,7 @@ type HardenRound struct {
 	Status         string              `json:"status"`
 	StartedAt      string              `json:"started_at"`
 	EndedAt        string              `json:"ended_at"`
+	SpecDigest     string              `json:"spec_digest,omitempty"`
 	Verdict        string              `json:"verdict,omitempty"`
 	Summary        string              `json:"summary,omitempty"`
 	DiagnosticPath string              `json:"diagnostic_path,omitempty"`
@@ -352,6 +355,7 @@ func validateCriterion(c Criterion, seen map[string]bool) []string {
 		errs = append(errs, "duplicate criterion id "+c.ID)
 	}
 	seen[c.ID] = true
+	c.Type = canonicalCriterionType(c.Type)
 	if c.Command == "" && c.Type != "manual" {
 		errs = append(errs, "criterion "+c.ID+" command is required")
 	}
@@ -363,6 +367,15 @@ func validateCriterion(c Criterion, seen map[string]bool) []string {
 	}
 	if c.ExpectedKind == acceptance.ExpectedBrowserEvidence && c.Type != "browser" {
 		errs = append(errs, "criterion "+c.ID+" browser_evidence expected_kind requires browser type")
+	}
+	if c.Type == "manual" && c.ExpectedKind != acceptance.ExpectedManual {
+		errs = append(errs, "criterion "+c.ID+" manual type requires expected_kind manual")
+	}
+	if c.ExpectedKind == acceptance.ExpectedManual && c.Type != "manual" {
+		errs = append(errs, "criterion "+c.ID+" manual expected_kind requires manual type")
+	}
+	if c.Type == "manual" && strings.TrimSpace(c.Command) != "" {
+		errs = append(errs, "criterion "+c.ID+" manual type cannot have a command")
 	}
 	return errs
 }
@@ -398,7 +411,7 @@ func ValidStatus(status Status) bool {
 // ValidHardenStatus reports whether status is a supported hardening status.
 func ValidHardenStatus(status HardenStatus) bool {
 	switch status {
-	case "", HardenNotRun, HardenInProgress, HardenPassed, HardenNeedsRevision, HardenError:
+	case "", HardenNotRun, HardenInProgress, HardenPassed, HardenNeedsRevision, HardenOverridden, HardenError:
 		return true
 	default:
 		return false
@@ -419,40 +432,141 @@ func (m Model) AllCriteria() []Criterion {
 	return criteria
 }
 
+type contractChecklistItem struct {
+	ID   string `json:"id"`
+	Text string `json:"text"`
+}
+
+type contractCriterion struct {
+	ID           string                  `json:"id"`
+	Title        string                  `json:"title"`
+	Type         string                  `json:"type"`
+	PhaseID      string                  `json:"phase_id,omitempty"`
+	Command      string                  `json:"command"`
+	ExpectedKind acceptance.ExpectedKind `json:"expected_kind"`
+}
+
+type contractAcceptance struct {
+	ValidationProfile string                  `json:"validation_profile"`
+	DefinitionDone    []contractChecklistItem `json:"definition_done"`
+	Criteria          []contractCriterion     `json:"criteria"`
+}
+
+type contractPhase struct {
+	ID             string                  `json:"id"`
+	Number         int                     `json:"number"`
+	Name           string                  `json:"name"`
+	Dependencies   []string                `json:"dependencies"`
+	Objective      string                  `json:"objective"`
+	Changes        []string                `json:"changes"`
+	Acceptance     []contractCriterion     `json:"acceptance"`
+	DefinitionDone []contractChecklistItem `json:"definition_done"`
+}
+
+func acceptanceContract(acceptance Acceptance) contractAcceptance {
+	return contractAcceptance{
+		ValidationProfile: acceptance.ValidationProfile,
+		DefinitionDone:    checklistContract(acceptance.DefinitionDone),
+		Criteria:          criteriaContract(acceptance.Criteria, ""),
+	}
+}
+
+func phasesContract(phases []Phase) []contractPhase {
+	out := make([]contractPhase, 0, len(phases))
+	for _, phase := range phases {
+		out = append(out, contractPhase{
+			ID:             phase.ID,
+			Number:         phase.Number,
+			Name:           phase.Name,
+			Dependencies:   phase.Dependencies,
+			Objective:      phase.Objective,
+			Changes:        phase.Changes,
+			Acceptance:     criteriaContract(phase.Acceptance, phase.ID),
+			DefinitionDone: checklistContract(phase.DefinitionDone),
+		})
+	}
+	return out
+}
+
+func criteriaContract(criteria []Criterion, defaultPhaseID string) []contractCriterion {
+	out := make([]contractCriterion, 0, len(criteria))
+	for _, criterion := range criteria {
+		phaseID := criterion.PhaseID
+		if phaseID == "" {
+			phaseID = defaultPhaseID
+		}
+		out = append(out, contractCriterion{
+			ID:           criterion.ID,
+			Title:        criterion.Title,
+			Type:         canonicalCriterionType(criterion.Type),
+			PhaseID:      phaseID,
+			Command:      criterion.Command,
+			ExpectedKind: canonicalExpectedKind(criterion),
+		})
+	}
+	return out
+}
+
+func checklistContract(items []ChecklistItem) []contractChecklistItem {
+	out := make([]contractChecklistItem, 0, len(items))
+	for _, item := range items {
+		out = append(out, contractChecklistItem{ID: item.ID, Text: item.Text})
+	}
+	return out
+}
+
+func canonicalCriterionType(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "command"
+	}
+	return value
+}
+
+func canonicalExpectedKind(criterion Criterion) acceptance.ExpectedKind {
+	if criterion.ExpectedKind != "" {
+		return criterion.ExpectedKind
+	}
+	switch canonicalCriterionType(criterion.Type) {
+	case "browser":
+		return acceptance.ExpectedBrowserEvidence
+	case "manual":
+		return acceptance.ExpectedManual
+	default:
+		return acceptance.ExpectedExitCodeZero
+	}
+}
+
 // ContractDigest returns a stable digest of the task contract under review.
 // Volatile projection fields such as lifecycle status, current state, updated
-// timestamps, and review output are intentionally excluded.
+// timestamps, harden/review output, and acceptance evidence are intentionally
+// excluded.
 func ContractDigest(model Model) string {
 	data, err := json.Marshal(struct {
-		Version      string            `json:"spec_version"`
-		TaskID       string            `json:"task_id"`
-		Title        string            `json:"title"`
-		Summary      string            `json:"summary"`
-		HardenStatus HardenStatus      `json:"harden_status"`
-		Size         Size              `json:"size"`
-		RiskLevel    RiskLevel         `json:"risk_level"`
-		Context      Context           `json:"context"`
-		Objectives   []string          `json:"objectives"`
-		Scope        []string          `json:"scope"`
-		Dependencies []string          `json:"dependencies"`
-		Assumptions  []string          `json:"assumptions"`
-		Touchpoints  []string          `json:"touchpoints"`
-		Risks        []Risk            `json:"risks"`
-		Acceptance   Acceptance        `json:"acceptance"`
-		Phases       []Phase           `json:"phases"`
-		Rollback     []string          `json:"rollback"`
-		SelfEval     []string          `json:"self_eval"`
-		Deviations   []string          `json:"deviations"`
-		Metadata     map[string]string `json:"metadata"`
-		Origin       Origin            `json:"origin"`
-		HardenRounds []HardenRound     `json:"harden_rounds"`
-		PlanningLog  []PlanningEvent   `json:"planning_log"`
+		Version      string             `json:"spec_version"`
+		TaskID       string             `json:"task_id"`
+		Title        string             `json:"title"`
+		Summary      string             `json:"summary"`
+		Size         Size               `json:"size"`
+		RiskLevel    RiskLevel          `json:"risk_level"`
+		Context      Context            `json:"context"`
+		Objectives   []string           `json:"objectives"`
+		Scope        []string           `json:"scope"`
+		Dependencies []string           `json:"dependencies"`
+		Assumptions  []string           `json:"assumptions"`
+		Touchpoints  []string           `json:"touchpoints"`
+		Risks        []Risk             `json:"risks"`
+		Acceptance   contractAcceptance `json:"acceptance"`
+		Phases       []contractPhase    `json:"phases"`
+		Rollback     []string           `json:"rollback"`
+		SelfEval     []string           `json:"self_eval"`
+		Deviations   []string           `json:"deviations"`
+		Metadata     map[string]string  `json:"metadata"`
 	}{
 		Version:      model.Version,
 		TaskID:       model.TaskID,
 		Title:        model.Title,
 		Summary:      model.Summary,
-		HardenStatus: model.HardenStatus,
 		Size:         model.Size,
 		RiskLevel:    model.RiskLevel,
 		Context:      model.Context,
@@ -462,15 +576,64 @@ func ContractDigest(model Model) string {
 		Assumptions:  model.Assumptions,
 		Touchpoints:  model.Touchpoints,
 		Risks:        model.Risks,
-		Acceptance:   model.Acceptance,
-		Phases:       model.Phases,
+		Acceptance:   acceptanceContract(model.Acceptance),
+		Phases:       phasesContract(model.Phases),
 		Rollback:     model.Rollback,
 		SelfEval:     model.SelfEval,
 		Deviations:   model.Deviations,
 		Metadata:     model.Metadata,
-		Origin:       model.Origin,
-		HardenRounds: model.HardenRounds,
-		PlanningLog:  model.PlanningLog,
+	})
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
+}
+
+// HardenContractDigest returns a stable digest of the draft material under the
+// pre-approval harden gate. It excludes lifecycle projections and harden evidence
+// so rerunning harden without changing the draft contract is detectable.
+func HardenContractDigest(model Model) string {
+	data, err := json.Marshal(struct {
+		Version      string             `json:"spec_version"`
+		TaskID       string             `json:"task_id"`
+		Title        string             `json:"title"`
+		Summary      string             `json:"summary"`
+		Size         Size               `json:"size"`
+		RiskLevel    RiskLevel          `json:"risk_level"`
+		Context      Context            `json:"context"`
+		Objectives   []string           `json:"objectives"`
+		Scope        []string           `json:"scope"`
+		Dependencies []string           `json:"dependencies"`
+		Assumptions  []string           `json:"assumptions"`
+		Touchpoints  []string           `json:"touchpoints"`
+		Risks        []Risk             `json:"risks"`
+		Acceptance   contractAcceptance `json:"acceptance"`
+		Phases       []contractPhase    `json:"phases"`
+		Rollback     []string           `json:"rollback"`
+		SelfEval     []string           `json:"self_eval"`
+		Deviations   []string           `json:"deviations"`
+		Metadata     map[string]string  `json:"metadata"`
+	}{
+		Version:      model.Version,
+		TaskID:       model.TaskID,
+		Title:        model.Title,
+		Summary:      model.Summary,
+		Size:         model.Size,
+		RiskLevel:    model.RiskLevel,
+		Context:      model.Context,
+		Objectives:   model.Objectives,
+		Scope:        model.Scope,
+		Dependencies: model.Dependencies,
+		Assumptions:  model.Assumptions,
+		Touchpoints:  model.Touchpoints,
+		Risks:        model.Risks,
+		Acceptance:   acceptanceContract(model.Acceptance),
+		Phases:       phasesContract(model.Phases),
+		Rollback:     model.Rollback,
+		SelfEval:     model.SelfEval,
+		Deviations:   model.Deviations,
+		Metadata:     model.Metadata,
 	})
 	if err != nil {
 		return ""

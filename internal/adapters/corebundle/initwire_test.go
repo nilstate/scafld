@@ -241,14 +241,49 @@ func TestInitWireExistingJSONPreservesEntriesAndInstallsAssets(t *testing.T) {
 		}
 	}
 	workflow := mustReadFile(t, filepath.Join(root, ".github", "workflows", "scafld-verify.yml"))
-	for _, want := range []string{"pull_request_target", "actions/setup-go", "SCAFLD_VERSION", "SCAFLD_VERIFY_TARGET", "RUNNER_TEMP", "git show", "scripts/scafld-verify.sh", "pull_request.head.sha"} {
+	for _, want := range []string{
+		"pull_request_target:",
+		"verify-material:",
+		"verify-acceptance:",
+		"verify-gate:",
+		"needs: [verify-material, verify-acceptance]",
+		"actions/setup-go",
+		"ref: ${{ github.event.pull_request.base.sha || github.sha }}",
+		"persist-credentials: false",
+		"Fetch pull request receipt source",
+		"if: github.event_name == 'pull_request_target'",
+		"git fetch --no-tags pr-head",
+		"SCAFLD_VERSION",
+		"SCAFLD_VERIFY_TARGET",
+		"SCAFLD_VERIFY_HEAD",
+		"SCAFLD_VERIFY_MODE: material",
+		"SCAFLD_VERIFY_MODE: full",
+		"if: ${{ always() && github.event_name == 'pull_request_target' }}",
+		"needs.verify-material.result",
+		"needs.verify-acceptance.result",
+		"scripts/scafld-verify.sh",
+		"pull_request.head.sha",
+	} {
 		if !strings.Contains(string(workflow), want) {
 			t.Fatalf("verify workflow missing %q:\n%s", want, workflow)
 		}
 	}
 	scriptPath := filepath.Join(root, "scripts", "scafld-verify.sh")
 	script := mustReadFile(t, scriptPath)
-	for _, want := range []string{"SCAFLD_TRUSTED_KEYS", "git show \"$target:.scafld/trusted-keys.json\"", "go install", "--trusted-keys", ".scafld/receipts/latest.json"} {
+	for _, want := range []string{
+		"SCAFLD_TRUSTED_KEYS",
+		"SCAFLD_VERIFY_MODE",
+		"head_ref=\"${SCAFLD_VERIFY_HEAD:-HEAD}\"",
+		"git diff --name-only \"$target\" \"$head_ref\"",
+		"git show \"$head_ref:$receipt\"",
+		"git worktree add --detach \"$acceptance_root\" \"$resolved_head\"",
+		"--material-only",
+		"--acceptance-root \"$acceptance_root\"",
+		"git show \"$target:.scafld/trusted-keys.json\"",
+		"go install",
+		"--trusted-keys",
+		".scafld/receipts/latest.json",
+	} {
 		if !strings.Contains(string(script), want) {
 			t.Fatalf("verify script missing %q:\n%s", want, script)
 		}

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -42,6 +43,13 @@ func TestRoundTripPreservesLiterateSpecFields(t *testing.T) {
 		ReviewGate:         "not_started",
 	}
 	model.Objectives = []string{"Keep specs readable", "Keep execution evidence deterministic"}
+	model.Context = spec.Context{
+		CWD:           "/repo",
+		Packages:      []string{"internal/core/reviewscope"},
+		FilesImpacted: []string{"`internal/core/reviewscope/scope.go` - derive task scope from explicit files"},
+		Invariants:    []string{"Context markdown is source-of-truth input."},
+		RelatedDocs:   []string{"`docs/review.md`"},
+	}
 	model.Scope = []string{"Markdown parser", "Renderer"}
 	model.Dependencies = []string{"go toolchain"}
 	model.Assumptions = []string{"No legacy YAML task specs"}
@@ -56,6 +64,7 @@ func TestRoundTripPreservesLiterateSpecFields(t *testing.T) {
 		ID:             "round-1",
 		Status:         string(spec.HardenInProgress),
 		StartedAt:      "2026-05-04T00:00:00Z",
+		SpecDigest:     "abc123",
 		DiagnosticPath: "/tmp/scafld-harden-diagnostic.txt",
 		Shape: spec.HardenShape{
 			Decision:          "keep",
@@ -80,7 +89,33 @@ func TestRoundTripPreservesLiterateSpecFields(t *testing.T) {
 			Default:      "Use the existing repair command.",
 		}},
 	}}
-	model.Review = spec.ReviewState{Status: "completed", Verdict: corereview.VerdictFail, Mode: corereview.ModeDiscover, Provider: "claude", Model: "claude-test", OutputFormat: "claude.mcp_submit_review", Summary: "Review found an open blocker.", Findings: []corereview.Finding{{ID: "f1", Severity: corereview.SeverityHigh, BlocksCompletion: true, Location: &corereview.Location{Path: "file.go"}, Evidence: "bug", Impact: "test impact", Validation: "rerun test", Summary: "bug"}}}
+	model.Review = spec.ReviewState{
+		Status:         "completed",
+		Verdict:        corereview.VerdictFail,
+		Mode:           corereview.ModeDiscover,
+		Provider:       "claude",
+		Model:          "claude-test",
+		OutputFormat:   "claude.mcp_submit_review",
+		Normalizations: []string{"normalized one"},
+		Summary:        "Review found an open blocker.",
+		Findings: []corereview.Finding{{
+			ID:               "f1",
+			Severity:         corereview.SeverityHigh,
+			BlocksCompletion: true,
+			Category:         "schema",
+			Confidence:       corereview.ConfidenceHigh,
+			Location:         &corereview.Location{Path: "file.go"},
+			Evidence:         "bug",
+			Impact:           "test impact",
+			Reproducer:       "render then parse",
+			SuggestedFix:     "preserve fields",
+			Validation:       "rerun test",
+			RelatedSpec:      "Review",
+			ReviewPass:       "verify",
+			Status:           corereview.FindingOpen,
+			Summary:          "bug",
+		}},
+	}
 	model.Phases[0].Dependencies = []string{"phase0"}
 	model.Phases[0].Acceptance[0].Status = "pass"
 	model.Phases[0].Acceptance[0].Evidence = "exit code was 0"
@@ -95,6 +130,9 @@ func TestRoundTripPreservesLiterateSpecFields(t *testing.T) {
 	}
 	if len(parsed.Objectives) != 2 || parsed.Objectives[0] != "Keep specs readable" {
 		t.Fatalf("objectives lost: %+v", parsed.Objectives)
+	}
+	if parsed.Context.CWD != model.Context.CWD || !reflect.DeepEqual(parsed.Context.Packages, model.Context.Packages) || !reflect.DeepEqual(parsed.Context.FilesImpacted, model.Context.FilesImpacted) || !reflect.DeepEqual(parsed.Context.Invariants, model.Context.Invariants) || !reflect.DeepEqual(parsed.Context.RelatedDocs, model.Context.RelatedDocs) {
+		t.Fatalf("context lost: %+v", parsed.Context)
 	}
 	if got := parsed.Phases[0].Dependencies; len(got) != 1 || got[0] != "phase0" {
 		t.Fatalf("phase dependencies lost: %+v", got)
@@ -114,6 +152,9 @@ func TestRoundTripPreservesLiterateSpecFields(t *testing.T) {
 	if parsed.HardenRounds[0].DiagnosticPath != "/tmp/scafld-harden-diagnostic.txt" {
 		t.Fatalf("harden diagnostic path lost: %+v", parsed.HardenRounds[0])
 	}
+	if parsed.HardenRounds[0].SpecDigest != "abc123" {
+		t.Fatalf("harden spec digest lost: %+v", parsed.HardenRounds[0])
+	}
 	if got := parsed.HardenRounds[0].Shape; got.Decision != "keep" || got.SharedOwner != "internal/core/reviewcontext" || len(got.AdapterBoundaries) != 2 {
 		t.Fatalf("harden shape lost: %+v", got)
 	}
@@ -123,7 +164,10 @@ func TestRoundTripPreservesLiterateSpecFields(t *testing.T) {
 	if got := parsed.Review.Findings; len(got) != 1 || got[0].Summary != "bug" {
 		t.Fatalf("review findings lost: %+v", got)
 	}
-	if parsed.Review.Provider != "claude" || parsed.Review.Model != "claude-test" || parsed.Review.OutputFormat != "claude.mcp_submit_review" || len(parsed.Review.Normalizations) != 0 {
+	if got := parsed.Review.Findings[0]; got.Category != "schema" || got.Confidence != corereview.ConfidenceHigh || got.Reproducer != "render then parse" || got.SuggestedFix != "preserve fields" || got.RelatedSpec != "Review" || got.ReviewPass != "verify" || got.Status != corereview.FindingOpen {
+		t.Fatalf("review finding details lost: %+v", got)
+	}
+	if parsed.Review.Provider != "claude" || parsed.Review.Model != "claude-test" || parsed.Review.OutputFormat != "claude.mcp_submit_review" || len(parsed.Review.Normalizations) != 1 || parsed.Review.Normalizations[0] != "normalized one" {
 		t.Fatalf("review provenance lost: %+v", parsed.Review)
 	}
 }
@@ -217,6 +261,40 @@ func TestParseDefaultsBrowserCriteriaToBrowserEvidence(t *testing.T) {
 	got := parsed.Phases[0].Acceptance[0]
 	if got.Type != "browser" || got.ExpectedKind != acceptance.ExpectedBrowserEvidence {
 		t.Fatalf("browser criterion = %+v", got)
+	}
+}
+
+func TestParseDefaultsManualCriteriaToManualEvidence(t *testing.T) {
+	t.Parallel()
+
+	input := string(Render(fixtureModel()))
+	input = strings.Replace(input, "- [ ] `ac1` command - runs", "- [ ] `ac1` manual - Operator signoff", 1)
+	input = strings.Replace(input, "  - Command: `true`\n", "", 1)
+	input = strings.Replace(input, "  - Expected kind: `exit_code_zero`\n", "", 1)
+	parsed, err := Parse([]byte(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := parsed.Phases[0].Acceptance[0]
+	if got.Type != "manual" || got.ExpectedKind != acceptance.ExpectedManual || got.Command != "" {
+		t.Fatalf("manual criterion = %+v", got)
+	}
+}
+
+func TestRenderDefaultsManualCriteriaToManualEvidence(t *testing.T) {
+	t.Parallel()
+
+	model := fixtureModel()
+	model.Phases[0].Acceptance[0] = spec.Criterion{
+		ID:      "signoff",
+		Type:    "manual",
+		Title:   "Operator signoff",
+		PhaseID: "phase1",
+		Status:  "pending",
+	}
+	rendered := string(Render(model))
+	if !strings.Contains(rendered, "- [ ] `signoff` manual - Operator signoff\n  - Expected kind: `manual`\n") {
+		t.Fatalf("manual criterion did not render expected kind manual:\n%s", rendered)
 	}
 }
 

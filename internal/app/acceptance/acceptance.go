@@ -22,6 +22,7 @@ type EvaluateInput struct {
 	Criteria      []Criterion
 	WorkDir       string
 	Env           []string
+	EnvMode       execution.EnvMode
 	Timeout       time.Duration
 	IdleTimeout   time.Duration
 	DiagnosticDir string
@@ -82,7 +83,7 @@ func Evaluate(ctx context.Context, runner Runner, input EvaluateInput) EvaluateO
 func evaluateCriterion(ctx context.Context, runner Runner, criterion Criterion, input EvaluateInput) CriterionResult {
 	started := time.Now().UTC()
 	if strings.TrimSpace(criterion.Command) == "" {
-		evaluation := coreacceptance.Evaluate(coreacceptance.ExpectedKind(criterion.ExpectedKind), coreacceptance.Evidence{})
+		evaluation := emptyCommandEvaluation(criterion)
 		ended := time.Now().UTC()
 		return CriterionResult{
 			ID:           criterion.ID,
@@ -134,6 +135,13 @@ func evaluateCriterion(ctx context.Context, runner Runner, criterion Criterion, 
 	}
 }
 
+func emptyCommandEvaluation(criterion Criterion) coreacceptance.Result {
+	if criterion.Type == "manual" && criterion.ExpectedKind == string(coreacceptance.ExpectedManual) {
+		return coreacceptance.Evaluate(coreacceptance.ExpectedManual, coreacceptance.Evidence{})
+	}
+	return coreacceptance.Result{Status: "fail", Reason: "criterion command is empty"}
+}
+
 func run(ctx context.Context, runner Runner, command string, input EvaluateInput) (execution.Result, error) {
 	if runner == nil {
 		return execution.Result{}, errors.New("missing acceptance runner")
@@ -142,6 +150,7 @@ func run(ctx context.Context, runner Runner, command string, input EvaluateInput
 		Command:     command,
 		CWD:         input.WorkDir,
 		Env:         input.Env,
+		EnvMode:     input.EnvMode,
 		Timeout:     input.Timeout,
 		IdleTimeout: input.IdleTimeout,
 	})

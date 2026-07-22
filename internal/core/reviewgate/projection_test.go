@@ -62,8 +62,106 @@ func TestProjectBlocksFailedReviewUntilBuildEvidence(t *testing.T) {
 
 	ledger = ledger.WithEntry(session.Entry{ID: "build-1", Type: "build", Status: string(spec.StatusReview)})
 	state = Project(ledger, model, Options{Now: time.Date(2026, 5, 4, 0, 0, 0, 0, time.UTC)})
-	if state.Kind != KindReviewStaleAfterBuild || !state.CanStartReview || state.HasReview {
+	if state.Kind != KindReviewStaleAfterBuild || !state.CanStartReview || !state.HasReview {
 		t.Fatalf("post-build state = %+v", state)
+	}
+}
+
+func TestProjectBlocksReviewRerunWhenBuildAddsNoMaterialRepairEvidence(t *testing.T) {
+	t.Parallel()
+
+	model := spec.Model{TaskID: "task", Status: spec.StatusReview, Summary: "contract"}
+	dossier := corereview.Dossier{
+		Verdict: corereview.VerdictFail,
+		Mode:    corereview.ModeVerify,
+		Summary: "Review found a persistent blocker.",
+		Findings: []corereview.Finding{{
+			ID:               "f1",
+			Severity:         corereview.SeverityHigh,
+			BlocksCompletion: true,
+			Category:         "correctness",
+			Confidence:       corereview.ConfidenceHigh,
+			Location:         &corereview.Location{Path: "file.go", Line: 1},
+			Evidence:         "bug evidence",
+			Impact:           "bug impact",
+			Validation:       "go test ./...",
+			Summary:          "bug still exists",
+		}},
+		AttackLog: []corereview.AttackLogEntry{{Target: "diff", Attack: "scan", Result: corereview.AttackResultFinding}},
+	}
+	failedReview := session.Entry{
+		ID:                     "review-fail",
+		Type:                   "review",
+		Status:                 corereview.VerdictFail,
+		Output:                 corereview.EncodeDossier(dossier),
+		ReviewedSpec:           spec.ContractDigest(model),
+		ReviewedScope:          []string{"file.go"},
+		ReviewedMaterialDigest: "same-material",
+	}
+	ledger := session.New("task", "now").
+		WithEntry(failedReview).
+		WithEntry(session.Entry{ID: "build-1", Type: "build", Status: string(spec.StatusReview)})
+
+	state := Project(ledger, model, Options{
+		Now:             time.Date(2026, 5, 4, 0, 0, 0, 0, time.UTC),
+		MaterialSeal:    reviewevidence.MaterialSeal{Scope: []string{"file.go"}, Digest: "same-material"},
+		HasMaterialSeal: true,
+	})
+	if state.Kind != KindReviewNeedsOperatorDecision || state.CanStartReview || !state.ReviewRerunBlocked || !state.OperatorDecisionRequired {
+		t.Fatalf("unchanged repair state = %+v", state)
+	}
+	if !state.HasReview || !state.HasPriorFailedReview || len(state.Blockers) != 1 || len(state.BlockerFingerprints) != 1 {
+		t.Fatalf("failed review context missing from state: %+v", state)
+	}
+	if scope := ReviewRerunMaterialScope(ledger); len(scope) != 1 || scope[0] != "file.go" {
+		t.Fatalf("rerun material scope = %+v", scope)
+	}
+}
+
+func TestProjectAllowsReviewRerunWhenMaterialChangedAfterFailedReview(t *testing.T) {
+	t.Parallel()
+
+	model := spec.Model{TaskID: "task", Status: spec.StatusReview, Summary: "contract"}
+	failedReview := session.Entry{
+		ID:                     "review-fail",
+		Type:                   "review",
+		Status:                 corereview.VerdictFail,
+		Output:                 corereview.EncodeDossier(blockingDossierForProjectionTest()),
+		ReviewedSpec:           spec.ContractDigest(model),
+		ReviewedScope:          []string{"file.go"},
+		ReviewedMaterialDigest: "old-material",
+	}
+	ledger := session.New("task", "now").
+		WithEntry(failedReview).
+		WithEntry(session.Entry{ID: "build-1", Type: "build", Status: string(spec.StatusReview)})
+
+	state := Project(ledger, model, Options{
+		Now:             time.Date(2026, 5, 4, 0, 0, 0, 0, time.UTC),
+		MaterialSeal:    reviewevidence.MaterialSeal{Scope: []string{"file.go"}, Digest: "new-material"},
+		HasMaterialSeal: true,
+	})
+	if state.Kind != KindReviewStaleAfterBuild || !state.CanStartReview || !state.HasReview {
+		t.Fatalf("changed repair state = %+v", state)
+	}
+}
+
+func TestProjectAllowsLegacyReviewRerunWhenMaterialSealIsMissing(t *testing.T) {
+	t.Parallel()
+
+	model := spec.Model{TaskID: "task", Status: spec.StatusReview, Summary: "contract"}
+	ledger := session.New("task", "now").
+		WithEntry(session.Entry{
+			ID:           "review-fail",
+			Type:         "review",
+			Status:       corereview.VerdictFail,
+			Output:       corereview.EncodeDossier(blockingDossierForProjectionTest()),
+			ReviewedSpec: spec.ContractDigest(model),
+		}).
+		WithEntry(session.Entry{ID: "build-1", Type: "build", Status: string(spec.StatusReview)})
+
+	state := Project(ledger, model, Options{Now: time.Date(2026, 5, 4, 0, 0, 0, 0, time.UTC)})
+	if state.Kind != KindReviewStaleAfterBuild || !state.CanStartReview {
+		t.Fatalf("legacy repair state = %+v", state)
 	}
 }
 
@@ -89,6 +187,27 @@ func TestProjectDetectsPassingReviewStaleness(t *testing.T) {
 	state = Project(ledger, cleanModel, Options{Now: now, WorkspaceSeal: WorkspaceSeal{Head: "head", Dirty: "false", Diff: ledger.Entries[len(ledger.Entries)-1].ReviewedDiff}, HasWorkspaceSeal: true})
 	if state.Kind != KindReviewStaleAfterWorkspace || !state.CanStartReview {
 		t.Fatalf("workspace stale state = %+v", state)
+	}
+}
+
+func blockingDossierForProjectionTest() corereview.Dossier {
+	return corereview.Dossier{
+		Verdict: corereview.VerdictFail,
+		Mode:    corereview.ModeVerify,
+		Summary: "Review found a blocker.",
+		Findings: []corereview.Finding{{
+			ID:               "f1",
+			Severity:         corereview.SeverityHigh,
+			BlocksCompletion: true,
+			Category:         "correctness",
+			Confidence:       corereview.ConfidenceHigh,
+			Location:         &corereview.Location{Path: "file.go", Line: 1},
+			Evidence:         "bug evidence",
+			Impact:           "bug impact",
+			Validation:       "go test ./...",
+			Summary:          "bug",
+		}},
+		AttackLog: []corereview.AttackLogEntry{{Target: "diff", Attack: "scan", Result: corereview.AttackResultFinding}},
 	}
 }
 

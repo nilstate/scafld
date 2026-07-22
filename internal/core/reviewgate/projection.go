@@ -1,6 +1,8 @@
 package reviewgate
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"strconv"
 	"strings"
@@ -28,17 +30,18 @@ const (
 type Kind string
 
 const (
-	KindReadyForReview            Kind = "ready_for_review"
-	KindAttemptRunning            Kind = "attempt_running"
-	KindAttemptStale              Kind = "attempt_stale"
-	KindAttemptFailed             Kind = "attempt_failed"
-	KindReviewFailed              Kind = "review_failed"
-	KindReviewPassed              Kind = "review_passed"
-	KindReviewStaleAfterBuild          = "review_stale_after_build"
-	KindReviewStaleAfterSpec           = "review_stale_after_spec"
-	KindReviewStaleAfterWorkspace      = "review_stale_after_workspace"
-	KindCompletedAuthorized            = "completed_authorized"
-	KindInvalid                        = "invalid"
+	KindReadyForReview              Kind = "ready_for_review"
+	KindAttemptRunning              Kind = "attempt_running"
+	KindAttemptStale                Kind = "attempt_stale"
+	KindAttemptFailed               Kind = "attempt_failed"
+	KindReviewFailed                Kind = "review_failed"
+	KindReviewNeedsOperatorDecision Kind = "review_needs_operator_decision"
+	KindReviewPassed                Kind = "review_passed"
+	KindReviewStaleAfterBuild       Kind = "review_stale_after_build"
+	KindReviewStaleAfterSpec        Kind = "review_stale_after_spec"
+	KindReviewStaleAfterWorkspace   Kind = "review_stale_after_workspace"
+	KindCompletedAuthorized         Kind = "completed_authorized"
+	KindInvalid                     Kind = "invalid"
 )
 
 // WorkspaceSeal is the current workspace seal used to decide whether a passing
@@ -61,23 +64,30 @@ type Options struct {
 
 // State is the single read model for review gate lifecycle decisions.
 type State struct {
-	Kind                    Kind
-	TaskID                  string
-	Reason                  string
-	Actual                  string
-	Next                    string
-	Evidence                []string
-	Blockers                []string
-	CanStartReview          bool
-	ShouldAbandonAttempt    bool
-	ReviewBlockedUntilBuild bool
-	Authority               Authority
-	LatestAttempt           Attempt
-	HasAttempt              bool
-	LatestReview            session.Entry
-	HasReview               bool
-	Dossier                 corereview.Dossier
-	HasDossier              bool
+	Kind                     Kind
+	TaskID                   string
+	Reason                   string
+	Actual                   string
+	Next                     string
+	Evidence                 []string
+	Blockers                 []string
+	CanStartReview           bool
+	ShouldAbandonAttempt     bool
+	ReviewBlockedUntilBuild  bool
+	ReviewRerunBlocked       bool
+	OperatorDecisionRequired bool
+	Authority                Authority
+	LatestAttempt            Attempt
+	HasAttempt               bool
+	LatestReview             session.Entry
+	HasReview                bool
+	Dossier                  corereview.Dossier
+	HasDossier               bool
+	PriorFailedReview        session.Entry
+	HasPriorFailedReview     bool
+	PriorFailedDossier       corereview.Dossier
+	HasPriorFailedDossier    bool
+	BlockerFingerprints      []string
 }
 
 // Attempt is normalized metadata for the latest current review attempt.
@@ -203,19 +213,40 @@ func Project(ledger session.Session, model spec.Model, opts Options) State {
 			return state
 		}
 	}
-	if latest, ok := latestGateEvent(ledger); ok {
-		switch latest.Type {
-		case "build", "criterion", "phase":
-			if priorReviewExists(ledger) {
-				state.Kind = KindReviewStaleAfterBuild
-				state.Reason = "latest review is stale after newer build evidence"
-				state.Actual = "latest gate event is " + EntryReference(latest)
-				state.Evidence = []string{EntryReference(latest)}
-				state.CanStartReview = true
-				state.Next = reviewCommand(taskID)
+	if repair, ok := latestReviewRepairWindow(ledger); ok {
+		state.LatestReview = repair.ReviewEntry
+		state.HasReview = true
+		state.Dossier = repair.Dossier
+		state.HasDossier = repair.HasDossier
+		if repair.ReviewEntry.Status == corereview.VerdictFail {
+			state.PriorFailedReview = repair.ReviewEntry
+			state.HasPriorFailedReview = true
+			state.PriorFailedDossier = repair.Dossier
+			state.HasPriorFailedDossier = repair.HasDossier
+			state.BlockerFingerprints = reviewFindingFingerprints(repair.Dossier.Findings)
+			if !reviewRepairEvidenceChanged(model, repair.ReviewEntry, opts) {
+				state.Kind = KindReviewNeedsOperatorDecision
+				state.Reason = "review rerun needs material repair or operator decision"
+				state.Actual = "latest build evidence is newer, but task material and spec match the failed review"
+				state.Evidence = []string{EntryReference(repair.RepairEntry), EntryReference(repair.ReviewEntry)}
+				state.Blockers = reviewFindingSummaries(repair.Dossier.Findings)
+				state.CanStartReview = false
+				state.ReviewRerunBlocked = true
+				state.OperatorDecisionRequired = true
+				state.Next = handoffCommand(taskID)
 				return state
 			}
 		}
+		state.Kind = KindReviewStaleAfterBuild
+		state.Reason = "latest review is stale after newer build evidence"
+		state.Actual = "latest gate event is " + EntryReference(repair.RepairEntry)
+		state.Evidence = []string{EntryReference(repair.RepairEntry)}
+		if repair.ReviewEntry.ID != "" || repair.ReviewEntry.Type != "" {
+			state.Evidence = append(state.Evidence, EntryReference(repair.ReviewEntry))
+		}
+		state.CanStartReview = true
+		state.Next = reviewCommand(taskID)
+		return state
 	}
 	if state.HasReview && state.LatestReview.Status == corereview.VerdictFail {
 		state.Kind = KindReviewFailed
@@ -262,6 +293,105 @@ func Project(ledger session.Session, model spec.Model, opts Options) State {
 	state.CanStartReview = true
 	state.Next = reviewCommand(taskID)
 	return state
+}
+
+type reviewRepairWindow struct {
+	RepairEntry session.Entry
+	ReviewEntry session.Entry
+	Dossier     corereview.Dossier
+	HasDossier  bool
+}
+
+// ReviewRerunMaterialScope returns the scope needed to decide whether a
+// post-build review rerun is meaningful after a failed review. An empty result
+// means no current failed-review repair window needs material comparison.
+func ReviewRerunMaterialScope(ledger session.Session) []string {
+	repair, ok := latestReviewRepairWindow(ledger)
+	if !ok || repair.ReviewEntry.Status != corereview.VerdictFail {
+		return nil
+	}
+	return nonEmptySlice(repair.ReviewEntry.ReviewedScope)
+}
+
+func latestReviewRepairWindow(ledger session.Session) (reviewRepairWindow, bool) {
+	repairIdx := -1
+	var repairEntry session.Entry
+	for i := len(ledger.Entries) - 1; i >= 0; i-- {
+		entry := ledger.Entries[i]
+		switch entry.Type {
+		case "build", "criterion", "phase":
+			repairIdx = i
+			repairEntry = entry
+			goto foundRepair
+		case "review":
+			return reviewRepairWindow{}, false
+		case "approval", session.EntryWorkspaceBaseline, "fail", "cancel", "complete":
+			return reviewRepairWindow{}, false
+		}
+	}
+foundRepair:
+	if repairIdx < 0 {
+		return reviewRepairWindow{}, false
+	}
+	for i := repairIdx - 1; i >= 0; i-- {
+		entry := ledger.Entries[i]
+		switch entry.Type {
+		case "review":
+			dossier, ok := corereview.DecodeDossier(firstNonBlank(entry.ReviewPacket, entry.Output))
+			return reviewRepairWindow{RepairEntry: repairEntry, ReviewEntry: entry, Dossier: dossier, HasDossier: ok}, true
+		case "approval", session.EntryWorkspaceBaseline, "fail", "cancel", "complete":
+			return reviewRepairWindow{}, false
+		}
+	}
+	return reviewRepairWindow{}, false
+}
+
+func reviewRepairEvidenceChanged(model spec.Model, failed session.Entry, opts Options) bool {
+	recordedSpec := strings.TrimSpace(failed.ReviewedSpec)
+	if recordedSpec == "" {
+		return true
+	}
+	if spec.ContractDigest(model) != recordedSpec {
+		return true
+	}
+	recordedMaterial := strings.TrimSpace(failed.ReviewedMaterialDigest)
+	if recordedMaterial == "" || len(nonEmptySlice(failed.ReviewedScope)) == 0 || !opts.HasMaterialSeal {
+		return true
+	}
+	return strings.TrimSpace(opts.MaterialSeal.Digest) != recordedMaterial
+}
+
+func reviewFindingFingerprints(findings []corereview.Finding) []string {
+	fingerprints := make([]string, 0, len(findings))
+	for _, finding := range findings {
+		if !corereview.BlocksCompletion(finding) {
+			continue
+		}
+		parts := []string{
+			strings.TrimSpace(finding.ID),
+			strings.TrimSpace(string(finding.Severity)),
+			strings.TrimSpace(finding.Category),
+			strings.TrimSpace(finding.Summary),
+			strings.TrimSpace(finding.Evidence),
+			strings.TrimSpace(finding.Validation),
+		}
+		if finding.Location != nil {
+			parts = append(parts, strings.TrimSpace(finding.Location.Path), strconv.Itoa(finding.Location.Line))
+		}
+		sum := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
+		fingerprints = append(fingerprints, hex.EncodeToString(sum[:]))
+	}
+	return fingerprints
+}
+
+func nonEmptySlice(values []string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			out = append(out, strings.TrimSpace(value))
+		}
+	}
+	return out
 }
 
 // LatestAttempt returns the newest review attempt in the current review window.

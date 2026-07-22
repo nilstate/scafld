@@ -340,7 +340,7 @@ review:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Harden.External.Codex.Model != DefaultCodexModel || cfg.Harden.External.Claude.Model != DefaultClaudeModel {
+	if cfg.Harden.External.Codex.Model != DefaultCodexModel || cfg.Harden.External.Claude.Model != "opus" {
 		t.Fatalf("harden provider models were not upgraded: %+v", cfg.Harden.External)
 	}
 	if cfg.Review.External.Codex.Model != DefaultCodexModel || cfg.Review.External.Claude.Model != "sonnet" {
@@ -388,6 +388,44 @@ review:
 	}
 }
 
+func TestProviderLatestAliasesResolveToProviderDefaults(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	writeFile(t, root, ".scafld/config.yaml", `
+harden:
+  external:
+    codex:
+      model: "latest"
+    claude:
+      model: "current"
+    gemini:
+      model: "default"
+review:
+  external:
+    codex:
+      model: "default"
+    claude:
+      model: "latest"
+    gemini:
+      model: "current"
+`)
+
+	cfg, err := Load(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Harden.External.Codex.Model != "" || cfg.Review.External.Codex.Model != "" {
+		t.Fatalf("codex latest aliases should omit model: harden=%q review=%q", cfg.Harden.External.Codex.Model, cfg.Review.External.Codex.Model)
+	}
+	if cfg.Harden.External.Claude.Model != "" || cfg.Review.External.Claude.Model != "" {
+		t.Fatalf("claude latest aliases should omit model: harden=%q review=%q", cfg.Harden.External.Claude.Model, cfg.Review.External.Claude.Model)
+	}
+	if cfg.Harden.External.Gemini.Model != "" || cfg.Review.External.Gemini.Model != "" {
+		t.Fatalf("gemini latest aliases should omit model: harden=%q review=%q", cfg.Harden.External.Gemini.Model, cfg.Review.External.Gemini.Model)
+	}
+}
+
 func TestClaudeConcreteModelsNormalizeToLatestAliases(t *testing.T) {
 	t.Parallel()
 
@@ -397,6 +435,9 @@ func TestClaudeConcreteModelsNormalizeToLatestAliases(t *testing.T) {
 		"opus-4.7":                   "opus",
 		"claude-3-5-sonnet-20241022": "sonnet",
 		"claude-haiku-4-5-20251001":  "haiku",
+		"latest":                     "",
+		"current":                    "",
+		"default":                    "",
 		" OPUS ":                     "opus",
 		"claude-config":              "claude-config",
 		"custom-sonnet-model":        "custom-sonnet-model",

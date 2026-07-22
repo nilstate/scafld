@@ -134,6 +134,54 @@ func TestHandoffIncludesLatestReviewFindings(t *testing.T) {
 	}
 }
 
+func TestHandoffRoutesUnchangedPostBuildFailedReviewToOperatorDecision(t *testing.T) {
+	t.Parallel()
+
+	model := spec.Model{
+		TaskID: "task",
+		Title:  "Task",
+		Status: spec.StatusReview,
+		Context: spec.Context{
+			FilesImpacted: []string{"`file.go`"},
+		},
+	}
+	materialDigest := reviewevidence.MaterialDigest([]string{"file.go"}, []reviewevidence.MaterialFile{{Path: "file.go", SHA256: "same"}})
+	ledger := session.New("task", "2026-05-05T00:00:00Z")
+	ledger = ledger.WithEntry(session.Entry{
+		ID:                     "review-fail",
+		Type:                   "review",
+		Status:                 corereview.VerdictFail,
+		Output:                 corereview.EncodeDossier(reviewDossier()),
+		ReviewedSpec:           spec.ContractDigest(model),
+		ReviewedScope:          []string{"file.go"},
+		ReviewedMaterialDigest: materialDigest,
+	})
+	ledger = ledger.WithEntry(session.Entry{ID: "build-1", Type: "build", Status: string(spec.StatusReview), Reason: "build completed; ready for review"})
+
+	out, err := Run(context.Background(), fakeSpecStore{model: model}, fakeSessionStore{ledger: ledger}, "task", fakeWorkspace{
+		material: reviewevidence.MaterialSeal{Scope: []string{"file.go"}, Digest: materialDigest},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"Next: scafld handoff task",
+		"Review rerun decision:",
+		"task material and spec still match the failed review",
+		"## Review Dossier",
+		"bug",
+		"--force --reason <reason>",
+		"Do not start another provider review just to re-ask about unchanged material.",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("handoff missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "Reviewer focus:") {
+		t.Fatalf("unchanged failed-review rerun should not ask for another provider review:\n%s", out)
+	}
+}
+
 func TestHandoffDoesNotSurfaceReviewAfterLaterBuildEvidence(t *testing.T) {
 	t.Parallel()
 

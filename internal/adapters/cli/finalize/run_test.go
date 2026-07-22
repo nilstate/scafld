@@ -25,7 +25,9 @@ import (
 	appfinalize "github.com/nilstate/scafld/v2/internal/app/finalize"
 	appverify "github.com/nilstate/scafld/v2/internal/app/verify"
 	"github.com/nilstate/scafld/v2/internal/core/receipt"
+	"github.com/nilstate/scafld/v2/internal/core/reconcile"
 	"github.com/nilstate/scafld/v2/internal/core/review"
+	"github.com/nilstate/scafld/v2/internal/core/reviewscope"
 	"github.com/nilstate/scafld/v2/internal/core/session"
 	"github.com/nilstate/scafld/v2/internal/core/spec"
 	"github.com/nilstate/scafld/v2/internal/core/trust"
@@ -39,7 +41,7 @@ func TestGateScopeUsesSpecScopeAndTouchpoints(t *testing.T) {
 		Touchpoints: []string{"internal/core/receipt/receipt.go"},
 		Context:     spec.Context{Packages: []string{"internal/core/trust"}},
 	}
-	scope := gateScope(model, []string{"internal/adapters/sign"})
+	scope := reviewscope.Merge(reviewscope.Derive(model, nil, nil), reviewscope.Literal([]string{"internal/adapters/sign"}))
 	want := []string{
 		"internal/adapters/sign",
 		"internal/app/finalize",
@@ -51,7 +53,7 @@ func TestGateScopeUsesSpecScopeAndTouchpoints(t *testing.T) {
 	}
 	// A spec that declares only Scope must still produce a non-empty gate scope,
 	// so the gate never falls back to whole-repo gating.
-	if got := gateScope(spec.Model{Scope: []string{"internal/app/finalize"}}, nil); len(got) == 0 {
+	if got := reviewscope.Derive(spec.Model{Scope: []string{"internal/app/finalize"}}, nil, nil); len(got) == 0 {
 		t.Fatal("spec Scope must yield a non-empty gate scope")
 	}
 }
@@ -70,7 +72,7 @@ func TestGateScopeFiltersProseAndSplitsTouchpointPaths(t *testing.T) {
 			"test/e2e/",
 		},
 	}
-	scope := gateScope(model, nil)
+	scope := reviewscope.Derive(model, nil, nil)
 	want := []string{"docs/review.md", "docs/sourcey.config.ts", "internal/app/finalize", "test/e2e"}
 	if !reflect.DeepEqual(scope, want) {
 		t.Fatalf("gateScope = %v, want %v", scope, want)
@@ -155,6 +157,21 @@ func TestNoSpecBaseDiffScope(t *testing.T) {
 		t.Fatal(err)
 	}
 	if diff.called != 1 || !reflect.DeepEqual(scope, []string{"a.go", "z.go"}) {
+		t.Fatalf("diff called=%d scope=%v, want base-diff scope", diff.called, scope)
+	}
+}
+
+func TestSpecWithoutScopeUsesBaseDiffScope(t *testing.T) {
+	t.Parallel()
+
+	req := Request{TaskID: "scoped-by-diff", BaseRef: "origin/main"}
+	model := spec.Model{TaskID: "scoped-by-diff", Title: "Scoped By Diff"}
+	diff := &fakeBaseDiff{paths: []string{"Makefile", "internal/app/review/review.go"}}
+	scope, err := deriveGateScope(context.Background(), diff, model, req, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diff.called != 1 || !reflect.DeepEqual(scope, []string{"Makefile", "internal/app/review/review.go"}) {
 		t.Fatalf("diff called=%d scope=%v, want base-diff scope", diff.called, scope)
 	}
 }
@@ -756,11 +773,74 @@ func TestFinalizePassWithAcceptanceResultsAppendsReceipt(t *testing.T) {
 	if ledger.Entries[0].Type != "criterion" || ledger.Entries[1].Type != session.EntryReceipt || ledger.Entries[2].Type != "complete" {
 		t.Fatalf("entry order = %+v, want criterion, receipt, complete", ledger.Entries)
 	}
+	if ledger.Entries[0].ExpectedKind != "exit_code_zero" || ledger.Entries[0].CriterionType != "command" {
+		t.Fatalf("criterion entry = %+v, want expected_kind/type preserved", ledger.Entries[0])
+	}
 	if ledger.Entries[1].LedgerHead != env.Body.LedgerHead || ledger.LedgerHead != env.Body.LedgerHead {
 		t.Fatalf("ledger head = %q entry head=%q want %q", ledger.LedgerHead, ledger.Entries[1].LedgerHead, env.Body.LedgerHead)
 	}
 	if got := ledger.CriterionStates["ac1"].Status; got != "pass" {
 		t.Fatalf("criterion state = %q, want pass", got)
+	}
+}
+
+func TestFinalizeAcceptanceEvidencePreservesContractFieldsForReplay(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	store := jsonstore.SessionStore{Root: root}
+	env := validReceiptEnvelope(t, "demo")
+	model := spec.Model{
+		TaskID: "demo",
+		Status: spec.StatusReview,
+		Phases: []spec.Phase{{
+			ID:     "phase1",
+			Name:   "Phase",
+			Status: "completed",
+			Acceptance: []spec.Criterion{{
+				ID:           "ac1",
+				Type:         "command",
+				PhaseID:      "phase1",
+				Command:      "go test ./...",
+				ExpectedKind: "exit_code_zero",
+				Status:       "pending",
+			}},
+		}},
+	}
+	out := appfinalize.Output{
+		Verdict: "pass",
+		Receipt: &env,
+		Acceptance: appacceptance.EvaluateOutput{
+			Passed: true,
+			Results: []appacceptance.CriterionResult{{
+				ID:           "ac1",
+				Type:         "command",
+				Command:      "go test ./...",
+				ExpectedKind: "exit_code_zero",
+				Status:       "pass",
+				ExitCode:     0,
+				Reason:       "exit code was 0",
+			}},
+		},
+	}
+	if _, err := finalize(context.Background(), root, "demo", store, model, false, out); err != nil {
+		t.Fatal(err)
+	}
+	ledger, err := store.Load(context.Background(), "demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := ledger.Entries[0]
+	if entry.ExpectedKind != "exit_code_zero" || entry.CriterionType != "command" || entry.PhaseID != "phase1" {
+		t.Fatalf("criterion entry = %+v, want contract-bound evidence", entry)
+	}
+	projected := reconcile.FromSession(model, ledger)
+	got := projected.Phases[0].Acceptance[0]
+	if got.Status != "pass" || got.SourceEvent == "" {
+		t.Fatalf("finalized criterion did not replay as current evidence: %+v", got)
+	}
+	if projected.Phases[0].Status != "completed" {
+		t.Fatalf("finalized criterion evidence overwrote phase status: %+v", projected.Phases[0])
 	}
 }
 

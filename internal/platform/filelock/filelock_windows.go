@@ -3,13 +3,24 @@
 package filelock
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"syscall"
+	"time"
 	"unsafe"
 )
 
-const lockfileExclusiveLock = 0x00000002
+const (
+	lockfileFailImmediately = 0x00000001
+	lockfileExclusiveLock   = 0x00000002
+	lockPollInterval        = 25 * time.Millisecond
+)
+
+const (
+	errorSharingViolation syscall.Errno = 32
+	errorLockViolation    syscall.Errno = 33
+)
 
 var (
 	kernel32              = syscall.NewLazyDLL("kernel32.dll")
@@ -35,10 +46,52 @@ func lock(path string) (func(), error) {
 	}, nil
 }
 
+func lockContext(ctx context.Context, path string) (func(), error) {
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		return nil, fmt.Errorf("open lock file %s: %w", path, err)
+	}
+	var overlapped syscall.Overlapped
+	for {
+		if err := ctx.Err(); err != nil {
+			_ = file.Close()
+			return nil, err
+		}
+		err := lockFileExWithFlags(syscall.Handle(file.Fd()), &overlapped, lockfileExclusiveLock|lockfileFailImmediately)
+		if err == nil {
+			return func() {
+				_ = unlockFileEx(syscall.Handle(file.Fd()), &overlapped)
+				_ = file.Close()
+			}, nil
+		}
+		if !isLockUnavailable(err) {
+			_ = file.Close()
+			return nil, fmt.Errorf("lock %s: %w", path, err)
+		}
+		timer := time.NewTimer(lockPollInterval)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			_ = file.Close()
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
 func lockFileEx(handle syscall.Handle, overlapped *syscall.Overlapped) error {
+	return lockFileExWithFlags(handle, overlapped, lockfileExclusiveLock)
+}
+
+func lockFileExWithFlags(handle syscall.Handle, overlapped *syscall.Overlapped, flags uint32) error {
 	r1, _, err := procLockFileEx.Call(
 		uintptr(handle),
-		uintptr(lockfileExclusiveLock),
+		uintptr(flags),
 		0,
 		uintptr(^uint32(0)),
 		uintptr(^uint32(0)),
@@ -51,6 +104,11 @@ func lockFileEx(handle syscall.Handle, overlapped *syscall.Overlapped) error {
 		return syscall.EINVAL
 	}
 	return nil
+}
+
+func isLockUnavailable(err error) bool {
+	errno, ok := err.(syscall.Errno)
+	return ok && (errno == errorLockViolation || errno == errorSharingViolation)
 }
 
 func unlockFileEx(handle syscall.Handle, overlapped *syscall.Overlapped) error {

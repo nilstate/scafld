@@ -58,10 +58,9 @@ harden:
     absolute_max_seconds: 1800
     fallback_policy: "disable"
     codex:
-      # Scafld resolves "latest" by omitting -m so Codex CLI uses its current
-      # default. Override locally with a concrete model string only when you
-      # need a pin.
-      model: "latest"
+      # Omit model so Codex CLI uses its current default. Set a concrete model
+      # string only when the workspace intentionally pins one.
+      # model: ""
       # Codex-specific effort passed through -c model_reasoning_effort=...
       # Review and harden default to xhigh because user Codex config is isolated.
       model_reasoning_effort: "xhigh"
@@ -69,8 +68,9 @@ harden:
       # endpoint_host: "api.openai.com"
       # endpoint_url: "https://api.openai.com"
     claude:
-      # Claude Code rolling alias for the latest Opus model.
-      model: "opus"
+      # Omit model so Claude Code uses its current default. Set opus, sonnet,
+      # haiku, or a concrete model only when the workspace intentionally pins it.
+      # model: ""
       # Claude Code native effort level for review and harden.
       effort: "xhigh"
       # binary: "claude"
@@ -93,10 +93,9 @@ review:
     absolute_max_seconds: 1800
     fallback_policy: "disable"
     codex:
-      # Scafld resolves "latest" by omitting -m so Codex CLI uses its current
-      # default. Override locally with a concrete model string only when you
-      # need a pin.
-      model: "latest"
+      # Omit model so Codex CLI uses its current default. Set a concrete model
+      # string only when the workspace intentionally pins one.
+      # model: ""
       # Codex-specific effort passed through -c model_reasoning_effort=...
       # Review and harden default to xhigh because user Codex config is isolated.
       model_reasoning_effort: "xhigh"
@@ -104,8 +103,9 @@ review:
       # endpoint_host: "api.openai.com"
       # endpoint_url: "https://api.openai.com"
     claude:
-      # Claude Code rolling alias for the latest Opus model.
-      model: "opus"
+      # Omit model so Claude Code uses its current default. Set opus, sonnet,
+      # haiku, or a concrete model only when the workspace intentionally pins it.
+      # model: ""
       # Claude Code native effort level for review and harden.
       effort: "xhigh"
       # binary: "claude"

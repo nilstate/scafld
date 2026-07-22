@@ -22,10 +22,10 @@ Flags:
   --max-findings N         Bound provider output volume
   --min-attack-angles N    Request at least N attack-log entries
   --review-depth TEXT      Review depth: light, standard, or deep
-  --force                  Rerun even when the current review already passed
+  --force                  Rerun a current pass, or an unchanged failed-review repair with --reason
   --print-context          Print the exact provider context and exit
   --human-reviewed         Record an audited human review instead of invoking a provider
-  --reason TEXT            Required reason for --human-reviewed
+  --reason TEXT            Required reason for --human-reviewed or forced operator-decision reruns
   --root PATH              Workspace root
   --json                   Print JSON envelope
   -h, --help               Show help
@@ -41,6 +41,13 @@ Review scope:
   The approval baseline is recorded before task execution. Outside-scope drift
   is included as ambient workspace context, not blocked before provider spend.
   Task-relevant changes during review still fail closed.
+
+Review reruns:
+  Failed review verdicts are not retried against unchanged task material. Repair
+  blockers from scafld handoff, run scafld build, then review again. If the
+  operator rejects the prior blocker as advisory, bookkeeping, or overengineering,
+  force the rerun with an audited reason:
+    scafld review email-contracts --force --reason "rejects prior finding as bookkeeping"
 
 Provider auto:
   auto prefers the other installed agent when scafld can infer the current

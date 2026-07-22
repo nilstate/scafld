@@ -27,8 +27,12 @@ func Project(model spec.Model, explicit []string, baselineSnapshot []string, cur
 	baseline := reviewevidence.ComparisonSnapshot(baselineSnapshot)
 	current := reviewevidence.ComparisonSnapshot(currentSnapshot)
 	scopeInput := append(append([]string(nil), baseline...), current...)
+	mutations := coreworkspace.Diff(baseline, current)
 	scope := Derive(model, explicit, scopeInput)
-	taskChanges, ambientDrift := coreworkspace.PartitionMutations(coreworkspace.Diff(baseline, current), scope)
+	if len(scope) == 0 {
+		scope = mutationScope(mutations)
+	}
+	taskChanges, ambientDrift := coreworkspace.PartitionMutations(mutations, scope)
 	return Projection{
 		Scope:        scope,
 		Baseline:     coreworkspace.Filter(baseline, scope),
@@ -41,7 +45,7 @@ func Project(model spec.Model, explicit []string, baselineSnapshot []string, cur
 // Derive returns the path scope implied by a task contract. Explicit scope wins.
 func Derive(model spec.Model, explicit []string, snapshot []string) []string {
 	if normalized := coreworkspace.NormalizeScope(explicit); len(normalized) > 0 {
-		return normalized
+		return FilterAllowed(normalized)
 	}
 	var scope []string
 	for _, pkg := range model.Context.Packages {
@@ -57,6 +61,18 @@ func Derive(model spec.Model, explicit []string, snapshot []string) []string {
 		scope = append(scope, pathishItems(phase.Changes)...)
 	}
 	return FilterAllowed(coreworkspace.NormalizeScope(scope))
+}
+
+// Literal cleans authoritative git path lists such as scope hints or base diffs.
+// It does not require prose-style path evidence, so top-level extensionless
+// files such as Makefile, Dockerfile, and LICENSE remain valid material scope.
+func Literal(paths []string) []string {
+	return FilterAllowed(coreworkspace.NormalizeScope(paths))
+}
+
+// Merge returns the sorted, de-duplicated union of scope path lists.
+func Merge(a, b []string) []string {
+	return FilterAllowed(coreworkspace.NormalizeScope(append(append([]string(nil), a...), b...)))
 }
 
 // MaterialScope returns the content scope that should be sealed for a review.
@@ -101,6 +117,14 @@ func PathAllowed(path string) bool {
 	return true
 }
 
+func mutationScope(mutations []coreworkspace.Mutation) []string {
+	paths := make([]string, 0, len(mutations))
+	for _, mutation := range mutations {
+		paths = append(paths, mutation.Path)
+	}
+	return Literal(paths)
+}
+
 func packageMatchesWorkspace(pkg string, snapshot []string) bool {
 	prefixes := coreworkspace.NormalizeScope([]string{pkg})
 	if len(prefixes) == 0 {
@@ -123,8 +147,9 @@ func pathishItems(values []string) []string {
 }
 
 func pathishTokens(value string) []string {
+	value = strings.TrimSpace(value)
 	var tokens []string
-	text := strings.TrimSpace(value)
+	text := value
 	for {
 		start := strings.Index(text, "`")
 		if start < 0 {
@@ -144,21 +169,34 @@ func pathishTokens(value string) []string {
 	if len(tokens) > 0 {
 		return tokens
 	}
-	first := strings.Fields(strings.TrimLeft(value, "-* "))
-	if len(first) == 0 {
+	if lower := strings.ToLower(value); strings.HasPrefix(lower, "in scope:") || strings.HasPrefix(lower, "out of scope:") {
 		return nil
 	}
-	token := strings.Trim(first[0], "`:,;")
-	if looksLikePath(token) {
-		return []string{token}
+	if before, _, ok := strings.Cut(value, " - "); ok {
+		value = before
 	}
-	return nil
+	if before, _, ok := strings.Cut(value, ": "); ok {
+		value = before
+	}
+	if before, _, ok := strings.Cut(value, " ("); ok {
+		value = before
+	}
+	for _, part := range strings.Split(value, ",") {
+		token := strings.TrimSpace(part)
+		token = strings.Trim(strings.ReplaceAll(token, "\\", "/"), "/")
+		token = strings.TrimPrefix(token, "./")
+		token = strings.Trim(token, "`:,;")
+		if looksLikePath(token) {
+			tokens = append(tokens, token)
+		}
+	}
+	return tokens
 }
 
 func looksLikePath(value string) bool {
 	text := strings.TrimSpace(value)
-	if text == "" || strings.Contains(text, "://") {
+	if text == "" || strings.Contains(text, "://") || strings.ContainsAny(text, " \t\n\r") {
 		return false
 	}
-	return strings.Contains(text, "/") || strings.HasPrefix(text, ".") || strings.Contains(text, ".")
+	return text == "." || strings.Contains(text, "/") || strings.HasPrefix(text, ".") || strings.Contains(text, ".") || strings.ContainsAny(text, "*?[")
 }

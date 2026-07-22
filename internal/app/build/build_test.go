@@ -155,6 +155,192 @@ func TestBuildRunsOpenedPhaseAndMovesToReview(t *testing.T) {
 	}
 }
 
+func TestBuildManualCriterionWithoutEvidenceBlocksInsteadOfPassing(t *testing.T) {
+	t.Parallel()
+
+	specs := &fakeSpecs{model: spec.Model{TaskID: "task", Status: spec.StatusApproved, Phases: []spec.Phase{{ID: "phase1", Name: "Phase", Acceptance: []spec.Criterion{{
+		ID:           "manual",
+		Type:         "manual",
+		PhaseID:      "phase1",
+		Title:        "Operator signoff",
+		ExpectedKind: acceptance.ExpectedManual,
+	}}}}}}
+	sessions := &fakeSessions{}
+	runner := &fakeRunner{}
+	if _, err := Run(context.Background(), specs, sessions, nil, runner, fakeBuildClock{}, Input{TaskID: "task"}); err != nil {
+		t.Fatal(err)
+	}
+	out, err := Run(context.Background(), specs, sessions, nil, runner, fakeBuildClock{}, Input{TaskID: "task"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Passed != 0 || out.Failed != 1 || out.Status != spec.StatusBlocked {
+		t.Fatalf("output = %+v, want manual evidence to block build", out)
+	}
+	if len(runner.commands) != 0 {
+		t.Fatalf("manual criterion should not run commands: %+v", runner.commands)
+	}
+	got := specs.model.Phases[0].Acceptance[0]
+	if got.Status != "pending" || got.Evidence != "manual criterion requires human evidence" {
+		t.Fatalf("manual criterion evidence = %+v, want pending manual evidence", got)
+	}
+}
+
+func TestBuildRerunsCompletedPhaseWhenAcceptanceCommandChanges(t *testing.T) {
+	t.Parallel()
+
+	specs := &fakeSpecs{model: spec.Model{
+		TaskID: "task",
+		Status: spec.StatusReview,
+		CurrentState: spec.CurrentState{
+			CurrentPhase:    "final",
+			Next:            "review",
+			AllowedFollowUp: "scafld review task",
+		},
+		Phases: []spec.Phase{{
+			ID:     "phase1",
+			Name:   "Phase",
+			Status: "completed",
+			Acceptance: []spec.Criterion{{
+				ID:           "ac1",
+				PhaseID:      "phase1",
+				Command:      "new check",
+				ExpectedKind: acceptance.ExpectedExitCodeZero,
+				Status:       "pass",
+				Evidence:     "exit code was 0",
+				SourceEvent:  "entry-old",
+			}},
+		}},
+	}}
+	ledger := session.New("task", "now")
+	ledger = ledger.WithEntry(session.Entry{ID: "entry-old", Type: "criterion", CriterionID: "ac1", PhaseID: "phase1", Status: "pass", Reason: "exit code was 0", Command: "old check", ExpectedKind: string(acceptance.ExpectedExitCodeZero), CriterionType: "command"})
+	ledger = ledger.WithEntry(session.Entry{ID: "entry-phase", Type: "phase", PhaseID: "phase1", Status: "completed", Reason: "all phase criteria passed"})
+	ledger = ledger.WithEntry(session.Entry{ID: "entry-build", Type: "build", Status: string(spec.StatusReview), Reason: "build completed; ready for review"})
+	sessions := &fakeSessions{ledger: ledger}
+	runner := &fakeRunner{}
+
+	out, err := Run(context.Background(), specs, sessions, nil, runner, fakeBuildClock{}, Input{TaskID: "task"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Passed != 1 || out.Failed != 0 || out.Status != spec.StatusReview {
+		t.Fatalf("output = %+v, want rerun pass back to review", out)
+	}
+	if len(runner.commands) != 1 || runner.commands[0] != "new check" {
+		t.Fatalf("commands = %+v, want edited command to run", runner.commands)
+	}
+	criterion := specs.model.Phases[0].Acceptance[0]
+	if criterion.Status != "pass" || criterion.SourceEvent == "entry-old" {
+		t.Fatalf("criterion evidence = %+v, want fresh pass", criterion)
+	}
+}
+
+func TestBuildReviewRepairRerunsAllAcceptance(t *testing.T) {
+	t.Parallel()
+
+	specs := &fakeSpecs{model: spec.Model{
+		TaskID: "task",
+		Status: spec.StatusReview,
+		CurrentState: spec.CurrentState{
+			CurrentPhase:    "final",
+			Next:            "repair",
+			AllowedFollowUp: "scafld handoff task",
+		},
+		Acceptance: spec.Acceptance{Criteria: []spec.Criterion{{
+			ID:           "global",
+			Command:      "go test ./...",
+			ExpectedKind: acceptance.ExpectedExitCodeZero,
+			Status:       "pass",
+			Evidence:     "exit code was 0",
+			SourceEvent:  "entry-global-old",
+		}}},
+		Phases: []spec.Phase{{
+			ID:     "phase1",
+			Name:   "Phase",
+			Status: "completed",
+			Acceptance: []spec.Criterion{{
+				ID:           "ac1",
+				PhaseID:      "phase1",
+				Command:      "go test ./phase",
+				ExpectedKind: acceptance.ExpectedExitCodeZero,
+				Status:       "pass",
+				Evidence:     "exit code was 0",
+				SourceEvent:  "entry-phase-old",
+			}},
+		}},
+	}}
+	ledger := session.New("task", "now")
+	ledger = ledger.WithEntry(session.Entry{ID: "entry-phase-old", Type: "criterion", CriterionID: "ac1", PhaseID: "phase1", Status: "pass", Reason: "exit code was 0", Command: "go test ./phase", ExpectedKind: string(acceptance.ExpectedExitCodeZero), CriterionType: "command"})
+	ledger = ledger.WithEntry(session.Entry{ID: "entry-global-old", Type: "criterion", CriterionID: "global", Status: "pass", Reason: "exit code was 0", Command: "go test ./...", ExpectedKind: string(acceptance.ExpectedExitCodeZero), CriterionType: "command"})
+	ledger = ledger.WithEntry(session.Entry{ID: "entry-phase", Type: "phase", PhaseID: "phase1", Status: "completed", Reason: "all phase criteria passed"})
+	ledger = ledger.WithEntry(session.Entry{ID: "entry-build", Type: "build", Status: string(spec.StatusReview), Reason: "build completed; ready for review"})
+	ledger = ledger.WithEntry(session.Entry{ID: "entry-review", Type: "review", Status: "fail", Reason: "review blockers remain"})
+	sessions := &fakeSessions{ledger: ledger}
+	runner := &fakeRunner{}
+
+	out, err := Run(context.Background(), specs, sessions, nil, runner, fakeBuildClock{}, Input{TaskID: "task"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Status != spec.StatusReview || out.Passed != 2 || out.Failed != 0 {
+		t.Fatalf("output = %+v, want full acceptance pass back to review", out)
+	}
+	if strings.Join(runner.commands, ",") != "go test ./phase,go test ./..." {
+		t.Fatalf("commands = %+v, want phase and final rerun", runner.commands)
+	}
+	if specs.model.Acceptance.Criteria[0].SourceEvent == "entry-global-old" || specs.model.Phases[0].Acceptance[0].SourceEvent == "entry-phase-old" {
+		t.Fatalf("acceptance evidence was not refreshed: global=%+v phase=%+v", specs.model.Acceptance.Criteria[0], specs.model.Phases[0].Acceptance[0])
+	}
+}
+
+func TestBuildReviewReadyRerunsAcceptanceWhenExplicitlyInvoked(t *testing.T) {
+	t.Parallel()
+
+	specs := &fakeSpecs{model: spec.Model{
+		TaskID: "task",
+		Status: spec.StatusReview,
+		CurrentState: spec.CurrentState{
+			CurrentPhase:    "final",
+			Next:            "review",
+			AllowedFollowUp: "scafld review task",
+		},
+		Phases: []spec.Phase{{
+			ID:     "phase1",
+			Name:   "Phase",
+			Status: "completed",
+			Acceptance: []spec.Criterion{{
+				ID:           "ac1",
+				PhaseID:      "phase1",
+				Command:      "go test ./phase",
+				ExpectedKind: acceptance.ExpectedExitCodeZero,
+				Status:       "pass",
+				Evidence:     "exit code was 0",
+				SourceEvent:  "entry-old",
+			}},
+		}},
+	}}
+	ledger := session.New("task", "now")
+	ledger = ledger.WithEntry(session.Entry{ID: "entry-old", Type: "criterion", CriterionID: "ac1", PhaseID: "phase1", Status: "pass", Reason: "exit code was 0", Command: "go test ./phase", ExpectedKind: string(acceptance.ExpectedExitCodeZero), CriterionType: "command"})
+	ledger = ledger.WithEntry(session.Entry{ID: "entry-phase", Type: "phase", PhaseID: "phase1", Status: "completed", Reason: "all phase criteria passed"})
+	ledger = ledger.WithEntry(session.Entry{ID: "entry-build", Type: "build", Status: string(spec.StatusReview), Reason: "build completed; ready for review"})
+	sessions := &fakeSessions{ledger: ledger}
+	runner := &fakeRunner{}
+
+	out, err := Run(context.Background(), specs, sessions, nil, runner, fakeBuildClock{}, Input{TaskID: "task"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Status != spec.StatusReview || out.Passed != 1 || out.Failed != 0 {
+		t.Fatalf("output = %+v, want explicit review-state build to refresh acceptance", out)
+	}
+	if len(runner.commands) != 1 || runner.commands[0] != "go test ./phase" {
+		t.Fatalf("commands = %+v, want acceptance rerun", runner.commands)
+	}
+	if specs.model.Phases[0].Acceptance[0].SourceEvent == "entry-old" {
+		t.Fatalf("criterion evidence did not refresh: %+v", specs.model.Phases[0].Acceptance[0])
+	}
+}
+
 func TestBuildBlocksOnlyAfterEvidenceAttempt(t *testing.T) {
 	t.Parallel()
 

@@ -81,12 +81,9 @@ func Run(ctx context.Context, opts Options) (Output, error) {
 	}
 	specs := markdown.Store{Root: root}
 	sessions := clisessionstore.New(ctx, root)
-	statusOut, err := appstatus.Run(ctx, specs, sessions, taskID, git.Adapter{Root: root})
+	statusOut, err := appstatus.RunWithOptions(ctx, specs, sessions, taskID, appstatus.Options{SuppressContext: opts.SuppressContext}, git.Adapter{Root: root})
 	if err != nil {
 		return Output{}, err
-	}
-	if opts.SuppressContext {
-		statusOut.SpecSource = nil
 	}
 	handoffOut, err := handoff.RunWithOptions(ctx, specs, sessions, taskID, handoff.Options{SuppressContext: opts.SuppressContext}, git.Adapter{Root: root})
 	if err != nil {

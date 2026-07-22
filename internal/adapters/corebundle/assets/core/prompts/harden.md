@@ -34,6 +34,14 @@ Before choosing `keep`, test the stronger alternatives:
 If a materially better shape solves the same root problem, report shrink or
 reframe as the shape decision; do not bury it as advisory feedback.
 
+Harden is a code-shape and system-design gate, not coverage bookkeeping. Once
+the draft names the governing invariant, shared owner, read model, chokepoint,
+and boundary that make the behavior apply by construction, do not demand a
+consumer-by-consumer compliance matrix, bespoke test for every surface, or
+repo-wide grep guard. Block only when a missing consumer or adapter changes the
+architecture, violates the invariant, or proves the shared boundary is not real.
+Per-surface implementation correctness belongs to build evidence and review.
+
 - `keep`: the draft should proceed as written.
 - `shrink`: the goal is valid, but the draft is doing too much.
 - `reframe`: the goal is valid, but the architecture or owner is wrong.
@@ -41,8 +49,10 @@ reframe as the shape decision; do not bury it as advisory feedback.
 
 A passing harden round needs `Shape decision: keep`, a true shape, minimal plan,
 shared owner, adapter-boundary judgment, and `Required spec edits: none`. Any
-other decision or any required spec edit keeps harden in `needs_revision` until
-the Markdown spec changes.
+other decision or any required spec edit keeps that harden round in
+`needs_revision` until the Markdown spec changes. `needs_revision` is evidence
+for an operator decision, not an instruction to appease the provider: revise true
+shape blockers, and leave bookkeeping or advisory findings as recorded evidence.
 
 `keep` is an earned decision, not the default. A keep decision must state why
 `reject`/no-op, `shrink`, `reframe`, and reuse of existing behavior were rejected
@@ -54,9 +64,9 @@ Cover these six dimensions in this order before polishing wording:
 
 - `design`: challenge the plan's right-to-exist and architecture: why it exists, what root problem it solves, whether shared behavior belongs in a shared core/app contract, whether API, MCP, CLI, provider, and docs surfaces stay light adapters, and whether it creates future bloat, compatibility debt, or product confusion.
 - `scope`: every migration, cutover, compatibility claim, shared behavior boundary, adapter-specific responsibility, and "no migration needed" statement is backed by repo evidence.
-- `path`: every named file, directory, package, and generated artifact exists now or is explicitly declared as new.
-- `command`: every validation command is runnable from the declared working directory with the configured toolchain.
-- `timing`: every acceptance criterion can be evaluated after the phase that claims it, not before implementation creates its target.
+- `path`: every named file, directory, package, and generated artifact exists now or is explicitly declared as new; do not expand this into an exhaustive consumer inventory unless the missing path changes the design boundary.
+- `command`: every validation command is runnable from the declared working directory with the configured toolchain; do not require bespoke tests per renderable surface when a shared owner/invariant test proves the behavior by construction.
+- `timing`: every acceptance criterion can be evaluated after the phase that claims it, not before implementation creates its target; do not turn timing into a request-spec matrix after the design is settled.
 - `rollback`: every risky phase has a realistic repair or rollback path.
 
 Treat scaffold boilerplate as a spec gap. Phase titles or objectives such as

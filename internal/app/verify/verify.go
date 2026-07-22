@@ -45,6 +45,7 @@ type SnapshotInput struct {
 	Scope        []string
 	SnapshotMode string
 	BaseRef      string
+	TargetRef    string
 }
 
 // Snapshot is the recomputed tree state.
@@ -65,6 +66,8 @@ type AcceptanceResult struct {
 // Policy controls pure verify invariants.
 type Policy struct {
 	TargetCommit    string
+	MaterialRef     string
+	MaterialOnly    bool
 	CI              bool
 	MinIndependence string
 }
@@ -80,7 +83,7 @@ func Run(ctx context.Context, envelope receipt.Envelope, trusted trust.TrustedKe
 	if policy.CI && strings.TrimSpace(policy.TargetCommit) == "" {
 		return fail("missing target in CI policy"), nil
 	}
-	if err := requirePorts(ports); err != nil {
+	if err := requirePorts(ports, policy.MaterialOnly); err != nil {
 		return Result{}, err
 	}
 	if err := receipt.ValidateEnvelope(envelope); err != nil {
@@ -105,11 +108,11 @@ func Run(ctx context.Context, envelope receipt.Envelope, trusted trust.TrustedKe
 	if ok, reason := meetsIndependence(body.Independence, body.Reviewer.Provider, body.HostUnderReview.Agent, policy.MinIndependence); !ok {
 		return fail(reason), nil
 	}
-	baseRef, ok := verifySnapshotBaseRef(body, policy.TargetCommit)
+	baseRef, ok := verifySnapshotBaseRef(body)
 	if !ok {
 		return fail("unknown snapshot_mode"), nil
 	}
-	snapshot, err := ports.Snapshotter.Snapshot(ctx, SnapshotInput{Scope: body.Scope, SnapshotMode: body.SnapshotMode, BaseRef: baseRef})
+	snapshot, err := ports.Snapshotter.Snapshot(ctx, SnapshotInput{Scope: body.Scope, SnapshotMode: body.SnapshotMode, BaseRef: baseRef, TargetRef: policy.MaterialRef})
 	if err != nil {
 		return Result{}, err
 	}
@@ -137,6 +140,27 @@ func Run(ctx context.Context, envelope receipt.Envelope, trusted trust.TrustedKe
 			return fail("base_commit is not ancestor of target"), nil
 		}
 	}
+	if strings.TrimSpace(policy.MaterialRef) != "" && strings.TrimSpace(policy.MaterialRef) != strings.TrimSpace(policy.TargetCommit) {
+		ok, err := ports.AncestryChecker.IsAncestor(ctx, body.BaseCommit, policy.MaterialRef)
+		if err != nil {
+			return Result{}, err
+		}
+		if !ok {
+			return fail("base_commit is not ancestor of material_ref"), nil
+		}
+		if strings.TrimSpace(policy.TargetCommit) != "" {
+			ok, err := ports.AncestryChecker.IsAncestor(ctx, policy.TargetCommit, policy.MaterialRef)
+			if err != nil {
+				return Result{}, err
+			}
+			if !ok {
+				return fail("target is not ancestor of material_ref"), nil
+			}
+		}
+	}
+	if policy.MaterialOnly {
+		return Result{Passed: true, Reason: "material verified"}, nil
+	}
 	observed, err := ports.AcceptanceRunner.RunAcceptance(ctx, body.Acceptance)
 	if err != nil {
 		return Result{}, err
@@ -147,7 +171,7 @@ func Run(ctx context.Context, envelope receipt.Envelope, trusted trust.TrustedKe
 	return Result{Passed: true, Reason: "verified"}, nil
 }
 
-func verifySnapshotBaseRef(body receipt.Body, _ string) (string, bool) {
+func verifySnapshotBaseRef(body receipt.Body) (string, bool) {
 	switch body.SnapshotMode {
 	case receipt.SnapshotModeWorkingTree:
 		return "", true
@@ -167,11 +191,11 @@ func verifySnapshotBaseRef(body receipt.Body, _ string) (string, bool) {
 	}
 }
 
-func requirePorts(ports Ports) error {
+func requirePorts(ports Ports, materialOnly bool) error {
 	switch {
 	case ports.Snapshotter == nil:
 		return fmt.Errorf("snapshotter is required")
-	case ports.AcceptanceRunner == nil:
+	case !materialOnly && ports.AcceptanceRunner == nil:
 		return fmt.Errorf("acceptance runner is required")
 	case ports.AncestryChecker == nil:
 		return fmt.Errorf("ancestry checker is required")

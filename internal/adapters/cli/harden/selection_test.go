@@ -33,15 +33,7 @@ func TestSelectUsesCodexHardenEffortFromConfig(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, ".scafld"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, ".scafld", "config.yaml"), []byte(`
-harden:
-  external:
-    provider: "codex"
-    codex:
-      model: "latest"
-      model_reasoning_effort: "xhigh"
-      binary: "codex-config"
-`), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, ".scafld", "config.yaml"), []byte("harden:\n  external:\n    provider: \"codex\"\n    codex:\n      model_reasoning_effort: \"xhigh\"\n      binary: \"codex-config\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	selected, err := Select(context.Background(), Options{Root: root, TaskID: "task"})

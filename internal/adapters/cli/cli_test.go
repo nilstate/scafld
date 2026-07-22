@@ -29,6 +29,8 @@ func TestRunHelpAndVersion(t *testing.T) {
 		{name: "version", args: []string{"--version"}, want: displayVersion()},
 		{name: "command help", args: []string{"plan", "--help"}, want: "scafld plan"},
 		{name: "harden help", args: []string{"harden", "--help"}, want: "Required observation dimensions"},
+		{name: "approve help", args: []string{"approve", "--help"}, want: "--reason TEXT"},
+		{name: "status help", args: []string{"status", "--help"}, want: "spec_source path, sha256, and byte count"},
 		{name: "review help", args: []string{"review", "--help"}, want: "--review-scope"},
 	}
 
@@ -163,6 +165,60 @@ func TestBlockedBuildHumanOutputUsesGateFailureContract(t *testing.T) {
 	} {
 		if !strings.Contains(stdout.String(), want) {
 			t.Fatalf("stdout missing %q:\n%s", want, stdout.String())
+		}
+	}
+}
+
+func TestApproveRequiresReasonOverHardenNeedsRevision(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	initGitWorkspace(t, root)
+	runCLI(t, []string{"init", "--root", root, "--no-agent-docs"})
+	runCLI(t, []string{"plan", "--root", root, "override-harden", "--command", "true"})
+	specPath := filepath.Join(root, ".scafld", "specs", "drafts", "override-harden.md")
+	data, err := os.ReadFile(specPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := strings.Replace(string(data), "harden_status: not_run", "harden_status: needs_revision", 1)
+	if err := os.WriteFile(specPath, []byte(text), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run(context.Background(), []string{"approve", "--root", root, "override-harden"}, &stdout, &stderr)
+	if code != ExitValidation {
+		t.Fatalf("approve exit = %d, want validation; stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	for _, want := range []string{"approval reason required", "gate: approve", "next: scafld approve override-harden --reason <reason>"} {
+		if !strings.Contains(stderr.String(), want) {
+			t.Fatalf("stderr missing %q:\n%s", want, stderr.String())
+		}
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = Run(context.Background(), []string{"approve", "--root", root, "override-harden", "--reason", "operator rejects bookkeeping harden finding"}, &stdout, &stderr)
+	if code != ExitSuccess {
+		t.Fatalf("approve with reason exit = %d; stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	approvedPath := filepath.Join(root, ".scafld", "specs", "approved", "override-harden.md")
+	approved, err := os.ReadFile(approvedPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(approved), "harden_status: overridden") {
+		t.Fatalf("approved spec missing override:\n%s", approved)
+	}
+	sessionData, err := os.ReadFile(filepath.Join(root, ".scafld", "runs", "override-harden", "session.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"harden_override", "operator rejects bookkeeping harden finding"} {
+		if !strings.Contains(string(sessionData), want) {
+			t.Fatalf("session missing %q:\n%s", want, sessionData)
 		}
 	}
 }
@@ -772,6 +828,39 @@ func TestRunReviewSurfacesFindingsInReviewStatusAndHandoff(t *testing.T) {
 	handoff := runCLI(t, []string{"handoff", "--root", root, "review-task"})
 	if !strings.Contains(handoff, "## Review Dossier") || !strings.Contains(handoff, "bug") {
 		t.Fatalf("handoff hides review findings:\n%s", handoff)
+	}
+}
+
+func TestRunStatusNoContextKeepsSpecSourceDigest(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	initGitWorkspace(t, root)
+	runCLI(t, []string{"init", "--root", root, "--no-agent-docs"})
+	runCLI(t, []string{"plan", "--root", root, "status-context-task", "--title", "Status Context Task", "--command", "true"})
+
+	stdout := runCLI(t, []string{"status", "--root", root, "status-context-task", "--json", "--no-context"})
+	var payload struct {
+		OK     bool `json:"ok"`
+		Result struct {
+			SpecSource struct {
+				Path            string `json:"path"`
+				SHA256          string `json:"sha256"`
+				Bytes           int    `json:"bytes"`
+				Markdown        string `json:"markdown"`
+				MarkdownOmitted bool   `json:"markdown_omitted"`
+			} `json:"spec_source"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &payload); err != nil {
+		t.Fatal(err)
+	}
+	source := payload.Result.SpecSource
+	if !payload.OK || source.Path == "" || source.SHA256 == "" || source.Bytes == 0 {
+		t.Fatalf("spec source provenance missing: %+v", payload)
+	}
+	if source.Markdown != "" || !source.MarkdownOmitted {
+		t.Fatalf("source markdown should be omitted but provenance kept: %+v", source)
 	}
 }
 

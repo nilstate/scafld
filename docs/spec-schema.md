@@ -94,9 +94,10 @@ runtime field.
 ## Hardening
 
 `harden_status` is separate from lifecycle `status`. Values are `not_run`,
-`in_progress`, `passed`, `needs_revision`, and `error`.
+`in_progress`, `passed`, `needs_revision`, `overridden`, and `error`.
 
-`scafld harden <task-id>` appends a round under `## Harden Rounds`:
+`scafld harden <task-id>` records a draft-revision-bound round under
+`## Harden Rounds`:
 
 ````markdown
 ## Harden Rounds
@@ -106,6 +107,7 @@ runtime field.
 Status: in_progress
 Started: 2026-05-04T00:00:00Z
 Ended: none
+Spec digest: observed-draft-digest
 Verdict: needs_revision
 Provider: codex
 Model: observed-provider-model
@@ -147,11 +149,21 @@ Each observation should carry one `Anchor` value matching `spec_gap:<field>`,
 or superseded before `scafld harden <task-id> --mark-passed` closes the round.
 Advisory observations may remain open.
 
+Approving over incomplete, stale, failed, or `needs_revision` harden evidence
+requires `scafld approve <task-id> --reason <reason>`. scafld records the
+operator decision as `harden_status: overridden` and keeps the harden round as
+audit evidence.
+
 Provider-backed hardening fills `Provider`, `Model`, `Output format`, `Summary`,
 and `Observations` from a strict `HardenDossier`. scafld fills `Verdict` by
 deriving it from observation coverage and unresolved blocking observations.
 Manual hardening may omit provenance fields, but should still record the
 required dimensions and any blocker/advisory observations it found.
+`Spec digest` binds the round to the draft contract that was hardened. A
+same-digest `needs_revision` round must be addressed by editing the draft before
+another provider pass; advisory observations do not force another pass. Approval
+over non-passing harden evidence requires `scafld approve <task-id> --reason
+<reason>` and records the harden state as `overridden`.
 
 ## Reconcile Contract
 

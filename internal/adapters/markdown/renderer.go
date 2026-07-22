@@ -117,7 +117,18 @@ func renderContext(b *strings.Builder, context spec.Context) {
 	if context.CWD != "" {
 		fmt.Fprintf(b, "CWD: `%s`\n\n", context.CWD)
 	}
-	renderBullets(b, context.Packages)
+	renderContextList(b, "Packages", context.Packages)
+	renderContextList(b, "Files impacted", context.FilesImpacted)
+	renderContextList(b, "Invariants", context.Invariants)
+	renderContextList(b, "Related docs", context.RelatedDocs)
+}
+
+func renderContextList(b *strings.Builder, title string, items []string) {
+	if len(items) == 0 {
+		return
+	}
+	fmt.Fprintf(b, "%s:\n", title)
+	renderBullets(b, items)
 	fmt.Fprintf(b, "\n")
 }
 
@@ -179,6 +190,18 @@ func renderReview(b *strings.Builder, review spec.ReviewState) {
 			blocking = "blocks completion"
 		}
 		fmt.Fprintf(b, "- [%s/%s] `%s` %s\n", fallback(string(finding.Severity), string(corereview.SeverityLow)), blocking, fallback(finding.ID, "finding"), fallback(finding.Summary, "No summary recorded."))
+		if finding.Category != "" {
+			fmt.Fprintf(b, "  - Category: %s\n", finding.Category)
+		}
+		if finding.Confidence != "" {
+			fmt.Fprintf(b, "  - Confidence: %s\n", finding.Confidence)
+		}
+		if finding.Status != "" {
+			fmt.Fprintf(b, "  - Status: %s\n", finding.Status)
+		}
+		if finding.ReviewPass != "" {
+			fmt.Fprintf(b, "  - Review pass: %s\n", finding.ReviewPass)
+		}
 		if finding.Location != nil && finding.Location.Path != "" {
 			if finding.Location.Line > 0 {
 				fmt.Fprintf(b, "  - Location: `%s:%d`\n", finding.Location.Path, finding.Location.Line)
@@ -192,8 +215,17 @@ func renderReview(b *strings.Builder, review spec.ReviewState) {
 		if finding.Impact != "" {
 			fmt.Fprintf(b, "  - Impact: %s\n", finding.Impact)
 		}
+		if finding.Reproducer != "" {
+			fmt.Fprintf(b, "  - Reproducer: %s\n", finding.Reproducer)
+		}
+		if finding.SuggestedFix != "" {
+			fmt.Fprintf(b, "  - Suggested fix: %s\n", finding.SuggestedFix)
+		}
 		if finding.Validation != "" {
 			fmt.Fprintf(b, "  - Validation: %s\n", finding.Validation)
+		}
+		if finding.RelatedSpec != "" {
+			fmt.Fprintf(b, "  - Related spec: %s\n", finding.RelatedSpec)
 		}
 	}
 	fmt.Fprintf(b, "\n")
@@ -204,6 +236,9 @@ func renderHardenRound(b *strings.Builder, round spec.HardenRound) {
 	fmt.Fprintf(b, "Status: %s\n", fallback(round.Status, "in_progress"))
 	fmt.Fprintf(b, "Started: %s\n", fallback(round.StartedAt, "none"))
 	fmt.Fprintf(b, "Ended: %s\n", fallback(round.EndedAt, "none"))
+	if round.SpecDigest != "" {
+		fmt.Fprintf(b, "Spec digest: %s\n", round.SpecDigest)
+	}
 	if round.Verdict != "" {
 		fmt.Fprintf(b, "Verdict: %s\n", round.Verdict)
 	}
@@ -280,7 +315,7 @@ func renderCriteria(b *strings.Builder, criteria []spec.Criterion) {
 		if c.Command != "" {
 			fmt.Fprintf(b, "  - Command: `%s`\n", c.Command)
 		}
-		fmt.Fprintf(b, "  - Expected kind: `%s`\n", fallback(string(c.ExpectedKind), string(acceptance.ExpectedExitCodeZero)))
+		fmt.Fprintf(b, "  - Expected kind: `%s`\n", string(expectedKindForRender(c)))
 		fmt.Fprintf(b, "  - Status: %s\n", fallback(c.Status, "pending"))
 		if c.Evidence != "" {
 			fmt.Fprintf(b, "  - Evidence: %s\n", c.Evidence)
@@ -288,6 +323,20 @@ func renderCriteria(b *strings.Builder, criteria []spec.Criterion) {
 		if c.SourceEvent != "" {
 			fmt.Fprintf(b, "  - Source event: %s\n", c.SourceEvent)
 		}
+	}
+}
+
+func expectedKindForRender(criterion spec.Criterion) acceptance.ExpectedKind {
+	if criterion.ExpectedKind != "" {
+		return criterion.ExpectedKind
+	}
+	switch fallback(criterion.Type, "command") {
+	case "browser":
+		return acceptance.ExpectedBrowserEvidence
+	case "manual":
+		return acceptance.ExpectedManual
+	default:
+		return acceptance.ExpectedExitCodeZero
 	}
 }
 

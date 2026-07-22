@@ -59,7 +59,7 @@ func RunWithOptions(ctx context.Context, specs SpecStore, sessions SessionStore,
 	if sessions != nil {
 		if loaded, err := sessions.Load(ctx, model.TaskID); err == nil {
 			ledger = loaded
-			reviewState = reviewgate.Project(ledger, model, reviewgate.Options{Now: time.Now().UTC()})
+			reviewState = reviewgate.Project(ledger, model, reviewProjectionOptions(ctx, ledger, firstWorkspace(workspaces)))
 			haveLedger = true
 		}
 	}
@@ -82,6 +82,23 @@ func RunWithOptions(ctx context.Context, specs SpecStore, sessions SessionStore,
 		writeLatestReviewFindings(&b, reviewState)
 	}
 	return b.String(), nil
+}
+
+func reviewProjectionOptions(ctx context.Context, ledger session.Session, workspace WorkspaceStatus) reviewgate.Options {
+	opts := reviewgate.Options{Now: time.Now().UTC()}
+	if workspace == nil {
+		return opts
+	}
+	materialScope := reviewgate.ReviewRerunMaterialScope(ledger)
+	if len(materialScope) > 0 {
+		if material, ok := workspace.(workspaceMaterialStatus); ok {
+			if seal, err := material.MaterialSeal(ctx, materialScope); err == nil {
+				opts.MaterialSeal = seal
+				opts.HasMaterialSeal = true
+			}
+		}
+	}
+	return opts
 }
 
 func writeSourceSpec(b *strings.Builder, source spec.Source) {
@@ -464,6 +481,13 @@ func writeReviewGate(b *strings.Builder, model spec.Model, ledger session.Sessio
 		fmt.Fprintf(b, "- After repair, run `%s` to refresh acceptance evidence.\n", "scafld build "+model.TaskID)
 		fmt.Fprintf(b, "- Then run `%s` for a new adversarial verdict.\n", "scafld review "+model.TaskID)
 		b.WriteString("- Do not run `scafld complete` until a later review passes after refreshed evidence.\n")
+		return
+	case reviewgate.KindReviewNeedsOperatorDecision:
+		b.WriteString("\nReview rerun decision:\n")
+		b.WriteString("- The latest build evidence is newer than the failed review, but the task material and spec still match the failed review.\n")
+		b.WriteString("- Repair the completion-blocking findings in the Review Dossier below, then run `scafld build " + model.TaskID + "` before reviewing again.\n")
+		b.WriteString("- If the blocker is intentionally rejected as advisory, bookkeeping, or overengineering, an operator may run `scafld review " + model.TaskID + " --force --reason <reason>`.\n")
+		b.WriteString("- Do not start another provider review just to re-ask about unchanged material.\n")
 		return
 	}
 	b.WriteString("\nReviewer focus:\n")

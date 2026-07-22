@@ -130,7 +130,7 @@ func TestCommandStreamsProgressToReporter(t *testing.T) {
 
 	var progress bytes.Buffer
 	result, err := (Runner{Progress: &progress, ProgressLabel: "review provider"}).Run(context.Background(), execution.Request{
-		Command: `printf '{"type":"result","subtype":"success"}\n'; printf 'thinking\n' >&2`,
+		Command: `printf '{"type":"result","subtype":"success"}\n'; printf '{"type":"result","subtype":"success"}\n'; printf 'thinking\n' >&2`,
 		Timeout: time.Second,
 		StdoutEventInspector: func(line string) string {
 			if strings.Contains(line, "result") {
@@ -142,7 +142,7 @@ func TestCommandStreamsProgressToReporter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.StdoutEvents["result.success"] != 1 {
+	if result.StdoutEvents["result.success"] != 2 {
 		t.Fatalf("events = %+v", result.StdoutEvents)
 	}
 	body := progress.String()
@@ -155,6 +155,9 @@ func TestCommandStreamsProgressToReporter(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Fatalf("progress missing %q:\n%s", want, body)
 		}
+	}
+	if count := strings.Count(body, "scafld review provider event result.success"); count != 1 {
+		t.Fatalf("progress event printed %d times, want once:\n%s", count, body)
 	}
 }
 

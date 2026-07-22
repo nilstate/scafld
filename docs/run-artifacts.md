@@ -46,6 +46,7 @@ to `archive/YYYY-MM/`.
 It records typed events such as:
 
 - `workspace_baseline`
+- `harden_override`
 - `approval`
 - `build`
 - `criterion`
@@ -67,6 +68,9 @@ task material scope is available, review entries also store `reviewed_scope` and
 instead of treating commit-only or unrelated workspace drift as stale authority.
 Human-reviewed overrides record a `review_override` entry with the operator
 reason before the passing `review` entry with provider `human`.
+
+Harden overrides record a `harden_override` entry with the operator reason and
+projected harden gate state before the draft moves to `approved`.
 
 `workspace_baseline` is captured at approval before task execution starts. It
 records dirty workspace fingerprints that review later uses to ignore unchanged

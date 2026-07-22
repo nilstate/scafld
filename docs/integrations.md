@@ -49,9 +49,9 @@ For challenger review work:
 - Codex review leaves the model unpinned by default so Codex CLI can use its
   current model path, and explicitly requests `model_reasoning_effort = "xhigh"`
   because scafld isolates user Codex config
-- Claude review requests the `opus` rolling alias and `--effort xhigh` by
-  default so Claude Code uses the latest Opus path with explicit review effort
-  unless configured otherwise
+- Claude review omits `--model` by default so Claude Code uses its current
+  model path, and explicitly requests `--effort xhigh` unless configured
+  otherwise
 - Gemini review uses Gemini CLI's configured default model unless
   `review.external.gemini.model` is set. It runs in plan mode with a temporary
   scafld MCP settings file and must submit through `submit_review`

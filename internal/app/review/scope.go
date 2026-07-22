@@ -153,3 +153,7 @@ func deriveReviewScope(model spec.Model, explicit []string, snapshot []string) [
 func filterReviewScope(scope []string) []string {
 	return reviewscope.FilterAllowed(scope)
 }
+
+func reviewScopeProjection(model spec.Model, explicit []string, baseline []string, current []string) reviewscope.Projection {
+	return reviewscope.Project(model, explicit, baseline, current)
+}

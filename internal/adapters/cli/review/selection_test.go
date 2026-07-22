@@ -130,6 +130,37 @@ review:
 	}
 }
 
+func TestSelectAutoDefaultClaudeModelIsUnpinned(t *testing.T) {
+	t.Setenv("SCAFLD_HOST_AGENT", "codex")
+
+	binDir := t.TempDir()
+	claudeBin := filepath.Join(binDir, "claude")
+	if err := os.WriteFile(claudeBin, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir)
+
+	var progress bytes.Buffer
+	selected, err := Select(context.Background(), Options{Root: t.TempDir(), TaskID: "task", Progress: &progress})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claude, ok := selected.Provider.(providers.ClaudeProvider)
+	if !ok {
+		t.Fatalf("provider = %T, want claude opposite Codex host", selected.Provider)
+	}
+	if claude.Model != "" {
+		t.Fatalf("default Claude model should be unpinned, got %q", claude.Model)
+	}
+	runner, ok := claude.Runner.(process.Runner)
+	if !ok {
+		t.Fatalf("runner = %T, want process.Runner", claude.Runner)
+	}
+	if runner.ProgressLabel != "review[claude]" {
+		t.Fatalf("progress label = %q", runner.ProgressLabel)
+	}
+}
+
 func TestSelectUsesGeminiProviderFromConfig(t *testing.T) {
 	t.Parallel()
 

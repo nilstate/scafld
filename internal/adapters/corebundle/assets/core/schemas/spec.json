@@ -18,7 +18,7 @@
     },
     "harden_status": {
       "type": "string",
-      "enum": ["not_run", "in_progress", "passed", "needs_revision", "error"]
+      "enum": ["not_run", "in_progress", "passed", "needs_revision", "overridden", "error"]
     },
     "size": {"type": "string", "enum": ["small", "medium", "large"]},
     "risk_level": {"type": "string", "enum": ["low", "medium", "high"]},
@@ -137,7 +137,7 @@
         "command": {"type": "string"},
         "expected_kind": {
           "type": "string",
-          "enum": ["exit_code_zero", "exit_code_nonzero", "no_matches"]
+          "enum": ["exit_code_zero", "exit_code_nonzero", "no_matches", "manual", "browser_evidence"]
         },
         "status": {"type": "string"},
         "evidence": {"type": "string"},
@@ -169,7 +169,11 @@
           "type": "array",
           "items": {"type": "object"}
         },
-        "budget": {"type": "object"}
+        "budget": {"type": "object"},
+        "provider": {"type": "string"},
+        "model": {"type": "string"},
+        "output_format": {"type": "string"},
+        "normalizations": {"type": "array", "items": {"type": "string"}}
       }
     },
     "review_finding": {
@@ -179,7 +183,26 @@
         "id": {"type": "string"},
         "severity": {"type": "string", "enum": ["critical", "high", "medium", "low"]},
         "blocks_completion": {"type": "boolean"},
+        "category": {"type": "string"},
+        "confidence": {"type": "string", "enum": ["high", "medium", "low", ""]},
+        "location": {"$ref": "#/definitions/review_location"},
+        "evidence": {"type": "string"},
+        "impact": {"type": "string"},
+        "reproducer": {"type": "string"},
+        "suggested_fix": {"type": "string"},
+        "validation": {"type": "string"},
+        "related_spec": {"type": "string"},
+        "review_pass": {"type": "string"},
+        "status": {"type": "string", "enum": ["open", "fixed", "accepted_risk", "superseded", ""]},
         "summary": {"type": "string"}
+      }
+    },
+    "review_location": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "path": {"type": "string"},
+        "line": {"type": "integer", "minimum": 1}
       }
     },
     "origin": {
@@ -196,13 +219,33 @@
       "required": ["id", "status"],
       "properties": {
         "id": {"type": "string", "pattern": "^round-[0-9]+$"},
-        "status": {"type": "string", "enum": ["in_progress", "passed", "needs_revision", "error"]},
+        "status": {"type": "string", "enum": ["in_progress", "passed", "needs_revision", "overridden", "error"]},
         "started_at": {"type": "string"},
         "ended_at": {"type": "string"},
+        "spec_digest": {"type": "string"},
+        "verdict": {"type": "string"},
+        "summary": {"type": "string"},
+        "diagnostic_path": {"type": "string"},
+        "provider": {"type": "string"},
+        "model": {"type": "string"},
+        "output_format": {"type": "string"},
+        "shape": {"$ref": "#/definitions/harden_shape"},
         "observations": {
           "type": "array",
           "items": {"$ref": "#/definitions/harden_observation"}
         }
+      }
+    },
+    "harden_shape": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "decision": {"type": "string", "enum": ["keep", "shrink", "reframe", "reject", ""]},
+        "true_shape": {"type": "string"},
+        "minimal_plan": {"type": "string"},
+        "shared_owner": {"type": "string"},
+        "adapter_boundaries": {"type": "array", "items": {"type": "string"}},
+        "required_spec_edits": {"type": "array", "items": {"type": "string"}}
       }
     },
     "harden_observation": {
@@ -213,6 +256,9 @@
         "result": {"type": "string", "enum": ["clean", "advisory", "blocks", "n/a"]},
         "anchor": {"type": "string", "pattern": "^(spec_gap:|code:|archive:).+"},
         "note": {"type": "string"},
+        "question": {"type": "string"},
+        "recommended": {"type": "string"},
+        "if_unanswered": {"type": "string"},
         "default": {"type": "string"},
         "status": {"type": "string", "enum": ["open", "fixed", "accepted_risk", "superseded"]}
       }

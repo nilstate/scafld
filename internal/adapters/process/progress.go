@@ -13,16 +13,17 @@ import (
 const defaultProgressInterval = 15 * time.Second
 
 type progressReporter struct {
-	mu    sync.Mutex
-	out   io.Writer
-	label string
+	mu            sync.Mutex
+	out           io.Writer
+	label         string
+	printedEvents map[string]bool
 }
 
 func newProgressReporter(out io.Writer, label string) *progressReporter {
 	if strings.TrimSpace(label) == "" {
 		label = "process"
 	}
-	return &progressReporter{out: out, label: strings.TrimSpace(label)}
+	return &progressReporter{out: out, label: strings.TrimSpace(label), printedEvents: map[string]bool{}}
 }
 
 func (p *progressReporter) line(format string, args ...interface{}) {
@@ -46,7 +47,16 @@ func (p *progressReporter) event(event string) {
 	if strings.TrimSpace(event) == "" {
 		return
 	}
-	p.line("event %s", event)
+	if p == nil || p.out == nil {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.printedEvents[event] {
+		return
+	}
+	p.printedEvents[event] = true
+	fmt.Fprintf(p.out, "scafld %s event %s\n", p.label, event)
 }
 
 func (p *progressReporter) running(started time.Time, lastActivity time.Time, lastProgress *time.Time, interval time.Duration) {

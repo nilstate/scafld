@@ -1,6 +1,8 @@
 package reconcile
 
 import (
+	"strings"
+
 	corereview "github.com/nilstate/scafld/v2/internal/core/review"
 	"github.com/nilstate/scafld/v2/internal/core/session"
 	"github.com/nilstate/scafld/v2/internal/core/spec"
@@ -33,11 +35,7 @@ func FromSession(model spec.Model, ledger session.Session) spec.Model {
 	replayed := session.Replay(ledger)
 	next := model
 	for i, criterion := range next.Acceptance.Criteria {
-		if state, ok := replayed.CriterionStates[criterion.ID]; ok {
-			next.Acceptance.Criteria[i].Status = state.Status
-			next.Acceptance.Criteria[i].Evidence = state.Reason
-			next.Acceptance.Criteria[i].SourceEvent = state.SourceID
-		}
+		projectCriterionState(&next.Acceptance.Criteria[i], criterion, replayed.CriterionStates[criterion.ID])
 	}
 	for pi, phase := range next.Phases {
 		if state, ok := replayed.PhaseBlocks[phase.ID]; ok {
@@ -45,11 +43,15 @@ func FromSession(model spec.Model, ledger session.Session) spec.Model {
 			next.Phases[pi].Reason = state.Reason
 		}
 		for ci, criterion := range phase.Acceptance {
-			if state, ok := replayed.CriterionStates[criterion.ID]; ok {
-				next.Phases[pi].Acceptance[ci].Status = state.Status
-				next.Phases[pi].Acceptance[ci].Evidence = state.Reason
-				next.Phases[pi].Acceptance[ci].SourceEvent = state.SourceID
+			withPhase := criterion
+			if withPhase.PhaseID == "" {
+				withPhase.PhaseID = phase.ID
 			}
+			projectCriterionState(&next.Phases[pi].Acceptance[ci], withPhase, replayed.CriterionStates[criterion.ID])
+		}
+		if next.Phases[pi].Status == "completed" && !phaseAcceptancePassed(next.Phases[pi]) {
+			next.Phases[pi].Status = "active"
+			next.Phases[pi].Reason = acceptanceStaleReason
 		}
 	}
 	if len(replayed.Entries) > 0 {
@@ -78,7 +80,96 @@ func FromSession(model spec.Model, ledger session.Session) spec.Model {
 		}
 		break
 	}
+	projectAcceptanceFreshness(&next)
 	return next
+}
+
+const acceptanceStaleReason = "acceptance evidence stale after criterion contract change"
+
+func projectCriterionState(target *spec.Criterion, criterion spec.Criterion, state session.StateRecord) {
+	target.Status = "pending"
+	target.Evidence = ""
+	target.SourceEvent = ""
+	if !criterionEvidenceMatches(criterion, state) {
+		return
+	}
+	target.Status = state.Status
+	target.Evidence = state.Reason
+	target.SourceEvent = state.SourceID
+}
+
+func criterionEvidenceMatches(criterion spec.Criterion, state session.StateRecord) bool {
+	if state.SourceID == "" {
+		return false
+	}
+	if strings.TrimSpace(state.Command) != strings.TrimSpace(criterion.Command) {
+		return false
+	}
+	if strings.TrimSpace(state.ExpectedKind) == "" || state.ExpectedKind != string(criterion.ExpectedKind) {
+		return false
+	}
+	if strings.TrimSpace(state.CriterionType) == "" || normalizeCriterionType(state.CriterionType) != normalizeCriterionType(criterion.Type) {
+		return false
+	}
+	if criterion.PhaseID != "" {
+		return state.PhaseID == criterion.PhaseID
+	}
+	if state.PhaseID != "" {
+		return false
+	}
+	return true
+}
+
+func normalizeCriterionType(value string) string {
+	switch value {
+	case "":
+		return "command"
+	default:
+		return value
+	}
+}
+
+func phaseAcceptancePassed(phase spec.Phase) bool {
+	for _, criterion := range phase.Acceptance {
+		if criterion.Status != "pass" {
+			return false
+		}
+	}
+	return true
+}
+
+func projectAcceptanceFreshness(model *spec.Model) {
+	if model.Status == spec.StatusCompleted || model.Status == spec.StatusFailed || model.Status == spec.StatusCancelled {
+		return
+	}
+	if len(model.Acceptance.Criteria) > 0 {
+		for _, criterion := range model.Acceptance.Criteria {
+			if criterion.Status != "pass" {
+				applyStaleAcceptanceState(model, "final")
+				return
+			}
+		}
+	}
+	for _, phase := range model.Phases {
+		if len(phase.Acceptance) == 0 || phase.Status == "completed" {
+			continue
+		}
+		applyStaleAcceptanceState(model, phase.ID)
+		return
+	}
+}
+
+func applyStaleAcceptanceState(model *spec.Model, phaseID string) {
+	if model.Status != spec.StatusReview {
+		return
+	}
+	model.Status = spec.StatusActive
+	model.CurrentState.CurrentPhase = phaseID
+	model.CurrentState.Next = "build"
+	model.CurrentState.Reason = acceptanceStaleReason
+	model.CurrentState.Blockers = "none"
+	model.CurrentState.AllowedFollowUp = "scafld handoff " + model.TaskID
+	model.CurrentState.ReviewGate = "not_started"
 }
 
 func projectLifecycle(model *spec.Model, ledger session.Session) {

@@ -134,11 +134,12 @@ approval: product goal, authority, ownership boundaries, halfway failure
 repair, hidden cutovers, testable invariants, golden examples, and recovery
 commands.
 
-Without flags, `harden` appends a round, sets `harden_status: in_progress`, and
-prints the active prompt from `.scafld/prompts/harden.md`, falling back to
-`.scafld/core/prompts/harden.md` and then the built-in prompt. The current
-state records a blocker until each required observation has a `Result` and
-`Anchor`.
+Without flags, `harden` opens a round for the current draft revision, sets
+`harden_status: in_progress`, and prints the active prompt from
+`.scafld/prompts/harden.md`, falling back to `.scafld/core/prompts/harden.md`
+and then the built-in prompt. Re-running it while the round is still open
+reprints the same round instead of appending another. The current state records
+a blocker until each required observation has a `Result` and `Anchor`.
 
 With `--mark-passed`, it verifies the latest round's harden observations and
 `Anchor` citations, closes the round, and sets `harden_status: passed`.
@@ -153,6 +154,18 @@ dimension coverage and unresolved `blocks` observations. Non-blocking advisory
 observations remain in the harden round as evidence, not as forced rework.
 Provider transport, invalid dossier, or unverified anchor problems are recorded
 as `harden_status: error`.
+
+Provider-backed hardening is also draft-revision bound. A `needs_revision`
+round is the finding ledger for that exact draft digest; another provider pass
+is refused until the draft contract changes. It does not force approval to wait:
+the operator either edits the draft for real shape blockers and reruns harden,
+or approves with `scafld approve <task-id> --reason <reason>` when the finding
+is rejected as bookkeeping/advisory or overengineering. A same-revision passing
+round is a no-op and points to `scafld approve <task-id>`.
+Harden blocks on system shape, ownership, invariants, chokepoints, and adapter
+boundaries. It should not turn a settled shared invariant into a
+consumer-by-consumer compliance matrix or demand bespoke tests for every
+renderable surface; build evidence and review own per-surface correctness.
 
 Accepted citation shapes are `Anchor: spec_gap:<field>`,
 `Anchor: code:<path>:<line>`, and `Anchor: archive:<task-id>`.
@@ -180,12 +193,18 @@ non-executable acceptance criteria.
 ## approve
 
 ```bash
-scafld approve <task-id> [--json]
+scafld approve <task-id> [--reason TEXT] [--json]
 ```
 
 Records approval in the session ledger, then moves the draft spec to
 `.scafld/specs/approved/`. Approval is explicit operator action; it is not
 implied by hardening.
+
+When harden evidence is incomplete, stale, failed, or `needs_revision`,
+`--reason` is required. scafld records a `harden_override` session entry, marks
+the harden state `overridden`, and then records approval. Use the reason to
+explain the operator decision. Fix real shape blockers in the draft and rerun
+harden; reject only bookkeeping, advisory, or overengineering findings.
 
 ## build
 
@@ -279,8 +298,12 @@ attempt blocks another review. If the process died and the lease has expired,
 the next `scafld review` records the old attempt as `abandoned` and starts a new
 one automatically. Provider failures are retryable. Review verdict failures are
 not: repair from `scafld handoff`, run `scafld build` to record fresh evidence,
-then run `scafld review` again. A current passing review is a no-op unless
-`--force` is set.
+then run `scafld review` again. If the latest build evidence is newer but the
+spec and reviewed task material still match the failed review, `review` blocks
+another provider call and routes the operator to `handoff`. The operator can
+reject the prior blocker as advisory, bookkeeping, or overengineering with
+`scafld review <task-id> --force --reason <reason>`. A current passing review is
+a no-op unless `--force` is set.
 
 scafld derives review scope from spec packages, impacted files, and phase
 changes. Use `--review-scope` only when a dirty monorepo or workspace needs an
@@ -375,13 +398,18 @@ Records the cancellation in session, then archives the spec.
 ## status
 
 ```bash
-scafld status <task-id> [--json]
+scafld status <task-id> [--json] [--no-context]
 ```
 
 Shows lifecycle status, the next allowed follow-up command, latest review
 findings when present, and `task_material` in JSON. `task_material` is the
 derived task-owned scope: baseline paths, task changes since baseline, ambient
 drift outside scope, and reviewed/current material digest status when available.
+Full status includes `spec_source.markdown`, which is the source-backed contract
+for agent entry. After an agent has read that contract for the same
+`spec_source.sha256`, follow-up polling can use `--no-context`; the response
+keeps `spec_source.path`, `sha256`, `bytes`, and `markdown_omitted: true` so the
+agent can reload full context if the digest changes.
 
 ## list
 
@@ -462,7 +490,8 @@ handoff text. It does not execute an agent runtime and does not advance state.
 ## verify
 
 ```bash
-scafld verify <receipt-path> --target <commit-ish> [--trusted-keys PATH] [--ci] [--self-check] [--root PATH] [--json]
+scafld verify <receipt-path> --target <commit-ish> [--material-ref <commit-ish>] [--acceptance-root PATH] [--trusted-keys PATH] [--ci] [--self-check] [--root PATH] [--json]
+scafld verify <receipt-path> --target <commit-ish> --material-ref <commit-ish> --material-only [--trusted-keys PATH] [--ci] [--root PATH]
 ```
 
 `verify` is the independent merge wall. It checks a signed receipt without
@@ -470,9 +499,11 @@ trusting the host that minted it:
 
 - verifies the ed25519 signature against an active key in the trusted-keys
   file, recomputing the canonical receipt digest.
-- snapshots the target workspace and compares file digests against the
+- snapshots the target workspace, or the immutable `--material-ref` commit when
+  supplied, and compares file digests against the
   digests the receipt fingerprints.
-- checks that `--target` is an ancestor-consistent commit for the receipt.
+- checks that the receipt base is ancestor-consistent with both the explicit
+  protected-base `--target` and the verified material ref when one is supplied.
 - re-runs the acceptance criteria recorded in the receipt.
 - enforces `verify.min_independence` from `.scafld/config.yaml`.
 
@@ -483,6 +514,19 @@ config only; `config.local.yaml` cannot repoint the trust anchors.
 
 CI mode applies when `--ci` is set or the `CI` environment variable is truthy.
 It fails closed when `--target` or the trusted-keys path is missing.
+
+`--material-ref` is for trusted-base pull-request CI that keeps scafld, config,
+and trust anchors on the protected base checkout while reading the fetched head
+commit's Git objects. Full verify only accepts that shape when acceptance runs
+against a clean checkout at the same commit: pass `--acceptance-root` for a
+detached pull-request head worktree, or run from a clean checkout whose `HEAD`
+already is the material ref.
+
+`--material-only` is for a separate CI material lane. It verifies the signed
+receipt, trusted keys, target/material ancestry, and material fingerprint, but
+it does not execute acceptance and is not a complete merge-wall proof by itself.
+The bundled `scafld-verify.sh` wrapper uses `SCAFLD_VERIFY_MODE=material` and
+`SCAFLD_VERIFY_MODE=full` to support split PR gates.
 
 `--self-check` prints a wiring report for the workspace (key material, trusted
 keys, config paths) without verifying a receipt.

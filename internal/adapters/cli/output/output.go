@@ -228,6 +228,7 @@ func Review(out appreview.Output) string {
 func Status(out appstatus.Output) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s: %s\nnext: %s\n", out.TaskID, out.Status, out.Next)
+	writeNextAction(&b, out.NextAction)
 	if out.Repair != nil {
 		b.WriteString(Gate(out.Repair))
 	}
@@ -255,6 +256,8 @@ func Status(out appstatus.Output) string {
 		if strings.TrimSpace(out.SpecSource.Markdown) != "" {
 			b.WriteString(strings.TrimSpace(out.SpecSource.Markdown))
 			b.WriteString("\n")
+		} else if out.SpecSource.MarkdownOmitted {
+			b.WriteString("Source markdown omitted by --no-context; rerun without --no-context or use scafld handoff to reload the full contract.\n")
 		}
 	}
 	if out.Completion != nil {
@@ -310,6 +313,29 @@ func Status(out appstatus.Output) string {
 		}
 	}
 	return b.String()
+}
+
+func writeNextAction(b *strings.Builder, action appstatus.NextAction) {
+	if strings.TrimSpace(action.Role) == "" && strings.TrimSpace(action.Action) == "" {
+		return
+	}
+	fmt.Fprintf(b, "next action: %s", fallback(action.Action, "inspect"))
+	if strings.TrimSpace(action.Role) != "" {
+		fmt.Fprintf(b, " (%s)", action.Role)
+	}
+	b.WriteString("\n")
+	if action.Reason != "" {
+		fmt.Fprintf(b, "next reason: %s\n", action.Reason)
+	}
+	if action.Command != "" && action.Command != "none" {
+		fmt.Fprintf(b, "command: %s\n", action.Command)
+	}
+	if action.AfterCommand != "" && action.AfterCommand != "none" {
+		fmt.Fprintf(b, "after: %s\n", action.AfterCommand)
+	}
+	if action.ThenCommand != "" && action.ThenCommand != "none" {
+		fmt.Fprintf(b, "then: %s\n", action.ThenCommand)
+	}
 }
 
 func fallback(value string, fallback string) string {

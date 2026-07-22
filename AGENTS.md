@@ -32,6 +32,11 @@ scafld handoff <task-id>
 
 Use `scafld harden` to strengthen drafts before approval. Use `scafld build` to record phase evidence. Use `scafld review` when running the lifecycle directly. Use `scafld status --json` for automation.
 
+If harden evidence is incomplete, stale, failed, or `needs_revision`, approval
+requires `scafld approve <task-id> --reason <reason>`. Fix real shape blockers
+in the draft and rerun harden; use a reason only for an explicit operator
+decision to reject bookkeeping, advisory, or overengineering findings.
+
 ## Agent Context Hierarchy
 
 Use structured JSON for lifecycle state and gate state. Use the embedded

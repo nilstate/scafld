@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"time"
 
@@ -19,19 +20,24 @@ import (
 	"github.com/nilstate/scafld/v2/internal/adapters/process"
 	appacceptance "github.com/nilstate/scafld/v2/internal/app/acceptance"
 	appverify "github.com/nilstate/scafld/v2/internal/app/verify"
+	"github.com/nilstate/scafld/v2/internal/core/execution"
 	"github.com/nilstate/scafld/v2/internal/core/receipt"
 	"github.com/nilstate/scafld/v2/internal/core/trust"
+	"github.com/nilstate/scafld/v2/internal/platform/processguard"
 )
 
 // Options configures the verify CLI adapter.
 type Options struct {
-	Root        string
-	ReceiptPath string
-	TrustedKeys string
-	Target      string
-	JSON        bool
-	CI          bool
-	SelfCheck   bool
+	Root           string
+	ReceiptPath    string
+	TrustedKeys    string
+	Target         string
+	MaterialRef    string
+	AcceptanceRoot string
+	MaterialOnly   bool
+	JSON           bool
+	CI             bool
+	SelfCheck      bool
 }
 
 // Handler returns a CLI-compatible verify handler.
@@ -59,6 +65,10 @@ func Handler() func(context.Context, []string, io.Writer, io.Writer) int {
 		if !out.Passed {
 			fmt.Fprintf(stderr, "verify failed: %s\n", out.Reason)
 			return 3
+		}
+		if out.Reason == "material verified" {
+			fmt.Fprintln(stdout, "verify material passed")
+			return 0
 		}
 		fmt.Fprintln(stdout, "verify passed")
 		return 0
@@ -99,14 +109,73 @@ func Run(ctx context.Context, opts Options) (appverify.Result, error) {
 		return appverify.Result{}, err
 	}
 	execCfg := configadapter.EffectiveExecution(opts.Root, cfg.Execution)
+	acceptanceRoot := opts.Root
+	acceptanceEnv := execCfg.ProcessEnv()
+	acceptanceEnvMode := execution.EnvModeInherit
+	cleanupAcceptanceEnv := func() {}
+	materialRef := strings.TrimSpace(opts.MaterialRef)
+	acceptanceRootFlag := strings.TrimSpace(opts.AcceptanceRoot)
+	if opts.MaterialOnly && acceptanceRootFlag != "" {
+		return appverify.Result{Passed: false, Reason: "material-only verify does not accept acceptance-root"}, nil
+	}
+	var materialCommit string
+	if materialRef != "" {
+		materialCommit, err = git.Adapter{Root: opts.Root}.ResolveCommit(ctx, materialRef)
+		if err != nil {
+			return appverify.Result{}, fmt.Errorf("resolve material ref: %w", err)
+		}
+	}
+	if !opts.MaterialOnly && materialRef != "" && acceptanceRootFlag == "" {
+		rootHead, ok, err := git.Adapter{Root: opts.Root}.ResolveHead(ctx)
+		if err != nil {
+			return appverify.Result{}, fmt.Errorf("resolve root HEAD: %w", err)
+		}
+		if !ok || rootHead != materialCommit {
+			return appverify.Result{Passed: false, Reason: "material-ref requires acceptance-root unless --material-only"}, nil
+		}
+		acceptanceRootFlag = opts.Root
+	}
+	if acceptanceRootFlag != "" {
+		if materialRef == "" {
+			return appverify.Result{Passed: false, Reason: "acceptance-root requires material-ref"}, nil
+		}
+		acceptanceRoot = acceptanceRootFlag
+		acceptanceHead, ok, err := git.Adapter{Root: acceptanceRoot}.ResolveHead(ctx)
+		if err != nil {
+			return appverify.Result{}, fmt.Errorf("resolve acceptance root HEAD: %w", err)
+		}
+		if !ok || acceptanceHead != materialCommit {
+			return appverify.Result{Passed: false, Reason: "acceptance-root HEAD does not match material-ref"}, nil
+		}
+		acceptanceState, err := git.Adapter{Root: acceptanceRoot}.ExactStatus(ctx)
+		if err != nil {
+			return appverify.Result{Passed: false, Reason: "acceptance-root is not exact material: " + err.Error()}, nil
+		}
+		if len(acceptanceState.Changed) != 0 {
+			return appverify.Result{Passed: false, Reason: "acceptance-root is not exact material: " + strings.Join(acceptanceState.Changed, ",")}, nil
+		}
+		acceptanceEnv, cleanupAcceptanceEnv, err = isolatedAcceptanceEnv(acceptanceEnv)
+		if err != nil {
+			return appverify.Result{}, err
+		}
+		defer cleanupAcceptanceEnv()
+		restoreProcessAccess, err := processguard.DisableDumpable()
+		if err != nil {
+			return appverify.Result{}, err
+		}
+		defer restoreProcessAccess()
+		acceptanceEnvMode = execution.EnvModeExact
+	}
 	runner := process.Runner{DiagnosticsDir: filepath.Join(opts.Root, ".scafld", "runs", "verify", "diagnostics")}
 	return appverify.Run(ctx, envelope, trusted, appverify.Policy{
 		TargetCommit:    target,
+		MaterialRef:     materialRef,
+		MaterialOnly:    opts.MaterialOnly,
 		CI:              ci,
 		MinIndependence: cfg.Verify.MinIndependence,
 	}, appverify.Ports{
 		Snapshotter:       gitSnapshotter{adapter: git.Adapter{Root: opts.Root}},
-		AcceptanceRunner:  acceptanceRunner{runner: runner, root: opts.Root, env: execCfg.ProcessEnv(), timeout: execCfg.AbsoluteTimeout(), idleTimeout: execCfg.IdleTimeout()},
+		AcceptanceRunner:  acceptanceRunner{runner: runner, root: acceptanceRoot, env: acceptanceEnv, envMode: acceptanceEnvMode, timeout: execCfg.AbsoluteTimeout(), idleTimeout: execCfg.IdleTimeout()},
 		AncestryChecker:   git.Adapter{Root: opts.Root},
 		SignatureVerifier: signatureVerifier{},
 	})
@@ -115,7 +184,7 @@ func Run(ctx context.Context, opts Options) (appverify.Result, error) {
 type gitSnapshotter struct{ adapter git.Adapter }
 
 func (g gitSnapshotter) Snapshot(ctx context.Context, input appverify.SnapshotInput) (appverify.Snapshot, error) {
-	snapshot, err := g.adapter.Snapshot(ctx, git.SnapshotInput{Scope: input.Scope, BaseRef: input.BaseRef})
+	snapshot, err := g.adapter.Snapshot(ctx, git.SnapshotInput{Scope: input.Scope, BaseRef: input.BaseRef, TargetRef: input.TargetRef})
 	if err != nil {
 		return appverify.Snapshot{}, err
 	}
@@ -134,6 +203,7 @@ type acceptanceRunner struct {
 	runner      appacceptance.Runner
 	root        string
 	env         []string
+	envMode     execution.EnvMode
 	timeout     time.Duration
 	idleTimeout time.Duration
 }
@@ -145,6 +215,7 @@ func (a acceptanceRunner) RunAcceptance(ctx context.Context, criteria []receipt.
 			Criteria:    []appacceptance.Criterion{{ID: criterion.ID, Command: criterion.Command, ExpectedKind: criterion.ExpectedKind}},
 			WorkDir:     a.root,
 			Env:         a.env,
+			EnvMode:     a.envMode,
 			Timeout:     a.timeout,
 			IdleTimeout: a.idleTimeout,
 		})
@@ -205,6 +276,50 @@ func resolveRootPath(root string, path string) string {
 	return filepath.Join(root, filepath.FromSlash(path))
 }
 
+func isolatedAcceptanceEnv(overrides []string) ([]string, func(), error) {
+	home, err := os.MkdirTemp("", "scafld-verify-home-")
+	if err != nil {
+		return nil, nil, fmt.Errorf("create isolated acceptance home: %w", err)
+	}
+	cleanup := func() { _ = os.RemoveAll(home) }
+	values := map[string]string{
+		"CI":            firstNonEmpty(os.Getenv("CI"), "true"),
+		"GITHUB_TOKEN":  "",
+		"GH_TOKEN":      "",
+		"HOME":          home,
+		"PATH":          os.Getenv("PATH"),
+		"SCAFLD_VERIFY": "1",
+		"TMPDIR":        os.TempDir(),
+	}
+	for _, item := range overrides {
+		key, value, ok := strings.Cut(item, "=")
+		key = strings.TrimSpace(key)
+		if ok && key != "" {
+			values[key] = value
+		}
+	}
+	for _, key := range acceptanceSecretEnvKeys {
+		values[key] = ""
+	}
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	env := make([]string, 0, len(keys))
+	for _, key := range keys {
+		env = append(env, key+"="+values[key])
+	}
+	return env, cleanup, nil
+}
+
+var acceptanceSecretEnvKeys = []string{
+	"ACTIONS_ID_TOKEN_REQUEST_TOKEN",
+	"ACTIONS_RUNTIME_TOKEN",
+	"GH_TOKEN",
+	"GITHUB_TOKEN",
+}
+
 // Parse parses verify command arguments.
 func Parse(args []string) (Options, error) {
 	var opts Options
@@ -217,6 +332,8 @@ func Parse(args []string) (Options, error) {
 			opts.CI = true
 		case arg == "--self-check":
 			opts.SelfCheck = true
+		case arg == "--material-only":
+			opts.MaterialOnly = true
 		case arg == "--target":
 			if i+1 >= len(args) {
 				return Options{}, errors.New("--target requires a value")
@@ -225,6 +342,22 @@ func Parse(args []string) (Options, error) {
 			i++
 		case strings.HasPrefix(arg, "--target="):
 			opts.Target = strings.TrimPrefix(arg, "--target=")
+		case arg == "--material-ref":
+			if i+1 >= len(args) {
+				return Options{}, errors.New("--material-ref requires a value")
+			}
+			opts.MaterialRef = args[i+1]
+			i++
+		case strings.HasPrefix(arg, "--material-ref="):
+			opts.MaterialRef = strings.TrimPrefix(arg, "--material-ref=")
+		case arg == "--acceptance-root":
+			if i+1 >= len(args) {
+				return Options{}, errors.New("--acceptance-root requires a value")
+			}
+			opts.AcceptanceRoot = args[i+1]
+			i++
+		case strings.HasPrefix(arg, "--acceptance-root="):
+			opts.AcceptanceRoot = strings.TrimPrefix(arg, "--acceptance-root=")
 		case arg == "--root":
 			if i+1 >= len(args) {
 				return Options{}, errors.New("--root requires a value")

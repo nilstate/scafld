@@ -44,8 +44,10 @@ The spec is readable state. The session ledger is the evidence source.
 
 A harden round records the pre-build challenge as one observation ledger. Each
 observation covers a dimension, result, and anchor. Open `blocks` observations
-block approval; advisories keep their full detail without forcing another harden
-loop.
+block passing the harden round; advisories keep their full detail without
+forcing another harden loop. Approval over incomplete, stale, failed, or
+`needs_revision` harden evidence requires a `--reason` and records a
+`harden_override` ledger entry before approval.
 
 ```markdown
 ## Harden Rounds
@@ -95,7 +97,11 @@ output should use the same observation shape.
 
 ## Status JSON
 
-`status --json` is the stable automation surface:
+`status --json` is the stable automation surface. Full status includes the
+source Markdown contract for agent entry. Follow-up polling can use
+`status --json --no-context`; `spec_source` still carries path, sha256, byte
+count, and `markdown_omitted: true` so wrappers can reload full context when the
+digest changes.
 
 ```json
 {

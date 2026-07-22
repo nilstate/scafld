@@ -8,16 +8,24 @@ on:
       - '.scafld/receipts/**'
 
 jobs:
-  verify-receipt:
+  verify-material:
+    if: github.event_name == 'pull_request_target'
     runs-on: ubuntu-24.04
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@v7
         with:
-          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.event.pull_request.base.sha || github.sha }}
           fetch-depth: 0
+          persist-credentials: false
+
+      - name: Fetch pull request receipt source
+        if: github.event_name == 'pull_request_target'
+        run: |
+          set -eu
+          git remote add pr-head "https://github.com/${{ github.event.pull_request.head.repo.full_name }}.git"
+          git fetch --no-tags pr-head "${{ github.event.pull_request.head.sha }}"
 
       - uses: actions/setup-go@v6
         with:
@@ -32,19 +40,66 @@ jobs:
 
       - name: Run scafld verify
         env:
-          SCAFLD_VERSION: v2.4.8
+          SCAFLD_VERSION: v2.5.2
           SCAFLD_RECEIPT_PATH: ${{ vars.SCAFLD_RECEIPT_PATH || '' }}
           SCAFLD_VERIFY_TARGET: ${{ github.event.pull_request.base.sha || github.event.before }}
+          SCAFLD_VERIFY_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+          SCAFLD_VERIFY_MODE: material
         run: |
           set -eu
-          if [ "${{ github.event_name }}" = "pull_request_target" ]; then
-            if ! git show "$SCAFLD_VERIFY_TARGET:scripts/scafld-verify.sh" > "$RUNNER_TEMP/scafld-verify.sh"; then
-              echo "error: protected target does not contain scripts/scafld-verify.sh" >&2
-              echo "bootstrap scafld init wiring on the protected branch before enforcing PR verification" >&2
-              exit 2
-            fi
-            chmod +x "$RUNNER_TEMP/scafld-verify.sh"
-            "$RUNNER_TEMP/scafld-verify.sh"
-          else
-            scripts/scafld-verify.sh
+          scripts/scafld-verify.sh
+
+  verify-acceptance:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.base.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Fetch pull request receipt source
+        if: github.event_name == 'pull_request_target'
+        run: |
+          set -eu
+          git remote add pr-head "https://github.com/${{ github.event.pull_request.head.repo.full_name }}.git"
+          git fetch --no-tags pr-head "${{ github.event.pull_request.head.sha }}"
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.2'
+
+      - name: Build scafld from source
+        run: |
+          set -eu
+          mkdir -p "$RUNNER_TEMP/scafld-bin"
+          go build -o "$RUNNER_TEMP/scafld-bin/scafld" ./cmd/scafld
+          echo "$RUNNER_TEMP/scafld-bin" >> "$GITHUB_PATH"
+
+      - name: Run scafld verify
+        env:
+          SCAFLD_VERSION: v2.5.2
+          SCAFLD_RECEIPT_PATH: ${{ vars.SCAFLD_RECEIPT_PATH || '' }}
+          SCAFLD_VERIFY_TARGET: ${{ github.event.pull_request.base.sha || github.event.before }}
+          SCAFLD_VERIFY_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+          SCAFLD_VERIFY_MODE: full
+        run: |
+          set -eu
+          scripts/scafld-verify.sh
+
+  verify-gate:
+    if: ${{ always() && github.event_name == 'pull_request_target' }}
+    runs-on: ubuntu-24.04
+    needs: [verify-material, verify-acceptance]
+    permissions: {}
+    steps:
+      - name: Require both verifier lanes
+        run: |
+          set -eu
+          if [ "${{ needs.verify-material.result }}" != "success" ] || [ "${{ needs.verify-acceptance.result }}" != "success" ]; then
+            echo "scafld verify gate failed: material=${{ needs.verify-material.result }} acceptance=${{ needs.verify-acceptance.result }}" >&2
+            exit 1
           fi
+          echo "scafld verify gate passed"

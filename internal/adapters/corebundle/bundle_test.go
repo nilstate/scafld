@@ -9,6 +9,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/nilstate/scafld/v2/internal/core/acceptance"
 )
 
 func TestRepositoryDoesNotTrackGeneratedWorkspaceCopies(t *testing.T) {
@@ -183,6 +185,77 @@ func TestInitCreatesSparseProjectConfigAndFullCoreExample(t *testing.T) {
 	}
 }
 
+func TestSpecSchemaCoversRuntimePublicSpecFields(t *testing.T) {
+	t.Parallel()
+
+	data, err := assets.ReadFile("assets/core/schemas/spec.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var schema map[string]any
+	if err := json.Unmarshal(data, &schema); err != nil {
+		t.Fatal(err)
+	}
+	defs := schemaMap(t, schema, "definitions")
+
+	criterion := schemaMap(t, defs, "criterion")
+	criterionProps := schemaMap(t, criterion, "properties")
+	expectedKind := schemaMap(t, criterionProps, "expected_kind")
+	for _, kind := range acceptance.ExpectedKindValues() {
+		if !schemaEnumContains(expectedKind, string(kind)) {
+			t.Fatalf("spec schema expected_kind enum missing %q", kind)
+		}
+	}
+
+	review := schemaMap(t, defs, "review")
+	reviewProps := schemaMap(t, review, "properties")
+	for _, field := range []string{"status", "verdict", "mode", "summary", "findings", "attack_log", "budget", "provider", "model", "output_format", "normalizations"} {
+		if _, ok := reviewProps[field]; !ok {
+			t.Fatalf("spec schema review missing %q", field)
+		}
+	}
+
+	finding := schemaMap(t, defs, "review_finding")
+	findingProps := schemaMap(t, finding, "properties")
+	for _, field := range []string{"id", "severity", "blocks_completion", "category", "confidence", "location", "evidence", "impact", "reproducer", "suggested_fix", "validation", "related_spec", "review_pass", "status", "summary"} {
+		if _, ok := findingProps[field]; !ok {
+			t.Fatalf("spec schema review_finding missing %q", field)
+		}
+	}
+
+	location := schemaMap(t, defs, "review_location")
+	locationProps := schemaMap(t, location, "properties")
+	for _, field := range []string{"path", "line"} {
+		if _, ok := locationProps[field]; !ok {
+			t.Fatalf("spec schema review_location missing %q", field)
+		}
+	}
+
+	round := schemaMap(t, defs, "harden_round")
+	roundProps := schemaMap(t, round, "properties")
+	for _, field := range []string{"spec_digest", "verdict", "summary", "diagnostic_path", "provider", "model", "output_format", "shape", "observations"} {
+		if _, ok := roundProps[field]; !ok {
+			t.Fatalf("spec schema harden_round missing %q", field)
+		}
+	}
+
+	shape := schemaMap(t, defs, "harden_shape")
+	shapeProps := schemaMap(t, shape, "properties")
+	for _, field := range []string{"decision", "true_shape", "minimal_plan", "shared_owner", "adapter_boundaries", "required_spec_edits"} {
+		if _, ok := shapeProps[field]; !ok {
+			t.Fatalf("spec schema harden_shape missing %q", field)
+		}
+	}
+
+	observation := schemaMap(t, defs, "harden_observation")
+	observationProps := schemaMap(t, observation, "properties")
+	for _, field := range []string{"dimension", "result", "anchor", "note", "question", "recommended", "if_unanswered", "default", "status"} {
+		if _, ok := observationProps[field]; !ok {
+			t.Fatalf("spec schema harden_observation missing %q", field)
+		}
+	}
+}
+
 func TestUpdateSkipsCustomizedProjectPrompt(t *testing.T) {
 	t.Parallel()
 
@@ -263,6 +336,29 @@ func writeTestPromptManifest(t *testing.T, root string, prompts map[string]strin
 func containsPath(paths []string, want string) bool {
 	for _, path := range paths {
 		if path == want {
+			return true
+		}
+	}
+	return false
+}
+
+func schemaMap(t *testing.T, parent map[string]any, key string) map[string]any {
+	t.Helper()
+
+	node, ok := parent[key].(map[string]any)
+	if !ok {
+		t.Fatalf("schema node %q missing or not an object", key)
+	}
+	return node
+}
+
+func schemaEnumContains(node map[string]any, want string) bool {
+	values, ok := node["enum"].([]any)
+	if !ok {
+		return false
+	}
+	for _, value := range values {
+		if value == want {
 			return true
 		}
 	}

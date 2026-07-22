@@ -9,10 +9,18 @@ inputs:
   target:
     description: Merge target commit-ish.
     required: true
+  head:
+    description: Verified material commit-ish. Defaults to the current checkout.
+    required: false
+    default: HEAD
+  mode:
+    description: Verification lane to run: full or material.
+    required: false
+    default: full
   scafld-version:
     description: scafld version to install if scafld is not already on PATH.
     required: false
-    default: v2.4.8
+    default: v2.5.2
 
 runs:
   using: composite
@@ -22,5 +30,7 @@ runs:
       env:
         SCAFLD_RECEIPT_PATH: ${{ inputs.receipt }}
         SCAFLD_VERIFY_TARGET: ${{ inputs.target }}
+        SCAFLD_VERIFY_HEAD: ${{ inputs.head }}
+        SCAFLD_VERIFY_MODE: ${{ inputs.mode }}
         SCAFLD_VERSION: ${{ inputs.scafld-version }}
       run: scripts/scafld-verify.sh

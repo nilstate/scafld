@@ -46,7 +46,9 @@ func TestRunListsSubmitHardenToolAndWritesValidDossier(t *testing.T) {
 	}
 	if !strings.Contains(tools.Result.Tools[0].Description, "draft as a hypothesis") ||
 		!strings.Contains(tools.Result.Tools[0].Description, "reuse-existing-behavior") ||
-		!strings.Contains(tools.Result.Tools[0].Description, "advisory feedback") {
+		!strings.Contains(tools.Result.Tools[0].Description, "advisory feedback") ||
+		!strings.Contains(tools.Result.Tools[0].Description, "not coverage bookkeeping") ||
+		!strings.Contains(tools.Result.Tools[0].Description, "consumer-by-consumer compliance matrix") {
 		t.Fatalf("tool description = %q", tools.Result.Tools[0].Description)
 	}
 	data, err := os.ReadFile(outPath)

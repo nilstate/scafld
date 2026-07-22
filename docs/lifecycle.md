@@ -101,18 +101,26 @@ the projected state from session evidence.
 - `in_progress`
 - `passed`
 - `needs_revision`
+- `overridden`
 - `error`
 
-`scafld harden <task-id>` appends a harden round while the spec is still a
-draft. The active prompt asks the agent to record evidence-backed observations
-for design, scope, paths, commands, acceptance timing, and rollback or repair
-shape. Design comes first: the round should challenge shared ownership and keep
-API/MCP/CLI/provider/docs surfaces as light adapters over common behavior.
+`scafld harden <task-id>` opens a harden round while the spec is still a draft.
+The active prompt asks the agent to record evidence-backed observations for
+design, scope, paths, commands, acceptance timing, and rollback or repair shape.
+Design comes first: the round should challenge shared ownership and keep
+API/MCP/CLI/provider/docs surfaces as light adapters over common behavior. The
+round is bound to the draft digest, so repeating harden without changing the
+draft reuses or blocks on the existing round instead of stacking new rounds.
 `scafld harden <task-id>
 --mark-passed` verifies dimension coverage, anchors, and unresolved blocking
 observations before recording that the draft survived hardening. Missing
-dimensions, open blocking observations, and unresolved citations keep approval
-blocked and leave the round open.
+dimensions, open blocking observations, and unresolved citations keep harden
+not-ready and leave the round open.
+
+Approving over incomplete, stale, failed, or `needs_revision` harden evidence
+requires `scafld approve <task-id> --reason <reason>`. scafld records that
+operator decision as `overridden`; real shape blockers should be fixed in the
+draft and hardened again.
 
 Approval remains explicit. Hardening makes the approval decision worth trusting.
 
@@ -129,6 +137,7 @@ adversarial review tries to break confidence in the work.
 ```bash
 scafld status add-auth
 scafld status add-auth --json
+scafld status add-auth --json --no-context
 scafld list
 scafld list --json
 scafld report
@@ -137,4 +146,7 @@ scafld report
 `status --json` is the right integration surface for wrappers. It reports the
 current lifecycle state, next allowed follow-up command, and task material
 projection without requiring the wrapper to scrape Markdown or invent a separate
-change manifest.
+change manifest. Agent entry should read full status or handoff once. Follow-up
+polling can use `--no-context` after the same `spec_source.sha256` is already in
+context; scafld keeps source path, digest, and byte count while omitting only the
+markdown body.

@@ -167,6 +167,7 @@ func (p *parser) handleLine(line string) {
 	case p.handleReview(line):
 	case p.handleMetadata(line):
 	case p.handleOrigin(line):
+	case p.handleContext(line):
 	case p.handleHardenLine(line):
 	case p.handleListItem(line):
 	case p.handlePhaseLine(line):
@@ -256,6 +257,14 @@ func (p *parser) handleReview(line string) bool {
 	if p.reviewFinding != nil {
 		if key, value, ok := parseIndentedSpecKeyValue(line); ok {
 			switch normalizeSpecKey(key) {
+			case "category":
+				p.reviewFinding.Category = value
+			case "confidence":
+				p.reviewFinding.Confidence = corereview.Confidence(value)
+			case "status":
+				p.reviewFinding.Status = corereview.FindingStatus(value)
+			case "review pass":
+				p.reviewFinding.ReviewPass = value
 			case "location":
 				path, lineNo := parseLocation(value)
 				p.reviewFinding.Location = &corereview.Location{Path: path, Line: lineNo}
@@ -263,8 +272,14 @@ func (p *parser) handleReview(line string) bool {
 				p.reviewFinding.Evidence = value
 			case "impact":
 				p.reviewFinding.Impact = value
+			case "reproducer":
+				p.reviewFinding.Reproducer = value
+			case "suggested fix":
+				p.reviewFinding.SuggestedFix = value
 			case "validation":
 				p.reviewFinding.Validation = value
+			case "related spec":
+				p.reviewFinding.RelatedSpec = value
 			}
 			return true
 		}
@@ -302,6 +317,54 @@ func (p *parser) handleOrigin(line string) bool {
 	return true
 }
 
+func (p *parser) handleContext(line string) bool {
+	if p.section != "context" {
+		return false
+	}
+	if key, value, ok := parseSpecKeyValue(line); ok {
+		switch normalizeSpecKey(key) {
+		case "cwd":
+			p.model.Context.CWD = value
+			return true
+		case "packages":
+			p.listTarget = &p.model.Context.Packages
+			appendInlineContextValues(p.listTarget, value)
+			return true
+		case "files impacted", "impacted files":
+			p.listTarget = &p.model.Context.FilesImpacted
+			appendInlineContextValues(p.listTarget, value)
+			return true
+		case "invariants":
+			p.listTarget = &p.model.Context.Invariants
+			appendInlineContextValues(p.listTarget, value)
+			return true
+		case "related docs", "related documents":
+			p.listTarget = &p.model.Context.RelatedDocs
+			appendInlineContextValues(p.listTarget, value)
+			return true
+		default:
+			return false
+		}
+	}
+	if p.listTarget == nil && strings.HasPrefix(strings.TrimSpace(line), "- ") {
+		value := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "- "))
+		if value != "" && value != "none" {
+			p.model.Context.Packages = append(p.model.Context.Packages, value)
+		}
+		return true
+	}
+	return false
+}
+
+func appendInlineContextValues(target *[]string, value string) {
+	if target == nil || value == "" || value == "none" {
+		return
+	}
+	for _, item := range splitCSV(value) {
+		*target = append(*target, item)
+	}
+}
+
 func (p *parser) handleHardenLine(line string) bool {
 	if p.section != "harden rounds" {
 		return false
@@ -335,6 +398,11 @@ func (p *parser) handleHardenLine(line string) bool {
 		case "ended":
 			if p.hardenRound != nil {
 				p.hardenRound.EndedAt = noneToEmpty(value)
+			}
+			return true
+		case "spec digest", "contract digest":
+			if p.hardenRound != nil {
+				p.hardenRound.SpecDigest = noneToEmpty(value)
 			}
 			return true
 		case "verdict":
@@ -608,8 +676,11 @@ func (p *parser) handleCriterionStart(line string) bool {
 		title = strings.TrimSpace(match[2])
 	}
 	expectedKind := acceptance.ExpectedExitCodeZero
-	if criterionType == "browser" {
+	switch criterionType {
+	case "browser":
 		expectedKind = acceptance.ExpectedBrowserEvidence
+	case "manual":
+		expectedKind = acceptance.ExpectedManual
 	}
 	c := spec.Criterion{ID: id, Type: criterionType, Title: title, ExpectedKind: expectedKind, Status: "pending"}
 	if p.phase != nil {

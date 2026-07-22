@@ -24,6 +24,21 @@ func TestReplayProjectionIdempotentAndAppendOrder(t *testing.T) {
 	}
 }
 
+func TestReplayCriterionPhaseIDDoesNotOverwritePhaseBlock(t *testing.T) {
+	t.Parallel()
+
+	ledger := New("task", "t0")
+	ledger = ledger.WithEntry(Entry{ID: "phase", Type: "phase", PhaseID: "phase1", Status: "completed", Reason: "phase done"})
+	ledger = ledger.WithEntry(Entry{ID: "criterion", Type: "criterion", CriterionID: "ac1", PhaseID: "phase1", Status: "pass", Reason: "criterion pass"})
+	replayed := Replay(ledger)
+	if got := replayed.CriterionStates["ac1"].Status; got != "pass" {
+		t.Fatalf("criterion state = %q, want pass", got)
+	}
+	if got := replayed.PhaseBlocks["phase1"].Status; got != "completed" {
+		t.Fatalf("phase block was overwritten by criterion phase_id: %+v", replayed.PhaseBlocks["phase1"])
+	}
+}
+
 func TestLedgerReplayComputesGenesisDigestNextHeadAndMismatch(t *testing.T) {
 	t.Parallel()
 

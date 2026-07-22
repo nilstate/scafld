@@ -79,6 +79,14 @@ Findings are defects only, blocking or not. An improvement, preference,
 nice-to-have refactor, or cleaner shape is not a finding unless it identifies a
 concrete defect in the task result.
 
+Review is not a marginal-surface compliance matrix. Do not fail a built
+artifact because a spec or test did not enumerate every adjacent consumer,
+fallback, adapter, or call site. File that only when you verified a concrete
+defect in the shipped behavior, a violated shared invariant, or a real adapter
+boundary break. If the implementation proves behavior through one shared owner,
+read model, chokepoint, or invariant test, treat omitted per-surface bookkeeping
+as non-finding context unless an actual surface is broken.
+
 Dossier field discipline:
 
 - `findings[].summary` names the defect, not a broad area.

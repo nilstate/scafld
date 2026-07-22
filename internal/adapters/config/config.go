@@ -20,8 +20,9 @@ const (
 	// DefaultCodexModelReasoningEffort keeps governed review/harden runs from
 	// inheriting a medium-effort CLI default after user config is isolated.
 	DefaultCodexModelReasoningEffort = "xhigh"
-	// DefaultClaudeModel uses Claude Code's rolling latest-Opus alias.
-	DefaultClaudeModel = "opus"
+	// DefaultClaudeModel is empty by design: scafld omits --model so Claude Code
+	// can use its own current default unless the workspace explicitly pins one.
+	DefaultClaudeModel = ""
 	// DefaultClaudeEffort uses Claude Code's native effort control for governed
 	// review/harden runs.
 	DefaultClaudeEffort = "xhigh"
@@ -37,12 +38,21 @@ var legacyCodexDefaultModels = map[string]string{
 }
 
 var claudeLatestAliases = map[string]string{
-	"opus":   "opus",
-	"sonnet": "sonnet",
-	"haiku":  "haiku",
+	"latest":  DefaultClaudeModel,
+	"current": DefaultClaudeModel,
+	"default": DefaultClaudeModel,
+	"opus":    "opus",
+	"sonnet":  "sonnet",
+	"haiku":   "haiku",
 }
 
 var claudeLatestFamilies = []string{"opus", "sonnet", "haiku"}
+
+var legacyGeminiDefaultModels = map[string]string{
+	"latest":  "",
+	"current": "",
+	"default": "",
+}
 
 // Config is the merged runtime configuration for a scafld workspace.
 type Config struct {
@@ -621,6 +631,7 @@ func normalizeProviderLatestModels(cfg ExternalReviewConfig) ExternalReviewConfi
 	cfg.Codex.ModelReasoningEffort = normalizeCodexModelReasoningEffort(cfg.Codex.ModelReasoningEffort)
 	cfg.Claude.Model = normalizeClaudeLatestModel(cfg.Claude.Model)
 	cfg.Claude.Effort = normalizeClaudeEffort(cfg.Claude.Effort)
+	cfg.Gemini.Model = normalizeGeminiLatestModel(cfg.Gemini.Model)
 	return cfg
 }
 
@@ -646,6 +657,10 @@ func normalizeClaudeEffort(effort string) string {
 	default:
 		return normalized
 	}
+}
+
+func normalizeGeminiLatestModel(model string) string {
+	return normalizeMappedModel(model, legacyGeminiDefaultModels)
 }
 
 func normalizeMappedModel(model string, aliases map[string]string) string {

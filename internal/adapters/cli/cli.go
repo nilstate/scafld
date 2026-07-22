@@ -284,9 +284,13 @@ func runApprove(ctx context.Context, args []string, stdout io.Writer, stderr io.
 		return failOut(stderr, err, code, opts.JSON)
 	}
 	root, _ := commandRoot(ctx, opts, false)
-	out, err := approve.Run(ctx, store, sessions, git.Adapter{Root: root}, clock.System{}, opts.Positionals[0])
+	out, err := approve.Run(ctx, store, sessions, git.Adapter{Root: root}, clock.System{}, opts.Positionals[0], opts.Values["reason"])
 	if err != nil {
-		return failOut(stderr, err, ExitGeneric, opts.JSON)
+		exit := ExitGeneric
+		if errors.Is(err, approve.ErrApprovalReasonRequired) {
+			exit = ExitValidation
+		}
+		return failOut(stderr, err, exit, opts.JSON)
 	}
 	return okOut(stdout, "approve", out, fmt.Sprintf("approved spec: %s\n", out.TaskID), opts.JSON)
 }
@@ -380,12 +384,9 @@ func runStatus(ctx context.Context, args []string, stdout io.Writer, stderr io.W
 	if err != nil {
 		return failOut(stderr, err, code, opts.JSON)
 	}
-	out, err := status.Run(ctx, store, sessions, opts.Positionals[0], git.Adapter{Root: store.Root})
+	out, err := status.RunWithOptions(ctx, store, sessions, opts.Positionals[0], status.Options{SuppressContext: opts.Flags["no-context"]}, git.Adapter{Root: store.Root})
 	if err != nil {
 		return failOut(stderr, err, ExitGeneric, opts.JSON)
-	}
-	if opts.Flags["no-context"] {
-		out.SpecSource = nil
 	}
 	return okOut(stdout, "status", out, output.Status(out), opts.JSON)
 }

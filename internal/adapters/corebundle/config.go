@@ -26,29 +26,29 @@ func installProjectConfig(ctx context.Context, root string, result *Result) erro
 #   external:
 #     provider: "codex"
 #     codex:
-#       model: "latest"
+#       # model: "" # omitted/default lets Codex CLI use its current model
 #       model_reasoning_effort: "xhigh"
 #       # endpoint_host: "api.openai.com"
 #     claude:
-#       model: "opus"
+#       # model: "" # omitted/default lets Claude Code use its current model
 #       effort: "xhigh"
 #       # endpoint_host: "api.anthropic.com"
 #     gemini:
-#       # model: ""
+#       # model: "" # omitted/default lets Gemini CLI use its current model
 #       # endpoint_host: "generativelanguage.googleapis.com"
 # review:
 #   external:
 #     provider: "codex"
 #     codex:
-#       model: "latest"
+#       # model: "" # omitted/default lets Codex CLI use its current model
 #       model_reasoning_effort: "xhigh"
 #       # endpoint_host: "api.openai.com"
 #     claude:
-#       model: "opus"
+#       # model: "" # omitted/default lets Claude Code use its current model
 #       effort: "xhigh"
 #       # endpoint_host: "api.anthropic.com"
 #     gemini:
-#       # model: ""
+#       # model: "" # omitted/default lets Gemini CLI use its current model
 #       # endpoint_host: "generativelanguage.googleapis.com"
 `)
 	return writeManagedFile(filepath.Join(root, ".scafld", "config.local.yaml"), ".scafld/config.local.yaml", local, false, result)

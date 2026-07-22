@@ -248,15 +248,15 @@ review:
     absolute_max_seconds: 1800
     fallback_policy: "disable"    # fail closed instead of using the host agent
     codex:
-      model: "latest"             # omit -m so Codex CLI uses its current default
+      # model: ""                 # omitted/default lets Codex CLI use its current model
       model_reasoning_effort: "xhigh"
       binary: "codex"
     claude:
-      model: "opus"
+      # model: ""                 # omitted/default lets Claude Code use its current model
       effort: "xhigh"
       binary: "claude"
     gemini:
-      # model: ""                 # empty uses Gemini CLI's configured default
+      # model: ""                 # omitted/default lets Gemini CLI use its current model
       binary: "gemini"
   context:
     # Aggregate rendered section-body budget for the provider brief.
@@ -338,9 +338,11 @@ reviewer brief. scafld skips private/local paths such as
 
 ## Hardening
 
-Hardening is operator-driven. `scafld approve` does not force
-`harden_status: passed`, but a complete nontrivial plan spec should usually be
-hardened before approval.
+Hardening is operator-driven. A draft with no harden round can still be
+approved, but approving over incomplete, stale, failed, or `needs_revision`
+harden evidence requires `scafld approve <task-id> --reason <reason>` and
+records `harden_status: overridden`. A complete nontrivial plan spec should
+usually be hardened before approval.
 
 The active harden prompt asks the agent to record evidence-backed observations
 under the latest `## Harden Rounds` entry. Required dimensions are `design`,
@@ -362,4 +364,9 @@ challenged by a separate agent. The provider receives a bounded harden context p
 must submit a strict `HardenDossier`: summary and observations. scafld derives
 `pass` or `needs_revision` from dimension coverage and unresolved `blocks`
 observations. Non-blocking advisories are rendered in `## Harden Rounds`, but do
-not force another harden cycle.
+not force another harden cycle. Provider harden is bound to the draft spec
+digest recorded on the round; `needs_revision` blocks another provider pass
+until the draft contract changes, while same-revision `passed` is a no-op. It
+does not force approval to wait; the operator decides whether findings are real
+shape blockers or bookkeeping/advisory noise. Approving over non-passing harden
+evidence requires `scafld approve <task-id> --reason <reason>`.

@@ -17,9 +17,19 @@ key. The signed body includes:
 - acceptance commands and observed results
 - open blockers, mutation guard state, ledger head, and minted time
 
-`scafld verify` checks that signature, recomputes the checkout fingerprint,
-checks base ancestry against the explicit target, re-runs signed acceptance
-commands, and enforces configured minimum independence.
+`scafld verify` checks that signature, recomputes the checkout fingerprint or
+the explicit material-ref fingerprint, checks base ancestry against the explicit
+protected-base target and verified material, re-runs signed acceptance commands,
+and enforces configured minimum independence.
+
+In pull-request CI, scafld's packaged `pull_request_target` workflow runs from
+trusted base workflow code and splits that proof into two required lanes. The
+material lane verifies signed receipt and fingerprint data without executing the
+proposed worktree. The acceptance lane runs recorded commands from a clean
+checkout at the same material commit with persisted checkout credentials
+disabled and token-like CI environment variables scrubbed. `scafld verify
+--material-only` is only the first lane; it is not a complete merge-wall proof
+unless paired with a passing full acceptance lane and aggregate gate.
 
 ## Trusted Keys
 
@@ -80,5 +90,7 @@ scafld does not claim to:
 - prove the host signing key was never copied
 - prove legal or organizational independence
 - enforce GitHub branch protection settings
+- guarantee GitHub secrets are unavailable if a workflow author explicitly
+  passes them into acceptance commands outside scafld's packaged verifier
 - replace project-specific security review, secrets scanning, or deployment
   policy

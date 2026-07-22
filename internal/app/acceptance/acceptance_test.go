@@ -123,7 +123,7 @@ func TestEvaluateRunErrorOverridesMatcherReason(t *testing.T) {
 	}
 }
 
-func TestEvaluateEmptyCommandCriteriaPreserveMatcherSemantics(t *testing.T) {
+func TestEvaluateEmptyCommandCriteriaFailClosedExceptManualEvidence(t *testing.T) {
 	t.Parallel()
 
 	runner := &fakeRunner{}
@@ -145,8 +145,8 @@ func TestEvaluateEmptyCommandCriteriaPreserveMatcherSemantics(t *testing.T) {
 	if out.Passed {
 		t.Fatalf("output = %+v, want manual criterion to block pass flag", out)
 	}
-	if out.Results[0].Status != "pass" || out.Results[0].Reason != "exit code was 0" {
-		t.Fatalf("empty command result = %+v, want existing exit-zero pass semantics", out.Results[0])
+	if out.Results[0].Status != "fail" || out.Results[0].Reason != "criterion command is empty" {
+		t.Fatalf("empty command result = %+v, want fail-closed empty command", out.Results[0])
 	}
 	if out.Results[1].Status != "pending" || out.Results[1].Reason != "manual criterion requires human evidence" {
 		t.Fatalf("manual result = %+v, want manual pending semantics", out.Results[1])

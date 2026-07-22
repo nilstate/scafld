@@ -42,6 +42,8 @@ type Entry struct {
 	Reason                  string   `json:"reason,omitempty"`
 	Provider                string   `json:"provider,omitempty"`
 	Command                 string   `json:"command,omitempty"`
+	ExpectedKind            string   `json:"expected_kind,omitempty"`
+	CriterionType           string   `json:"criterion_type,omitempty"`
 	ExitCode                int      `json:"exit_code,omitempty"`
 	Output                  string   `json:"output,omitempty"`
 	Path                    string   `json:"path,omitempty"`
@@ -67,10 +69,14 @@ type Entry struct {
 
 // StateRecord is the replayed state for a criterion or phase.
 type StateRecord struct {
-	Status    string `json:"status"`
-	Reason    string `json:"reason,omitempty"`
-	UpdatedAt string `json:"updated_at,omitempty"`
-	SourceID  string `json:"source_id,omitempty"`
+	Status        string `json:"status"`
+	Reason        string `json:"reason,omitempty"`
+	UpdatedAt     string `json:"updated_at,omitempty"`
+	SourceID      string `json:"source_id,omitempty"`
+	Command       string `json:"command,omitempty"`
+	ExpectedKind  string `json:"expected_kind,omitempty"`
+	CriterionType string `json:"criterion_type,omitempty"`
+	PhaseID       string `json:"phase_id,omitempty"`
 }
 
 // ReceiptTrustChecker validates receipt key trust at replay time. The core
@@ -126,10 +132,14 @@ func ReplayWithOptions(s Session, opts ReplayOptions) Session {
 			source = entry.Type
 		}
 		record := StateRecord{
-			Status:    entry.Status,
-			Reason:    entry.Reason,
-			UpdatedAt: entry.RecordedAt,
-			SourceID:  source,
+			Status:        entry.Status,
+			Reason:        entry.Reason,
+			UpdatedAt:     entry.RecordedAt,
+			SourceID:      source,
+			Command:       entry.Command,
+			ExpectedKind:  entry.ExpectedKind,
+			CriterionType: entry.CriterionType,
+			PhaseID:       entry.PhaseID,
 		}
 		if record.Status == "" {
 			record.Status = entry.Type
@@ -137,7 +147,7 @@ func ReplayWithOptions(s Session, opts ReplayOptions) Session {
 		if entry.CriterionID != "" {
 			next.CriterionStates[entry.CriterionID] = record
 		}
-		if entry.PhaseID != "" {
+		if entry.Type == "phase" && entry.PhaseID != "" {
 			next.PhaseBlocks[entry.PhaseID] = record
 		}
 		if idx == len(s.Entries)-1 && entry.RecordedAt != "" {
@@ -174,10 +184,14 @@ func AppendEntryWithOptions(s Session, entry Entry, opts ReplayOptions) Session 
 		source = entry.Type
 	}
 	record := StateRecord{
-		Status:    entry.Status,
-		Reason:    entry.Reason,
-		UpdatedAt: entry.RecordedAt,
-		SourceID:  source,
+		Status:        entry.Status,
+		Reason:        entry.Reason,
+		UpdatedAt:     entry.RecordedAt,
+		SourceID:      source,
+		Command:       entry.Command,
+		ExpectedKind:  entry.ExpectedKind,
+		CriterionType: entry.CriterionType,
+		PhaseID:       entry.PhaseID,
 	}
 	if record.Status == "" {
 		record.Status = entry.Type
@@ -185,7 +199,7 @@ func AppendEntryWithOptions(s Session, entry Entry, opts ReplayOptions) Session 
 	if entry.CriterionID != "" {
 		next.CriterionStates[entry.CriterionID] = record
 	}
-	if entry.PhaseID != "" {
+	if entry.Type == "phase" && entry.PhaseID != "" {
 		next.PhaseBlocks[entry.PhaseID] = record
 	}
 	if entry.RecordedAt != "" {

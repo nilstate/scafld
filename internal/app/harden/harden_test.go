@@ -48,6 +48,60 @@ func TestRunOpensHardenRound(t *testing.T) {
 	if store.model.CurrentState.Blockers != manualHardenBlocker() || !strings.Contains(store.model.CurrentState.AllowedFollowUp, "fill harden observations in") || !strings.Contains(store.model.CurrentState.AllowedFollowUp, out.NextCommand) {
 		t.Fatalf("current state = %+v", store.model.CurrentState)
 	}
+	if store.model.HardenRounds[0].SpecDigest == "" || out.SpecDigest != store.model.HardenRounds[0].SpecDigest {
+		t.Fatalf("spec digest not recorded: out=%q round=%q", out.SpecDigest, store.model.HardenRounds[0].SpecDigest)
+	}
+}
+
+func TestRunReusesOpenManualHardenRound(t *testing.T) {
+	t.Parallel()
+
+	model := fixtureModel()
+	model.HardenStatus = spec.HardenInProgress
+	model.HardenRounds = []spec.HardenRound{{
+		ID:           "round-1",
+		Status:       string(spec.HardenInProgress),
+		StartedAt:    "2026-05-04T00:00:00Z",
+		SpecDigest:   spec.HardenContractDigest(model),
+		Observations: hardenObservationSkeleton(),
+	}}
+	store := newMemorySpecStore(model)
+	store.sourceMarkdown = []byte("# Fixture task\n\n## Summary\n\n## Harden Rounds\n\n### round-1\n\nStatus: in_progress\n")
+	out, err := Run(context.Background(), store, fixedClock{}, Input{TaskID: "fixture-task", Prompt: "prompt body"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.RoundID != "round-1" || len(store.model.HardenRounds) != 1 || store.saves != 0 {
+		t.Fatalf("rerun should reuse current round without saving: out=%+v rounds=%+v saves=%d", out, store.model.HardenRounds, store.saves)
+	}
+	if !strings.Contains(out.Context, "### round-1") {
+		t.Fatalf("context did not render existing round:\n%s", out.Context)
+	}
+}
+
+func TestRunProviderHardenBlocksWhenRoundOpen(t *testing.T) {
+	t.Parallel()
+
+	model := fixtureModel()
+	model.HardenStatus = spec.HardenInProgress
+	model.HardenRounds = []spec.HardenRound{{
+		ID:         "round-1",
+		Status:     string(spec.HardenInProgress),
+		StartedAt:  "2026-05-04T00:00:00Z",
+		SpecDigest: spec.HardenContractDigest(model),
+	}}
+	called := false
+	store := newMemorySpecStore(model)
+	_, err := Run(context.Background(), store, fixedClock{}, Input{
+		TaskID:   "fixture-task",
+		Provider: fakeHardenProvider{dossier: passingHardenDossier(), called: &called},
+	})
+	if !errors.Is(err, ErrHardenRoundOpen) {
+		t.Fatalf("error = %v, want %v", err, ErrHardenRoundOpen)
+	}
+	if called || len(store.model.HardenRounds) != 1 {
+		t.Fatalf("provider should not run or append round: called=%v rounds=%+v", called, store.model.HardenRounds)
+	}
 }
 
 func TestRunMarkPassedRequiresExistingRound(t *testing.T) {
@@ -271,6 +325,62 @@ func TestRunProviderHardenRecordsPassingDossier(t *testing.T) {
 	if round.Shape.Decision != coreharden.DecisionKeep || round.Shape.TrueShape == "" {
 		t.Fatalf("shape not recorded: %+v", round.Shape)
 	}
+	if round.SpecDigest == "" || out.SpecDigest != round.SpecDigest {
+		t.Fatalf("spec digest not recorded: out=%q round=%q", out.SpecDigest, round.SpecDigest)
+	}
+}
+
+func TestRunProviderHardenNoopsWhenSameRevisionAlreadyPassed(t *testing.T) {
+	t.Parallel()
+
+	store := newMemorySpecStore(fixtureModel())
+	if _, err := Run(context.Background(), store, fixedClock{}, Input{
+		TaskID:   "fixture-task",
+		Provider: fakeHardenProvider{dossier: passingHardenDossier()},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	out, err := Run(context.Background(), store, fixedClock{}, Input{
+		TaskID:   "fixture-task",
+		Provider: fakeHardenProvider{dossier: passingHardenDossier(), called: &called},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if called || len(store.model.HardenRounds) != 1 {
+		t.Fatalf("same-revision pass should not rerun provider: called=%v rounds=%+v", called, store.model.HardenRounds)
+	}
+	if out.HardenStatus != spec.HardenPassed || out.NextCommand != "scafld approve fixture-task" {
+		t.Fatalf("output = %+v", out)
+	}
+}
+
+func TestRunProviderHardenUsesLatestRoundOverStaleProjection(t *testing.T) {
+	t.Parallel()
+
+	model := fixtureModel()
+	model.HardenStatus = spec.HardenInProgress
+	model.HardenRounds = []spec.HardenRound{{
+		ID:         "round-1",
+		Status:     string(spec.HardenPassed),
+		StartedAt:  "2026-05-04T00:00:00Z",
+		EndedAt:    "2026-05-04T00:01:00Z",
+		SpecDigest: spec.HardenContractDigest(model),
+		Verdict:    coreharden.VerdictPass,
+		Summary:    "already passed",
+	}}
+	called := false
+	out, err := Run(context.Background(), newMemorySpecStore(model), fixedClock{}, Input{
+		TaskID:   "fixture-task",
+		Provider: fakeHardenProvider{dossier: passingHardenDossier(), called: &called},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if called || out.HardenStatus != spec.HardenPassed || out.NextCommand != "scafld approve fixture-task" {
+		t.Fatalf("stale projection should no-op from latest round: called=%v out=%+v", called, out)
+	}
 }
 
 func TestRunProviderHardenUsesProviderOutputContractOnly(t *testing.T) {
@@ -340,8 +450,77 @@ func TestRunProviderHardenRecordsNeedsRevision(t *testing.T) {
 	if round.Status != string(spec.HardenNeedsRevision) || len(round.Observations) != 6 {
 		t.Fatalf("round = %+v", round)
 	}
-	if !strings.Contains(store.model.CurrentState.Blockers, "unresolved blocking observation") || !strings.Contains(store.model.CurrentState.AllowedFollowUp, "--provider <provider>") {
+	if !strings.Contains(store.model.CurrentState.Blockers, "unresolved blocking observation") ||
+		!strings.Contains(store.model.CurrentState.AllowedFollowUp, "operator decision") ||
+		!strings.Contains(store.model.CurrentState.AllowedFollowUp, "--provider <provider>") ||
+		!strings.Contains(store.model.CurrentState.AllowedFollowUp, "scafld approve fixture-task") {
 		t.Fatalf("current state = %+v", store.model.CurrentState)
+	}
+}
+
+func TestRunProviderHardenBlocksSameRevisionAfterNeedsRevision(t *testing.T) {
+	t.Parallel()
+
+	dossier := passingHardenDossier()
+	dossier.Observations[0] = coreharden.Observation{
+		Dimension: "design",
+		Result:    coreharden.ResultBlocks,
+		Anchor:    "spec_gap:Summary",
+		Note:      "The plan may be future bloat.",
+		Status:    coreharden.StatusOpen,
+	}
+	store := newMemorySpecStore(fixtureModel())
+	if _, err := Run(context.Background(), store, fixedClock{}, Input{
+		TaskID:   "fixture-task",
+		Provider: fakeHardenProvider{dossier: dossier},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	_, err := Run(context.Background(), store, fixedClock{}, Input{
+		TaskID:   "fixture-task",
+		Provider: fakeHardenProvider{dossier: passingHardenDossier(), called: &called},
+	})
+	if !errors.Is(err, ErrHardenRevisionRequired) {
+		t.Fatalf("error = %v, want %v", err, ErrHardenRevisionRequired)
+	}
+	if called || len(store.model.HardenRounds) != 1 {
+		t.Fatalf("same-revision rerun should not spend provider: called=%v rounds=%+v", called, store.model.HardenRounds)
+	}
+	var gateErr gate.Error
+	if !errors.As(err, &gateErr) || !strings.Contains(gateErr.Failure.Next, "operator decision") || !strings.Contains(gateErr.Failure.Next, "scafld approve fixture-task") {
+		t.Fatalf("gate failure should expose operator decision: %#v", gateErr.Failure)
+	}
+}
+
+func TestRunProviderHardenAllowsRerunAfterDraftRevision(t *testing.T) {
+	t.Parallel()
+
+	dossier := passingHardenDossier()
+	dossier.Shape.Decision = coreharden.DecisionReframe
+	dossier.Shape.RequiredSpecEdits = []string{"Move the shared behavior to the core owner."}
+	store := newMemorySpecStore(fixtureModel())
+	if _, err := Run(context.Background(), store, fixedClock{}, Input{
+		TaskID:   "fixture-task",
+		Provider: fakeHardenProvider{dossier: dossier},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	revised := store.model
+	revised.Summary = revised.Summary + " Revised to name the shared owner."
+	store.model = revised
+	called := false
+	if _, err := Run(context.Background(), store, fixedClock{}, Input{
+		TaskID:   "fixture-task",
+		Provider: fakeHardenProvider{dossier: passingHardenDossier(), called: &called},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !called || len(store.model.HardenRounds) != 2 {
+		t.Fatalf("revision should allow a new provider round: called=%v rounds=%+v", called, store.model.HardenRounds)
+	}
+	if store.model.HardenRounds[0].SpecDigest == store.model.HardenRounds[1].SpecDigest {
+		t.Fatalf("new round kept old digest: %+v", store.model.HardenRounds)
 	}
 }
 
@@ -458,6 +637,111 @@ func TestRunProviderHardenClosesRoundOnProviderError(t *testing.T) {
 	}
 }
 
+func TestRunProviderHardenClosesFailureAfterCallerContextCancel(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	store := &contextCheckingSpecStore{memorySpecStore: newMemorySpecStore(fixtureModel())}
+	_, err := Run(ctx, store, fixedClock{}, Input{
+		TaskID: "fixture-task",
+		Provider: hardenProviderFunc(func(context.Context, coreharden.Request) (coreharden.Dossier, error) {
+			cancel()
+			return coreharden.Dossier{}, context.Canceled
+		}),
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context canceled", err)
+	}
+	if store.model.HardenStatus != spec.HardenError {
+		t.Fatalf("harden status = %s", store.model.HardenStatus)
+	}
+	round := store.model.HardenRounds[0]
+	if round.Status != string(spec.HardenError) || !strings.Contains(round.Summary, "context canceled") {
+		t.Fatalf("round = %+v", round)
+	}
+}
+
+func TestRunProviderHardenRecordsDossierAfterCallerContextCancel(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	store := &contextCheckingSpecStore{memorySpecStore: newMemorySpecStore(fixtureModel())}
+	out, err := Run(ctx, store, fixedClock{}, Input{
+		TaskID: "fixture-task",
+		Provider: hardenProviderFunc(func(context.Context, coreharden.Request) (coreharden.Dossier, error) {
+			cancel()
+			return passingHardenDossier(), nil
+		}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Verdict != coreharden.VerdictPass || store.model.HardenStatus != spec.HardenPassed {
+		t.Fatalf("harden output = %+v status=%s", out, store.model.HardenStatus)
+	}
+}
+
+func TestRunProviderHardenTerminalReloadFailureClosesOriginalTaskRound(t *testing.T) {
+	t.Parallel()
+
+	store := newMemorySpecStore(fixtureModel())
+	store.failLoadAt = 1
+	store.loadErr = errors.New("reload failed")
+	_, err := Run(context.Background(), store, fixedClock{}, Input{
+		TaskID:   "fixture-task",
+		Provider: fakeHardenProvider{dossier: passingHardenDossier()},
+	})
+	if err == nil || !strings.Contains(err.Error(), "load harden round after provider") {
+		t.Fatalf("err = %v, want terminal reload failure", err)
+	}
+	if store.model.TaskID != "fixture-task" {
+		t.Fatalf("recovery wrote wrong task: %+v", store.model)
+	}
+	if store.model.HardenStatus != spec.HardenError {
+		t.Fatalf("harden status = %s", store.model.HardenStatus)
+	}
+	round := store.model.HardenRounds[0]
+	if round.Status != string(spec.HardenError) || !strings.Contains(round.Summary, "provider harden terminal recording failed") || !strings.Contains(round.Summary, "reload failed") {
+		t.Fatalf("round = %+v", round)
+	}
+	if !strings.Contains(store.model.CurrentState.AllowedFollowUp, "fixture-task") {
+		t.Fatalf("current state lost task id: %+v", store.model.CurrentState)
+	}
+}
+
+func TestRunProviderHardenClosesRoundWhenContextCancelsAfterInitialSave(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	called := false
+	store := &contextCheckingSpecStore{memorySpecStore: newMemorySpecStore(fixtureModel())}
+	store.memorySpecStore.afterSave = func(saves int) {
+		if saves == 1 {
+			cancel()
+		}
+	}
+	_, err := Run(ctx, store, fixedClock{}, Input{
+		TaskID:   "fixture-task",
+		Provider: fakeHardenProvider{dossier: passingHardenDossier(), called: &called},
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context canceled", err)
+	}
+	if called {
+		t.Fatal("provider should not run after source reload cancellation")
+	}
+	if store.model.HardenStatus != spec.HardenError {
+		t.Fatalf("harden status = %s", store.model.HardenStatus)
+	}
+	round := store.model.HardenRounds[0]
+	if round.Status != string(spec.HardenError) || !strings.Contains(round.Summary, "provider harden source reload failed") {
+		t.Fatalf("round = %+v", round)
+	}
+	if store.model.CurrentState.Reason != "external hardening setup error" || !strings.Contains(store.model.CurrentState.AllowedFollowUp, "fix local spec access") {
+		t.Fatalf("current state = %+v", store.model.CurrentState)
+	}
+}
+
 func TestRunProviderHardenCompactsProviderDiagnosticsInSpec(t *testing.T) {
 	t.Parallel()
 
@@ -554,6 +838,31 @@ func TestRunProviderHardenReportsFailureRecordingError(t *testing.T) {
 	}
 }
 
+func TestRunProviderHardenTerminalSaveFailureClosesRound(t *testing.T) {
+	t.Parallel()
+
+	store := newMemorySpecStore(fixtureModel())
+	store.failSaveAt = 2
+	store.saveErr = errors.New("terminal save failed")
+	_, err := Run(context.Background(), store, fixedClock{}, Input{
+		TaskID:   "fixture-task",
+		Provider: fakeHardenProvider{dossier: passingHardenDossier()},
+	})
+	if err == nil || !strings.Contains(err.Error(), "save harden dossier") || !strings.Contains(err.Error(), "terminal save failed") {
+		t.Fatalf("error = %v, want terminal save failure", err)
+	}
+	if store.model.HardenStatus != spec.HardenError {
+		t.Fatalf("harden status = %s", store.model.HardenStatus)
+	}
+	round := store.model.HardenRounds[0]
+	if round.Status != string(spec.HardenError) || round.EndedAt == "" || !strings.Contains(round.Summary, "provider harden terminal recording failed") {
+		t.Fatalf("round = %+v", round)
+	}
+	if store.model.CurrentState.Reason != "external hardening terminal recording error" || !strings.Contains(store.model.CurrentState.AllowedFollowUp, "fix local spec storage") {
+		t.Fatalf("current state = %+v", store.model.CurrentState)
+	}
+}
+
 func passingObservations() []spec.HardenObservation {
 	return []spec.HardenObservation{
 		{Dimension: "design", Result: coreharden.ResultClean, Anchor: "spec_gap:Summary", Note: "Shared owner and adapter boundaries are checked."},
@@ -580,9 +889,13 @@ type memorySpecStore struct {
 	path           string
 	sourceMarkdown []byte
 	saves          int
+	loads          int
 
 	failSaveAt int
 	saveErr    error
+	failLoadAt int
+	loadErr    error
+	afterSave  func(int)
 }
 
 func newMemorySpecStore(model spec.Model) *memorySpecStore {
@@ -590,6 +903,10 @@ func newMemorySpecStore(model spec.Model) *memorySpecStore {
 }
 
 func (s *memorySpecStore) Load(context.Context, string) (spec.Model, string, error) {
+	s.loads++
+	if s.failLoadAt > 0 && s.loads == s.failLoadAt {
+		return spec.Model{}, "", s.loadErr
+	}
 	return s.model, s.path, nil
 }
 
@@ -608,7 +925,35 @@ func (s *memorySpecStore) Save(_ context.Context, path string, model spec.Model)
 	}
 	s.path = path
 	s.model = model
+	if s.afterSave != nil {
+		s.afterSave(s.saves)
+	}
 	return nil
+}
+
+type contextCheckingSpecStore struct {
+	*memorySpecStore
+}
+
+func (s *contextCheckingSpecStore) Load(ctx context.Context, taskID string) (spec.Model, string, error) {
+	if err := ctx.Err(); err != nil {
+		return spec.Model{}, "", err
+	}
+	return s.memorySpecStore.Load(ctx, taskID)
+}
+
+func (s *contextCheckingSpecStore) LoadSource(ctx context.Context, taskID string) (spec.Source, error) {
+	if err := ctx.Err(); err != nil {
+		return spec.Source{}, err
+	}
+	return s.memorySpecStore.LoadSource(ctx, taskID)
+}
+
+func (s *contextCheckingSpecStore) Save(ctx context.Context, path string, model spec.Model) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return s.memorySpecStore.Save(ctx, path, model)
 }
 
 type fixedClock struct{}
@@ -622,6 +967,12 @@ type fakeHardenProvider struct {
 	err           error
 	called        *bool
 	capturePrompt *string
+}
+
+type hardenProviderFunc func(context.Context, coreharden.Request) (coreharden.Dossier, error)
+
+func (f hardenProviderFunc) Invoke(ctx context.Context, req coreharden.Request) (coreharden.Dossier, error) {
+	return f(ctx, req)
 }
 
 type hardenDiagnosticErr struct {

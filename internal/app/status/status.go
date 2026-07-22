@@ -8,6 +8,8 @@ import (
 
 	"github.com/nilstate/scafld/v2/internal/app/specsource"
 	"github.com/nilstate/scafld/v2/internal/core/gate"
+	"github.com/nilstate/scafld/v2/internal/core/hardengate"
+	"github.com/nilstate/scafld/v2/internal/core/reconcile"
 	corereview "github.com/nilstate/scafld/v2/internal/core/review"
 	"github.com/nilstate/scafld/v2/internal/core/reviewcontext"
 	"github.com/nilstate/scafld/v2/internal/core/reviewevidence"
@@ -38,6 +40,15 @@ type workspaceMaterialStatus interface {
 	MaterialSeal(context.Context, []string) (reviewevidence.MaterialSeal, error)
 }
 
+type workspaceStatusMaterialStatus interface {
+	StatusMaterialSeal(context.Context, []string) (reviewevidence.MaterialSeal, error)
+}
+
+// Options configures status projection output.
+type Options struct {
+	SuppressContext bool
+}
+
 // Output describes the task status projection.
 type Output struct {
 	TaskID          string          `json:"task_id"`
@@ -58,10 +69,11 @@ type Output struct {
 
 // SpecSource describes the canonical Markdown contract behind status.
 type SpecSource struct {
-	Path     string `json:"path"`
-	SHA256   string `json:"sha256"`
-	Bytes    int    `json:"bytes"`
-	Markdown string `json:"markdown"`
+	Path            string `json:"path"`
+	SHA256          string `json:"sha256"`
+	Bytes           int    `json:"bytes"`
+	Markdown        string `json:"markdown,omitempty"`
+	MarkdownOmitted bool   `json:"markdown_omitted,omitempty"`
 }
 
 // NextAction gives wrappers and trigger agents the next deterministic role and
@@ -77,21 +89,24 @@ type NextAction struct {
 
 // ReviewInfo is the latest review evidence visible from status.
 type ReviewInfo struct {
-	Verdict        string                      `json:"verdict,omitempty"`
-	Mode           corereview.Mode             `json:"mode,omitempty"`
-	Summary        string                      `json:"summary,omitempty"`
-	Findings       []corereview.Finding        `json:"findings,omitempty"`
-	OpenBlockers   int                         `json:"open_blockers,omitempty"`
-	AttackLog      []corereview.AttackLogEntry `json:"attack_log,omitempty"`
-	Budget         corereview.Budget           `json:"budget,omitempty"`
-	Provider       string                      `json:"provider,omitempty"`
-	Model          string                      `json:"model,omitempty"`
-	OutputFormat   string                      `json:"output_format,omitempty"`
-	Normalizations []string                    `json:"normalizations,omitempty"`
-	Attempt        *ReviewAttemptInfo          `json:"attempt,omitempty"`
-	Running        bool                        `json:"running,omitempty"`
-	AttemptStatus  string                      `json:"attempt_status,omitempty"`
-	Reason         string                      `json:"reason,omitempty"`
+	Verdict                  string                      `json:"verdict,omitempty"`
+	Mode                     corereview.Mode             `json:"mode,omitempty"`
+	Summary                  string                      `json:"summary,omitempty"`
+	Findings                 []corereview.Finding        `json:"findings,omitempty"`
+	OpenBlockers             int                         `json:"open_blockers,omitempty"`
+	AttackLog                []corereview.AttackLogEntry `json:"attack_log,omitempty"`
+	Budget                   corereview.Budget           `json:"budget,omitempty"`
+	Provider                 string                      `json:"provider,omitempty"`
+	Model                    string                      `json:"model,omitempty"`
+	OutputFormat             string                      `json:"output_format,omitempty"`
+	Normalizations           []string                    `json:"normalizations,omitempty"`
+	Attempt                  *ReviewAttemptInfo          `json:"attempt,omitempty"`
+	Running                  bool                        `json:"running,omitempty"`
+	AttemptStatus            string                      `json:"attempt_status,omitempty"`
+	Reason                   string                      `json:"reason,omitempty"`
+	RerunBlocked             bool                        `json:"rerun_blocked,omitempty"`
+	OperatorDecisionRequired bool                        `json:"operator_decision_required,omitempty"`
+	BlockerFingerprints      []string                    `json:"blocker_fingerprints,omitempty"`
 }
 
 // ReviewAttemptInfo describes the latest provider attempt separately from the
@@ -125,57 +140,76 @@ type TaskMaterial = reviewmaterial.Projection
 
 // Run reads status for taskID.
 func Run(ctx context.Context, specs SpecStore, sessions SessionStore, taskID string, workspaces ...WorkspaceStatus) (Output, error) {
+	return RunWithOptions(ctx, specs, sessions, taskID, Options{}, workspaces...)
+}
+
+// RunWithOptions reads status for taskID with output shaping options.
+func RunWithOptions(ctx context.Context, specs SpecStore, sessions SessionStore, taskID string, opts Options, workspaces ...WorkspaceStatus) (Output, error) {
 	source, err := specsource.Load(ctx, specs, taskID)
 	if err != nil {
 		return Output{}, err
 	}
 	model := source.Model
+	var ledger session.Session
+	sessionOK := false
+	if sessions != nil {
+		if loaded, err := sessions.Load(ctx, model.TaskID); err == nil {
+			ledger = loaded
+			sessionOK = true
+			model = reconcile.FromSession(model, ledger)
+		}
+	}
+	hardenState := hardengate.Project(model)
 	out := Output{
 		TaskID:          model.TaskID,
 		Status:          model.Status,
 		Title:           model.Title,
 		Next:            model.CurrentState.AllowedFollowUp,
-		Gate:            currentGate(model),
+		Gate:            currentGate(model, hardenState),
 		TrustedState:    "session ledger replay projected into the Markdown spec",
 		AllowedFollowUp: model.CurrentState.AllowedFollowUp,
-		SpecSource:      statusSpecSource(source),
+		SpecSource:      statusSpecSource(source, opts),
 	}
 	reviewGateValid := false
-	if sessions != nil {
-		if ledger, err := sessions.Load(ctx, model.TaskID); err == nil {
-			out.SessionOK = true
-			workspace := firstWorkspace(workspaces)
-			state := reviewgate.Project(ledger, model, reviewProjectionOptions(ctx, ledger, workspace))
-			out.Review = reviewInfoFromGate(state)
-			out.TaskMaterial = taskMaterialInfo(ctx, model, ledger, workspace, state.Authority)
-			if model.Status == spec.StatusCompleted {
-				out.Completion = completionInfo(state.Authority)
-			}
-			out.Repair = repairContract(model, ledger, state)
-			if out.Repair != nil && out.Repair.Next != "" {
-				out.Next = out.Repair.Next
-				out.AllowedFollowUp = out.Repair.Next
-			}
-			reviewGateValid = applyReviewGateState(&out, model, state)
+	if sessionOK {
+		out.SessionOK = true
+		workspace := firstWorkspace(workspaces)
+		state := reviewgate.Project(ledger, model, reviewProjectionOptions(ctx, ledger, workspace))
+		out.Review = reviewInfoFromGate(state)
+		out.TaskMaterial = taskMaterialInfo(ctx, model, ledger, workspace, state.Authority)
+		if model.Status == spec.StatusCompleted {
+			out.Completion = completionInfo(state.Authority)
 		}
+		out.Repair = repairContract(model, ledger, state)
+		if out.Repair != nil && out.Repair.Next != "" {
+			out.Next = out.Repair.Next
+			out.AllowedFollowUp = out.Repair.Next
+		}
+		reviewGateValid = applyReviewGateState(&out, model, state)
 	}
+	applyHardenGateState(&out, model, hardenState)
 	if model.Status == spec.StatusReview && !out.SessionOK {
 		out.Next = reviewCommand(model.TaskID)
 		out.AllowedFollowUp = out.Next
 		out.Review.Reason = "session ledger unavailable; review authority cannot be verified"
 	}
-	out.NextAction = nextAction(model, out.Repair, out.Review, out.Next, reviewGateValid)
+	out.NextAction = nextAction(model, hardenState, out.Repair, out.Review, out.Next, reviewGateValid)
 	return out, nil
 }
 
-func statusSpecSource(source spec.Source) *SpecSource {
+func statusSpecSource(source spec.Source, opts Options) *SpecSource {
 	provenance := reviewcontext.SourceForContent("file", source.Path, source.Markdown)
-	return &SpecSource{
-		Path:     provenance.Path,
-		SHA256:   provenance.SHA256,
-		Bytes:    provenance.Bytes,
-		Markdown: string(source.Markdown),
+	specSource := &SpecSource{
+		Path:   provenance.Path,
+		SHA256: provenance.SHA256,
+		Bytes:  provenance.Bytes,
 	}
+	if opts.SuppressContext {
+		specSource.MarkdownOmitted = true
+		return specSource
+	}
+	specSource.Markdown = string(source.Markdown)
+	return specSource
 }
 
 func taskMaterialInfo(ctx context.Context, model spec.Model, ledger session.Session, workspace WorkspaceStatus, authority reviewgate.Authority) *TaskMaterial {
@@ -227,8 +261,12 @@ func reviewProjectionOptions(ctx context.Context, ledger session.Session, worksp
 		opts.HasWorkspaceSeal = true
 	}
 	authority := reviewgate.CurrentReviewGate(ledger)
-	if authority.Valid && strings.TrimSpace(authority.ReviewEntry.ReviewedMaterialDigest) != "" && reviewedScopePresent(authority.ReviewEntry.ReviewedScope) {
-		if material, err := currentMaterialSeal(ctx, workspace, authority.ReviewEntry.ReviewedScope); err == nil {
+	materialScope := reviewgate.ReviewRerunMaterialScope(ledger)
+	if len(materialScope) == 0 && authority.Valid && strings.TrimSpace(authority.ReviewEntry.ReviewedMaterialDigest) != "" && reviewedScopePresent(authority.ReviewEntry.ReviewedScope) {
+		materialScope = authority.ReviewEntry.ReviewedScope
+	}
+	if len(materialScope) > 0 {
+		if material, err := currentMaterialSeal(ctx, workspace, materialScope); err == nil {
 			opts.MaterialSeal = material
 			opts.HasMaterialSeal = true
 		}
@@ -250,6 +288,9 @@ func currentWorkspaceSeal(ctx context.Context, workspace WorkspaceStatus) (revie
 }
 
 func currentMaterialSeal(ctx context.Context, workspace WorkspaceStatus, scope []string) (reviewevidence.MaterialSeal, error) {
+	if material, ok := workspace.(workspaceStatusMaterialStatus); ok {
+		return material.StatusMaterialSeal(ctx, scope)
+	}
 	material, ok := workspace.(workspaceMaterialStatus)
 	if !ok {
 		return reviewevidence.MaterialSeal{}, fmt.Errorf("workspace material seal is unavailable")
@@ -294,7 +335,23 @@ func applyReviewGateState(out *Output, model spec.Model, state reviewgate.State)
 	return false
 }
 
-func nextAction(model spec.Model, repair *gate.Failure, review ReviewInfo, command string, reviewGateValid bool) NextAction {
+func applyHardenGateState(out *Output, model spec.Model, state hardengate.State) {
+	if model.Status != spec.StatusDraft {
+		return
+	}
+	if out.Next == "" && state.Next != "" {
+		out.Next = state.Next
+		out.AllowedFollowUp = state.Next
+	}
+	switch state.Kind {
+	case hardengate.KindRoundOpen, hardengate.KindNeedsOperatorDecision, hardengate.KindStaleAfterDraft, hardengate.KindError, hardengate.KindInvalid:
+		out.Next = fallback(state.Next, out.Next)
+		out.AllowedFollowUp = out.Next
+		out.Gate = hardenGateName(state)
+	}
+}
+
+func nextAction(model spec.Model, hardenState hardengate.State, repair *gate.Failure, review ReviewInfo, command string, reviewGateValid bool) NextAction {
 	taskCommand := func(name string) string {
 		if model.TaskID == "" {
 			return "scafld " + name
@@ -304,10 +361,22 @@ func nextAction(model spec.Model, repair *gate.Failure, review ReviewInfo, comma
 	if command == "" {
 		command = model.CurrentState.AllowedFollowUp
 	}
+	if command == "" && model.Status == spec.StatusDraft {
+		command = hardenState.Next
+	}
 	switch model.Status {
 	case spec.StatusDraft:
-		if model.HardenStatus == spec.HardenInProgress {
-			return NextAction{Role: "planner", Action: "finish_hardening", Command: command, Reason: fallback(model.CurrentState.Reason, "draft hardening is in progress")}
+		switch hardenState.Kind {
+		case hardengate.KindRoundOpen:
+			return NextAction{Role: "planner", Action: "finish_hardening", Command: command, Reason: fallback(model.CurrentState.Reason, hardenState.Reason)}
+		case hardengate.KindNeedsOperatorDecision:
+			return NextAction{Role: "operator", Action: "decide_harden_findings", Command: command, Reason: fallback(model.CurrentState.Reason, hardenState.Reason)}
+		case hardengate.KindError:
+			return NextAction{Role: "operator", Action: "decide_harden_error", Command: command, Reason: fallback(model.CurrentState.Reason, hardenState.Reason)}
+		case hardengate.KindStaleAfterDraft:
+			return NextAction{Role: "planner", Action: "refresh_hardening", Command: command, Reason: fallback(model.CurrentState.Reason, hardenState.Reason)}
+		case hardengate.KindInvalid:
+			return NextAction{Role: "operator", Action: "repair_harden_state", Command: command, Reason: fallback(model.CurrentState.Reason, hardenState.Reason)}
 		}
 		return NextAction{Role: "operator", Action: "approve_contract", Command: command, Reason: "draft needs explicit approval before build"}
 	case spec.StatusApproved:
@@ -321,11 +390,14 @@ func nextAction(model spec.Model, repair *gate.Failure, review ReviewInfo, comma
 			if review.AttemptStatus == "stale" {
 				return NextAction{Role: "reviewer", Action: "recover_stale_review_attempt", Command: command, Reason: fallback(repair.Reason, "latest review attempt is stale"), ThenCommand: taskCommand("review")}
 			}
-			if review.Verdict == corereview.VerdictFail {
-				return NextAction{Role: "executor", Action: "repair_review_findings", Command: command, Reason: "review found completion blockers", AfterCommand: taskCommand("build"), ThenCommand: taskCommand("review")}
+			if review.OperatorDecisionRequired {
+				return NextAction{Role: "operator", Action: "decide_review_rerun", Command: command, Reason: fallback(repair.Reason, "review rerun needs operator decision"), ThenCommand: taskCommand("review") + " --force --reason <reason>"}
 			}
 			if repair.Next == taskCommand("review") {
 				return NextAction{Role: "reviewer", Action: "run_review", Command: repair.Next, Reason: fallback(repair.Reason, "latest review gate is stale")}
+			}
+			if review.Verdict == corereview.VerdictFail {
+				return NextAction{Role: "executor", Action: "repair_review_findings", Command: command, Reason: "review found completion blockers", AfterCommand: taskCommand("build"), ThenCommand: taskCommand("review")}
 			}
 			return NextAction{Role: "operator", Action: "repair_review_provider", Command: command, Reason: fallback(repair.Reason, "latest review attempt failed"), ThenCommand: taskCommand("review")}
 		}
@@ -376,7 +448,11 @@ func completionInfo(authority reviewgate.Authority) *CompletionInfo {
 }
 
 func reviewInfoFromGate(state reviewgate.State) ReviewInfo {
-	var info ReviewInfo
+	info := ReviewInfo{
+		RerunBlocked:             state.ReviewRerunBlocked,
+		OperatorDecisionRequired: state.OperatorDecisionRequired,
+		BlockerFingerprints:      append([]string(nil), state.BlockerFingerprints...),
+	}
 	if state.HasAttempt {
 		status := state.LatestAttempt.Status
 		if state.LatestAttempt.Stale {
@@ -421,13 +497,10 @@ func reviewInfoFromGate(state reviewgate.State) ReviewInfo {
 	return info
 }
 
-func currentGate(model spec.Model) string {
+func currentGate(model spec.Model, hardenState hardengate.State) string {
 	switch model.Status {
 	case spec.StatusDraft:
-		if model.HardenStatus == spec.HardenInProgress {
-			return "harden"
-		}
-		return "approve"
+		return hardenGateName(hardenState)
 	case spec.StatusApproved, spec.StatusActive, spec.StatusBlocked:
 		return "build"
 	case spec.StatusReview:
@@ -436,6 +509,17 @@ func currentGate(model spec.Model) string {
 		return "complete"
 	default:
 		return string(model.Status)
+	}
+}
+
+func hardenGateName(state hardengate.State) string {
+	switch state.Kind {
+	case hardengate.KindRoundOpen, hardengate.KindStaleAfterDraft, hardengate.KindError, hardengate.KindInvalid:
+		return "harden"
+	case hardengate.KindNeedsOperatorDecision:
+		return "harden_decision"
+	default:
+		return "approve"
 	}
 }
 
@@ -490,6 +574,20 @@ func repairContract(model spec.Model, ledger session.Session, state reviewgate.S
 				Actual:   "review verdict fail",
 				Blockers: reviewFindingSummaries(review.Findings),
 				Next:     model.CurrentState.AllowedFollowUp,
+			}
+		}
+		if state.Kind == reviewgate.KindReviewNeedsOperatorDecision {
+			blockers := append([]string(nil), state.Blockers...)
+			blockers = append(blockers, "rerun review only after material/spec repair evidence, or use scafld review "+model.TaskID+" --force --reason <reason> for an explicit operator decision")
+			return &gate.Failure{
+				Gate:     "review",
+				Status:   string(model.Status),
+				Reason:   state.Reason,
+				Evidence: nonEmptyStrings(state.Evidence, latestReviewEvidence(ledger)),
+				Expected: "material/spec repair evidence after failed review, or explicit operator decision",
+				Actual:   fallback(state.Actual, "review rerun would repeat the same material"),
+				Blockers: blockers,
+				Next:     fallback(state.Next, "scafld handoff "+model.TaskID),
 			}
 		}
 		if reviewStaleKind(state.Kind) || state.Kind == reviewgate.KindInvalid {

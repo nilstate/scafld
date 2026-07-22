@@ -54,6 +54,10 @@ func TestHardenSubmitToolRequiresShapeReframeWhenBetter(t *testing.T) {
 		"reuse-existing-behavior",
 		"materially better",
 		"instead of softening it into advisory feedback",
+		"code-shape and system-design gate",
+		"not coverage bookkeeping",
+		"consumer-by-consumer compliance matrix",
+		"bespoke test-per-surface",
 	} {
 		if !strings.Contains(description, want) {
 			t.Fatalf("harden submit tool description missing %q:\n%s", want, description)

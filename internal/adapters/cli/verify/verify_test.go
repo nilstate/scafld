@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -21,11 +23,11 @@ import (
 func TestParseTarget(t *testing.T) {
 	t.Parallel()
 
-	opts, err := Parse([]string{"receipt.json", "--target", "main", "--ci"})
+	opts, err := Parse([]string{"receipt.json", "--target", "main", "--material-ref", "head", "--acceptance-root", "head-worktree", "--material-only", "--ci"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if opts.ReceiptPath != "receipt.json" || opts.Target != "main" || !opts.CI {
+	if opts.ReceiptPath != "receipt.json" || opts.Target != "main" || opts.MaterialRef != "head" || opts.AcceptanceRoot != "head-worktree" || !opts.MaterialOnly || !opts.CI {
 		t.Fatalf("opts = %+v", opts)
 	}
 }
@@ -318,6 +320,207 @@ func TestTamperedTreeVerifyExitsNonzero(t *testing.T) {
 	exit := Handler()(context.Background(), []string{"--root", root, receiptPath, "--target", head, "--trusted-keys", filepath.Join(root, ".scafld", "trusted-keys.json")}, &stdout, &stderr)
 	if exit == 0 || !strings.Contains(stderr.String(), "file digest mismatch") {
 		t.Fatalf("exit=%d stdout=%q stderr=%q", exit, stdout.String(), stderr.String())
+	}
+}
+
+func TestMaterialRefVerifyRunsAcceptanceInSeparateCleanSanitizedRoot(t *testing.T) {
+	fixture := newMaterialRefVerifyFixture(t)
+	var stdout, stderr bytes.Buffer
+	exit := Handler()(context.Background(), []string{
+		"--root", fixture.root,
+		fixture.receiptPath,
+		"--target", fixture.base,
+		"--material-ref", fixture.head,
+		"--acceptance-root", fixture.acceptanceRoot,
+		"--trusted-keys", fixture.trustedKeysPath,
+	}, &stdout, &stderr)
+	if exit != 0 {
+		t.Fatalf("exit=%d stdout=%q stderr=%q", exit, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "verify passed") {
+		t.Fatalf("stdout = %q", stdout.String())
+	}
+}
+
+func TestMaterialRefVerifyRequiresAcceptanceRootForFullVerify(t *testing.T) {
+	fixture := newMaterialRefVerifyFixture(t)
+	var stdout, stderr bytes.Buffer
+	exit := Handler()(context.Background(), []string{
+		"--root", fixture.root,
+		fixture.receiptPath,
+		"--target", fixture.base,
+		"--material-ref", fixture.head,
+		"--trusted-keys", fixture.trustedKeysPath,
+	}, &stdout, &stderr)
+	if exit != 3 || !strings.Contains(stderr.String(), "material-ref requires acceptance-root") {
+		t.Fatalf("exit=%d stdout=%q stderr=%q", exit, stdout.String(), stderr.String())
+	}
+}
+
+func TestMaterialRefVerifyRejectsNonExactAcceptanceRoot(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		mutate func(t *testing.T, root string)
+		want   string
+	}{
+		{name: "dirty tracked file", want: "app.txt", mutate: func(t *testing.T, root string) {
+			t.Helper()
+			if err := os.WriteFile(filepath.Join(root, "app.txt"), []byte("dirty\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "ignored file", want: "ignored.txt", mutate: func(t *testing.T, root string) {
+			t.Helper()
+			if err := os.WriteFile(filepath.Join(root, "ignored.txt"), []byte("ignored\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "scafld runtime path", want: ".scafld/specs/active/runtime.md", mutate: func(t *testing.T, root string) {
+			t.Helper()
+			path := filepath.Join(root, ".scafld", "specs", "active", "runtime.md")
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte("runtime\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "skip worktree", want: "evidence_integrity", mutate: func(t *testing.T, root string) {
+			t.Helper()
+			gitCmd(t, root, "update-index", "--skip-worktree", "app.txt")
+			if err := os.WriteFile(filepath.Join(root, "app.txt"), []byte("hidden\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "assume unchanged", want: "evidence_integrity", mutate: func(t *testing.T, root string) {
+			t.Helper()
+			gitCmd(t, root, "update-index", "--assume-unchanged", "app.txt")
+			if err := os.WriteFile(filepath.Join(root, "app.txt"), []byte("hidden\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			fixture := newMaterialRefVerifyFixture(t)
+			tt.mutate(t, fixture.acceptanceRoot)
+			var stdout, stderr bytes.Buffer
+			exit := Handler()(context.Background(), []string{
+				"--root", fixture.root,
+				fixture.receiptPath,
+				"--target", fixture.base,
+				"--material-ref", fixture.head,
+				"--acceptance-root", fixture.acceptanceRoot,
+				"--trusted-keys", fixture.trustedKeysPath,
+			}, &stdout, &stderr)
+			if exit != 3 || !strings.Contains(stderr.String(), "acceptance-root is not exact material") || !strings.Contains(stderr.String(), tt.want) {
+				t.Fatalf("exit=%d stdout=%q stderr=%q", exit, stdout.String(), stderr.String())
+			}
+		})
+	}
+}
+
+func TestMaterialOnlyVerifyDoesNotRequireAcceptanceRoot(t *testing.T) {
+	fixture := newMaterialRefVerifyFixture(t)
+	var stdout, stderr bytes.Buffer
+	exit := Handler()(context.Background(), []string{
+		"--root", fixture.root,
+		fixture.receiptPath,
+		"--target", fixture.base,
+		"--material-ref", fixture.head,
+		"--material-only",
+		"--trusted-keys", fixture.trustedKeysPath,
+	}, &stdout, &stderr)
+	if exit != 0 {
+		t.Fatalf("exit=%d stdout=%q stderr=%q", exit, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "verify material passed") {
+		t.Fatalf("stdout = %q", stdout.String())
+	}
+}
+
+type materialRefVerifyFixture struct {
+	root            string
+	base            string
+	head            string
+	acceptanceRoot  string
+	receiptPath     string
+	trustedKeysPath string
+}
+
+func newMaterialRefVerifyFixture(t *testing.T) materialRefVerifyFixture {
+	t.Helper()
+	root := t.TempDir()
+	gitCmd(t, root, "init")
+	gitCmd(t, root, "config", "user.name", "scafld")
+	gitCmd(t, root, "config", "user.email", "scafld@example.invalid")
+	if err := os.MkdirAll(filepath.Join(root, ".scafld"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	config := "version: \"1\"\nexecution:\n  env:\n    GITHUB_TOKEN: config-leak\n    ACTIONS_RUNTIME_TOKEN: config-leak\n"
+	if err := os.WriteFile(filepath.Join(root, ".scafld", "config.yaml"), []byte(config), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".gitignore"), []byte("ignored.txt\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "app.txt"), []byte("base\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitCmd(t, root, "add", ".")
+	gitCmd(t, root, "commit", "-m", "base")
+	base := gitCmd(t, root, "rev-parse", "HEAD")
+	if err := os.WriteFile(filepath.Join(root, "app.txt"), []byte("head\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitCmd(t, root, "add", ".")
+	gitCmd(t, root, "commit", "-m", "head")
+	head := gitCmd(t, root, "rev-parse", "HEAD")
+	acceptanceRoot := filepath.Join(t.TempDir(), "head-worktree")
+	gitCmd(t, root, "worktree", "add", "--detach", acceptanceRoot, head)
+	gitCmd(t, root, "checkout", base)
+
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := verifyTrustedKey(t, pub)
+	writeTrustedKeys(t, root, trust.TrustedKeys{Version: trust.TrustedKeysVersion, Keys: []trust.TrustedKey{key}})
+
+	headSum := sha256.Sum256([]byte("head\n"))
+	body := minimalReceiptBody()
+	body.SnapshotMode = receipt.SnapshotModeBaseDelta
+	body.BaseRef = base
+	body.BaseCommit = base
+	body.HeadCommit = head
+	body.Scope = []string{"app.txt"}
+	body.FileDigests = map[string]string{"app.txt": fmt.Sprintf("%x", headSum)}
+	body.ReviewedContextProvenance = []receipt.Provenance{{Kind: "evidence_file", Path: "app.txt", SHA256: fmt.Sprintf("%x", headSum)}}
+	body.Acceptance = []receipt.Acceptance{{
+		ID:           "ac1",
+		Command:      `test "$(cat app.txt)" = "head" && test -z "${SECRET_TOKEN:-}" && test -z "${GITHUB_TOKEN:-}" && test -z "${ACTIONS_RUNTIME_TOKEN:-}" && if [ -e /proc/$PPID/environ ]; then ! cat /proc/$PPID/environ >/dev/null 2>&1; fi`,
+		ExpectedKind: "exit_code_zero",
+		Status:       "pass",
+		ExitCode:     0,
+	}}
+	envelope := signVerifyReceipt(t, body, key.KeyID, priv)
+	data, err := json.Marshal(envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	receiptPath := filepath.Join(root, "receipt.json")
+	if err := os.WriteFile(receiptPath, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SECRET_TOKEN", "leak")
+	t.Setenv("GITHUB_TOKEN", "leak")
+	t.Setenv("ACTIONS_RUNTIME_TOKEN", "leak")
+	return materialRefVerifyFixture{
+		root:            root,
+		base:            base,
+		head:            head,
+		acceptanceRoot:  acceptanceRoot,
+		receiptPath:     receiptPath,
+		trustedKeysPath: filepath.Join(root, ".scafld", "trusted-keys.json"),
 	}
 }
 

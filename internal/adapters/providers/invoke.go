@@ -298,7 +298,7 @@ func reviewSubmitTool() SubmitTool {
 	return SubmitTool{
 		Name:        "submit_review",
 		Title:       "Submit scafld review",
-		Description: "Submit the final scafld ReviewDossier. Call exactly once after completing the read-only adversarial review. Findings are defects only; improvements and preferences are not findings. Clean attack_log entries must name the concrete target inspected.",
+		Description: "Submit the final scafld ReviewDossier. Call exactly once after completing the read-only adversarial review. Findings are defects only; improvements, preferences, marginal-surface enumeration, and per-consumer bookkeeping are not findings unless they identify a verified defect, violated shared invariant, or broken adapter boundary. Clean attack_log entries must name the concrete target inspected.",
 		Command:     "review-submit-stdio",
 	}
 }
@@ -307,7 +307,7 @@ func hardenSubmitTool() SubmitTool {
 	return SubmitTool{
 		Name:        "submit_harden",
 		Title:       "Submit scafld hardening",
-		Description: "Submit the final scafld HardenDossier. Call exactly once after stress-testing the draft spec. Treat the draft as a hypothesis: if reject/no-op, shrink, reframe, move-owner, or reuse-existing-behavior is materially better, record that in shape instead of softening it into advisory feedback. The shape object must answer keep, shrink, reframe, or reject before observations. The observations array must cover " + coreharden.RequiredDimensionList() + " with result, anchor, and any note/question/recommended/if_unanswered/default/status. A keep decision and clean observations must name what was checked and what would have failed the check.",
+		Description: "Submit the final scafld HardenDossier. Call exactly once after stress-testing the draft spec. Treat the draft as a hypothesis: if reject/no-op, shrink, reframe, move-owner, or reuse-existing-behavior is materially better, record that in shape instead of softening it into advisory feedback. Harden is a code-shape and system-design gate, not coverage bookkeeping; do not turn a settled shared invariant into a consumer-by-consumer compliance matrix or bespoke test-per-surface demand. The shape object must answer keep, shrink, reframe, or reject before observations. The observations array must cover " + coreharden.RequiredDimensionList() + " with result, anchor, and any note/question/recommended/if_unanswered/default/status. A keep decision and clean observations must name what was checked and what would have failed the check.",
 		Command:     "harden-submit-stdio",
 	}
 }

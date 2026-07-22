@@ -36,6 +36,27 @@ type fakeAncestry struct{ ok bool }
 
 func (f fakeAncestry) IsAncestor(context.Context, string, string) (bool, error) { return f.ok, nil }
 
+type ancestryCall struct {
+	ancestor   string
+	descendant string
+}
+
+type recordingAncestry struct {
+	calls []ancestryCall
+	ok    map[string]bool
+}
+
+func (r *recordingAncestry) IsAncestor(_ context.Context, ancestor, descendant string) (bool, error) {
+	r.calls = append(r.calls, ancestryCall{ancestor: ancestor, descendant: descendant})
+	if r.ok == nil {
+		return true, nil
+	}
+	if ok, exists := r.ok[ancestor+"->"+descendant]; exists {
+		return ok, nil
+	}
+	return r.ok[descendant], nil
+}
+
 type fakeSignature struct{ err error }
 
 func (f fakeSignature) Verify(receipt.Envelope, trust.TrustedKeys) error { return f.err }
@@ -64,17 +85,17 @@ func TestRunReportsInvariantFailures(t *testing.T) {
 	}{
 		{name: "recorded path missing", ports: func() Ports {
 			p := validPorts()
-			p.Snapshotter = fakeSnapshotter{snapshot: Snapshot{TreeSHA: "different", BaseCommit: "base", FileDigests: map[string]string{}}}
+			p.Snapshotter = fakeSnapshotter{snapshot: Snapshot{TreeSHA: "tree", BaseCommit: "base", FileDigests: map[string]string{}}}
 			return p
 		}, want: "recorded in-scope path missing"},
 		{name: "new in-scope path", ports: func() Ports {
 			p := validPorts()
-			p.Snapshotter = fakeSnapshotter{snapshot: Snapshot{TreeSHA: "different", BaseCommit: "base", FileDigests: map[string]string{"a.go": "sha", "new.go": "sha"}}}
+			p.Snapshotter = fakeSnapshotter{snapshot: Snapshot{TreeSHA: "tree", BaseCommit: "base", FileDigests: map[string]string{"a.go": "sha", "new.go": "sha"}}}
 			return p
 		}, want: "unreviewed in-scope path"},
 		{name: "ignored path mismatch", ports: func() Ports {
 			p := validPorts()
-			p.Snapshotter = fakeSnapshotter{snapshot: Snapshot{TreeSHA: "different", BaseCommit: "base", FileDigests: map[string]string{"a.go": "sha"}, Ignored: []string{"AGENTS.md"}}}
+			p.Snapshotter = fakeSnapshotter{snapshot: Snapshot{TreeSHA: "tree", BaseCommit: "base", FileDigests: map[string]string{"a.go": "sha"}, Ignored: []string{"AGENTS.md"}}}
 			return p
 		}, want: "ignored_unreviewed mismatch"},
 		{name: "unknown key", ports: func() Ports {
@@ -238,6 +259,81 @@ func TestRunUsesBaseCommitForBaseDeltaWithoutOriginalBaseRef(t *testing.T) {
 	}
 	if snapshotter.input.SnapshotMode != receipt.SnapshotModeBaseDelta || snapshotter.input.BaseRef != "base" {
 		t.Fatalf("snapshot input = %+v, want signed base commit fallback", snapshotter.input)
+	}
+}
+
+func TestRunPassesMaterialRefToSnapshotter(t *testing.T) {
+	t.Parallel()
+
+	snapshotter := &recordingSnapshotter{snapshot: Snapshot{TreeSHA: "tree", BaseCommit: "base", FileDigests: map[string]string{"a.go": "sha"}}}
+	ports := validPorts()
+	ports.Snapshotter = snapshotter
+	result, err := Run(context.Background(), validEnvelope(), trust.TrustedKeys{Version: trust.TrustedKeysVersion}, Policy{TargetCommit: "base", MaterialRef: "head"}, ports)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Passed {
+		t.Fatalf("result = %+v", result)
+	}
+	if snapshotter.input.TargetRef != "head" {
+		t.Fatalf("snapshot input target = %q, want head", snapshotter.input.TargetRef)
+	}
+}
+
+func TestRunMaterialOnlySkipsAcceptance(t *testing.T) {
+	t.Parallel()
+
+	ports := validPorts()
+	ports.AcceptanceRunner = nil
+	result, err := Run(context.Background(), validEnvelope(), trust.TrustedKeys{Version: trust.TrustedKeysVersion}, Policy{TargetCommit: "base", MaterialOnly: true}, ports)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Passed || result.Reason != "material verified" {
+		t.Fatalf("result = %+v, want material-only pass", result)
+	}
+}
+
+func TestRunChecksTargetAndMaterialRefAncestry(t *testing.T) {
+	t.Parallel()
+
+	ancestry := &recordingAncestry{ok: map[string]bool{"protected": true, "head": true}}
+	ports := validPorts()
+	ports.AncestryChecker = ancestry
+	result, err := Run(context.Background(), validEnvelope(), trust.TrustedKeys{Version: trust.TrustedKeysVersion}, Policy{TargetCommit: "protected", MaterialRef: "head"}, ports)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Passed {
+		t.Fatalf("result = %+v", result)
+	}
+	if len(ancestry.calls) != 3 || ancestry.calls[0].descendant != "protected" || ancestry.calls[1].descendant != "head" || ancestry.calls[2] != (ancestryCall{ancestor: "protected", descendant: "head"}) {
+		t.Fatalf("ancestry calls = %+v, want receipt base checks plus protected target against material ref", ancestry.calls)
+	}
+
+	ancestry = &recordingAncestry{ok: map[string]bool{"protected": false, "head": true}}
+	ports = validPorts()
+	ports.AncestryChecker = ancestry
+	result, err = Run(context.Background(), validEnvelope(), trust.TrustedKeys{Version: trust.TrustedKeysVersion}, Policy{TargetCommit: "protected", MaterialRef: "head"}, ports)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Passed || !strings.Contains(result.Reason, "target") {
+		t.Fatalf("result = %+v, want target ancestry failure", result)
+	}
+	if len(ancestry.calls) != 1 || ancestry.calls[0].descendant != "protected" {
+		t.Fatalf("target ancestry boundary was not checked first: %+v", ancestry.calls)
+	}
+
+	ancestry = &recordingAncestry{ok: map[string]bool{"protected": true, "head": true, "protected->head": false}}
+	ports = validPorts()
+	ports.AncestryChecker = ancestry
+	result, err = Run(context.Background(), validEnvelope(), trust.TrustedKeys{Version: trust.TrustedKeysVersion}, Policy{TargetCommit: "protected", MaterialRef: "head"}, ports)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Passed || !strings.Contains(result.Reason, "target is not ancestor") {
+		t.Fatalf("result = %+v, want target/material divergence failure", result)
 	}
 }
 

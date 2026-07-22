@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/nilstate/scafld/v2/internal/core/session"
 )
@@ -143,6 +144,34 @@ func TestAppendTransactionDerivesEntriesUnderCurrentLedger(t *testing.T) {
 	}
 	if got.Entries[1].ID != "entry-2" || got.Entries[2].ID != "entry-3" || got.Entries[2].RecordedAt != "second" {
 		t.Fatalf("transaction metadata = %+v", got.Entries)
+	}
+}
+
+func TestAppendTransactionDeadlineBoundsLockAcquisition(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	store := SessionStore{Root: root}
+	path := store.path("task")
+	mutex := pathLock(path)
+	mutex.Lock()
+	defer mutex.Unlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	_, err := store.AppendTransaction(ctx, "task", "now", func(session.Session) ([]session.Entry, error) {
+		t.Fatal("derive must not run after lock deadline")
+		return nil, nil
+	})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("AppendTransaction error = %v, want deadline", err)
+	}
+	if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
+		t.Fatalf("AppendTransaction did not return promptly: %s", elapsed)
+	}
+	if _, err := store.Load(context.Background(), "task"); !errors.Is(err, ErrSessionNotFound) {
+		t.Fatalf("deadline-bound append must not persist a session: %v", err)
 	}
 }
 
