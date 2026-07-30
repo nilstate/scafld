@@ -11,6 +11,7 @@ import (
 
 	"github.com/nilstate/scafld/v2/internal/core/execution"
 	coreharden "github.com/nilstate/scafld/v2/internal/core/harden"
+	"github.com/nilstate/scafld/v2/internal/core/providerpacket"
 	"github.com/nilstate/scafld/v2/internal/core/review"
 )
 
@@ -47,7 +48,7 @@ func (p HardenProvider) Invoke(ctx context.Context, req coreharden.Request) (cor
 	if err != nil {
 		return coreharden.Dossier{}, err
 	}
-	dossier, dossierErr := hardenDossierFromProviderResult(resp.Result, resp.RunErr, resp.Text)
+	dossier, dossierErr := hardenDossierFromProviderResult(resp)
 	if dossierErr != nil {
 		return coreharden.Dossier{}, dossierErr
 	}
@@ -71,7 +72,7 @@ func invokeReviewAgent(ctx context.Context, agent Agent, req review.Request, par
 	if err != nil {
 		return review.Dossier{}, err
 	}
-	dossier, dossierErr := dossierFromProviderResult(resp.Result, resp.RunErr, resp.Text, parse)
+	dossier, dossierErr := dossierFromProviderResult(resp, parse)
 	if dossierErr != nil {
 		return review.Dossier{}, dossierErr
 	}
@@ -83,7 +84,8 @@ func invokeReviewAgent(ctx context.Context, agent Agent, req review.Request, par
 	return dossier, nil
 }
 
-func dossierFromProviderResult(result execution.Result, runErr error, text string, parse func(string) (review.Dossier, error)) (review.Dossier, error) {
+func dossierFromProviderResult(resp AgentResponse, parse func(string) (review.Dossier, error)) (review.Dossier, error) {
+	result, runErr, text := resp.Result, resp.RunErr, resp.Text
 	if runErr != nil && strings.TrimSpace(text) == "" {
 		return review.Dossier{}, providerFailedError(result, runErr)
 	}
@@ -93,7 +95,7 @@ func dossierFromProviderResult(result execution.Result, runErr error, text strin
 			return review.Dossier{}, providerFailedError(result, runErr)
 		}
 		if result.DiagnosticPath != "" {
-			return review.Dossier{}, providerFailedError(result, parseErr)
+			return review.Dossier{}, providerFailedPacketError(result, parseErr, packetSourceFromResponse(resp, "ReviewDossier", "submit_review", parseErr))
 		}
 		if result.ExitCode != 0 {
 			return review.Dossier{}, providerFailedError(result, fmt.Errorf("exit code %d", result.ExitCode))
@@ -109,7 +111,8 @@ func dossierFromProviderResult(result execution.Result, runErr error, text strin
 	return dossier, nil
 }
 
-func hardenDossierFromProviderResult(result execution.Result, runErr error, text string) (coreharden.Dossier, error) {
+func hardenDossierFromProviderResult(resp AgentResponse) (coreharden.Dossier, error) {
+	result, runErr, text := resp.Result, resp.RunErr, resp.Text
 	if runErr != nil && strings.TrimSpace(text) == "" {
 		return coreharden.Dossier{}, providerFailedError(result, runErr)
 	}
@@ -119,7 +122,7 @@ func hardenDossierFromProviderResult(result execution.Result, runErr error, text
 			return coreharden.Dossier{}, providerFailedError(result, runErr)
 		}
 		if result.DiagnosticPath != "" {
-			return coreharden.Dossier{}, providerFailedError(result, parseErr)
+			return coreharden.Dossier{}, providerFailedPacketError(result, parseErr, packetSourceFromResponse(resp, "HardenDossier", "submit_harden", parseErr))
 		}
 		if result.ExitCode != 0 {
 			return coreharden.Dossier{}, providerFailedError(result, fmt.Errorf("exit code %d", result.ExitCode))
@@ -136,6 +139,10 @@ func hardenDossierFromProviderResult(result execution.Result, runErr error, text
 }
 
 func providerFailedError(result execution.Result, cause error) error {
+	return providerFailedPacketError(result, cause, providerpacket.Source{})
+}
+
+func providerFailedPacketError(result execution.Result, cause error, source providerpacket.Source) error {
 	detail := ""
 	if stderr := errorSnippet(result.Stderr); stderr != "" {
 		detail += ": " + stderr
@@ -145,13 +152,20 @@ func providerFailedError(result execution.Result, cause error) error {
 	if result.DiagnosticPath != "" {
 		detail += " (diagnostic: " + result.DiagnosticPath + ")"
 	}
-	return providerFailureError{cause: cause, detail: detail, diagnosticPath: result.DiagnosticPath}
+	if strings.TrimSpace(source.DiagnosticPath) == "" {
+		source.DiagnosticPath = result.DiagnosticPath
+	}
+	if strings.TrimSpace(source.Error) == "" && cause != nil {
+		source.Error = cause.Error()
+	}
+	return providerFailureError{cause: cause, detail: detail, diagnosticPath: result.DiagnosticPath, packetSource: source}
 }
 
 type providerFailureError struct {
 	cause          error
 	detail         string
 	diagnosticPath string
+	packetSource   providerpacket.Source
 }
 
 func (e providerFailureError) Error() string {
@@ -164,6 +178,42 @@ func (e providerFailureError) Unwrap() []error {
 
 func (e providerFailureError) DiagnosticPath() string {
 	return e.diagnosticPath
+}
+
+func (e providerFailureError) ProviderPacketRepairSource() providerpacket.Source {
+	return e.packetSource
+}
+
+func packetSourceFromResponse(resp AgentResponse, schemaName string, submitTool string, cause error) providerpacket.Source {
+	return providerpacket.Source{
+		Provider:           resp.Provider,
+		Model:              resp.Model,
+		OutputFormat:       resp.OutputFormat,
+		ExpectedSchema:     schemaName,
+		ExpectedSubmitTool: submitTool,
+		Error:              errorString(cause),
+		DiagnosticPath:     resp.Result.DiagnosticPath,
+		RejectedText:       strings.TrimSpace(resp.Text),
+	}
+}
+
+func providerpacketSource(provider string, model string, outputFormat string, schemaName string, submitTool string, rejectedText string, cause error) providerpacket.Source {
+	return providerpacket.Source{
+		Provider:           provider,
+		Model:              model,
+		OutputFormat:       outputFormat,
+		ExpectedSchema:     schemaName,
+		ExpectedSubmitTool: submitTool,
+		Error:              errorString(cause),
+		RejectedText:       strings.TrimSpace(rejectedText),
+	}
+}
+
+func errorString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }
 
 func errorSnippet(text string) string {

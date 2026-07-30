@@ -25,6 +25,7 @@ Flags:
   --force                  Rerun a current pass, or an unchanged failed-review repair with --reason
   --print-context          Print the exact provider context and exit
   --human-reviewed         Record an audited human review instead of invoking a provider
+  --repair-packet PATH     Accept a filled provider packet repair artifact
   --reason TEXT            Required reason for --human-reviewed or forced operator-decision reruns
   --root PATH              Workspace root
   --json                   Print JSON envelope
@@ -67,6 +68,14 @@ Command provider contract:
   --provider command runs --provider-command and expects one complete
   ReviewDossier JSON object on stdout. Progress and diagnostics belong on
   stderr; a non-zero exit or malformed stdout fails the review attempt.
+
+Provider packet repair:
+  If an external provider prints a dossier to final text instead of the submit
+  channel, scafld writes a provider packet repair artifact and records that path
+  on the failed attempt. Fill the artifact's repaired_packet field with exactly
+  one valid ReviewDossier JSON object, then record it without another external
+  review call:
+    scafld review email-contracts --repair-packet .scafld/runs/email-contracts/diagnostics/provider-packet-repair-review-<attempt>.json
 
 Cost control:
   For small diffs, keep the same gate but request a tighter review budget:

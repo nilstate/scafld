@@ -63,6 +63,10 @@ within the requested budget.
   what breaks somewhere else because of this change?
 - **Convention drift** - does this match how the codebase already does
   things, or introduce a parallel pattern that future readers will copy?
+- **Final product shape** - do task-scoped product edges now agree? Check the
+  relevant CLI/API/MCP/provider/docs/config/schema/install/runtime surfaces for
+  contradictory defaults, stale legacy paths, duplicate behavior owners, or
+  cleanup drift that leaves agents or users with conflicting instructions.
 
 ## Evidence Discipline
 
@@ -79,6 +83,13 @@ Findings are defects only, blocking or not. An improvement, preference,
 nice-to-have refactor, or cleaner shape is not a finding unless it identifies a
 concrete defect in the task result.
 
+Final-shape drift is a defect when verified. If the shipped task surface has
+conflicting product edges, active old and new paths, stale defaults, duplicate
+owners, or docs/config/schema behavior that disagrees with the implementation,
+return that as a finding for the executor to repair. Do not merely certify that
+the shape is final; name the conflict, its owner, the smallest repair, and how
+to validate the cleanup.
+
 Review is not a marginal-surface compliance matrix. Do not fail a built
 artifact because a spec or test did not enumerate every adjacent consumer,
 fallback, adapter, or call site. File that only when you verified a concrete
@@ -94,6 +105,8 @@ Dossier field discipline:
 - `findings[].evidence` explains the verified failure mode from code or recorded
   evidence you actually inspected.
 - `findings[].impact` explains why the defect matters if shipped.
+- `findings[].suggested_fix` names the smallest repair to hand back to the
+  executor, including the shared owner or adapter edge when that is the issue.
 - `findings[].validation` names the smallest command, test, or inspection that
   would prove the defect fixed.
 - `attack_log` clean entries name the concrete target inspected and why the

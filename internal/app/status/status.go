@@ -399,7 +399,11 @@ func nextAction(model spec.Model, hardenState hardengate.State, repair *gate.Fai
 			if review.Verdict == corereview.VerdictFail {
 				return NextAction{Role: "executor", Action: "repair_review_findings", Command: command, Reason: "review found completion blockers", AfterCommand: taskCommand("build"), ThenCommand: taskCommand("review")}
 			}
-			return NextAction{Role: "operator", Action: "repair_review_provider", Command: command, Reason: fallback(repair.Reason, "latest review attempt failed"), ThenCommand: taskCommand("review")}
+			repairPath := ""
+			if len(repair.Evidence) > 0 {
+				repairPath = repair.Evidence[0]
+			}
+			return NextAction{Role: "operator", Action: "repair_review_provider_packet", Command: command, Reason: fallback(repair.Reason, "latest review attempt failed"), ThenCommand: reviewgate.RepairPacketCommand(model.TaskID, repairPath)}
 		}
 		if reviewGateValid {
 			return NextAction{Role: "operator", Action: "complete", Command: command, Reason: "latest review gate passed"}

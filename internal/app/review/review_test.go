@@ -2,14 +2,19 @@ package review
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/nilstate/scafld/v2/internal/app/packetrepair"
 	"github.com/nilstate/scafld/v2/internal/core/acceptance"
 	"github.com/nilstate/scafld/v2/internal/core/agentcontract"
 	"github.com/nilstate/scafld/v2/internal/core/gate"
+	"github.com/nilstate/scafld/v2/internal/core/providerpacket"
 	corereview "github.com/nilstate/scafld/v2/internal/core/review"
 	"github.com/nilstate/scafld/v2/internal/core/reviewcontext"
 	"github.com/nilstate/scafld/v2/internal/core/reviewevidence"
@@ -606,6 +611,17 @@ func (e diagnosticErr) DiagnosticPath() string {
 	return e.path
 }
 
+type reviewPacketRepairErr struct {
+	err    error
+	source providerpacket.Source
+}
+
+func (e reviewPacketRepairErr) Error() string { return e.err.Error() }
+func (e reviewPacketRepairErr) Unwrap() error { return e.err }
+func (e reviewPacketRepairErr) ProviderPacketRepairSource() providerpacket.Source {
+	return e.source
+}
+
 func TestProviderTimeoutMutationInvalidOutputDossierRepairFindingSignal(t *testing.T) {
 	t.Parallel()
 
@@ -621,6 +637,108 @@ func TestProviderTimeoutMutationInvalidOutputDossierRepairFindingSignal(t *testi
 	if len(out.Findings) != 1 || out.Findings[0].ID != "workspace_mutation" {
 		t.Fatalf("mutation finding = %+v", out.Findings)
 	}
+}
+
+func TestReviewProviderPacketRepairArtifactCanBeAcceptedWithoutProviderRerun(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	taskID := "task"
+	specs := &fakeSpecs{
+		model: spec.Model{TaskID: taskID, Title: "Task", Status: spec.StatusReview},
+		path:  filepath.Join(root, ".scafld", "specs", "active", taskID+".md"),
+	}
+	sessions := &fakeSessions{}
+	rejected := "{\"not\":\"a review dossier\"}"
+	_, err := RunWithInput(context.Background(), specs, sessions, cleanWorkspace(), providerFunc(func(context.Context, corereview.Request) (corereview.Dossier, error) {
+		return corereview.Dossier{}, reviewPacketRepairErr{
+			err: errors.New("provider returned output without submit_review"),
+			source: providerpacket.Source{
+				Provider:           "claude",
+				Model:              "claude-test",
+				OutputFormat:       "claude.mcp_submit_review",
+				ExpectedSchema:     "ReviewDossier",
+				ExpectedSubmitTool: "submit_review",
+				RejectedText:       rejected,
+			},
+		}
+	}), fakeClock{}, Input{
+		TaskID:        taskID,
+		ProviderName:  "claude",
+		ProviderModel: "claude-test",
+	})
+	if err == nil {
+		t.Fatal("expected failed provider packet")
+	}
+
+	failed := latestReviewAttemptEntry(t, sessions.ledger, "failed")
+	repairPath := failed.Path
+	if !strings.Contains(repairPath, "provider-packet-repair-review-") || !strings.Contains(repairPath, failed.AttemptID) {
+		t.Fatalf("repair artifact path = %q, failed attempt = %+v", repairPath, failed)
+	}
+	data, err := os.ReadFile(repairPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifact, err := packetrepair.Decode(data)
+	if err != nil {
+		t.Fatalf("repair artifact decode err=%v", err)
+	}
+	if artifact.TaskID != taskID || artifact.Gate != "review" || artifact.AttemptID != failed.AttemptID || artifact.RejectedText != rejected {
+		t.Fatalf("repair artifact = %+v, failed attempt = %+v", artifact, failed)
+	}
+	if !strings.Contains(artifact.AcceptCommand, "--repair-packet") || !strings.Contains(artifact.AcceptCommand, repairPath) {
+		t.Fatalf("accept command = %q", artifact.AcceptCommand)
+	}
+
+	repaired := passingDossier()
+	repaired.Provider = ""
+	repaired.Model = ""
+	repaired.OutputFormat = ""
+	artifact.RepairedPacket = json.RawMessage(corereview.EncodeDossier(repaired))
+	encoded, err := packetrepair.Encode(artifact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(repairPath, encoded, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := RunWithInput(context.Background(), specs, sessions, cleanWorkspace(), providerFunc(func(context.Context, corereview.Request) (corereview.Dossier, error) {
+		t.Fatal("provider should not be called when accepting a repaired packet")
+		return corereview.Dossier{}, nil
+	}), fakeClock{}, Input{TaskID: taskID, RepairPacketPath: repairPath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Verdict != corereview.VerdictPass || out.Provider != "claude" || out.Model != "claude-test" || out.OutputFormat != "provider_packet_repair" {
+		t.Fatalf("output = %+v", out)
+	}
+	accepted := latestReviewAttemptEntry(t, sessions.ledger, "accepted")
+	if accepted.AttemptID != failed.AttemptID {
+		t.Fatalf("accepted attempt id = %q, want %q", accepted.AttemptID, failed.AttemptID)
+	}
+	var reviewEntry session.Entry
+	for _, entry := range sessions.ledger.Entries {
+		if entry.Type == "review" {
+			reviewEntry = entry
+		}
+	}
+	if reviewEntry.Type != "review" || reviewEntry.Status != corereview.VerdictPass || reviewEntry.Provider != "claude" || reviewEntry.ProviderModel != "claude-test" {
+		t.Fatalf("review entry = %+v", reviewEntry)
+	}
+}
+
+func latestReviewAttemptEntry(t *testing.T, ledger session.Session, status string) session.Entry {
+	t.Helper()
+	for i := len(ledger.Entries) - 1; i >= 0; i-- {
+		entry := ledger.Entries[i]
+		if entry.Type == "review_attempt" && entry.Status == status {
+			return entry
+		}
+	}
+	t.Fatalf("review_attempt status %q not found in %+v", status, ledger.Entries)
+	return session.Entry{}
 }
 
 func TestReviewRejectsInvalidDirectProviderDossier(t *testing.T) {

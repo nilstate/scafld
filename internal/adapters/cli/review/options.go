@@ -10,16 +10,17 @@ import (
 
 // InputOptions carries CLI review flags into the app input assembler.
 type InputOptions struct {
-	TaskID          string
-	Mode            string
-	ReviewScope     string
-	MaxFindings     string
-	MinAttackAngles string
-	ReviewDepth     string
-	ForceReview     bool
-	PrintContext    bool
-	HumanReviewed   bool
-	Reason          string
+	TaskID           string
+	Mode             string
+	ReviewScope      string
+	MaxFindings      string
+	MinAttackAngles  string
+	ReviewDepth      string
+	ForceReview      bool
+	PrintContext     bool
+	HumanReviewed    bool
+	RepairPacketPath string
+	Reason           string
 }
 
 // BuildInput maps CLI selection and flags to the app-layer review input.
@@ -44,6 +45,7 @@ func BuildInput(opts InputOptions, selected Selection) appreview.Input {
 		ProviderModel:           selected.ProviderModel,
 		PrintContext:            opts.PrintContext,
 		HumanReviewed:           opts.HumanReviewed,
+		RepairPacketPath:        opts.RepairPacketPath,
 		Reason:                  opts.Reason,
 	}
 }

@@ -47,6 +47,12 @@ scafld derives pass or needs_revision from the submitted shape decision,
 required spec edits, and observations. Provider transport, invalid dossier, or
 unverified anchor problems are recorded as harden_status error. Advisory
 observations remain recorded.
+If an external provider printed the dossier to final text instead of the submit
+channel, scafld writes a provider packet repair artifact and records that path
+on the failed harden round. Fill the artifact's repaired_packet field with
+exactly one valid HardenDossier JSON object, then record it without another
+external harden call:
+  scafld harden email-contracts --repair-packet .scafld/runs/email-contracts/diagnostics/provider-packet-repair-harden-<round>.json
 Provider auto prefers the other installed agent when the host is detected, can
 use Gemini as an additional external challenger, and fails closed when only the
 host provider is available unless fallback_policy is relaxed or a provider is
@@ -84,6 +90,7 @@ Flags:
   --provider-command C  Command provider executable or shell command
   --provider-binary P   Selected provider binary override
   --model NAME          Selected provider model override
+  --repair-packet PATH  Accept a filled provider packet repair artifact
   --mark-passed         Verify manual harden evidence and close the latest round
   --no-context          Suppress source context in human/JSON output
   --root PATH           Workspace root

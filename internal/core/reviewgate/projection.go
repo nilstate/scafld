@@ -92,31 +92,43 @@ type State struct {
 
 // Attempt is normalized metadata for the latest current review attempt.
 type Attempt struct {
-	Entry          session.Entry
-	AttemptID      string
-	Status         string
-	Running        bool
-	Stale          bool
-	LeaseExpiresAt time.Time
-	HasLease       bool
-	Provider       string
-	Model          string
-	Mode           corereview.Mode
-	PassCount      int
-	Reason         string
-	DiagnosticPath string
+	Entry                  session.Entry
+	AttemptID              string
+	Status                 string
+	Running                bool
+	Stale                  bool
+	LeaseExpiresAt         time.Time
+	HasLease               bool
+	Provider               string
+	Model                  string
+	Mode                   corereview.Mode
+	PassCount              int
+	Reason                 string
+	DiagnosticPath         string
+	ReviewedHead           string
+	ReviewedDirty          string
+	ReviewedDiff           string
+	ReviewedSpec           string
+	ReviewedScope          []string
+	ReviewedMaterialDigest string
 }
 
 // AttemptEntryInput contains the typed metadata stamped onto review_attempt entries.
 type AttemptEntryInput struct {
-	AttemptID      string
-	LeaseExpiresAt time.Time
-	Mode           corereview.Mode
-	Provider       string
-	Model          string
-	PassCount      int
-	Reason         string
-	Output         string
+	AttemptID              string
+	LeaseExpiresAt         time.Time
+	Mode                   corereview.Mode
+	Provider               string
+	Model                  string
+	PassCount              int
+	Reason                 string
+	Output                 string
+	ReviewedHead           string
+	ReviewedDirty          string
+	ReviewedDiff           string
+	ReviewedSpec           string
+	ReviewedScope          []string
+	ReviewedMaterialDigest string
 }
 
 // Project reduces a session ledger plus current task state into the review
@@ -413,15 +425,21 @@ func LatestAttempt(ledger session.Session, opts Options) (Attempt, bool) {
 func DecodeAttempt(entry session.Entry, opts Options) Attempt {
 	opts = normalizeOptions(opts)
 	attempt := Attempt{
-		Entry:          entry,
-		AttemptID:      firstNonBlank(entry.AttemptID, entry.ID),
-		Status:         strings.TrimSpace(entry.Status),
-		Provider:       strings.TrimSpace(entry.Provider),
-		Model:          strings.TrimSpace(entry.ProviderModel),
-		Mode:           corereview.Mode(strings.TrimSpace(entry.ReviewMode)),
-		PassCount:      entry.ReviewPassCount,
-		Reason:         strings.TrimSpace(entry.Reason),
-		DiagnosticPath: strings.TrimSpace(entry.Path),
+		Entry:                  entry,
+		AttemptID:              firstNonBlank(entry.AttemptID, entry.ID),
+		Status:                 strings.TrimSpace(entry.Status),
+		Provider:               strings.TrimSpace(entry.Provider),
+		Model:                  strings.TrimSpace(entry.ProviderModel),
+		Mode:                   corereview.Mode(strings.TrimSpace(entry.ReviewMode)),
+		PassCount:              entry.ReviewPassCount,
+		Reason:                 strings.TrimSpace(entry.Reason),
+		DiagnosticPath:         strings.TrimSpace(entry.Path),
+		ReviewedHead:           strings.TrimSpace(entry.ReviewedHead),
+		ReviewedDirty:          strings.TrimSpace(entry.ReviewedDirty),
+		ReviewedDiff:           strings.TrimSpace(entry.ReviewedDiff),
+		ReviewedSpec:           strings.TrimSpace(entry.ReviewedSpec),
+		ReviewedScope:          append([]string(nil), entry.ReviewedScope...),
+		ReviewedMaterialDigest: strings.TrimSpace(entry.ReviewedMaterialDigest),
 	}
 	if attempt.Status == "" {
 		attempt.Status = AttemptStatusRunning
@@ -447,16 +465,22 @@ func NewAttemptID(taskID string, now time.Time) string {
 // RunningAttemptEntry builds the opening review_attempt entry.
 func RunningAttemptEntry(input AttemptEntryInput) session.Entry {
 	return session.Entry{
-		Type:            EntryReviewAttempt,
-		Status:          AttemptStatusRunning,
-		Reason:          strings.TrimSpace(input.Reason),
-		Provider:        strings.TrimSpace(input.Provider),
-		Output:          strings.TrimSpace(input.Output),
-		AttemptID:       strings.TrimSpace(input.AttemptID),
-		LeaseExpiresAt:  formatTime(input.LeaseExpiresAt),
-		ReviewMode:      string(input.Mode),
-		ReviewPassCount: input.PassCount,
-		ProviderModel:   strings.TrimSpace(input.Model),
+		Type:                   EntryReviewAttempt,
+		Status:                 AttemptStatusRunning,
+		Reason:                 strings.TrimSpace(input.Reason),
+		Provider:               strings.TrimSpace(input.Provider),
+		Output:                 strings.TrimSpace(input.Output),
+		AttemptID:              strings.TrimSpace(input.AttemptID),
+		LeaseExpiresAt:         formatTime(input.LeaseExpiresAt),
+		ReviewMode:             string(input.Mode),
+		ReviewPassCount:        input.PassCount,
+		ProviderModel:          strings.TrimSpace(input.Model),
+		ReviewedHead:           strings.TrimSpace(input.ReviewedHead),
+		ReviewedDirty:          strings.TrimSpace(input.ReviewedDirty),
+		ReviewedDiff:           strings.TrimSpace(input.ReviewedDiff),
+		ReviewedSpec:           strings.TrimSpace(input.ReviewedSpec),
+		ReviewedScope:          append([]string(nil), input.ReviewedScope...),
+		ReviewedMaterialDigest: strings.TrimSpace(input.ReviewedMaterialDigest),
 	}
 }
 
@@ -478,17 +502,23 @@ func AbandonedAttemptEntry(attempt Attempt, reason string) session.Entry {
 
 func closeAttemptEntry(attempt Attempt, status string, reason string, diagnosticPath string) session.Entry {
 	return session.Entry{
-		Type:            EntryReviewAttempt,
-		Status:          status,
-		Reason:          strings.TrimSpace(reason),
-		Provider:        attempt.Provider,
-		ProviderModel:   attempt.Model,
-		Output:          strings.TrimSpace(attempt.Entry.Output),
-		Path:            strings.TrimSpace(diagnosticPath),
-		AttemptID:       attempt.AttemptID,
-		LeaseExpiresAt:  formatTime(attempt.LeaseExpiresAt),
-		ReviewMode:      string(attempt.Mode),
-		ReviewPassCount: attempt.PassCount,
+		Type:                   EntryReviewAttempt,
+		Status:                 status,
+		Reason:                 strings.TrimSpace(reason),
+		Provider:               attempt.Provider,
+		ProviderModel:          attempt.Model,
+		Output:                 strings.TrimSpace(attempt.Entry.Output),
+		Path:                   strings.TrimSpace(diagnosticPath),
+		AttemptID:              attempt.AttemptID,
+		LeaseExpiresAt:         formatTime(attempt.LeaseExpiresAt),
+		ReviewMode:             string(attempt.Mode),
+		ReviewPassCount:        attempt.PassCount,
+		ReviewedHead:           attempt.ReviewedHead,
+		ReviewedDirty:          attempt.ReviewedDirty,
+		ReviewedDiff:           attempt.ReviewedDiff,
+		ReviewedSpec:           attempt.ReviewedSpec,
+		ReviewedScope:          append([]string(nil), attempt.ReviewedScope...),
+		ReviewedMaterialDigest: attempt.ReviewedMaterialDigest,
 	}
 }
 
@@ -661,6 +691,16 @@ func reviewCommand(taskID string) string {
 		return "scafld review"
 	}
 	return "scafld review " + taskID
+}
+
+// RepairPacketCommand records a locally repaired ReviewDossier without
+// spending another external review call.
+func RepairPacketCommand(taskID string, path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		path = "<provider-packet-repair.json>"
+	}
+	return reviewCommand(taskID) + " --repair-packet " + strconv.Quote(path)
 }
 
 func handoffCommand(taskID string) string {

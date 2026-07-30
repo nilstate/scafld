@@ -264,7 +264,7 @@ func TestStatusReviewAttemptFailureCreatesRepairContract(t *testing.T) {
 
 	ledger := session.New("task", "2026-05-05T00:00:00Z")
 	ledger = ledger.WithEntry(session.Entry{Type: "review", Status: corereview.VerdictPass, Output: corereview.EncodeDossier(corereview.Dossier{Verdict: corereview.VerdictPass, Mode: corereview.ModeDiscover, Summary: "clean", AttackLog: []corereview.AttackLogEntry{{Target: "diff", Attack: "scan", Result: "clean"}}})})
-	ledger = ledger.WithEntry(session.Entry{Type: "review_attempt", Status: "failed", Reason: "review provider failed: invalid dossier", Path: "/tmp/review-diagnostic.txt"})
+	ledger = ledger.WithEntry(session.Entry{Type: "review_attempt", Status: "failed", Reason: "review provider failed: invalid dossier", Path: "/tmp/provider-packet-repair-review-attempt.json"})
 	out, err := Run(context.Background(), fakeSpecStore{model: spec.Model{
 		TaskID: "task",
 		Status: spec.StatusReview,
@@ -278,10 +278,11 @@ func TestStatusReviewAttemptFailureCreatesRepairContract(t *testing.T) {
 	if out.Repair == nil || out.Repair.Gate != "review" || out.Repair.Next != "scafld handoff task" {
 		t.Fatalf("repair contract = %+v", out.Repair)
 	}
-	if out.NextAction.Role != "operator" || out.NextAction.Action != "repair_review_provider" || out.NextAction.ThenCommand != "scafld review task" {
+	wantThen := `scafld review task --repair-packet "/tmp/provider-packet-repair-review-attempt.json"`
+	if out.NextAction.Role != "operator" || out.NextAction.Action != "repair_review_provider_packet" || out.NextAction.ThenCommand != wantThen {
 		t.Fatalf("next action = %+v", out.NextAction)
 	}
-	if len(out.Repair.Evidence) != 1 || out.Repair.Evidence[0] != "/tmp/review-diagnostic.txt" {
+	if len(out.Repair.Evidence) != 1 || out.Repair.Evidence[0] != "/tmp/provider-packet-repair-review-attempt.json" {
 		t.Fatalf("repair evidence = %+v", out.Repair.Evidence)
 	}
 	if out.Next != "scafld handoff task" {

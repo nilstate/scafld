@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/nilstate/scafld/v2/internal/app/packetrepair"
 	"github.com/nilstate/scafld/v2/internal/app/specsource"
 	"github.com/nilstate/scafld/v2/internal/core/agentcontract"
 	corecompletion "github.com/nilstate/scafld/v2/internal/core/completion"
@@ -29,6 +30,10 @@ var ErrSpecNotReviewable = errors.New("review requires task status review")
 // ErrReviewStartBlocked is returned when the current review gate state forbids
 // starting a new provider attempt.
 var ErrReviewStartBlocked = errors.New("review attempt cannot start")
+
+// ErrReviewRepairPacketInvalid is returned when a repaired provider packet
+// cannot be accepted into the current review attempt.
+var ErrReviewRepairPacketInvalid = errors.New("review repair packet cannot be accepted")
 
 // SpecStore is the spec persistence port used by review.
 type SpecStore interface {
@@ -99,6 +104,7 @@ type Input struct {
 	ProviderModel           string
 	PrintContext            bool
 	HumanReviewed           bool
+	RepairPacketPath        string
 	Reason                  string
 }
 
@@ -138,6 +144,9 @@ func RunWithInput(ctx context.Context, specs SpecStore, sessions SessionStore, w
 	}
 	if input.HumanReviewed {
 		return runHumanReviewed(ctx, specs, sessions, clock, model, path, input.Reason)
+	}
+	if strings.TrimSpace(input.RepairPacketPath) != "" {
+		return runRepairedReviewPacket(ctx, specs, sessions, workspace, clock, model, path, ledger, input.RepairPacketPath)
 	}
 	beforeFull, err := workspaceSnapshot(ctx, workspace)
 	if err != nil {
@@ -208,6 +217,10 @@ func RunWithInput(ctx context.Context, specs SpecStore, sessions SessionStore, w
 	dossier = applyRequestedBudget(dossier, reviewBudget(input, 0, 0))
 	if err != nil {
 		reason, diagnosticPath := diagnostics.FailureReason("review provider failed", err, 240)
+		if repairPath, ok := writeReviewPacketRepairArtifact(path, model, attempt, err); ok {
+			diagnosticPath = repairPath
+			reason = diagnostics.CompactOneLine("review provider failed: "+err.Error()+" (repair artifact: "+repairPath+")", 240)
+		}
 		return recordFailedReviewAttempt(ctx, sessions, model, attempt, reason, diagnosticPath, now, err, "review provider failed", err.Error())
 	}
 	if dossier.Mode != mode {
@@ -250,12 +263,14 @@ func reviewCompletionSuffix(ctx context.Context, sessions SessionStore, taskID s
 	return corecompletion.TerminalAuthority(ledger).RefusalSuffix()
 }
 
-func reviewGateError(model spec.Model, err error, reason string, actual string) error {
+func reviewGateError(model spec.Model, err error, reason string, actual string, evidencePathOpt ...string) error {
 	if err == nil {
 		err = errors.New(reason)
 	}
 	evidence := []string{"review_attempt session entry", "provider diagnostic output"}
-	if path := diagnostics.Path(err); path != "" {
+	if len(evidencePathOpt) > 0 && strings.TrimSpace(evidencePathOpt[0]) != "" {
+		evidence = []string{strings.TrimSpace(evidencePathOpt[0])}
+	} else if path := diagnostics.Path(err); path != "" {
 		evidence = []string{path}
 	}
 	return gate.New(err, gate.Failure{
@@ -267,6 +282,128 @@ func reviewGateError(model spec.Model, err error, reason string, actual string) 
 		Actual:   actual,
 		Blockers: []string{reason},
 		Next:     "scafld handoff " + model.TaskID,
+	})
+}
+
+func runRepairedReviewPacket(ctx context.Context, specs SpecStore, sessions SessionStore, workspace WorkspaceStatus, clock Clock, model spec.Model, path string, ledger session.Session, packetPath string) (Output, error) {
+	nowTime := clock.Now().UTC()
+	state := reviewgate.Project(ledger, model, reviewgate.Options{Now: nowTime})
+	if state.Kind != reviewgate.KindAttemptFailed || !state.HasAttempt {
+		return Output{}, reviewRepairPacketGateError(model, errors.New("latest review attempt is not a failed provider packet"), state.Evidence, "latest review_attempt failed with a repair artifact", fallbackString(state.Actual, string(state.Kind)), []string{"run scafld handoff " + model.TaskID + " to inspect the current review gate"})
+	}
+	attempt := state.LatestAttempt
+	packet, err := packetrepair.Load(packetPath, packetrepair.Identity{TaskID: model.TaskID, Gate: "review", AttemptID: attempt.AttemptID})
+	if err != nil {
+		return Output{}, reviewRepairPacketGateError(model, err, []string{packetPath}, "repair artifact for latest failed review attempt with repaired_packet set to one ReviewDossier", err.Error(), []string{"repair " + packetPath + " or use the artifact from scafld handoff " + model.TaskID})
+	}
+	dossier, err := review.ParseText(string(packet))
+	if err != nil {
+		return Output{}, reviewRepairPacketGateError(model, err, []string{packetPath}, "valid ReviewDossier repaired_packet", err.Error(), []string{"repair the ReviewDossier JSON in " + packetPath})
+	}
+	if attempt.Mode != "" && dossier.Mode != attempt.Mode {
+		err := fmt.Errorf("%w: mode %q does not match failed attempt mode %q", review.ErrInvalidDossier, dossier.Mode, attempt.Mode)
+		return Output{}, reviewRepairPacketGateError(model, err, []string{packetPath}, "ReviewDossier mode matches failed provider attempt", err.Error(), []string{"repair the ReviewDossier mode in " + packetPath})
+	}
+	if err := ensureRepairAttemptStillCurrent(ctx, workspace, model, attempt); err != nil {
+		return Output{}, err
+	}
+	seal, material, hasMaterial, err := repairedAttemptSeal(ctx, workspace, attempt)
+	if err != nil {
+		return Output{}, reviewRepairPacketGateError(model, err, []string{packetPath}, "workspace/material still matches failed provider attempt", err.Error(), []string{"rerun review after refreshing build evidence"})
+	}
+	if strings.TrimSpace(dossier.Provider) == "" {
+		dossier.Provider = attempt.Provider
+	}
+	if strings.TrimSpace(dossier.Model) == "" {
+		dossier.Model = attempt.Model
+	}
+	if strings.TrimSpace(dossier.OutputFormat) == "" {
+		dossier.OutputFormat = "provider_packet_repair"
+	}
+	now := nowTime.Format(time.RFC3339)
+	out, _, err := recordReviewDossier(ctx, specs, sessions, model, path, dossier, now, seal, material, hasMaterial, attempt)
+	return out, err
+}
+
+func reviewRepairPacketGateError(model spec.Model, err error, evidence []string, expected string, actual string, blockers []string) error {
+	if err == nil {
+		err = ErrReviewRepairPacketInvalid
+	}
+	return gate.New(errors.Join(ErrReviewRepairPacketInvalid, err), gate.Failure{
+		Gate:     "review",
+		Status:   string(model.Status),
+		Reason:   "review provider packet repair is invalid",
+		Evidence: nonEmptyStrings(evidence, "provider packet repair artifact"),
+		Expected: expected,
+		Actual:   actual,
+		Blockers: blockers,
+		Next:     "scafld handoff " + model.TaskID,
+	})
+}
+
+func ensureRepairAttemptStillCurrent(ctx context.Context, workspace WorkspaceStatus, model spec.Model, attempt reviewgate.Attempt) error {
+	if attempt.ReviewedSpec != "" && attempt.ReviewedSpec != spec.ContractDigest(model) {
+		return reviewRepairPacketGateError(model, errors.New("spec changed since failed provider attempt"), []string{attempt.DiagnosticPath}, "same source spec digest as failed provider attempt", "spec digest changed", []string{"rerun build/review after the spec change"})
+	}
+	if attempt.ReviewedHead == "" && attempt.ReviewedDirty == "" && attempt.ReviewedDiff == "" {
+		return nil
+	}
+	snapshot, err := workspaceSnapshot(ctx, workspace)
+	if err != nil {
+		return reviewRepairPacketGateError(model, err, []string{attempt.DiagnosticPath}, "workspace snapshot available", err.Error(), []string{"rerun review after workspace state is available"})
+	}
+	seal, err := reviewSeal(ctx, workspace, reviewComparisonSnapshot(snapshot))
+	if err != nil {
+		return reviewRepairPacketGateError(model, err, []string{attempt.DiagnosticPath}, "workspace seal available", err.Error(), []string{"rerun review after workspace state is available"})
+	}
+	if attempt.ReviewedHead != "" && seal.reviewedHead != attempt.ReviewedHead {
+		return reviewRepairPacketGateError(model, errors.New("workspace head changed since failed provider attempt"), []string{attempt.DiagnosticPath}, "same workspace head as failed provider attempt", "workspace head changed", []string{"rerun review for the changed workspace"})
+	}
+	if attempt.ReviewedDirty != "" && seal.reviewedDirty != attempt.ReviewedDirty {
+		return reviewRepairPacketGateError(model, errors.New("workspace dirty state changed since failed provider attempt"), []string{attempt.DiagnosticPath}, "same workspace dirty state as failed provider attempt", "workspace dirty state changed", []string{"rerun review for the changed workspace"})
+	}
+	if attempt.ReviewedDiff != "" && seal.reviewedDiff != attempt.ReviewedDiff {
+		return reviewRepairPacketGateError(model, errors.New("workspace diff changed since failed provider attempt"), []string{attempt.DiagnosticPath}, "same workspace diff as failed provider attempt", "workspace diff changed", []string{"rerun review for the changed workspace"})
+	}
+	return nil
+}
+
+func repairedAttemptSeal(ctx context.Context, workspace WorkspaceStatus, attempt reviewgate.Attempt) (reviewSessionSeal, reviewevidence.MaterialSeal, bool, error) {
+	seal := reviewSessionSeal{reviewedHead: attempt.ReviewedHead, reviewedDirty: attempt.ReviewedDirty, reviewedDiff: attempt.ReviewedDiff}
+	if seal.reviewedHead == "" && seal.reviewedDirty == "" && seal.reviewedDiff == "" {
+		snapshot, err := workspaceSnapshot(ctx, workspace)
+		if err != nil {
+			return reviewSessionSeal{}, reviewevidence.MaterialSeal{}, false, err
+		}
+		resolved, err := reviewSeal(ctx, workspace, reviewComparisonSnapshot(snapshot))
+		if err != nil {
+			return reviewSessionSeal{}, reviewevidence.MaterialSeal{}, false, err
+		}
+		seal = resolved
+	}
+	if attempt.ReviewedMaterialDigest == "" {
+		return seal, reviewevidence.MaterialSeal{}, false, nil
+	}
+	material, ok, err := reviewMaterialSeal(ctx, workspace, attempt.ReviewedScope)
+	if err != nil {
+		return reviewSessionSeal{}, reviewevidence.MaterialSeal{}, false, err
+	}
+	if !ok || material.Digest != attempt.ReviewedMaterialDigest {
+		return reviewSessionSeal{}, reviewevidence.MaterialSeal{}, false, errors.New("review material digest changed since failed provider attempt")
+	}
+	return seal, material, true, nil
+}
+
+func writeReviewPacketRepairArtifact(specPath string, model spec.Model, attempt reviewgate.Attempt, err error) (string, bool) {
+	root := packetrepair.RootFromSpecPath(specPath)
+	return packetrepair.WriteArtifact(packetrepair.ArtifactInput{
+		Root:          root,
+		TaskID:        model.TaskID,
+		Name:          "provider-packet-repair-review-" + attempt.AttemptID,
+		Gate:          "review",
+		AttemptID:     attempt.AttemptID,
+		Err:           err,
+		AcceptCommand: func(path string) string { return reviewgate.RepairPacketCommand(model.TaskID, path) },
 	})
 }
 
@@ -313,7 +450,15 @@ func startReviewAttempt(ctx context.Context, sessions SessionStore, model spec.M
 		PassCount:      1,
 		Reason:         reason,
 		Output:         reviewAttemptOutput(baselineScoped, taskChanges, scopeDrift),
+		ReviewedHead:   seal.reviewedHead,
+		ReviewedDirty:  seal.reviewedDirty,
+		ReviewedDiff:   seal.reviewedDiff,
+		ReviewedSpec:   spec.ContractDigest(model),
 	})
+	if hasMaterial {
+		attemptEntry.ReviewedScope = append([]string(nil), material.Scope...)
+		attemptEntry.ReviewedMaterialDigest = material.Digest
+	}
 	opts := reviewStartProjectionOptions(now, seal, material, hasMaterial)
 	ledger, err := sessions.AppendTransaction(ctx, model.TaskID, now.Format(time.RFC3339), func(current session.Session) ([]session.Entry, error) {
 		state := reviewgate.Project(current, model, opts)
@@ -416,7 +561,7 @@ func appendFailedReviewAttempt(ctx context.Context, sessions SessionStore, taskI
 }
 
 func recordFailedReviewAttempt(ctx context.Context, sessions SessionStore, model spec.Model, attempt reviewgate.Attempt, reason string, diagnosticPath string, now string, cause error, gateReason string, actual string) (Output, error) {
-	gateErr := reviewGateError(model, cause, gateReason, actual)
+	gateErr := reviewGateError(model, cause, gateReason, actual, diagnosticPath)
 	if err := appendFailedReviewAttempt(ctx, sessions, model.TaskID, attempt, reason, diagnosticPath, now); err != nil {
 		return Output{}, errors.Join(gateErr, fmt.Errorf("record review attempt failure: %w", err))
 	}

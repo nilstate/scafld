@@ -217,7 +217,7 @@ func TestHandoffUsesRepairNextAfterFailedReviewAttempt(t *testing.T) {
 
 	ledger := session.New("task", "2026-05-05T00:00:00Z")
 	ledger = ledger.WithEntry(session.Entry{Type: "review", Status: corereview.VerdictPass, Output: corereview.EncodeDossier(corereview.Dossier{Verdict: corereview.VerdictPass, Mode: corereview.ModeDiscover, Summary: "clean", AttackLog: []corereview.AttackLogEntry{{Target: "diff", Attack: "scan", Result: "clean"}}})})
-	ledger = ledger.WithEntry(session.Entry{Type: "review_attempt", Status: "failed", Reason: "review provider failed", Path: "/tmp/scafld-review.txt"})
+	ledger = ledger.WithEntry(session.Entry{Type: "review_attempt", Status: "failed", Reason: "review provider failed", Path: "/tmp/provider-packet-repair-review-attempt.json"})
 	out, err := Run(context.Background(), fakeSpecStore{model: spec.Model{
 		TaskID: "task",
 		Title:  "Task",
@@ -229,10 +229,23 @@ func TestHandoffUsesRepairNextAfterFailedReviewAttempt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"Next: scafld handoff task", "Allowed command: `scafld handoff task`", "Latest review attempt: failed", "Attempt reason: review provider failed", "Attempt diagnostic: `/tmp/scafld-review.txt`", "Provider repair focus:", "Then run `scafld review task`"} {
+	for _, want := range []string{
+		"Next: scafld handoff task",
+		"Allowed command: `scafld handoff task`",
+		"Latest review attempt: failed",
+		"Attempt reason: review provider failed",
+		"Attempt diagnostic: `/tmp/provider-packet-repair-review-attempt.json`",
+		"Provider packet repair focus:",
+		"Read the attempt repair artifact",
+		"do not spend another external review call just to fix packet shape",
+		`scafld review task --repair-packet "/tmp/provider-packet-repair-review-attempt.json"`,
+	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("handoff missing %q:\n%s", want, out)
 		}
+	}
+	if strings.Contains(out, "Then run `scafld review task`") {
+		t.Fatalf("failed attempt handoff should not point at a plain external review rerun:\n%s", out)
 	}
 	if strings.Contains(out, "Reviewer focus:") {
 		t.Fatalf("failed attempt handoff should not ask for reviewer focus:\n%s", out)

@@ -23,15 +23,16 @@ import (
 
 // Options configures review-provider selection for the CLI.
 type Options struct {
-	Root            string
-	TaskID          string
-	Provider        string
-	Command         string
-	ProviderBinary  string
-	Model           string
-	DiagnosticsPath string
-	Progress        io.Writer
-	PrintContext    bool
+	Root             string
+	TaskID           string
+	Provider         string
+	Command          string
+	ProviderBinary   string
+	Model            string
+	DiagnosticsPath  string
+	Progress         io.Writer
+	PrintContext     bool
+	RepairPacketPath string
 }
 
 // Selection is the provider and review agenda chosen for a review run.
@@ -68,7 +69,7 @@ func Select(ctx context.Context, opts Options) (Selection, error) {
 		Contract:                contract,
 		Dossier:                 cfg.Review.Dossier,
 	}
-	if opts.PrintContext {
+	if opts.PrintContext || strings.TrimSpace(opts.RepairPacketPath) != "" {
 		return selection, nil
 	}
 	external := cfg.Review.External

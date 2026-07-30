@@ -2,6 +2,7 @@ package hardengate
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	coreharden "github.com/nilstate/scafld/v2/internal/core/harden"
@@ -192,6 +193,16 @@ func ApproveCommand(taskID string) string {
 // HardenCommand formats the harden command.
 func HardenCommand(taskID string) string {
 	return command("harden", taskID)
+}
+
+// RepairPacketCommand records a locally repaired HardenDossier without
+// spending another external harden call.
+func RepairPacketCommand(taskID string, path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		path = "<provider-packet-repair.json>"
+	}
+	return HardenCommand(taskID) + " --repair-packet " + strconv.Quote(path)
 }
 
 // MarkPassedCommand formats the manual harden close command.

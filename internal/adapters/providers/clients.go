@@ -169,7 +169,8 @@ func (p ClaudeProvider) InvokeAgent(ctx context.Context, req AgentRequest) (Agen
 	}
 	body := strings.TrimSpace(string(data))
 	if body == "" {
-		return AgentResponse{}, providerFailedError(result, fmt.Errorf("provider produced no submission; Claude must call %s exactly once and final text is ignored", tool.Name))
+		cause := fmt.Errorf("provider produced no submission; Claude must call %s exactly once", tool.Name)
+		return AgentResponse{}, providerFailedPacketError(result, cause, providerpacketSource("claude", provenance.Model, "claude.mcp_"+tool.Name, req.SchemaName, tool.Name, result.Stdout, cause))
 	}
 	return AgentResponse{
 		Text:          body,
@@ -364,7 +365,8 @@ func (p GeminiProvider) InvokeAgent(ctx context.Context, req AgentRequest) (Agen
 	}
 	body := strings.TrimSpace(string(data))
 	if body == "" {
-		return AgentResponse{}, providerFailedError(result, fmt.Errorf("provider produced no submission; Gemini must call mcp_scafld_%s exactly once and final text is ignored", tool.Name))
+		cause := fmt.Errorf("provider produced no submission; Gemini must call mcp_scafld_%s exactly once", tool.Name)
+		return AgentResponse{}, providerFailedPacketError(result, cause, providerpacketSource("gemini", extractGeminiModel(result.Stdout), "gemini.mcp_"+tool.Name, req.SchemaName, tool.Name, result.Stdout, cause))
 	}
 	return AgentResponse{
 		Text:          body,

@@ -2,6 +2,7 @@ package harden
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nilstate/scafld/v2/internal/app/packetrepair"
 	"github.com/nilstate/scafld/v2/internal/core/agentcontract"
 	"github.com/nilstate/scafld/v2/internal/core/gate"
 	coreharden "github.com/nilstate/scafld/v2/internal/core/harden"
@@ -594,6 +596,10 @@ func TestRunProviderHardenRejectsUnverifiedAnchor(t *testing.T) {
 	if round.Status != string(spec.HardenError) || !strings.Contains(round.Summary, "invalid provider dossier evidence") {
 		t.Fatalf("round = %+v", round)
 	}
+	if !strings.Contains(store.model.CurrentState.AllowedFollowUp, "--repair-packet") ||
+		!strings.Contains(store.model.CurrentState.AllowedFollowUp, "provider-packet-repair-harden-round-1.json") {
+		t.Fatalf("current state should point at repaired packet flow: %+v", store.model.CurrentState)
+	}
 }
 
 func TestRunProviderHardenRejectsUnknownSpecGapAnchor(t *testing.T) {
@@ -605,6 +611,7 @@ func TestRunProviderHardenRejectsUnknownSpecGapAnchor(t *testing.T) {
 	out, err := Run(context.Background(), store, fixedClock{}, Input{
 		TaskID:   "fixture-task",
 		Provider: fakeHardenProvider{dossier: dossier},
+		Root:     t.TempDir(),
 	})
 	if !errors.Is(err, ErrInvalidHardenEvidence) {
 		t.Fatalf("error = %v, want %v", err, ErrInvalidHardenEvidence)
@@ -632,7 +639,8 @@ func TestRunProviderHardenClosesRoundOnProviderError(t *testing.T) {
 	if round.Status != string(spec.HardenError) || round.EndedAt == "" || !strings.Contains(round.Summary, "provider unavailable") {
 		t.Fatalf("round = %+v", round)
 	}
-	if !strings.Contains(store.model.CurrentState.AllowedFollowUp, "--provider <provider>") {
+	if !strings.Contains(store.model.CurrentState.AllowedFollowUp, "fix provider availability/output") ||
+		!strings.Contains(store.model.CurrentState.AllowedFollowUp, "--provider <provider>") {
 		t.Fatalf("current state = %+v", store.model.CurrentState)
 	}
 }
@@ -806,6 +814,7 @@ func TestRunProviderHardenClosesRoundOnInvalidDossier(t *testing.T) {
 	_, err := Run(context.Background(), store, fixedClock{}, Input{
 		TaskID:   "fixture-task",
 		Provider: fakeHardenProvider{dossier: coreharden.Dossier{Summary: "missing observations"}},
+		Root:     t.TempDir(),
 	})
 	if err == nil {
 		t.Fatal("expected invalid dossier error")
@@ -816,6 +825,83 @@ func TestRunProviderHardenClosesRoundOnInvalidDossier(t *testing.T) {
 	round := store.model.HardenRounds[0]
 	if round.Status != string(spec.HardenError) || round.EndedAt == "" || !strings.Contains(round.Summary, "invalid provider dossier") {
 		t.Fatalf("round = %+v", round)
+	}
+	if !strings.Contains(store.model.CurrentState.AllowedFollowUp, "--repair-packet") ||
+		!strings.Contains(store.model.CurrentState.AllowedFollowUp, "provider-packet-repair-harden-round-1.json") {
+		t.Fatalf("current state should point at repaired packet flow: %+v", store.model.CurrentState)
+	}
+}
+
+func TestHardenProviderPacketRepairArtifactCanBeAcceptedWithoutProviderRerun(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	dossier := passingHardenDossier()
+	dossier.Observations[0].Anchor = "code:missing.go:1"
+	store := newMemorySpecStore(fixtureModel())
+	_, err := Run(context.Background(), store, fixedClock{}, Input{
+		TaskID:   "fixture-task",
+		Provider: fakeHardenProvider{dossier: dossier},
+		Root:     root,
+	})
+	if !errors.Is(err, ErrInvalidHardenEvidence) {
+		t.Fatalf("error = %v, want %v", err, ErrInvalidHardenEvidence)
+	}
+
+	round := store.model.HardenRounds[0]
+	repairPath := round.DiagnosticPath
+	if !strings.Contains(repairPath, "provider-packet-repair-harden-round-1.json") {
+		t.Fatalf("repair artifact path = %q", repairPath)
+	}
+	data, err := os.ReadFile(repairPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifact, err := packetrepair.Decode(data)
+	if err != nil {
+		t.Fatalf("repair artifact decode err=%v", err)
+	}
+	if artifact.TaskID != "fixture-task" || artifact.Gate != "harden" || artifact.RoundID != "round-1" || !strings.Contains(artifact.RejectedText, "missing.go") {
+		t.Fatalf("repair artifact = %+v", artifact)
+	}
+	if !strings.Contains(artifact.AcceptCommand, "--repair-packet") || !strings.Contains(artifact.AcceptCommand, repairPath) {
+		t.Fatalf("accept command = %q", artifact.AcceptCommand)
+	}
+
+	repaired := passingHardenDossier()
+	repaired.Provider = ""
+	repaired.Model = ""
+	repaired.OutputFormat = ""
+	artifact.RepairedPacket = json.RawMessage(coreharden.EncodeDossier(repaired))
+	encoded, err := packetrepair.Encode(artifact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(repairPath, encoded, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := Run(context.Background(), store, fixedClock{}, Input{
+		TaskID:           "fixture-task",
+		Root:             root,
+		RepairPacketPath: repairPath,
+		Provider: hardenProviderFunc(func(context.Context, coreharden.Request) (coreharden.Dossier, error) {
+			t.Fatal("provider should not be called when accepting a repaired packet")
+			return coreharden.Dossier{}, nil
+		}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.HardenStatus != spec.HardenPassed || out.Verdict != coreharden.VerdictPass || out.Provider != "codex" || out.Model != "gpt-test" {
+		t.Fatalf("output = %+v", out)
+	}
+	round = store.model.HardenRounds[0]
+	if round.Status != string(spec.HardenPassed) || round.Provider != "codex" || round.Model != "gpt-test" || round.OutputFormat != "provider_packet_repair" {
+		t.Fatalf("round = %+v", round)
+	}
+	if store.model.CurrentState.AllowedFollowUp != "scafld approve fixture-task" {
+		t.Fatalf("current state = %+v", store.model.CurrentState)
 	}
 }
 

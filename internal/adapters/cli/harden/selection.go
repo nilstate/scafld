@@ -18,14 +18,15 @@ import (
 
 // Options configures harden-provider selection for the CLI.
 type Options struct {
-	Root            string
-	TaskID          string
-	Provider        string
-	Command         string
-	ProviderBinary  string
-	Model           string
-	DiagnosticsPath string
-	Progress        io.Writer
+	Root             string
+	TaskID           string
+	Provider         string
+	Command          string
+	ProviderBinary   string
+	Model            string
+	DiagnosticsPath  string
+	Progress         io.Writer
+	RepairPacketPath string
 }
 
 // Selection is the provider and context budget chosen for a harden run.
@@ -37,27 +38,29 @@ type Selection struct {
 
 // RunOptions configures the app harden input assembled by the CLI adapter.
 type RunOptions struct {
-	Root            string
-	TaskID          string
-	MarkPassed      bool
-	Provider        string
-	Command         string
-	ProviderBinary  string
-	Model           string
-	SuppressContext bool
-	Progress        io.Writer
+	Root             string
+	TaskID           string
+	MarkPassed       bool
+	Provider         string
+	Command          string
+	ProviderBinary   string
+	Model            string
+	SuppressContext  bool
+	RepairPacketPath string
+	Progress         io.Writer
 }
 
 // BuildInput returns the app-layer harden input for CLI execution.
 func BuildInput(ctx context.Context, opts RunOptions) (appharden.Input, error) {
 	selected, err := Select(ctx, Options{
-		Root:           opts.Root,
-		TaskID:         opts.TaskID,
-		Provider:       opts.Provider,
-		Command:        opts.Command,
-		ProviderBinary: opts.ProviderBinary,
-		Model:          opts.Model,
-		Progress:       opts.Progress,
+		Root:             opts.Root,
+		TaskID:           opts.TaskID,
+		Provider:         opts.Provider,
+		Command:          opts.Command,
+		ProviderBinary:   opts.ProviderBinary,
+		Model:            opts.Model,
+		RepairPacketPath: opts.RepairPacketPath,
+		Progress:         opts.Progress,
 	})
 	if err != nil {
 		return appharden.Input{}, err
@@ -76,6 +79,7 @@ func BuildInput(ctx context.Context, opts RunOptions) (appharden.Input, error) {
 		ContextMaxBytes:         selected.ContextMaxBytes,
 		RequiredContextMaxBytes: selected.RequiredContextMaxBytes,
 		SuppressContext:         opts.SuppressContext,
+		RepairPacketPath:        opts.RepairPacketPath,
 	}, nil
 }
 
@@ -109,7 +113,7 @@ func Select(ctx context.Context, opts Options) (Selection, error) {
 	}
 	selection := Selection{ContextMaxBytes: cfg.Harden.ContextMaxBytes, RequiredContextMaxBytes: cfg.Harden.RequiredContextMaxBytes}
 	external := cfg.Harden.External
-	if !hardenProviderRequested(opts, external) {
+	if strings.TrimSpace(opts.RepairPacketPath) != "" || !hardenProviderRequested(opts, external) {
 		return selection, nil
 	}
 	diagnosticsPath := opts.DiagnosticsPath

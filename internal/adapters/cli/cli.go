@@ -246,15 +246,16 @@ func runHarden(ctx context.Context, args []string, stdout io.Writer, stderr io.W
 	}
 	root, _ := commandRoot(ctx, opts, false)
 	input, err := hardencli.BuildInput(ctx, hardencli.RunOptions{
-		Root:            root,
-		TaskID:          opts.Positionals[0],
-		MarkPassed:      opts.Flags["mark-passed"],
-		Provider:        opts.Values["provider"],
-		Command:         opts.Values["provider-command"],
-		ProviderBinary:  opts.Values["provider-binary"],
-		Model:           opts.Values["model"],
-		SuppressContext: opts.Flags["no-context"],
-		Progress:        stderr,
+		Root:             root,
+		TaskID:           opts.Positionals[0],
+		MarkPassed:       opts.Flags["mark-passed"],
+		Provider:         opts.Values["provider"],
+		Command:          opts.Values["provider-command"],
+		ProviderBinary:   opts.Values["provider-binary"],
+		Model:            opts.Values["model"],
+		SuppressContext:  opts.Flags["no-context"],
+		RepairPacketPath: opts.Values["repair-packet"],
+		Progress:         stderr,
 	})
 	if err != nil {
 		return failOut(stderr, err, ExitReview, opts.JSON)
@@ -339,14 +340,15 @@ func runReview(ctx context.Context, args []string, stdout io.Writer, stderr io.W
 	var selected reviewcli.Selection
 	if !opts.Flags["human-reviewed"] {
 		selected, err = reviewcli.Select(ctx, reviewcli.Options{
-			Root:           root,
-			TaskID:         opts.Positionals[0],
-			Provider:       opts.Values["provider"],
-			Command:        opts.Values["provider-command"],
-			ProviderBinary: opts.Values["provider-binary"],
-			Model:          opts.Values["model"],
-			Progress:       stderr,
-			PrintContext:   opts.Flags["print-context"],
+			Root:             root,
+			TaskID:           opts.Positionals[0],
+			Provider:         opts.Values["provider"],
+			Command:          opts.Values["provider-command"],
+			ProviderBinary:   opts.Values["provider-binary"],
+			Model:            opts.Values["model"],
+			Progress:         stderr,
+			PrintContext:     opts.Flags["print-context"],
+			RepairPacketPath: opts.Values["repair-packet"],
 		})
 		if err != nil {
 			return failOut(stderr, err, ExitInvalid, opts.JSON)
@@ -355,7 +357,7 @@ func runReview(ctx context.Context, args []string, stdout io.Writer, stderr io.W
 	input := reviewcli.BuildInput(reviewcli.InputOptions{
 		TaskID: opts.Positionals[0], Mode: opts.Values["mode"], ReviewScope: opts.Values["review-scope"],
 		MaxFindings: opts.Values["max-findings"], MinAttackAngles: opts.Values["min-attack-angles"], ReviewDepth: opts.Values["review-depth"],
-		ForceReview: opts.Flags["force"], PrintContext: opts.Flags["print-context"], HumanReviewed: opts.Flags["human-reviewed"], Reason: opts.Values["reason"],
+		ForceReview: opts.Flags["force"], PrintContext: opts.Flags["print-context"], HumanReviewed: opts.Flags["human-reviewed"], RepairPacketPath: opts.Values["repair-packet"], Reason: opts.Values["reason"],
 	}, selected)
 	out, err := review.RunWithInput(ctx, store, sessions, git.Adapter{Root: root}, selected.Provider, clock.System{}, input)
 	if err != nil {

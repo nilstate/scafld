@@ -14,6 +14,7 @@ import (
 
 	"github.com/nilstate/scafld/v2/internal/core/execution"
 	coreharden "github.com/nilstate/scafld/v2/internal/core/harden"
+	"github.com/nilstate/scafld/v2/internal/core/providerpacket"
 	"github.com/nilstate/scafld/v2/internal/core/review"
 )
 
@@ -1017,8 +1018,14 @@ func TestClaudeProviderRequiresMCPSubmissionAndIgnoresResultText(t *testing.T) {
 		`{"type":"result","result":"Will produce the requested dossier.\n` + "```json" + `\n` + strings.ReplaceAll(dossierJSON(review.VerdictPass), `"`, `\"`) + `\n` + "```" + `"}` + "\n"
 	runner := &fakeRunner{result: execution.Result{Stdout: stdout}}
 	dossier, err := (ClaudeProvider{Runner: runner, SessionID: "00000000-0000-4000-8000-000000000000"}).Invoke(context.Background(), review.Request{TaskID: "task"})
-	if !errors.Is(err, ErrProviderFailed) || !strings.Contains(err.Error(), "provider produced no submission") || !strings.Contains(err.Error(), "submit_review") {
+	if !errors.Is(err, ErrProviderFailed) ||
+		!strings.Contains(err.Error(), "provider produced no submission") ||
+		!strings.Contains(err.Error(), "submit_review") {
 		t.Fatalf("err = %v dossier=%+v", err, dossier)
+	}
+	source := providerPacketSourceFromTestError(t, err)
+	if source.Provider != "claude" || source.ExpectedSchema != "ReviewDossier" || source.ExpectedSubmitTool != "submit_review" || !strings.Contains(source.RejectedText, "Will produce the requested dossier") {
+		t.Fatalf("packet repair source = %+v", source)
 	}
 }
 
@@ -1198,9 +1205,26 @@ func TestGeminiProviderFailsWhenToolSubmissionIsMissing(t *testing.T) {
 
 	runner := &fakeRunner{result: execution.Result{Stdout: `{"type":"message","text":"done"}` + "\n"}}
 	_, err := (GeminiProvider{Runner: runner}).Invoke(context.Background(), review.Request{TaskID: "task"})
-	if !errors.Is(err, ErrProviderFailed) || !strings.Contains(err.Error(), "provider produced no submission") || !strings.Contains(err.Error(), "mcp_scafld_submit_review") {
+	if !errors.Is(err, ErrProviderFailed) ||
+		!strings.Contains(err.Error(), "provider produced no submission") ||
+		!strings.Contains(err.Error(), "mcp_scafld_submit_review") {
 		t.Fatalf("err = %v", err)
 	}
+	source := providerPacketSourceFromTestError(t, err)
+	if source.Provider != "gemini" || source.ExpectedSchema != "ReviewDossier" || source.ExpectedSubmitTool != "submit_review" || !strings.Contains(source.RejectedText, "done") {
+		t.Fatalf("packet repair source = %+v", source)
+	}
+}
+
+func providerPacketSourceFromTestError(t *testing.T, err error) providerpacket.Source {
+	t.Helper()
+	var carrier interface {
+		ProviderPacketRepairSource() providerpacket.Source
+	}
+	if !errors.As(err, &carrier) {
+		t.Fatalf("error missing provider packet repair source: %v", err)
+	}
+	return carrier.ProviderPacketRepairSource()
 }
 
 func TestReviewDossierSchemaIsStrictStructuredOutputCompatible(t *testing.T) {

@@ -470,9 +470,11 @@ func writeReviewGate(b *strings.Builder, model spec.Model, ledger session.Sessio
 		b.WriteString("- Do not complete from older passing review evidence after a later attempt.\n")
 		return
 	case reviewgate.KindAttemptFailed:
-		b.WriteString("\nProvider repair focus:\n")
-		b.WriteString("- Fix provider availability, permissions, timeout, or dossier output shape.\n")
-		fmt.Fprintf(b, "- Then run `%s` for a new accepted review attempt.\n", "scafld review "+model.TaskID)
+		b.WriteString("\nProvider packet repair focus:\n")
+		b.WriteString("- Read the attempt repair artifact; it contains provider stdout/stderr references and any final text packet scafld rejected.\n")
+		b.WriteString("- Fill `repaired_packet` with exactly one valid ReviewDossier JSON object; do not spend another external review call just to fix packet shape.\n")
+		fmt.Fprintf(b, "- Then record the repaired packet: `%s`.\n", reviewgate.RepairPacketCommand(model.TaskID, state.LatestAttempt.DiagnosticPath))
+		b.WriteString("- If the diagnostic contains no usable packet, fix provider availability/output before explicitly rerunning external review.\n")
 		b.WriteString("- Do not complete from an older passing review after a later failed attempt.\n")
 		return
 	case reviewgate.KindReviewFailed:

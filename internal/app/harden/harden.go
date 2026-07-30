@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/nilstate/scafld/v2/internal/app/packetrepair"
 	"github.com/nilstate/scafld/v2/internal/app/specsource"
 	"github.com/nilstate/scafld/v2/internal/core/agentcontract"
 	"github.com/nilstate/scafld/v2/internal/core/diagnostics"
@@ -18,6 +19,7 @@ import (
 	coreharden "github.com/nilstate/scafld/v2/internal/core/harden"
 	"github.com/nilstate/scafld/v2/internal/core/hardengate"
 	"github.com/nilstate/scafld/v2/internal/core/lifecycle"
+	"github.com/nilstate/scafld/v2/internal/core/providerpacket"
 	"github.com/nilstate/scafld/v2/internal/core/reviewcontext"
 	"github.com/nilstate/scafld/v2/internal/core/spec"
 )
@@ -35,6 +37,8 @@ var (
 	ErrHardenRoundOpen = errors.New("harden round already in progress")
 	// ErrHardenRevisionRequired is returned when a provider harden rerun is attempted without draft edits.
 	ErrHardenRevisionRequired = errors.New("harden revision required before rerun")
+	// ErrHardenRepairPacketInvalid is returned when a repaired provider packet cannot be accepted.
+	ErrHardenRepairPacketInvalid = errors.New("harden repair packet cannot be accepted")
 )
 
 const anchorShape = `expected "Anchor: spec_gap:<field>", "Anchor: code:<path>:<line>", or "Anchor: archive:<task-id>"`
@@ -68,6 +72,7 @@ type Input struct {
 	ContextMaxBytes         int
 	RequiredContextMaxBytes int
 	SuppressContext         bool
+	RepairPacketPath        string
 }
 
 // Output describes the opened or completed hardening round.
@@ -111,6 +116,9 @@ func Run(ctx context.Context, store SpecStore, clock Clock, input Input) (Output
 	}
 	specDigest := spec.HardenContractDigest(model)
 	state := hardengate.Project(model)
+	if strings.TrimSpace(input.RepairPacketPath) != "" {
+		return runRepairedHardenPacket(ctx, store, path, model, now, input.Root, input.RepairPacketPath, state, specDigest)
+	}
 	if out, err, handled := guardExistingHardenRound(ctx, store, path, model, input, state); handled {
 		return out, err
 	}
@@ -198,6 +206,63 @@ func existingOpenRoundOutput(ctx context.Context, store SpecStore, path string, 
 	}, nil
 }
 
+func runRepairedHardenPacket(ctx context.Context, store SpecStore, path string, model spec.Model, now string, root string, packetPath string, state hardengate.State, specDigest string) (Output, error) {
+	if state.Kind != hardengate.KindError || !state.HasRound {
+		return Output{}, hardenRepairPacketGateError(model, errors.New("latest harden round is not a provider error"), []string{packetPath}, "latest harden round with status error", string(state.Kind), []string{"run scafld status " + model.TaskID + " to inspect the current harden gate"})
+	}
+	round := state.LatestRound
+	if !hardengate.SameDraft(round, specDigest) {
+		return Output{}, hardenRepairPacketGateError(model, errors.New("draft changed since failed harden provider attempt"), []string{packetPath}, "same draft digest as failed harden round", "draft digest changed", []string{"rerun harden after the draft change"})
+	}
+	packet, err := packetrepair.Load(packetPath, packetrepair.Identity{TaskID: model.TaskID, Gate: "harden", RoundID: round.ID})
+	if err != nil {
+		return Output{}, hardenRepairPacketGateError(model, err, []string{packetPath}, "repair artifact for latest failed harden round with repaired_packet set to one HardenDossier", err.Error(), []string{"repair " + packetPath + " or use the artifact from scafld status " + model.TaskID})
+	}
+	dossier, err := coreharden.ParseText(string(packet))
+	if err != nil {
+		return Output{}, hardenRepairPacketGateError(model, err, []string{packetPath}, "valid HardenDossier repaired_packet", err.Error(), []string{"repair the HardenDossier JSON in " + packetPath})
+	}
+	if strings.TrimSpace(dossier.Provider) == "" {
+		dossier.Provider = round.Provider
+	}
+	if strings.TrimSpace(dossier.Model) == "" {
+		dossier.Model = round.Model
+	}
+	if strings.TrimSpace(dossier.OutputFormat) == "" {
+		dossier.OutputFormat = "provider_packet_repair"
+	}
+	return recordHardenDossier(ctx, store, model.TaskID, round.ID, now, root, specDigest, dossier)
+}
+
+func hardenRepairPacketGateError(model spec.Model, err error, evidence []string, expected string, actual string, blockers []string) error {
+	if err == nil {
+		err = ErrHardenRepairPacketInvalid
+	}
+	return gate.New(errors.Join(ErrHardenRepairPacketInvalid, err), gate.Failure{
+		Gate:     "harden",
+		Status:   string(model.Status),
+		Reason:   "harden provider packet repair is invalid",
+		Evidence: nonEmptyStrings(evidence, "provider packet repair artifact"),
+		Expected: expected,
+		Actual:   actual,
+		Blockers: blockers,
+		Next:     "scafld status " + model.TaskID,
+	})
+}
+
+func nonEmptyStrings(values []string, fallback string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			out = append(out, value)
+		}
+	}
+	if len(out) == 0 && strings.TrimSpace(fallback) != "" {
+		return []string{fallback}
+	}
+	return out
+}
+
 func runProviderHarden(ctx context.Context, store SpecStore, provider Provider, path string, model spec.Model, now string, root string, contract agentcontract.Contract, contextMaxBytes int, requiredContextMaxBytes int, specDigest string) (Output, error) {
 	roundID := nextRoundID(model.HardenRounds)
 	model.HardenStatus = spec.HardenInProgress
@@ -228,7 +293,7 @@ func runProviderHarden(ctx context.Context, store SpecStore, provider Provider, 
 	rendered, err := reviewcontext.RenderMarkdownStrict(packet, reviewcontext.Options{MaxBytes: contextMaxBytes, RequiredMaxBytes: requiredContextMaxBytes, Title: "Harden Context Packet"})
 	if err != nil {
 		reason, diagnosticPath := diagnostics.FailureReason("provider harden context invalid", err, 240)
-		if closeErr := closeProviderHardenFailure(ctx, store, model.TaskID, roundID, now, reason, diagnosticPath); closeErr != nil {
+		if closeErr := closeProviderHardenRound(ctx, store, model.TaskID, roundID, now, reason, diagnosticPath, "external hardening context error", "fix harden context packet/budget, then run scafld harden "+model.TaskID+" --provider <provider>"); closeErr != nil {
 			return Output{}, errors.Join(err, fmt.Errorf("record provider harden failure: %w", closeErr))
 		}
 		return Output{}, err
@@ -236,29 +301,52 @@ func runProviderHarden(ctx context.Context, store SpecStore, provider Provider, 
 	dossier, err := provider.Invoke(ctx, coreharden.Request{TaskID: model.TaskID, Prompt: rendered, Context: packet})
 	if err != nil {
 		reason, diagnosticPath := diagnostics.FailureReason("provider error", err, 240)
-		if closeErr := closeProviderHardenFailure(ctx, store, model.TaskID, roundID, now, reason, diagnosticPath); closeErr != nil {
+		repairPath := ""
+		if path, ok := writeHardenPacketRepairArtifact(root, model.TaskID, roundID, err, providerpacket.Source{}); ok {
+			repairPath = path
+			diagnosticPath = repairPath
+			reason = diagnostics.CompactOneLine("provider error: "+err.Error()+" (repair artifact: "+repairPath+")", 240)
+		}
+		if closeErr := closeProviderHardenFailure(ctx, store, model.TaskID, roundID, now, reason, diagnosticPath, repairPath); closeErr != nil {
 			return Output{}, errors.Join(err, fmt.Errorf("record provider harden failure: %w", closeErr))
 		}
 		return Output{}, err
 	}
 	if err := coreharden.ValidateDossier(dossier); err != nil {
 		reason, diagnosticPath := diagnostics.FailureReason("invalid provider dossier", err, 240)
-		if closeErr := closeProviderHardenFailure(ctx, store, model.TaskID, roundID, now, reason, diagnosticPath); closeErr != nil {
+		repairPath := ""
+		source := providerpacket.Source{
+			Provider:           dossier.Provider,
+			Model:              dossier.Model,
+			OutputFormat:       dossier.OutputFormat,
+			ExpectedSchema:     "HardenDossier",
+			ExpectedSubmitTool: "submit_harden",
+			Error:              err.Error(),
+			RejectedText:       coreharden.EncodeDossier(dossier),
+		}
+		if path, ok := writeHardenPacketRepairArtifact(root, model.TaskID, roundID, err, source); ok {
+			repairPath = path
+			diagnosticPath = repairPath
+			reason = diagnostics.CompactOneLine("invalid provider dossier: "+err.Error()+" (repair artifact: "+repairPath+")", 240)
+		}
+		if closeErr := closeProviderHardenFailure(ctx, store, model.TaskID, roundID, now, reason, diagnosticPath, repairPath); closeErr != nil {
 			return Output{}, errors.Join(err, fmt.Errorf("record provider harden failure: %w", closeErr))
 		}
 		return Output{}, err
 	}
+	return recordHardenDossier(ctx, store, model.TaskID, roundID, now, root, specDigest, dossier)
+}
+
+func recordHardenDossier(ctx context.Context, store SpecStore, taskID string, roundID string, now string, root string, specDigest string, dossier coreharden.Dossier) (Output, error) {
 	recordCtx, cancelRecord := lifecycle.TerminalEvidenceContext(ctx)
 	defer cancelRecord()
-	taskID := model.TaskID
-	reloaded, _, err := store.Load(recordCtx, taskID)
+	model, path, err := store.Load(recordCtx, taskID)
 	if err != nil {
 		if closeErr := closeProviderHardenTerminalRecordFailure(ctx, store, taskID, roundID, now, "load harden round after provider", err); closeErr != nil {
 			return Output{}, closeErr
 		}
 		return Output{}, err
 	}
-	model = reloaded
 	if len(model.HardenRounds) == 0 || model.HardenRounds[len(model.HardenRounds)-1].ID != roundID {
 		return Output{}, fmt.Errorf("harden round changed while provider was running")
 	}
@@ -267,13 +355,29 @@ func runProviderHarden(ctx context.Context, store SpecStore, provider Provider, 
 	model.Updated = now
 	if warnings := verifyHardenRoundShape(root, model, model.HardenRounds[latest], true); len(warnings) > 0 {
 		reason := "invalid provider dossier evidence: " + strings.Join(warnings, "; ")
+		source := providerpacket.Source{
+			Provider:           dossier.Provider,
+			Model:              dossier.Model,
+			OutputFormat:       dossier.OutputFormat,
+			ExpectedSchema:     "HardenDossier",
+			ExpectedSubmitTool: "submit_harden",
+			Error:              reason,
+			RejectedText:       coreharden.EncodeDossier(dossier),
+		}
+		repairPath, hasRepair := writeHardenPacketRepairArtifact(root, model.TaskID, roundID, errors.New(reason), source)
+		if hasRepair {
+			reason = diagnostics.CompactOneLine(reason+" (repair artifact: "+repairPath+")", 240)
+		}
 		model.HardenRounds[latest].Status = string(spec.HardenError)
 		model.HardenRounds[latest].Summary = reason
+		if hasRepair {
+			model.HardenRounds[latest].DiagnosticPath = repairPath
+		}
 		model.HardenStatus = spec.HardenError
 		model.CurrentState.Next = "harden"
 		model.CurrentState.Reason = "external hardening provider evidence error"
 		model.CurrentState.Blockers = reason
-		model.CurrentState.AllowedFollowUp = "fix provider harden evidence, then run scafld harden " + model.TaskID + " --provider <provider>"
+		model.CurrentState.AllowedFollowUp = providerHardenPacketRepairFollowUp(model.TaskID, repairPath)
 		if err := store.Save(recordCtx, path, model); err != nil {
 			return Output{}, closeProviderHardenTerminalRecordFailure(ctx, store, model.TaskID, roundID, now, "save harden evidence failure", err)
 		}
@@ -286,7 +390,7 @@ func runProviderHarden(ctx context.Context, store SpecStore, provider Provider, 
 			Expected: "observations with filesystem-verifiable anchors",
 			Actual:   strings.Join(warnings, "; "),
 			Blockers: warnings,
-			Next:     "fix provider harden evidence, then run scafld harden " + model.TaskID + " --provider <provider>",
+			Next:     providerHardenPacketRepairFollowUp(model.TaskID, repairPath),
 		})
 	}
 	verdict := coreharden.VerdictFromDossier(dossier)
@@ -323,8 +427,29 @@ func runProviderHarden(ctx context.Context, store SpecStore, provider Provider, 
 	}, nil
 }
 
-func closeProviderHardenFailure(ctx context.Context, store SpecStore, taskID string, roundID string, now string, reason string, diagnosticPath string) error {
-	return closeProviderHardenRound(ctx, store, taskID, roundID, now, reason, diagnosticPath, "external hardening provider error", "fix provider availability/output, then run scafld harden "+taskID+" --provider <provider>")
+func closeProviderHardenFailure(ctx context.Context, store SpecStore, taskID string, roundID string, now string, reason string, diagnosticPath string, repairPath string) error {
+	followUp := "fix provider availability/output, then run scafld harden " + taskID + " --provider <provider>"
+	if strings.TrimSpace(repairPath) != "" {
+		followUp = providerHardenPacketRepairFollowUp(taskID, repairPath)
+	}
+	return closeProviderHardenRound(ctx, store, taskID, roundID, now, reason, diagnosticPath, "external hardening provider error", followUp)
+}
+
+func providerHardenPacketRepairFollowUp(taskID string, repairPath string) string {
+	return "read provider repair artifact, fill repaired_packet with one HardenDossier JSON object, then run " + hardengate.RepairPacketCommand(taskID, repairPath) + "; if no usable packet exists, fix provider availability/output before explicitly rerunning external harden"
+}
+
+func writeHardenPacketRepairArtifact(root string, taskID string, roundID string, err error, source providerpacket.Source) (string, bool) {
+	return packetrepair.WriteArtifact(packetrepair.ArtifactInput{
+		Root:          root,
+		TaskID:        taskID,
+		Name:          "provider-packet-repair-harden-" + roundID,
+		Gate:          "harden",
+		RoundID:       roundID,
+		Source:        source,
+		Err:           err,
+		AcceptCommand: func(path string) string { return hardengate.RepairPacketCommand(taskID, path) },
+	})
 }
 
 func closeProviderHardenRound(ctx context.Context, store SpecStore, taskID string, roundID string, now string, reason string, diagnosticPath string, stateReason string, followUp string) error {
