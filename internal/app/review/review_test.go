@@ -670,6 +670,10 @@ func TestReviewProviderPacketRepairArtifactCanBeAcceptedWithoutProviderRerun(t *
 	if err == nil {
 		t.Fatal("expected failed provider packet")
 	}
+	var gateErr gate.Error
+	if !errors.As(err, &gateErr) || gateErr.Failure.RepairAction == nil {
+		t.Fatalf("provider packet failure missing repair action: %v", err)
+	}
 
 	failed := latestReviewAttemptEntry(t, sessions.ledger, "failed")
 	repairPath := failed.Path
@@ -689,6 +693,12 @@ func TestReviewProviderPacketRepairArtifactCanBeAcceptedWithoutProviderRerun(t *
 	}
 	if !strings.Contains(artifact.AcceptCommand, "--repair-packet") || !strings.Contains(artifact.AcceptCommand, repairPath) {
 		t.Fatalf("accept command = %q", artifact.AcceptCommand)
+	}
+	if gateErr.Failure.RepairAction.ArtifactPath != repairPath || gateErr.Failure.RepairAction.CommandAfterEdit != artifact.AcceptCommand {
+		t.Fatalf("gate repair action = %+v, artifact command = %q", gateErr.Failure.RepairAction, artifact.AcceptCommand)
+	}
+	if !strings.Contains(gateErr.Failure.RepairAction.RequiredEdit, "do not invent, remove, soften, or rewrite findings") {
+		t.Fatalf("repair action should constrain operator edits: %+v", gateErr.Failure.RepairAction)
 	}
 
 	repaired := passingDossier()

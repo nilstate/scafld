@@ -217,11 +217,14 @@ func RunWithInput(ctx context.Context, specs SpecStore, sessions SessionStore, w
 	dossier = applyRequestedBudget(dossier, reviewBudget(input, 0, 0))
 	if err != nil {
 		reason, diagnosticPath := diagnostics.FailureReason("review provider failed", err, 240)
+		var repairAction *gate.RepairAction
 		if repairPath, ok := writeReviewPacketRepairArtifact(path, model, attempt, err); ok {
 			diagnosticPath = repairPath
 			reason = diagnostics.CompactOneLine("review provider failed: "+err.Error()+" (repair artifact: "+repairPath+")", 240)
+			action := packetrepair.ReviewAction(model.TaskID, repairPath)
+			repairAction = &action
 		}
-		return recordFailedReviewAttempt(ctx, sessions, model, attempt, reason, diagnosticPath, now, err, "review provider failed", err.Error())
+		return recordFailedReviewAttempt(ctx, sessions, model, attempt, reason, diagnosticPath, now, err, "review provider failed", err.Error(), repairAction)
 	}
 	if dossier.Mode != mode {
 		err := fmt.Errorf("%w: mode %q does not match requested mode %q", review.ErrInvalidDossier, dossier.Mode, mode)
@@ -264,6 +267,10 @@ func reviewCompletionSuffix(ctx context.Context, sessions SessionStore, taskID s
 }
 
 func reviewGateError(model spec.Model, err error, reason string, actual string, evidencePathOpt ...string) error {
+	return reviewGateErrorWithRepairAction(model, err, reason, actual, nil, evidencePathOpt...)
+}
+
+func reviewGateErrorWithRepairAction(model spec.Model, err error, reason string, actual string, repairAction *gate.RepairAction, evidencePathOpt ...string) error {
 	if err == nil {
 		err = errors.New(reason)
 	}
@@ -273,15 +280,20 @@ func reviewGateError(model spec.Model, err error, reason string, actual string, 
 	} else if path := diagnostics.Path(err); path != "" {
 		evidence = []string{path}
 	}
+	blockers := []string{reason}
+	if repairAction != nil {
+		blockers = append(blockers, packetrepair.Blockers(*repairAction)...)
+	}
 	return gate.New(err, gate.Failure{
-		Gate:     "review",
-		Status:   string(model.Status),
-		Reason:   reason,
-		Evidence: evidence,
-		Expected: "valid ReviewDossier submitted by an external reviewer",
-		Actual:   actual,
-		Blockers: []string{reason},
-		Next:     "scafld handoff " + model.TaskID,
+		Gate:         "review",
+		Status:       string(model.Status),
+		Reason:       reason,
+		Evidence:     evidence,
+		Expected:     "valid ReviewDossier submitted by an external reviewer",
+		Actual:       actual,
+		Blockers:     blockers,
+		Next:         "scafld handoff " + model.TaskID,
+		RepairAction: repairAction,
 	})
 }
 
@@ -294,15 +306,18 @@ func runRepairedReviewPacket(ctx context.Context, specs SpecStore, sessions Sess
 	attempt := state.LatestAttempt
 	packet, err := packetrepair.Load(packetPath, packetrepair.Identity{TaskID: model.TaskID, Gate: "review", AttemptID: attempt.AttemptID})
 	if err != nil {
-		return Output{}, reviewRepairPacketGateError(model, err, []string{packetPath}, "repair artifact for latest failed review attempt with repaired_packet set to one ReviewDossier", err.Error(), []string{"repair " + packetPath + " or use the artifact from scafld handoff " + model.TaskID})
+		action := packetrepair.ReviewAction(model.TaskID, packetPath)
+		return Output{}, reviewRepairPacketGateErrorWithAction(model, err, []string{packetPath}, "repair artifact for latest failed review attempt with repaired_packet set to one ReviewDossier", err.Error(), []string{"repair " + packetPath + " or use the artifact from scafld handoff " + model.TaskID}, &action)
 	}
 	dossier, err := review.ParseText(string(packet))
 	if err != nil {
-		return Output{}, reviewRepairPacketGateError(model, err, []string{packetPath}, "valid ReviewDossier repaired_packet", err.Error(), []string{"repair the ReviewDossier JSON in " + packetPath})
+		action := packetrepair.ReviewAction(model.TaskID, packetPath)
+		return Output{}, reviewRepairPacketGateErrorWithAction(model, err, []string{packetPath}, "valid ReviewDossier repaired_packet", err.Error(), []string{"repair the ReviewDossier JSON in " + packetPath}, &action)
 	}
 	if attempt.Mode != "" && dossier.Mode != attempt.Mode {
 		err := fmt.Errorf("%w: mode %q does not match failed attempt mode %q", review.ErrInvalidDossier, dossier.Mode, attempt.Mode)
-		return Output{}, reviewRepairPacketGateError(model, err, []string{packetPath}, "ReviewDossier mode matches failed provider attempt", err.Error(), []string{"repair the ReviewDossier mode in " + packetPath})
+		action := packetrepair.ReviewAction(model.TaskID, packetPath)
+		return Output{}, reviewRepairPacketGateErrorWithAction(model, err, []string{packetPath}, "ReviewDossier mode matches failed provider attempt", err.Error(), []string{"repair the ReviewDossier mode in " + packetPath}, &action)
 	}
 	if err := ensureRepairAttemptStillCurrent(ctx, workspace, model, attempt); err != nil {
 		return Output{}, err
@@ -326,18 +341,26 @@ func runRepairedReviewPacket(ctx context.Context, specs SpecStore, sessions Sess
 }
 
 func reviewRepairPacketGateError(model spec.Model, err error, evidence []string, expected string, actual string, blockers []string) error {
+	return reviewRepairPacketGateErrorWithAction(model, err, evidence, expected, actual, blockers, nil)
+}
+
+func reviewRepairPacketGateErrorWithAction(model spec.Model, err error, evidence []string, expected string, actual string, blockers []string, repairAction *gate.RepairAction) error {
 	if err == nil {
 		err = ErrReviewRepairPacketInvalid
 	}
+	if repairAction != nil {
+		blockers = append(append([]string(nil), blockers...), packetrepair.Blockers(*repairAction)...)
+	}
 	return gate.New(errors.Join(ErrReviewRepairPacketInvalid, err), gate.Failure{
-		Gate:     "review",
-		Status:   string(model.Status),
-		Reason:   "review provider packet repair is invalid",
-		Evidence: nonEmptyStrings(evidence, "provider packet repair artifact"),
-		Expected: expected,
-		Actual:   actual,
-		Blockers: blockers,
-		Next:     "scafld handoff " + model.TaskID,
+		Gate:         "review",
+		Status:       string(model.Status),
+		Reason:       "review provider packet repair is invalid",
+		Evidence:     nonEmptyStrings(evidence, "provider packet repair artifact"),
+		Expected:     expected,
+		Actual:       actual,
+		Blockers:     blockers,
+		Next:         "scafld handoff " + model.TaskID,
+		RepairAction: repairAction,
 	})
 }
 
@@ -560,8 +583,12 @@ func appendFailedReviewAttempt(ctx context.Context, sessions SessionStore, taskI
 	return err
 }
 
-func recordFailedReviewAttempt(ctx context.Context, sessions SessionStore, model spec.Model, attempt reviewgate.Attempt, reason string, diagnosticPath string, now string, cause error, gateReason string, actual string) (Output, error) {
-	gateErr := reviewGateError(model, cause, gateReason, actual, diagnosticPath)
+func recordFailedReviewAttempt(ctx context.Context, sessions SessionStore, model spec.Model, attempt reviewgate.Attempt, reason string, diagnosticPath string, now string, cause error, gateReason string, actual string, repairActionOpt ...*gate.RepairAction) (Output, error) {
+	var repairAction *gate.RepairAction
+	if len(repairActionOpt) > 0 {
+		repairAction = repairActionOpt[0]
+	}
+	gateErr := reviewGateErrorWithRepairAction(model, cause, gateReason, actual, repairAction, diagnosticPath)
 	if err := appendFailedReviewAttempt(ctx, sessions, model.TaskID, attempt, reason, diagnosticPath, now); err != nil {
 		return Output{}, errors.Join(gateErr, fmt.Errorf("record review attempt failure: %w", err))
 	}

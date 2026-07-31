@@ -237,8 +237,9 @@ func TestHandoffUsesRepairNextAfterFailedReviewAttempt(t *testing.T) {
 		"Attempt diagnostic: `/tmp/provider-packet-repair-review-attempt.json`",
 		"Provider packet repair focus:",
 		"Read the attempt repair artifact",
-		"do not spend another external review call just to fix packet shape",
+		"do not invent, remove, soften, or rewrite findings",
 		`scafld review task --repair-packet "/tmp/provider-packet-repair-review-attempt.json"`,
+		"only rerun external review if the artifact or diagnostic contains no usable provider packet",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("handoff missing %q:\n%s", want, out)

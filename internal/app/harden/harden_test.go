@@ -632,6 +632,13 @@ func TestRunProviderHardenClosesRoundOnProviderError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected provider error")
 	}
+	var gateErr gate.Error
+	if !errors.As(err, &gateErr) {
+		t.Fatalf("provider error missing gate failure: %v", err)
+	}
+	if gateErr.Failure.RepairAction != nil || !strings.Contains(gateErr.Failure.Next, "fix provider availability/output") {
+		t.Fatalf("provider error gate = %+v", gateErr.Failure)
+	}
 	if store.model.HardenStatus != spec.HardenError {
 		t.Fatalf("harden status = %s", store.model.HardenStatus)
 	}
@@ -819,6 +826,10 @@ func TestRunProviderHardenClosesRoundOnInvalidDossier(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected invalid dossier error")
 	}
+	var gateErr gate.Error
+	if !errors.As(err, &gateErr) || gateErr.Failure.RepairAction == nil {
+		t.Fatalf("invalid dossier missing repair action: %v", err)
+	}
 	if store.model.HardenStatus != spec.HardenError {
 		t.Fatalf("harden status = %s", store.model.HardenStatus)
 	}
@@ -829,6 +840,9 @@ func TestRunProviderHardenClosesRoundOnInvalidDossier(t *testing.T) {
 	if !strings.Contains(store.model.CurrentState.AllowedFollowUp, "--repair-packet") ||
 		!strings.Contains(store.model.CurrentState.AllowedFollowUp, "provider-packet-repair-harden-round-1.json") {
 		t.Fatalf("current state should point at repaired packet flow: %+v", store.model.CurrentState)
+	}
+	if gateErr.Failure.RepairAction.CommandAfterEdit == "" || !strings.Contains(gateErr.Failure.RepairAction.RequiredEdit, "do not invent, remove, soften, or rewrite findings") {
+		t.Fatalf("repair action = %+v", gateErr.Failure.RepairAction)
 	}
 }
 
@@ -846,6 +860,10 @@ func TestHardenProviderPacketRepairArtifactCanBeAcceptedWithoutProviderRerun(t *
 	})
 	if !errors.Is(err, ErrInvalidHardenEvidence) {
 		t.Fatalf("error = %v, want %v", err, ErrInvalidHardenEvidence)
+	}
+	var gateErr gate.Error
+	if !errors.As(err, &gateErr) || gateErr.Failure.RepairAction == nil {
+		t.Fatalf("invalid evidence missing repair action: %v", err)
 	}
 
 	round := store.model.HardenRounds[0]
@@ -866,6 +884,12 @@ func TestHardenProviderPacketRepairArtifactCanBeAcceptedWithoutProviderRerun(t *
 	}
 	if !strings.Contains(artifact.AcceptCommand, "--repair-packet") || !strings.Contains(artifact.AcceptCommand, repairPath) {
 		t.Fatalf("accept command = %q", artifact.AcceptCommand)
+	}
+	if gateErr.Failure.RepairAction.ArtifactPath != repairPath || gateErr.Failure.RepairAction.CommandAfterEdit != artifact.AcceptCommand {
+		t.Fatalf("gate repair action = %+v, artifact command = %q", gateErr.Failure.RepairAction, artifact.AcceptCommand)
+	}
+	if !strings.Contains(gateErr.Failure.RepairAction.RequiredEdit, "do not invent, remove, soften, or rewrite findings") {
+		t.Fatalf("repair action should constrain operator edits: %+v", gateErr.Failure.RepairAction)
 	}
 
 	repaired := passingHardenDossier()

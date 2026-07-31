@@ -278,15 +278,65 @@ func TestStatusReviewAttemptFailureCreatesRepairContract(t *testing.T) {
 	if out.Repair == nil || out.Repair.Gate != "review" || out.Repair.Next != "scafld handoff task" {
 		t.Fatalf("repair contract = %+v", out.Repair)
 	}
-	wantThen := `scafld review task --repair-packet "/tmp/provider-packet-repair-review-attempt.json"`
-	if out.NextAction.Role != "operator" || out.NextAction.Action != "repair_review_provider_packet" || out.NextAction.ThenCommand != wantThen {
+	wantCommand := `scafld review task --repair-packet "/tmp/provider-packet-repair-review-attempt.json"`
+	if out.NextAction.Role != "operator" || out.NextAction.Action != "repair_review_provider_packet" || out.NextAction.ThenCommand != "" {
 		t.Fatalf("next action = %+v", out.NextAction)
 	}
-	if len(out.Repair.Evidence) != 1 || out.Repair.Evidence[0] != "/tmp/provider-packet-repair-review-attempt.json" {
-		t.Fatalf("repair evidence = %+v", out.Repair.Evidence)
+	if out.NextAction.RepairAction == nil || out.NextAction.RepairAction.ArtifactPath != "/tmp/provider-packet-repair-review-attempt.json" || out.NextAction.RepairAction.CommandAfterEdit != wantCommand {
+		t.Fatalf("next repair action = %+v", out.NextAction.RepairAction)
 	}
-	if out.Next != "scafld handoff task" {
-		t.Fatalf("next = %q, want handoff", out.Next)
+	if out.NextAction.RepairAction.RequiredEdit == "" || out.NextAction.RepairAction.Fallback == "" {
+		t.Fatalf("repair action missing edit/fallback = %+v", out.NextAction.RepairAction)
+	}
+}
+
+func TestStatusReviewAttemptFailureWithoutArtifactDoesNotSuggestRepairPacket(t *testing.T) {
+	t.Parallel()
+
+	ledger := session.New("task", "2026-05-05T00:00:00Z")
+	ledger = ledger.WithEntry(session.Entry{Type: "review_attempt", Status: "failed", Reason: "provider unavailable", Path: "/tmp/scafld-review-diagnostic.txt"})
+	out, err := Run(context.Background(), fakeSpecStore{model: spec.Model{
+		TaskID: "task",
+		Status: spec.StatusReview,
+		CurrentState: spec.CurrentState{
+			AllowedFollowUp: "scafld handoff task",
+		},
+	}}, fakeSessionStore{ledger: ledger}, "task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.NextAction.Action != "fix_review_provider_output" || out.NextAction.RepairAction != nil {
+		t.Fatalf("next action = %+v", out.NextAction)
+	}
+	if out.Repair == nil || out.Repair.RepairAction != nil {
+		t.Fatalf("repair = %+v", out.Repair)
+	}
+}
+
+func TestStatusHardenProviderErrorCreatesRepairAction(t *testing.T) {
+	t.Parallel()
+
+	path := "/tmp/provider-packet-repair-harden-round-1.json"
+	out, err := Run(context.Background(), fakeSpecStore{model: spec.Model{
+		TaskID:       "task",
+		Status:       spec.StatusDraft,
+		HardenStatus: spec.HardenError,
+		HardenRounds: []spec.HardenRound{{
+			ID:             "round-1",
+			Status:         string(spec.HardenError),
+			Summary:        "provider error",
+			DiagnosticPath: path,
+		}},
+	}}, fakeSessionStore{}, "task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantCommand := `scafld harden task --repair-packet "/tmp/provider-packet-repair-harden-round-1.json"`
+	if out.NextAction.Role != "operator" || out.NextAction.Action != "repair_harden_provider_packet" {
+		t.Fatalf("next action = %+v", out.NextAction)
+	}
+	if out.NextAction.RepairAction == nil || out.NextAction.RepairAction.ArtifactPath != path || out.NextAction.RepairAction.CommandAfterEdit != wantCommand {
+		t.Fatalf("repair action = %+v", out.NextAction.RepairAction)
 	}
 }
 

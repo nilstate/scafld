@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/nilstate/scafld/v2/internal/app/packetrepair"
 	"github.com/nilstate/scafld/v2/internal/app/specsource"
 	"github.com/nilstate/scafld/v2/internal/core/gate"
 	"github.com/nilstate/scafld/v2/internal/core/hardengate"
@@ -79,12 +80,13 @@ type SpecSource struct {
 // NextAction gives wrappers and trigger agents the next deterministic role and
 // command without requiring them to interpret prose handoffs.
 type NextAction struct {
-	Role         string `json:"role,omitempty"`
-	Action       string `json:"action,omitempty"`
-	Command      string `json:"command,omitempty"`
-	Reason       string `json:"reason,omitempty"`
-	AfterCommand string `json:"after_command,omitempty"`
-	ThenCommand  string `json:"then_command,omitempty"`
+	Role         string             `json:"role,omitempty"`
+	Action       string             `json:"action,omitempty"`
+	Command      string             `json:"command,omitempty"`
+	Reason       string             `json:"reason,omitempty"`
+	AfterCommand string             `json:"after_command,omitempty"`
+	ThenCommand  string             `json:"then_command,omitempty"`
+	RepairAction *gate.RepairAction `json:"repair_action,omitempty"`
 }
 
 // ReviewInfo is the latest review evidence visible from status.
@@ -345,7 +347,11 @@ func applyHardenGateState(out *Output, model spec.Model, state hardengate.State)
 	}
 	switch state.Kind {
 	case hardengate.KindRoundOpen, hardengate.KindNeedsOperatorDecision, hardengate.KindStaleAfterDraft, hardengate.KindError, hardengate.KindInvalid:
-		out.Next = fallback(state.Next, out.Next)
+		if action, ok := hardenRepairAction(model, state); ok {
+			out.Next = fallback(packetrepair.FollowUp(action), out.Next)
+		} else {
+			out.Next = fallback(state.Next, out.Next)
+		}
 		out.AllowedFollowUp = out.Next
 		out.Gate = hardenGateName(state)
 	}
@@ -372,6 +378,9 @@ func nextAction(model spec.Model, hardenState hardengate.State, repair *gate.Fai
 		case hardengate.KindNeedsOperatorDecision:
 			return NextAction{Role: "operator", Action: "decide_harden_findings", Command: command, Reason: fallback(model.CurrentState.Reason, hardenState.Reason)}
 		case hardengate.KindError:
+			if action, ok := hardenRepairAction(model, hardenState); ok {
+				return NextAction{Role: "operator", Action: "repair_harden_provider_packet", Reason: fallback(model.CurrentState.Reason, hardenState.Reason), RepairAction: &action}
+			}
 			return NextAction{Role: "operator", Action: "decide_harden_error", Command: command, Reason: fallback(model.CurrentState.Reason, hardenState.Reason)}
 		case hardengate.KindStaleAfterDraft:
 			return NextAction{Role: "planner", Action: "refresh_hardening", Command: command, Reason: fallback(model.CurrentState.Reason, hardenState.Reason)}
@@ -399,11 +408,10 @@ func nextAction(model spec.Model, hardenState hardengate.State, repair *gate.Fai
 			if review.Verdict == corereview.VerdictFail {
 				return NextAction{Role: "executor", Action: "repair_review_findings", Command: command, Reason: "review found completion blockers", AfterCommand: taskCommand("build"), ThenCommand: taskCommand("review")}
 			}
-			repairPath := ""
-			if len(repair.Evidence) > 0 {
-				repairPath = repair.Evidence[0]
+			if repair.RepairAction != nil {
+				return NextAction{Role: "operator", Action: "repair_review_provider_packet", Reason: fallback(repair.Reason, "latest review attempt failed"), RepairAction: repair.RepairAction}
 			}
-			return NextAction{Role: "operator", Action: "repair_review_provider_packet", Command: command, Reason: fallback(repair.Reason, "latest review attempt failed"), ThenCommand: reviewgate.RepairPacketCommand(model.TaskID, repairPath)}
+			return NextAction{Role: "operator", Action: "fix_review_provider_output", Command: command, Reason: fallback(repair.Reason, "latest review attempt failed"), ThenCommand: taskCommand("review")}
 		}
 		if reviewGateValid {
 			return NextAction{Role: "operator", Action: "complete", Command: command, Reason: "latest review gate passed"}
@@ -527,6 +535,28 @@ func hardenGateName(state hardengate.State) string {
 	}
 }
 
+func reviewRepairAction(taskID string, state reviewgate.State) (gate.RepairAction, bool) {
+	path := strings.TrimSpace(state.LatestAttempt.DiagnosticPath)
+	if path == "" && len(state.Evidence) > 0 {
+		path = strings.TrimSpace(state.Evidence[0])
+	}
+	if !packetrepair.LooksLikeArtifactPath("review", path) {
+		return gate.RepairAction{}, false
+	}
+	return packetrepair.ReviewAction(taskID, path), true
+}
+
+func hardenRepairAction(model spec.Model, state hardengate.State) (gate.RepairAction, bool) {
+	if state.Kind != hardengate.KindError || !state.HasRound {
+		return gate.RepairAction{}, false
+	}
+	path := strings.TrimSpace(state.LatestRound.DiagnosticPath)
+	if !packetrepair.LooksLikeArtifactPath("harden", path) {
+		return gate.RepairAction{}, false
+	}
+	return packetrepair.HardenAction(model.TaskID, path), true
+}
+
 func repairContract(model spec.Model, ledger session.Session, state reviewgate.State) *gate.Failure {
 	switch model.Status {
 	case spec.StatusBlocked:
@@ -545,7 +575,7 @@ func repairContract(model spec.Model, ledger session.Session, state reviewgate.S
 		review := reviewInfoFromGate(state)
 		if state.Kind == reviewgate.KindAttemptFailed {
 			evidence := nonEmptyStrings(state.Evidence, "latest review_attempt session entry")
-			return &gate.Failure{
+			failure := &gate.Failure{
 				Gate:     "review",
 				Status:   string(model.Status),
 				Reason:   fallback(state.Reason, "latest review attempt failed"),
@@ -555,6 +585,13 @@ func repairContract(model spec.Model, ledger session.Session, state reviewgate.S
 				Blockers: []string{fallback(state.Reason, "latest review attempt failed")},
 				Next:     "scafld handoff " + model.TaskID,
 			}
+			if action, ok := reviewRepairAction(model.TaskID, state); ok {
+				failure.Blockers = append(failure.Blockers, packetrepair.Blockers(action)...)
+				failure.RepairAction = &action
+			} else {
+				failure.Blockers = append(failure.Blockers, "inspect provider diagnostic output, fix provider availability/output, then rerun external review")
+			}
+			return failure
 		}
 		if state.Kind == reviewgate.KindAttemptStale {
 			return &gate.Failure{

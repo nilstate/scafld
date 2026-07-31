@@ -4,14 +4,24 @@ import "fmt"
 
 // Failure is the machine-readable repair contract for a blocked gate.
 type Failure struct {
-	Gate     string   `json:"gate"`
-	Status   string   `json:"status,omitempty"`
-	Reason   string   `json:"reason"`
-	Evidence []string `json:"evidence,omitempty"`
-	Expected string   `json:"expected,omitempty"`
-	Actual   string   `json:"actual,omitempty"`
-	Blockers []string `json:"blockers,omitempty"`
-	Next     string   `json:"next,omitempty"`
+	Gate         string        `json:"gate"`
+	Status       string        `json:"status,omitempty"`
+	Reason       string        `json:"reason"`
+	Evidence     []string      `json:"evidence,omitempty"`
+	Expected     string        `json:"expected,omitempty"`
+	Actual       string        `json:"actual,omitempty"`
+	Blockers     []string      `json:"blockers,omitempty"`
+	Next         string        `json:"next,omitempty"`
+	RepairAction *RepairAction `json:"repair_action,omitempty"`
+}
+
+// RepairAction is the machine-readable operator action for salvaging a provider
+// packet that scafld rejected for transport or schema shape.
+type RepairAction struct {
+	ArtifactPath     string `json:"artifact_path,omitempty"`
+	RequiredEdit     string `json:"required_edit,omitempty"`
+	CommandAfterEdit string `json:"command_after_edit,omitempty"`
+	Fallback         string `json:"fallback,omitempty"`
 }
 
 // Error wraps a cause with a deterministic gate failure payload.
