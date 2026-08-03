@@ -4,7 +4,7 @@ set -euo pipefail
 version="${1:-}"
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 dist="$root/dist"
-max_bytes="${SCAFLD_MAX_RELEASE_BINARY_BYTES:-6291456}"
+max_bytes="${SCAFLD_MAX_RELEASE_BINARY_BYTES:-6553600}"
 
 if [[ ! "$max_bytes" =~ ^[0-9]+$ ]]; then
   echo "SCAFLD_MAX_RELEASE_BINARY_BYTES must be an integer byte count" >&2

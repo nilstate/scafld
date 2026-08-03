@@ -5,7 +5,7 @@ receipt="${SCAFLD_RECEIPT_PATH:-${1:-}}"
 target="${SCAFLD_VERIFY_TARGET:-${2:-}}"
 head_ref="${SCAFLD_VERIFY_HEAD:-HEAD}"
 trusted_keys="${SCAFLD_TRUSTED_KEYS:-}"
-version="${SCAFLD_VERSION:-v2.5.3}"
+version="${SCAFLD_VERSION:-v2.5.4}"
 tmp_dir="${RUNNER_TEMP:-${TMPDIR:-/tmp}}"
 mode="${SCAFLD_VERIFY_MODE:-full}"
 

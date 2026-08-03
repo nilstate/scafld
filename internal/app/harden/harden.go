@@ -22,6 +22,7 @@ import (
 	"github.com/nilstate/scafld/v2/internal/core/providerpacket"
 	"github.com/nilstate/scafld/v2/internal/core/reviewcontext"
 	"github.com/nilstate/scafld/v2/internal/core/spec"
+	coreworkspace "github.com/nilstate/scafld/v2/internal/core/workspace"
 )
 
 var (
@@ -71,6 +72,7 @@ type Input struct {
 	Provider                Provider
 	ContextMaxBytes         int
 	RequiredContextMaxBytes int
+	EvidenceRoots           []string
 	SuppressContext         bool
 	RepairPacketPath        string
 }
@@ -112,20 +114,20 @@ func Run(ctx context.Context, store SpecStore, clock Clock, input Input) (Output
 	}
 	now := clock.Now().UTC().Format(time.RFC3339)
 	if input.MarkPassed {
-		return markPassed(ctx, store, path, model, now, input.Root)
+		return markPassed(ctx, store, path, model, now, input.Root, input.EvidenceRoots)
 	}
 	specDigest := spec.HardenContractDigest(model)
 	state := hardengate.Project(model)
 	if strings.TrimSpace(input.RepairPacketPath) != "" {
-		return runRepairedHardenPacket(ctx, store, path, model, now, input.Root, input.RepairPacketPath, state, specDigest)
+		return runRepairedHardenPacket(ctx, store, path, model, now, input.Root, input.EvidenceRoots, input.RepairPacketPath, state, specDigest)
 	}
 	if out, err, handled := guardExistingHardenRound(ctx, store, path, model, input, state); handled {
 		return out, err
 	}
 	if input.Provider != nil {
-		return runProviderHarden(ctx, store, input.Provider, path, model, now, input.Root, input.Contract, input.ContextMaxBytes, input.RequiredContextMaxBytes, specDigest)
+		return runProviderHarden(ctx, store, input.Provider, path, model, now, input.Root, input.EvidenceRoots, input.Contract, input.ContextMaxBytes, input.RequiredContextMaxBytes, specDigest)
 	}
-	return openRound(ctx, store, path, model, now, input.Contract, input.Prompt, input.ContextMaxBytes, input.RequiredContextMaxBytes, input.SuppressContext, specDigest)
+	return openRound(ctx, store, path, model, now, input.Root, input.EvidenceRoots, input.Contract, input.Prompt, input.ContextMaxBytes, input.RequiredContextMaxBytes, input.SuppressContext, specDigest)
 }
 
 func guardExistingHardenRound(ctx context.Context, store SpecStore, path string, model spec.Model, input Input, state hardengate.State) (Output, error, bool) {
@@ -146,7 +148,7 @@ func guardExistingHardenRound(ctx context.Context, store SpecStore, path string,
 				Next:     hardengate.MarkPassedCommand(model.TaskID),
 			}), true
 		}
-		out, err := existingOpenRoundOutput(ctx, store, path, model, round, input.Contract, input.Prompt, input.ContextMaxBytes, input.RequiredContextMaxBytes, input.SuppressContext)
+		out, err := existingOpenRoundOutput(ctx, store, path, model, round, input.Root, input.EvidenceRoots, input.Contract, input.Prompt, input.ContextMaxBytes, input.RequiredContextMaxBytes, input.SuppressContext)
 		return out, err, true
 	}
 	switch state.Kind {
@@ -184,14 +186,14 @@ func guardExistingHardenRound(ctx context.Context, store SpecStore, path string,
 	}
 }
 
-func existingOpenRoundOutput(ctx context.Context, store SpecStore, path string, model spec.Model, round spec.HardenRound, contract agentcontract.Contract, prompt string, contextMaxBytes int, requiredContextMaxBytes int, suppressContext bool) (Output, error) {
+func existingOpenRoundOutput(ctx context.Context, store SpecStore, path string, model spec.Model, round spec.HardenRound, root string, evidenceRoots []string, contract agentcontract.Contract, prompt string, contextMaxBytes int, requiredContextMaxBytes int, suppressContext bool) (Output, error) {
 	renderedContext := ""
 	if !suppressContext {
 		source, err := specsource.Load(ctx, store, model.TaskID)
 		if err != nil {
 			return Output{}, err
 		}
-		packet := hardenContextPacket(source, contract, manualHardenOutputSection(hardengate.MarkPassedCommand(model.TaskID)))
+		packet := hardenContextPacket(source, contract, manualHardenOutputSection(hardengate.MarkPassedCommand(model.TaskID)), coreworkspace.EvidenceRoots(root, evidenceRoots))
 		renderedContext = reviewcontext.RenderMarkdown(packet, reviewcontext.Options{MaxBytes: contextMaxBytes, RequiredMaxBytes: requiredContextMaxBytes, Title: "Harden Context Packet"})
 	}
 	return Output{
@@ -206,7 +208,7 @@ func existingOpenRoundOutput(ctx context.Context, store SpecStore, path string, 
 	}, nil
 }
 
-func runRepairedHardenPacket(ctx context.Context, store SpecStore, path string, model spec.Model, now string, root string, packetPath string, state hardengate.State, specDigest string) (Output, error) {
+func runRepairedHardenPacket(ctx context.Context, store SpecStore, path string, model spec.Model, now string, root string, evidenceRoots []string, packetPath string, state hardengate.State, specDigest string) (Output, error) {
 	if state.Kind != hardengate.KindError || !state.HasRound {
 		return Output{}, hardenRepairPacketGateError(model, errors.New("latest harden round is not a provider error"), []string{packetPath}, "latest harden round with status error", string(state.Kind), []string{"run scafld status " + model.TaskID + " to inspect the current harden gate"})
 	}
@@ -233,7 +235,7 @@ func runRepairedHardenPacket(ctx context.Context, store SpecStore, path string, 
 	if strings.TrimSpace(dossier.OutputFormat) == "" {
 		dossier.OutputFormat = "provider_packet_repair"
 	}
-	return recordHardenDossier(ctx, store, model.TaskID, round.ID, now, root, specDigest, dossier)
+	return recordHardenDossier(ctx, store, model.TaskID, round.ID, now, root, evidenceRoots, specDigest, dossier)
 }
 
 func hardenRepairPacketGateError(model spec.Model, err error, evidence []string, expected string, actual string, blockers []string) error {
@@ -273,7 +275,7 @@ func nonEmptyStrings(values []string, fallback string) []string {
 	return out
 }
 
-func runProviderHarden(ctx context.Context, store SpecStore, provider Provider, path string, model spec.Model, now string, root string, contract agentcontract.Contract, contextMaxBytes int, requiredContextMaxBytes int, specDigest string) (Output, error) {
+func runProviderHarden(ctx context.Context, store SpecStore, provider Provider, path string, model spec.Model, now string, root string, evidenceRoots []string, contract agentcontract.Contract, contextMaxBytes int, requiredContextMaxBytes int, specDigest string) (Output, error) {
 	roundID := nextRoundID(model.HardenRounds)
 	model.HardenStatus = spec.HardenInProgress
 	model.HardenRounds = append(model.HardenRounds, spec.HardenRound{
@@ -299,7 +301,7 @@ func runProviderHarden(ctx context.Context, store SpecStore, provider Provider, 
 		return Output{}, err
 	}
 	model = source.Model
-	packet := hardenContextPacket(source, contract, providerHardenOutputSection())
+	packet := hardenContextPacket(source, contract, providerHardenOutputSection(), coreworkspace.EvidenceRoots(root, evidenceRoots))
 	rendered, err := reviewcontext.RenderMarkdownStrict(packet, reviewcontext.Options{MaxBytes: contextMaxBytes, RequiredMaxBytes: requiredContextMaxBytes, Title: "Harden Context Packet"})
 	if err != nil {
 		reason, diagnosticPath := diagnostics.FailureReason("provider harden context invalid", err, 240)
@@ -346,10 +348,10 @@ func runProviderHarden(ctx context.Context, store SpecStore, provider Provider, 
 		}
 		return Output{}, hardenProviderFailureGateError(model, err, "external hardening provider dossier invalid", err.Error(), diagnosticPath, repairPath, followUp)
 	}
-	return recordHardenDossier(ctx, store, model.TaskID, roundID, now, root, specDigest, dossier)
+	return recordHardenDossier(ctx, store, model.TaskID, roundID, now, root, evidenceRoots, specDigest, dossier)
 }
 
-func recordHardenDossier(ctx context.Context, store SpecStore, taskID string, roundID string, now string, root string, specDigest string, dossier coreharden.Dossier) (Output, error) {
+func recordHardenDossier(ctx context.Context, store SpecStore, taskID string, roundID string, now string, root string, evidenceRoots []string, specDigest string, dossier coreharden.Dossier) (Output, error) {
 	recordCtx, cancelRecord := lifecycle.TerminalEvidenceContext(ctx)
 	defer cancelRecord()
 	model, path, err := store.Load(recordCtx, taskID)
@@ -365,7 +367,7 @@ func recordHardenDossier(ctx context.Context, store SpecStore, taskID string, ro
 	latest := len(model.HardenRounds) - 1
 	model.HardenRounds[latest] = roundFromDossier(model.HardenRounds[latest], dossier, now)
 	model.Updated = now
-	if warnings := verifyHardenRoundShape(root, model, model.HardenRounds[latest], true); len(warnings) > 0 {
+	if warnings := verifyHardenRoundShapeWithEvidenceRoots(root, evidenceRoots, model, model.HardenRounds[latest], true); len(warnings) > 0 {
 		reason := "invalid provider dossier evidence: " + strings.Join(warnings, "; ")
 		source := providerpacket.Source{
 			Provider:           dossier.Provider,
@@ -528,7 +530,7 @@ func closeProviderHardenTerminalRecordFailure(ctx context.Context, store SpecSto
 	return recordErr
 }
 
-func openRound(ctx context.Context, store SpecStore, path string, model spec.Model, now string, contract agentcontract.Contract, prompt string, contextMaxBytes int, requiredContextMaxBytes int, suppressContext bool, specDigest string) (Output, error) {
+func openRound(ctx context.Context, store SpecStore, path string, model spec.Model, now string, root string, evidenceRoots []string, contract agentcontract.Contract, prompt string, contextMaxBytes int, requiredContextMaxBytes int, suppressContext bool, specDigest string) (Output, error) {
 	roundID := nextRoundID(model.HardenRounds)
 	model.HardenStatus = spec.HardenInProgress
 	model.HardenRounds = append(model.HardenRounds, spec.HardenRound{
@@ -552,7 +554,7 @@ func openRound(ctx context.Context, store SpecStore, path string, model spec.Mod
 		if err != nil {
 			return Output{}, err
 		}
-		packet := hardenContextPacket(source, contract, manualHardenOutputSection(hardengate.MarkPassedCommand(model.TaskID)))
+		packet := hardenContextPacket(source, contract, manualHardenOutputSection(hardengate.MarkPassedCommand(model.TaskID)), coreworkspace.EvidenceRoots(root, evidenceRoots))
 		renderedContext = reviewcontext.RenderMarkdown(packet, reviewcontext.Options{MaxBytes: contextMaxBytes, RequiredMaxBytes: requiredContextMaxBytes, Title: "Harden Context Packet"})
 	}
 	return Output{
@@ -583,12 +585,12 @@ func manualHardenFollowUp(path string, taskID string) string {
 	return "fill harden observations in " + path + ", then run " + hardengate.MarkPassedCommand(taskID)
 }
 
-func markPassed(ctx context.Context, store SpecStore, path string, model spec.Model, now string, root string) (Output, error) {
+func markPassed(ctx context.Context, store SpecStore, path string, model spec.Model, now string, root string, evidenceRoots []string) (Output, error) {
 	if len(model.HardenRounds) == 0 {
 		return Output{}, ErrNoHardenRound
 	}
 	latest := len(model.HardenRounds) - 1
-	warnings := verifyHardenRoundEvidence(root, model, model.HardenRounds[latest])
+	warnings := verifyHardenRoundEvidence(root, evidenceRoots, model, model.HardenRounds[latest])
 	if len(warnings) > 0 {
 		summary := hardenEvidenceSummary(warnings)
 		out := Output{TaskID: model.TaskID, Path: path, HardenStatus: model.HardenStatus, RoundID: model.HardenRounds[latest].ID, Warnings: warnings}
@@ -709,17 +711,21 @@ func nextRoundID(rounds []spec.HardenRound) string {
 	}
 }
 
-func verifyHardenRoundEvidence(root string, model spec.Model, round spec.HardenRound) []string {
-	return verifyHardenRoundShape(root, model, round, false)
+func verifyHardenRoundEvidence(root string, evidenceRoots []string, model spec.Model, round spec.HardenRound) []string {
+	return verifyHardenRoundShapeWithEvidenceRoots(root, evidenceRoots, model, round, false)
 }
 
 func verifyHardenRoundShape(root string, model spec.Model, round spec.HardenRound, allowOpenBlocks bool) []string {
+	return verifyHardenRoundShapeWithEvidenceRoots(root, nil, model, round, allowOpenBlocks)
+}
+
+func verifyHardenRoundShapeWithEvidenceRoots(root string, evidenceRoots []string, model spec.Model, round spec.HardenRound, allowOpenBlocks bool) []string {
 	if root == "" {
 		root = "."
 	}
 	var warnings []string
 	warnings = append(warnings, verifyHardenShapeDecision(round.Shape, allowOpenBlocks)...)
-	warnings = append(warnings, verifyHardenObservations(root, model, round.Observations, allowOpenBlocks)...)
+	warnings = append(warnings, verifyHardenObservations(root, coreworkspace.EvidenceRoots(root, evidenceRoots), model, round.Observations, allowOpenBlocks)...)
 	return warnings
 }
 
@@ -748,7 +754,7 @@ func verifyHardenShapeDecision(shape spec.HardenShape, allowRevision bool) []str
 	return warnings
 }
 
-func verifyHardenObservations(root string, model spec.Model, observations []spec.HardenObservation, allowOpenBlocks bool) []string {
+func verifyHardenObservations(root string, evidenceRoots []string, model spec.Model, observations []spec.HardenObservation, allowOpenBlocks bool) []string {
 	var warnings []string
 	if len(observations) == 0 {
 		return []string{"missing harden observations: record " + coreharden.RequiredDimensionList() + " observations before marking hardening passed"}
@@ -788,7 +794,7 @@ func verifyHardenObservations(root string, model spec.Model, observations []spec
 		if strings.TrimSpace(observation.Status) != "" && !coreharden.ValidObservationStatus(observation.Status) {
 			warnings = append(warnings, fmt.Sprintf("%s: invalid status %q", label, observation.Status))
 		}
-		warnings = append(warnings, verifyAnchor(root, model, label, anchorShape, observation.Anchor)...)
+		warnings = append(warnings, verifyAnchor(root, evidenceRoots, model, label, anchorShape, observation.Anchor)...)
 	}
 	var missing []string
 	for _, required := range requiredHardenDimensions {
@@ -813,7 +819,7 @@ func observationOpen(status string) bool {
 	}
 }
 
-func verifyAnchor(root string, model spec.Model, label string, expected string, anchor string) []string {
+func verifyAnchor(root string, evidenceRoots []string, model spec.Model, label string, expected string, anchor string) []string {
 	anchor = strings.TrimSpace(anchor)
 	switch {
 	case anchor == "":
@@ -821,7 +827,7 @@ func verifyAnchor(root string, model spec.Model, label string, expected string, 
 	case strings.HasPrefix(anchor, "spec_gap:"):
 		return verifySpecGapCitation(model, label, anchor)
 	case strings.HasPrefix(anchor, "code:"):
-		return verifyCodeCitation(root, label, anchor)
+		return verifyCodeCitation(root, evidenceRoots, label, anchor)
 	case strings.HasPrefix(anchor, "archive:"):
 		return verifyArchiveCitation(root, label, anchor)
 	default:
@@ -913,18 +919,22 @@ func normalizeResult(value string) string {
 	}
 }
 
-func verifyCodeCitation(root string, label string, grounded string) []string {
+func verifyCodeCitation(root string, evidenceRoots []string, label string, grounded string) []string {
 	rel, lineNumber, ok := parseCodeGroundedIn(grounded)
 	if !ok {
 		return []string{fmt.Sprintf("%s: invalid code citation %q (expected code:<path>:<line>, for example code:src/file.go:42; line ranges are not supported)", label, grounded)}
 	}
-	rootAbs, err := filepath.Abs(root)
-	if err != nil {
-		return []string{fmt.Sprintf("%s: cannot resolve workspace root: %v", label, err)}
+	roots := coreworkspace.EvidenceRoots(root, evidenceRoots)
+	if len(roots) == 0 {
+		return []string{fmt.Sprintf("%s: cannot resolve workspace root", label)}
 	}
-	candidate := filepath.Clean(filepath.Join(rootAbs, filepath.FromSlash(rel)))
-	if !isInside(candidate, rootAbs) {
-		return []string{fmt.Sprintf("%s: code citation escapes workspace root: %s", label, grounded)}
+	candidate := filepath.Clean(filepath.Join(roots[0], filepath.FromSlash(rel)))
+	if !coreworkspace.InsideAnyRoot(candidate, roots) {
+		scope := "workspace root"
+		if len(roots) > 1 {
+			scope = "declared evidence roots"
+		}
+		return []string{fmt.Sprintf("%s: code citation escapes %s: %s (fix the anchor or declare workspace.evidence_roots)", label, scope, grounded)}
 	}
 	lines, err := countLines(candidate)
 	if err != nil {
@@ -977,11 +987,6 @@ func countLines(path string) (int, error) {
 		return 0, err
 	}
 	return count, nil
-}
-
-func isInside(path string, root string) bool {
-	rel, err := filepath.Rel(root, path)
-	return err == nil && rel != "." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && rel != ".."
 }
 
 func specPathIsDraft(path string) bool {

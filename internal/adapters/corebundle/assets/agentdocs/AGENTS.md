@@ -56,4 +56,7 @@ sources, not independent contracts.
 
 ## Prompts
 
-`.scafld/prompts/*` overrides `.scafld/core/prompts/*` overrides built-ins.
+Embedded scafld prompts are the runtime default. `.scafld/core/prompts/*` is the
+managed visible copy refreshed by `scafld update`. `.scafld/prompts/*` overrides
+runtime only when the file contains `scafld:prompt-owner=project`; unmarked
+workspace prompt copies are refreshable scaffolding and ignored by runtime.

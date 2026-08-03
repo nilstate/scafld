@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	coreworkspace "github.com/nilstate/scafld/v2/internal/core/workspace"
 	"gopkg.in/yaml.v3"
 )
 
@@ -57,12 +58,22 @@ var legacyGeminiDefaultModels = map[string]string{
 // Config is the merged runtime configuration for a scafld workspace.
 type Config struct {
 	Version    string          `yaml:"version"`
+	Workspace  WorkspaceConfig `yaml:"workspace"`
 	Invariants InvariantConfig `yaml:"invariants"`
 	LLM        LLMConfig       `yaml:"llm"`
 	Execution  ExecutionConfig `yaml:"execution"`
 	Verify     VerifyConfig    `yaml:"verify"`
 	Harden     HardenConfig    `yaml:"harden"`
 	Review     ReviewConfig    `yaml:"review"`
+}
+
+// WorkspaceConfig describes the local filesystem boundary scafld should treat
+// as part of the project evidence surface.
+type WorkspaceConfig struct {
+	// EvidenceRoots are additional roots, relative to the scafld root unless
+	// absolute, whose files may be cited by harden/review evidence. The scafld
+	// root is always included.
+	EvidenceRoots []string `yaml:"evidence_roots"`
 }
 
 // InvariantConfig names project-level invariant IDs available to specs.
@@ -280,6 +291,9 @@ func mappingLookup(node *yaml.Node, key string) *yaml.Node {
 func Default() Config {
 	return Config{
 		Version: "1.0",
+		Workspace: WorkspaceConfig{
+			EvidenceRoots: nil,
+		},
 		Invariants: InvariantConfig{Canonical: map[string]string{
 			"domain_boundaries":           "Respect layer separation and ownership boundaries.",
 			"no_legacy_code":              "Do not add dual-reads, dual-writes, runtime fallbacks, or compatibility shims.",
@@ -369,6 +383,7 @@ func overlay(base Config, local Config) Config {
 	if local.Version != "" {
 		base.Version = local.Version
 	}
+	base.Workspace = overlayWorkspace(base.Workspace, local.Workspace)
 	base.Invariants.Canonical = overlayStrings(base.Invariants.Canonical, local.Invariants.Canonical)
 	if local.LLM.ModelProfile != "" {
 		base.LLM.ModelProfile = local.LLM.ModelProfile
@@ -391,6 +406,13 @@ func overlay(base Config, local Config) Config {
 	base.Review.AutomatedPasses = overlayPasses(base.Review.AutomatedPasses, local.Review.AutomatedPasses)
 	base.Review.AdversarialPasses = overlayPasses(base.Review.AdversarialPasses, local.Review.AdversarialPasses)
 	return withDefaults(base)
+}
+
+func overlayWorkspace(base WorkspaceConfig, local WorkspaceConfig) WorkspaceConfig {
+	if len(local.EvidenceRoots) > 0 {
+		base.EvidenceRoots = dedupeList(append(append([]string(nil), base.EvidenceRoots...), local.EvidenceRoots...))
+	}
+	return base
 }
 
 func overlayExternal(base ExternalReviewConfig, local ExternalReviewConfig) ExternalReviewConfig {
@@ -583,6 +605,7 @@ func withDefaults(cfg Config) Config {
 	if cfg.Version == "" {
 		cfg.Version = defaults.Version
 	}
+	cfg.Workspace = overlayWorkspace(defaults.Workspace, cfg.Workspace)
 	cfg.Invariants.Canonical = overlayStrings(defaults.Invariants.Canonical, cfg.Invariants.Canonical)
 	if cfg.LLM.ModelProfile == "" {
 		cfg.LLM.ModelProfile = defaults.LLM.ModelProfile
@@ -624,6 +647,12 @@ func withDefaults(cfg Config) Config {
 	cfg.Harden.External = normalizeProviderLatestModels(cfg.Harden.External)
 	cfg.Review.External = normalizeProviderLatestModels(cfg.Review.External)
 	return cfg
+}
+
+// EffectiveEvidenceRoots returns the absolute roots under which harden/review
+// evidence may be read or cited. The primary scafld root is always first.
+func EffectiveEvidenceRoots(root string, cfg WorkspaceConfig) []string {
+	return coreworkspace.EvidenceRoots(root, cfg.EvidenceRoots)
 }
 
 func normalizeProviderLatestModels(cfg ExternalReviewConfig) ExternalReviewConfig {

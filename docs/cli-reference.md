@@ -98,7 +98,7 @@ and open questions.
 `config` does not mutate `.scafld/config.yaml`. The operator or agent must
 open the cited sources and copy only verified runtime policy into the real
 config. Agent guidance belongs in `AGENTS.md`, `CLAUDE.md`, `.claude/rules`, or
-project prompts rather than unsupported config fields.
+marker-bearing project prompts rather than unsupported config fields.
 
 ## update
 
@@ -107,8 +107,8 @@ scafld update [--root PATH] [--json]
 ```
 
 Refreshes managed `.scafld/core/` files from the bundled runtime. It also
-refreshes existing `.scafld/prompts/*` copies only when the prompt manifest
-proves they are unmodified defaults. Customized project prompts are skipped. It
+refreshes unmarked `.scafld/prompts/*` copies. A project prompt override is
+preserved only when the file contains `scafld:prompt-owner=project`. It
 refreshes root agent docs and renders generated `.scafld/config.yaml` into the
 current strict runtime shape. Specs, runs, reviews, and local config are
 preserved.

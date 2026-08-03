@@ -185,6 +185,5 @@ func safeName(name string) string {
 }
 
 func hasSource(source providerpacket.Source) bool {
-	return strings.TrimSpace(source.RejectedText) != "" ||
-		strings.TrimSpace(source.DiagnosticPath) != ""
+	return strings.TrimSpace(source.RejectedText) != ""
 }

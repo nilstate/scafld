@@ -18,6 +18,9 @@ func installProjectConfig(ctx context.Context, root string, result *Result) erro
 # in .scafld/core/config.yaml; the committed project config lives in
 # .scafld/config.yaml.
 #
+# workspace:
+#   evidence_roots:
+#     - ".."
 # execution:
 #   path_prepend:
 #     - "$HOME/.rbenv/shims"
@@ -65,6 +68,9 @@ func projectConfig() []byte {
 # evidence-backed suggestions before tightening this file.
 
 version: "1.0"
+
+workspace:
+  evidence_roots: []
 
 invariants:
   canonical: {}

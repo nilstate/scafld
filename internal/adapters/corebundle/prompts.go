@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 
+	corecontract "github.com/nilstate/scafld/v2/internal/core/agentcontract"
 	"github.com/nilstate/scafld/v2/internal/platform/atomicfile"
 )
 
@@ -73,7 +74,6 @@ func writeProjectPrompt(path string, targetRel string, rel string, data []byte, 
 		manifest.Prompts[rel] = targetHash
 		return true, nil
 	}
-	existingHash := sha256Hex(existing)
 	if bytes.Equal(existing, data) {
 		result.Skipped = append(result.Skipped, targetRel)
 		if manifest.Prompts[rel] != targetHash {
@@ -82,15 +82,13 @@ func writeProjectPrompt(path string, targetRel string, rel string, data []byte, 
 		}
 		return false, nil
 	}
-	if refresh {
-		if manifest.Prompts[rel] != "" && manifest.Prompts[rel] == existingHash {
-			if err := atomicfile.Write(path, data, fileMode(targetRel)); err != nil {
-				return false, fmt.Errorf("write %s: %w", targetRel, err)
-			}
-			result.Updated = append(result.Updated, targetRel)
-			manifest.Prompts[rel] = targetHash
-			return true, nil
+	if refresh && !corecontract.HasProjectOverrideMarker(existing) {
+		if err := atomicfile.Write(path, data, fileMode(targetRel)); err != nil {
+			return false, fmt.Errorf("write %s: %w", targetRel, err)
 		}
+		result.Updated = append(result.Updated, targetRel)
+		manifest.Prompts[rel] = targetHash
+		return true, nil
 	}
 	result.Skipped = append(result.Skipped, targetRel)
 	return false, nil

@@ -34,7 +34,7 @@ func TestLoadPrefersProjectPromptOverride(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, ".scafld", "prompts"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, ".scafld", "prompts", "review.md"), []byte("# Project Review\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, ".scafld", "prompts", "review.md"), []byte("<!-- scafld:prompt-owner=project -->\n# Project Review\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	contract, err := Load(context.Background(), root, corecontract.RoleReview)
@@ -42,6 +42,25 @@ func TestLoadPrefersProjectPromptOverride(t *testing.T) {
 		t.Fatal(err)
 	}
 	if contract.Path != ".scafld/prompts/review.md" || !strings.Contains(contract.Body, "Project Review") {
+		t.Fatalf("contract = %+v", contract)
+	}
+}
+
+func TestLoadIgnoresUnmarkedProjectPromptCopy(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".scafld", "prompts"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".scafld", "prompts", "review.md"), []byte("# stale generated review prompt\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	contract, err := Load(context.Background(), root, corecontract.RoleReview)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(contract.Path, "embedded:.scafld/core/prompts/") || strings.Contains(contract.Body, "stale generated") {
 		t.Fatalf("contract = %+v", contract)
 	}
 }

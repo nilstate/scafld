@@ -64,6 +64,46 @@ func TestUpdateRefreshesUnmodifiedProjectPromptsFromManifest(t *testing.T) {
 	}
 }
 
+func TestUpdateRefreshesUnmarkedProjectPromptWithoutManifest(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	if _, err := Init(t.Context(), root); err != nil {
+		t.Fatal(err)
+	}
+	promptPath := filepath.Join(root, ".scafld", "prompts", "harden.md")
+	oldPrompt := []byte("# stale generated harden prompt\n")
+	if err := os.MkdirAll(filepath.Dir(promptPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(promptPath, oldPrompt, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	manifestPath := filepath.Join(root, ".scafld", "prompts", ".manifest.json")
+	if err := os.Remove(manifestPath); err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+
+	result, err := Update(t.Context(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsPath(result.Updated, ".scafld/prompts/harden.md") {
+		t.Fatalf("updated = %v, want harden prompt refreshed", result.Updated)
+	}
+	got, err := os.ReadFile(promptPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := assets.ReadFile("assets/core/prompts/harden.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("harden prompt not refreshed from bundle")
+	}
+}
+
 func TestUpdateSkipsFilesThatAlreadyMatchBundle(t *testing.T) {
 	t.Parallel()
 
@@ -267,7 +307,7 @@ func TestUpdateSkipsCustomizedProjectPrompt(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(promptPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	custom := []byte("# custom review prompt\n")
+	custom := []byte("<!-- scafld:prompt-owner=project -->\n# custom review prompt\n")
 	if err := os.WriteFile(promptPath, custom, 0o644); err != nil {
 		t.Fatal(err)
 	}

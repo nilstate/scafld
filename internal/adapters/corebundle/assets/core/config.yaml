@@ -7,6 +7,14 @@
 
 version: "1.0"
 
+workspace:
+  # Additional roots whose files may be cited by harden/review evidence.
+  # The scafld root is always included. Paths are relative to this config's
+  # workspace root unless absolute. Use this for monorepos where a governed
+  # service lives under api/ but the real evidence also lives in sibling app/
+  # or root files.
+  evidence_roots: []
+
 invariants:
   canonical:
     domain_boundaries: "Respect layer separation and ownership boundaries."

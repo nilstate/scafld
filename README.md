@@ -420,12 +420,14 @@ config, and custom prompts belong to the project. Run evidence stays local.
 
 Prompt ownership is deliberate:
 
-- `.scafld/prompts/*` is the active project-owned layer
-- `.scafld/core/prompts/*` is the managed reset copy refreshed by `scafld update`
+- embedded prompts are the runtime default
+- `.scafld/core/prompts/*` is the managed visible copy refreshed by `scafld update`
+- `.scafld/prompts/*` overrides runtime only when the file contains
+  `scafld:prompt-owner=project`
 
-`scafld update` refreshes managed core assets and existing manifest-backed
-prompt copies. Customized project prompts are skipped. It also refreshes root
-agent docs. Project config is left untouched.
+`scafld update` refreshes managed core assets and unmarked prompt copies.
+Marker-bearing project prompts are skipped. It also refreshes root agent docs.
+Project config is left untouched.
 
 ## Adversarial Review
 

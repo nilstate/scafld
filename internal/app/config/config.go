@@ -189,7 +189,7 @@ func agentInstructions() AgentInstructions {
 		Role: "Configure this repository for scafld using only cited evidence.",
 		Deliverables: []string{
 			"Update .scafld/config.yaml with verified runtime config only: invariant IDs, execution environment, review provider defaults, timeouts, context, and review passes.",
-			"Update AGENTS.md, CLAUDE.md, .claude/rules, or .scafld/prompts/* when the repo needs agent guidance that scafld should read as context but does not enforce as runtime config.",
+			"Update AGENTS.md, CLAUDE.md, .claude/rules, or marker-bearing .scafld/prompts/* when the repo needs agent guidance that scafld should read as context but does not enforce as runtime config.",
 			"Use spec_guidance.commands and spec_guidance.review_focus when drafting or tightening task specs; do not copy them into config unless they are translated into real config fields.",
 			"Resolve open_questions by inspecting the repo or asking the operator before treating the answer as policy.",
 		},
@@ -214,8 +214,9 @@ that has inspected the repo.
 1. Read .scafld/config.proposed.yaml.
 2. Open every cited source before trusting a suggestion.
 3. Update .scafld/config.yaml only with fields scafld actually enforces.
-4. Update AGENTS.md, CLAUDE.md, .claude/rules, or .scafld/prompts/* when the
-   finding belongs in agent guidance instead of runtime config.
+4. Update AGENTS.md, CLAUDE.md, .claude/rules, or marker-bearing
+   .scafld/prompts/* when the finding belongs in agent guidance instead of
+   runtime config.
 5. Use spec_guidance for future specs and review passes; do not paste it into
    config as unsupported YAML.
 6. Resolve open_questions by inspecting the repo or asking the operator.

@@ -88,6 +88,7 @@ type Selection struct {
 	Idle                      time.Duration
 	FallbackPolicy            string
 	HostAgent                 string
+	ReadRoots                 []string
 	CommandExists             func(string) bool
 }
 
@@ -155,11 +156,11 @@ func Select(opts Selection) (interface {
 	case "command":
 		return nil, errors.New("--provider=command requires --provider-command")
 	case "claude":
-		return ClaudeProvider{Binary: first(opts.Binary, opts.ClaudeBinary), Model: first(opts.Model, opts.ClaudeModel), Effort: opts.ClaudeEffort, CWD: opts.CWD, Runner: opts.Runner, Timeout: opts.Timeout, IdleTimeout: opts.Idle}, nil
+		return ClaudeProvider{Binary: first(opts.Binary, opts.ClaudeBinary), Model: first(opts.Model, opts.ClaudeModel), Effort: opts.ClaudeEffort, CWD: opts.CWD, Runner: opts.Runner, Timeout: opts.Timeout, IdleTimeout: opts.Idle, ReadRoots: append([]string(nil), opts.ReadRoots...)}, nil
 	case "codex":
-		return CodexProvider{Binary: first(opts.Binary, opts.CodexBinary), Model: first(opts.Model, opts.CodexModel), ModelReasoningEffort: opts.CodexModelReasoningEffort, CWD: opts.CWD, Runner: opts.Runner, Timeout: opts.Timeout, IdleTimeout: opts.Idle}, nil
+		return CodexProvider{Binary: first(opts.Binary, opts.CodexBinary), Model: first(opts.Model, opts.CodexModel), ModelReasoningEffort: opts.CodexModelReasoningEffort, CWD: opts.CWD, Runner: opts.Runner, Timeout: opts.Timeout, IdleTimeout: opts.Idle, ReadRoots: append([]string(nil), opts.ReadRoots...)}, nil
 	case "gemini":
-		return GeminiProvider{Binary: first(opts.Binary, opts.GeminiBinary), Model: first(opts.Model, opts.GeminiModel), CWD: opts.CWD, Runner: opts.Runner, Timeout: opts.Timeout, IdleTimeout: opts.Idle}, nil
+		return GeminiProvider{Binary: first(opts.Binary, opts.GeminiBinary), Model: first(opts.Model, opts.GeminiModel), CWD: opts.CWD, Runner: opts.Runner, Timeout: opts.Timeout, IdleTimeout: opts.Idle, ReadRoots: append([]string(nil), opts.ReadRoots...)}, nil
 	default:
 		return nil, fmt.Errorf("unknown review provider %q", opts.Provider)
 	}
@@ -184,11 +185,11 @@ func SelectAgent(opts Selection) (Agent, error) {
 	case "command":
 		return nil, errors.New("--provider=command requires --provider-command")
 	case "claude":
-		return ClaudeProvider{Binary: first(opts.Binary, opts.ClaudeBinary), Model: first(opts.Model, opts.ClaudeModel), Effort: opts.ClaudeEffort, CWD: opts.CWD, Runner: opts.Runner, Timeout: opts.Timeout, IdleTimeout: opts.Idle}, nil
+		return ClaudeProvider{Binary: first(opts.Binary, opts.ClaudeBinary), Model: first(opts.Model, opts.ClaudeModel), Effort: opts.ClaudeEffort, CWD: opts.CWD, Runner: opts.Runner, Timeout: opts.Timeout, IdleTimeout: opts.Idle, ReadRoots: append([]string(nil), opts.ReadRoots...)}, nil
 	case "codex":
-		return CodexProvider{Binary: first(opts.Binary, opts.CodexBinary), Model: first(opts.Model, opts.CodexModel), ModelReasoningEffort: opts.CodexModelReasoningEffort, CWD: opts.CWD, Runner: opts.Runner, Timeout: opts.Timeout, IdleTimeout: opts.Idle}, nil
+		return CodexProvider{Binary: first(opts.Binary, opts.CodexBinary), Model: first(opts.Model, opts.CodexModel), ModelReasoningEffort: opts.CodexModelReasoningEffort, CWD: opts.CWD, Runner: opts.Runner, Timeout: opts.Timeout, IdleTimeout: opts.Idle, ReadRoots: append([]string(nil), opts.ReadRoots...)}, nil
 	case "gemini":
-		return GeminiProvider{Binary: first(opts.Binary, opts.GeminiBinary), Model: first(opts.Model, opts.GeminiModel), CWD: opts.CWD, Runner: opts.Runner, Timeout: opts.Timeout, IdleTimeout: opts.Idle}, nil
+		return GeminiProvider{Binary: first(opts.Binary, opts.GeminiBinary), Model: first(opts.Model, opts.GeminiModel), CWD: opts.CWD, Runner: opts.Runner, Timeout: opts.Timeout, IdleTimeout: opts.Idle, ReadRoots: append([]string(nil), opts.ReadRoots...)}, nil
 	default:
 		return nil, fmt.Errorf("unknown provider %q", opts.Provider)
 	}
@@ -523,22 +524,22 @@ func reviewProviderFor(provider string, opts Selection) interface {
 } {
 	switch provider {
 	case "claude":
-		return ClaudeProvider{Binary: first(opts.Binary, opts.ClaudeBinary), Model: first(opts.Model, opts.ClaudeModel), Effort: opts.ClaudeEffort, CWD: opts.CWD, Runner: opts.Runner, Timeout: opts.Timeout, IdleTimeout: opts.Idle}
+		return ClaudeProvider{Binary: first(opts.Binary, opts.ClaudeBinary), Model: first(opts.Model, opts.ClaudeModel), Effort: opts.ClaudeEffort, CWD: opts.CWD, Runner: opts.Runner, Timeout: opts.Timeout, IdleTimeout: opts.Idle, ReadRoots: append([]string(nil), opts.ReadRoots...)}
 	case "gemini":
-		return GeminiProvider{Binary: first(opts.Binary, opts.GeminiBinary), Model: first(opts.Model, opts.GeminiModel), CWD: opts.CWD, Runner: opts.Runner, Timeout: opts.Timeout, IdleTimeout: opts.Idle}
+		return GeminiProvider{Binary: first(opts.Binary, opts.GeminiBinary), Model: first(opts.Model, opts.GeminiModel), CWD: opts.CWD, Runner: opts.Runner, Timeout: opts.Timeout, IdleTimeout: opts.Idle, ReadRoots: append([]string(nil), opts.ReadRoots...)}
 	default:
-		return CodexProvider{Binary: first(opts.Binary, opts.CodexBinary), Model: first(opts.Model, opts.CodexModel), ModelReasoningEffort: opts.CodexModelReasoningEffort, CWD: opts.CWD, Runner: opts.Runner, Timeout: opts.Timeout, IdleTimeout: opts.Idle}
+		return CodexProvider{Binary: first(opts.Binary, opts.CodexBinary), Model: first(opts.Model, opts.CodexModel), ModelReasoningEffort: opts.CodexModelReasoningEffort, CWD: opts.CWD, Runner: opts.Runner, Timeout: opts.Timeout, IdleTimeout: opts.Idle, ReadRoots: append([]string(nil), opts.ReadRoots...)}
 	}
 }
 
 func agentProviderFor(provider string, opts Selection) Agent {
 	switch provider {
 	case "claude":
-		return ClaudeProvider{Binary: first(opts.Binary, opts.ClaudeBinary), Model: first(opts.Model, opts.ClaudeModel), Effort: opts.ClaudeEffort, CWD: opts.CWD, Runner: opts.Runner, Timeout: opts.Timeout, IdleTimeout: opts.Idle}
+		return ClaudeProvider{Binary: first(opts.Binary, opts.ClaudeBinary), Model: first(opts.Model, opts.ClaudeModel), Effort: opts.ClaudeEffort, CWD: opts.CWD, Runner: opts.Runner, Timeout: opts.Timeout, IdleTimeout: opts.Idle, ReadRoots: append([]string(nil), opts.ReadRoots...)}
 	case "gemini":
-		return GeminiProvider{Binary: first(opts.Binary, opts.GeminiBinary), Model: first(opts.Model, opts.GeminiModel), CWD: opts.CWD, Runner: opts.Runner, Timeout: opts.Timeout, IdleTimeout: opts.Idle}
+		return GeminiProvider{Binary: first(opts.Binary, opts.GeminiBinary), Model: first(opts.Model, opts.GeminiModel), CWD: opts.CWD, Runner: opts.Runner, Timeout: opts.Timeout, IdleTimeout: opts.Idle, ReadRoots: append([]string(nil), opts.ReadRoots...)}
 	default:
-		return CodexProvider{Binary: first(opts.Binary, opts.CodexBinary), Model: first(opts.Model, opts.CodexModel), ModelReasoningEffort: opts.CodexModelReasoningEffort, CWD: opts.CWD, Runner: opts.Runner, Timeout: opts.Timeout, IdleTimeout: opts.Idle}
+		return CodexProvider{Binary: first(opts.Binary, opts.CodexBinary), Model: first(opts.Model, opts.CodexModel), ModelReasoningEffort: opts.CodexModelReasoningEffort, CWD: opts.CWD, Runner: opts.Runner, Timeout: opts.Timeout, IdleTimeout: opts.Idle, ReadRoots: append([]string(nil), opts.ReadRoots...)}
 	}
 }
 

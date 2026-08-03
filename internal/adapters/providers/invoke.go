@@ -209,6 +209,132 @@ func providerpacketSource(provider string, model string, outputFormat string, sc
 	}
 }
 
+func providerNoSubmissionSource(provider string, model string, outputFormat string, schemaName string, submitTool string, cause error, candidates ...string) providerpacket.Source {
+	return providerpacket.Source{
+		Provider:           provider,
+		Model:              model,
+		OutputFormat:       outputFormat,
+		ExpectedSchema:     schemaName,
+		ExpectedSubmitTool: submitTool,
+		Error:              errorString(cause),
+		RejectedText:       noSubmissionRepairText(schemaName, candidates...),
+	}
+}
+
+func noSubmissionRepairText(schemaName string, candidates ...string) string {
+	for _, candidate := range packetTextCandidates(candidates...) {
+		if providerPacketParses(schemaName, candidate) || providerPacketShape(schemaName, candidate) {
+			return candidate
+		}
+	}
+	return ""
+}
+
+func providerPacketParses(schemaName string, text string) bool {
+	switch schemaName {
+	case "HardenDossier":
+		_, err := coreharden.ParseText(text)
+		return err == nil
+	case "ReviewDossier":
+		_, err := review.ParseText(text)
+		return err == nil
+	default:
+		return false
+	}
+}
+
+func providerPacketShape(schemaName string, text string) bool {
+	fields, ok := jsonObjectFields(text)
+	if !ok {
+		return false
+	}
+	switch schemaName {
+	case "HardenDossier":
+		return knownFieldCount(fields, "summary", "shape", "observations", "provider", "model", "output_format") >= 2
+	case "ReviewDossier":
+		if rawType, hasType := fields["type"]; hasType {
+			var frameType string
+			if err := json.Unmarshal(rawType, &frameType); err == nil && frameType == "dossier" {
+				_, hasDossier := fields["dossier"]
+				return hasDossier
+			}
+		}
+		return knownFieldCount(fields, "verdict", "mode", "summary", "findings", "attack_log", "budget", "provider", "model", "output_format") >= 2
+	default:
+		return false
+	}
+}
+
+func knownFieldCount(fields map[string]json.RawMessage, names ...string) int {
+	count := 0
+	for _, name := range names {
+		if _, ok := fields[name]; ok {
+			count++
+		}
+	}
+	return count
+}
+
+func jsonObjectFields(text string) (map[string]json.RawMessage, bool) {
+	text = strings.TrimSpace(text)
+	if !strings.HasPrefix(text, "{") {
+		return nil, false
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(text), &fields); err != nil {
+		return nil, false
+	}
+	return fields, true
+}
+
+func packetTextCandidates(candidates ...string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, candidate := range candidates {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" {
+			continue
+		}
+		if !seen[candidate] {
+			seen[candidate] = true
+			out = append(out, candidate)
+		}
+		for _, fenced := range fencedJSONCandidates(candidate) {
+			if !seen[fenced] {
+				seen[fenced] = true
+				out = append(out, fenced)
+			}
+		}
+	}
+	return out
+}
+
+func fencedJSONCandidates(text string) []string {
+	var out []string
+	rest := text
+	for {
+		start := strings.Index(rest, "```")
+		if start < 0 {
+			return out
+		}
+		rest = rest[start+3:]
+		end := strings.Index(rest, "```")
+		if end < 0 {
+			return out
+		}
+		block := strings.TrimSpace(rest[:end])
+		rest = rest[end+3:]
+		if first, body, ok := strings.Cut(block, "\n"); ok {
+			if language := strings.ToLower(strings.TrimSpace(first)); language == "json" || language == "jsonc" {
+				block = strings.TrimSpace(body)
+			}
+		}
+		if block != "" {
+			out = append(out, block)
+		}
+	}
+}
+
 func errorString(err error) string {
 	if err == nil {
 		return ""
@@ -251,6 +377,26 @@ func extractClaudeProvenance(stdout string) claudeProvenance {
 		if event["type"] == "system" && event["subtype"] == "init" {
 			out.Model = stringField(event, "model", "model_id", "modelId")
 			out.SessionID = stringField(event, "session_id", "sessionId")
+		}
+	}
+	return out
+}
+
+func claudeResultTexts(stdout string) []string {
+	var out []string
+	for _, raw := range strings.Split(stdout, "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" {
+			continue
+		}
+		var event map[string]any
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			continue
+		}
+		if event["type"] == "result" {
+			if result := stringField(event, "result"); result != "" {
+				out = append(out, result)
+			}
 		}
 	}
 	return out

@@ -205,6 +205,34 @@ func TestRunMarkPassedRejectsInvalidObservationAnchors(t *testing.T) {
 	}
 }
 
+func TestHardenCodeCitationAllowsDeclaredEvidenceRoot(t *testing.T) {
+	t.Parallel()
+
+	base := t.TempDir()
+	root := filepath.Join(base, "api")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(base, "app", "src", "view.ts")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("export const ok = true\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	round := spec.HardenRound{Shape: passingShape(), Observations: passingObservations()}
+	round.Observations[0].Anchor = "code:../app/src/view.ts:1"
+
+	defaultWarnings := verifyHardenRoundShape(root, fixtureModel(), round, true)
+	if !containsWarning(defaultWarnings, "code citation escapes workspace root") {
+		t.Fatalf("default warnings = %+v, want workspace escape", defaultWarnings)
+	}
+	configuredWarnings := verifyHardenRoundShapeWithEvidenceRoots(root, []string{".."}, fixtureModel(), round, true)
+	if len(configuredWarnings) != 0 {
+		t.Fatalf("configured evidence root warnings = %+v", configuredWarnings)
+	}
+}
+
 func TestRunMarkPassedRejectsUnknownSpecGapAnchor(t *testing.T) {
 	t.Parallel()
 
@@ -992,6 +1020,15 @@ func passingShape() spec.HardenShape {
 		SharedOwner:       "internal/core/reviewcontext",
 		AdapterBoundaries: []string{"harden and review build provider packets", "CLI surfaces print context by default"},
 	}
+}
+
+func containsWarning(warnings []string, want string) bool {
+	for _, warning := range warnings {
+		if strings.Contains(warning, want) {
+			return true
+		}
+	}
+	return false
 }
 
 type memorySpecStore struct {

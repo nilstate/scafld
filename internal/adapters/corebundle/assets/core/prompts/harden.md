@@ -1,7 +1,7 @@
 # HARDEN MODE TEMPLATE
 
-This file is the managed harden prompt. Workspace-owned copies may override it
-at `.scafld/prompts/harden.md`.
+This file is the managed harden prompt. A workspace `.scafld/prompts/harden.md`
+override is active only when it contains `scafld:prompt-owner=project`.
 
 **Status:** ACTIVE
 **Mode:** HARDEN

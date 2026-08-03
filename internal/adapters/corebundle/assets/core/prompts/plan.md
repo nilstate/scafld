@@ -1,7 +1,8 @@
 # PLANNING HANDOFF TEMPLATE
 
-This file is the generated core template source for planning. A workspace-owned
-`.scafld/prompts/plan.md` may override it.
+This file is the generated core template source for planning. A workspace
+`.scafld/prompts/plan.md` override is active only when it contains
+`scafld:prompt-owner=project`.
 
 You are planning governed work for scafld.
 

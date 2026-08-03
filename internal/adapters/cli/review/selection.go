@@ -47,6 +47,7 @@ type Selection struct {
 	RequiredContextMaxBytes int
 	Contract                corecontract.Contract
 	Dossier                 configadapter.ReviewDossierConfig
+	EvidenceRoots           []string
 }
 
 // Select loads config, applies CLI overrides, and returns a review provider.
@@ -60,6 +61,7 @@ func Select(ctx context.Context, opts Options) (Selection, error) {
 	if err != nil {
 		return Selection{}, output.ConfigGateError(fmt.Errorf("load review contract: %w", err))
 	}
+	evidenceRoots := configadapter.EffectiveEvidenceRoots(opts.Root, cfg.Workspace)
 	selection := Selection{
 		Passes:                  reviewPassesFromConfig(cfg.Review),
 		Invariants:              cloneStrings(cfg.Invariants.Canonical),
@@ -68,6 +70,7 @@ func Select(ctx context.Context, opts Options) (Selection, error) {
 		RequiredContextMaxBytes: cfg.Review.Context.RequiredMaxBytes,
 		Contract:                contract,
 		Dossier:                 cfg.Review.Dossier,
+		EvidenceRoots:           evidenceRoots,
 	}
 	if opts.PrintContext || strings.TrimSpace(opts.RepairPacketPath) != "" {
 		return selection, nil
@@ -96,6 +99,7 @@ func Select(ctx context.Context, opts Options) (Selection, error) {
 		Idle:                      time.Duration(external.IdleTimeoutSeconds) * time.Second,
 		FallbackPolicy:            external.FallbackPolicy,
 		HostAgent:                 providers.DetectHostAgent(os.Environ()),
+		ReadRoots:                 evidenceRoots,
 	})
 	if err != nil {
 		return Selection{}, output.ReviewProviderGateError(err)

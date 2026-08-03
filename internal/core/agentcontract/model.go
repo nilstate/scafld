@@ -19,6 +19,11 @@ const (
 	RoleBuild    Role = "build"
 	RoleReview   Role = "review"
 	RoleRecovery Role = "recovery"
+
+	// ProjectOverrideMarker must appear in a workspace prompt before scafld will
+	// treat that file as an active role-contract override. Generated prompt copies
+	// intentionally omit it so a newer binary can always carry newer contracts.
+	ProjectOverrideMarker = "scafld:prompt-owner=project"
 )
 
 // Roles returns every managed role contract.
@@ -92,4 +97,21 @@ func (c Contract) Section(key string, title string, order int) reviewcontext.Sec
 			Bytes:  c.Bytes,
 		}},
 	}
+}
+
+// HasProjectOverrideMarker reports whether body opts into replacing the
+// embedded contract for a role. Without this marker, workspace prompt files are
+// refreshable copies, not runtime authority.
+func HasProjectOverrideMarker(body []byte) bool {
+	for _, line := range strings.Split(string(body), "\n") {
+		line = strings.TrimSpace(line)
+		line = strings.TrimPrefix(line, "<!--")
+		line = strings.TrimSuffix(line, "-->")
+		line = strings.TrimPrefix(line, "#")
+		line = strings.TrimPrefix(line, "//")
+		if strings.TrimSpace(line) == ProjectOverrideMarker {
+			return true
+		}
+	}
+	return false
 }

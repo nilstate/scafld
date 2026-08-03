@@ -41,16 +41,18 @@ control, but it is not the default agent path.
 
 Prompt ownership:
 
-- `.scafld/prompts/*` is the active template layer
-- `.scafld/core/prompts/*` is the managed reset copy
+- embedded prompts are the runtime default
+- `.scafld/core/prompts/*` is the managed visible copy refreshed by update
+- `.scafld/prompts/*` overrides runtime only when the file contains
+  `scafld:prompt-owner=project`
 
 `scafld config` writes `.scafld/config.proposed.yaml` with evidence-backed
 config suggestions. It does not mutate `.scafld/config.yaml`.
 
-`scafld update` refreshes managed core assets and existing manifest-backed
-prompt copies. Customized project prompts are skipped. It also refreshes root
-agent docs and renders generated `.scafld/config.yaml` into the current strict
-runtime shape.
+`scafld update` refreshes managed core assets and unmarked prompt copies.
+Marker-bearing project prompts are skipped. It also refreshes root agent docs
+and renders generated `.scafld/config.yaml` into the current strict runtime
+shape.
 
 ## Handoffs
 

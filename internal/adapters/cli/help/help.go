@@ -177,8 +177,9 @@ Flags:
 Usage:
   scafld update [--root PATH] [--json]
 
-Refreshes .scafld/core, existing manifest-backed prompt copies, root agent docs,
-and managed core assets. Project config is left untouched.
+Refreshes .scafld/core, unmarked prompt copies, root agent docs, and managed
+core assets. Marker-bearing project prompts and project config are left
+untouched.
 
 Use this after upgrading scafld.
 `)

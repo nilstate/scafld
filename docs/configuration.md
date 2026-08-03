@@ -26,7 +26,7 @@ and lifecycle commands.
 Project-owned:
 
 - `.scafld/config.yaml`
-- `.scafld/prompts/*`
+- marker-bearing `.scafld/prompts/*`
 - `.scafld/specs/**`
 
 Local/generated:
@@ -36,8 +36,8 @@ Local/generated:
 - `.scafld/runs/**`
 
 `scafld update` refreshes `.scafld/core/` and safely refreshes project prompt
-copies only when the prompt manifest proves they are unmodified defaults.
-Customized project prompts are skipped. It also refreshes root agent docs.
+copies unless they explicitly contain `scafld:prompt-owner=project`.
+Marker-bearing project prompts are skipped. It also refreshes root agent docs.
 Project config is left untouched; invalid config shapes fail at lifecycle or
 config-load time. Specs, sessions, reviews, and local config are never
 overwritten.
@@ -53,17 +53,35 @@ Do not copy the full config shape into local config just to keep an example.
 
 ## Prompt Overrides
 
-Prompt lookup uses project files first:
+Prompt lookup uses embedded contracts by default:
 
 ```text
-.scafld/prompts/harden.md
-.scafld/core/prompts/harden.md
 built-in default
+.scafld/prompts/harden.md only with scafld:prompt-owner=project
+.scafld/core/prompts/harden.md only as a fallback if the embedded asset is unavailable
 ```
 
-Use project prompts for local voice and policy. Keep core prompts as generated
-reset copies. If you have not customized a project prompt, do not add a copy;
-scafld will fall back to the generated core prompt and then the built-in prompt.
+Use marker-bearing project prompts for deliberate local voice and policy. Keep
+core prompts as generated reset copies. If you have not customized a project
+prompt, do not add the marker; `scafld update` will refresh stale copies and the
+runtime will ignore unmarked copies.
+
+## Evidence Roots
+
+The scafld root is always an evidence root. Monorepos can declare additional
+roots whose files may be read and cited by harden/review evidence:
+
+```yaml
+workspace:
+  evidence_roots:
+    - ".."
+    - "../app"
+```
+
+Paths are resolved relative to `.scafld/config.yaml` unless absolute. Use this
+when the governed service lives in a subdirectory but valid evidence sits in a
+sibling package or repo root file. Do not use it to paper over bad citations:
+if a file is not part of the governed evidence surface, fix the anchor instead.
 
 ## Acceptance Strictness
 

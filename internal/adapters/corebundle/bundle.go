@@ -50,7 +50,7 @@ func Init(ctx context.Context, root string) (Result, error) {
 	})
 }
 
-// Update refreshes managed assets and existing manifest-backed prompt copies.
+// Update refreshes managed assets and unmarked workspace prompt copies.
 func Update(ctx context.Context, root string) (Result, error) {
 	return Install(ctx, root, Options{OverwriteCore: true, RefreshProjectPrompts: true, InstallLifecycleTools: true})
 }

@@ -34,6 +34,7 @@ type Selection struct {
 	Provider                appharden.Provider
 	ContextMaxBytes         int
 	RequiredContextMaxBytes int
+	EvidenceRoots           []string
 }
 
 // RunOptions configures the app harden input assembled by the CLI adapter.
@@ -78,6 +79,7 @@ func BuildInput(ctx context.Context, opts RunOptions) (appharden.Input, error) {
 		Provider:                selected.Provider,
 		ContextMaxBytes:         selected.ContextMaxBytes,
 		RequiredContextMaxBytes: selected.RequiredContextMaxBytes,
+		EvidenceRoots:           selected.EvidenceRoots,
 		SuppressContext:         opts.SuppressContext,
 		RepairPacketPath:        opts.RepairPacketPath,
 	}, nil
@@ -111,7 +113,8 @@ func Select(ctx context.Context, opts Options) (Selection, error) {
 	if err != nil {
 		return Selection{}, output.ConfigGateError(fmt.Errorf("load config: %w", err))
 	}
-	selection := Selection{ContextMaxBytes: cfg.Harden.ContextMaxBytes, RequiredContextMaxBytes: cfg.Harden.RequiredContextMaxBytes}
+	evidenceRoots := configadapter.EffectiveEvidenceRoots(opts.Root, cfg.Workspace)
+	selection := Selection{ContextMaxBytes: cfg.Harden.ContextMaxBytes, RequiredContextMaxBytes: cfg.Harden.RequiredContextMaxBytes, EvidenceRoots: evidenceRoots}
 	external := cfg.Harden.External
 	if strings.TrimSpace(opts.RepairPacketPath) != "" || !hardenProviderRequested(opts, external) {
 		return selection, nil
@@ -139,6 +142,7 @@ func Select(ctx context.Context, opts Options) (Selection, error) {
 		Idle:                      time.Duration(external.IdleTimeoutSeconds) * time.Second,
 		FallbackPolicy:            external.FallbackPolicy,
 		HostAgent:                 providers.DetectHostAgent(os.Environ()),
+		ReadRoots:                 evidenceRoots,
 	})
 	if err != nil {
 		return Selection{}, output.ReviewProviderGateError(err)

@@ -16,6 +16,9 @@ func TestConfigLoad(t *testing.T) {
 	}
 	if err := os.WriteFile(filepath.Join(root, ".scafld", "config.yaml"), []byte(`
 version: "1.0"
+workspace:
+  evidence_roots:
+    - ".."
 llm:
   model_profile: "team-default"
 execution:
@@ -86,6 +89,9 @@ review:
 	if cfg.Version != "1.0" || cfg.LLM.ModelProfile != "team-default" {
 		t.Fatalf("config = %+v", cfg)
 	}
+	if len(cfg.Workspace.EvidenceRoots) != 1 || cfg.Workspace.EvidenceRoots[0] != ".." {
+		t.Fatalf("workspace config = %+v", cfg.Workspace)
+	}
 	if cfg.Harden.MaxIssuesPerRound != 5 {
 		t.Fatalf("harden config = %+v", cfg.Harden)
 	}
@@ -140,10 +146,16 @@ harden:
     codex:
       model: "gpt-harden-config"
       model_reasoning_effort: "high"
+workspace:
+  evidence_roots:
+    - api
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(root, ".scafld", "config.local.yaml"), []byte(`
+workspace:
+  evidence_roots:
+    - app
 execution:
   absolute_timeout_seconds: 900
   path_prepend:
@@ -181,6 +193,9 @@ harden:
 	if cfg.Review.External.Provider != "claude" || cfg.Review.External.Claude.Model != "claude-local" || cfg.Review.External.Claude.EndpointHost != "api.anthropic.com" {
 		t.Fatalf("local overlay did not apply: %+v", cfg.Review.External)
 	}
+	if !contains(cfg.Workspace.EvidenceRoots, "api") || !contains(cfg.Workspace.EvidenceRoots, "app") {
+		t.Fatalf("workspace overlay did not apply: %+v", cfg.Workspace)
+	}
 	if cfg.Review.External.Claude.Effort != "xhigh" {
 		t.Fatalf("local claude effort did not apply: %+v", cfg.Review.External.Claude)
 	}
@@ -208,6 +223,26 @@ func contains(values []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func TestEffectiveEvidenceRootsIncludesPrimaryRootAndConfiguredRoots(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	got := EffectiveEvidenceRoots(filepath.Join(root, "api"), WorkspaceConfig{EvidenceRoots: []string{"..", "app", "app"}})
+	want := []string{
+		filepath.Clean(filepath.Join(root, "api")),
+		filepath.Clean(root),
+		filepath.Clean(filepath.Join(root, "api", "app")),
+	}
+	if len(got) != len(want) {
+		t.Fatalf("roots = %#v, want %#v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("roots = %#v, want %#v", got, want)
+		}
+	}
 }
 
 func TestExecutionEnvExpandsPathPrependAndEnv(t *testing.T) {

@@ -373,7 +373,8 @@ func TestInitUpdatePreservesProjectOwnedFilesAndGitignore(t *testing.T) {
 	root := t.TempDir()
 	run(t, bin, "init", "--root", root)
 	projectPrompt := filepath.Join(root, ".scafld", "prompts", "harden.md")
-	if err := os.WriteFile(projectPrompt, []byte("# Project harden prompt\n\nKeep this exact prompt.\n"), 0o644); err != nil {
+	customPrompt := "<!-- scafld:prompt-owner=project -->\n# Project harden prompt\n\nKeep this exact prompt.\n"
+	if err := os.WriteFile(projectPrompt, []byte(customPrompt), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	agentsPath := filepath.Join(root, "AGENTS.md")
@@ -393,7 +394,7 @@ func TestInitUpdatePreservesProjectOwnedFilesAndGitignore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(prompt) != "# Project harden prompt\n\nKeep this exact prompt.\n" {
+	if string(prompt) != customPrompt {
 		t.Fatalf("project prompt was clobbered:\n%s", prompt)
 	}
 	agents, err = os.ReadFile(agentsPath)

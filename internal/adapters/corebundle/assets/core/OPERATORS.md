@@ -50,13 +50,15 @@ config from cited repo evidence; it is not part of the normal task lifecycle.
 
 Prompt ownership:
 
-- `.scafld/prompts/*` is the active template layer
-- `.scafld/core/prompts/*` is the managed reset copy
+- embedded prompts are the runtime default
+- `.scafld/core/prompts/*` is the managed visible copy refreshed by update
+- `.scafld/prompts/*` overrides runtime only when the file contains
+  `scafld:prompt-owner=project`
 
 `scafld update` refreshes managed core assets, installs optional lifecycle
-helper scripts, and updates existing manifest-backed prompt copies. Customized
-project prompts are skipped. It also refreshes root agent docs and renders
-generated `.scafld/config.yaml` into the current strict runtime shape.
+helper scripts, and updates unmarked prompt copies. Marker-bearing project
+prompts are skipped. It also refreshes root agent docs and renders generated
+`.scafld/config.yaml` into the current strict runtime shape.
 
 ## Review Providers
 

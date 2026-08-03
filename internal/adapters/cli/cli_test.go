@@ -519,7 +519,8 @@ func TestRunUpdateRefreshesCoreButPreservesProjectPrompts(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(projectPrompt), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(projectPrompt, []byte("custom project prompt\n"), 0o644); err != nil {
+	customPrompt := "<!-- scafld:prompt-owner=project -->\ncustom project prompt\n"
+	if err := os.WriteFile(projectPrompt, []byte(customPrompt), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	stdout := runCLI(t, []string{"update", "--root", root})
@@ -537,7 +538,7 @@ func TestRunUpdateRefreshesCoreButPreservesProjectPrompts(t *testing.T) {
 	if !strings.Contains(string(coreData), "HARDEN MODE TEMPLATE") {
 		t.Fatalf("core prompt was not refreshed:\n%s", coreData)
 	}
-	if string(projectData) != "custom project prompt\n" {
+	if string(projectData) != customPrompt {
 		t.Fatalf("project prompt was overwritten:\n%s", projectData)
 	}
 }

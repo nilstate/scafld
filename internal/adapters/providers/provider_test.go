@@ -1011,11 +1011,12 @@ func TestClaudeProviderBuildsRestrictedStreamJSONArgsAndExtractsStructuredOutput
 	}
 }
 
-func TestClaudeProviderRequiresMCPSubmissionAndIgnoresResultText(t *testing.T) {
+func TestClaudeProviderRequiresMCPSubmissionAndCapturesRepairPacket(t *testing.T) {
 	t.Parallel()
 
+	reviewPacket := dossierJSON(review.VerdictPass)
 	stdout := `{"type":"system","subtype":"init","model":"claude-test","session_id":"observed-session"}` + "\n" +
-		`{"type":"result","result":"Will produce the requested dossier.\n` + "```json" + `\n` + strings.ReplaceAll(dossierJSON(review.VerdictPass), `"`, `\"`) + `\n` + "```" + `"}` + "\n"
+		`{"type":"result","result":"Will produce the requested dossier.\n` + "```json" + `\n` + strings.ReplaceAll(reviewPacket, `"`, `\"`) + `\n` + "```" + `"}` + "\n"
 	runner := &fakeRunner{result: execution.Result{Stdout: stdout}}
 	dossier, err := (ClaudeProvider{Runner: runner, SessionID: "00000000-0000-4000-8000-000000000000"}).Invoke(context.Background(), review.Request{TaskID: "task"})
 	if !errors.Is(err, ErrProviderFailed) ||
@@ -1024,8 +1025,26 @@ func TestClaudeProviderRequiresMCPSubmissionAndIgnoresResultText(t *testing.T) {
 		t.Fatalf("err = %v dossier=%+v", err, dossier)
 	}
 	source := providerPacketSourceFromTestError(t, err)
-	if source.Provider != "claude" || source.ExpectedSchema != "ReviewDossier" || source.ExpectedSubmitTool != "submit_review" || !strings.Contains(source.RejectedText, "Will produce the requested dossier") {
+	if source.Provider != "claude" || source.ExpectedSchema != "ReviewDossier" || source.ExpectedSubmitTool != "submit_review" || source.RejectedText != reviewPacket {
 		t.Fatalf("packet repair source = %+v", source)
+	}
+}
+
+func TestNoSubmissionRepairTextUsesDossierParsersAndPacketShape(t *testing.T) {
+	t.Parallel()
+
+	rawReview := dossierJSON(review.VerdictPass)
+	if got := noSubmissionRepairText("ReviewDossier", rawReview); got != rawReview {
+		t.Fatalf("valid raw review dossier repair text = %q", got)
+	}
+
+	invalidHarden := "```json\n" + `{"summary":"shape attempt","shape":{},"observations":[]}` + "\n```"
+	if got := noSubmissionRepairText("HardenDossier", invalidHarden); !strings.Contains(got, `"shape"`) || strings.Contains(got, "```") {
+		t.Fatalf("target-shaped harden JSON repair text = %q", got)
+	}
+
+	if got := noSubmissionRepairText("ReviewDossier", `{"type":"message","text":"done"}`); got != "" {
+		t.Fatalf("generic provider event became repair text: %q", got)
 	}
 }
 
@@ -1211,7 +1230,7 @@ func TestGeminiProviderFailsWhenToolSubmissionIsMissing(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 	source := providerPacketSourceFromTestError(t, err)
-	if source.Provider != "gemini" || source.ExpectedSchema != "ReviewDossier" || source.ExpectedSubmitTool != "submit_review" || !strings.Contains(source.RejectedText, "done") {
+	if source.Provider != "gemini" || source.ExpectedSchema != "ReviewDossier" || source.ExpectedSubmitTool != "submit_review" || source.RejectedText != "" {
 		t.Fatalf("packet repair source = %+v", source)
 	}
 }
