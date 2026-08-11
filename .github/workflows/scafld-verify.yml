@@ -40,7 +40,7 @@ jobs:
 
       - name: Run scafld verify
         env:
-          SCAFLD_VERSION: v2.5.4
+          SCAFLD_VERSION: v2.5.5
           SCAFLD_RECEIPT_PATH: ${{ vars.SCAFLD_RECEIPT_PATH || '' }}
           SCAFLD_VERIFY_TARGET: ${{ github.event.pull_request.base.sha || github.event.before }}
           SCAFLD_VERIFY_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
@@ -80,7 +80,7 @@ jobs:
 
       - name: Run scafld verify
         env:
-          SCAFLD_VERSION: v2.5.4
+          SCAFLD_VERSION: v2.5.5
           SCAFLD_RECEIPT_PATH: ${{ vars.SCAFLD_RECEIPT_PATH || '' }}
           SCAFLD_VERIFY_TARGET: ${{ github.event.pull_request.base.sha || github.event.before }}
           SCAFLD_VERIFY_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
