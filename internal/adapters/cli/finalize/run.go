@@ -27,10 +27,10 @@ import (
 	appacceptance "github.com/nilstate/scafld/v2/internal/app/acceptance"
 	appfinalize "github.com/nilstate/scafld/v2/internal/app/finalize"
 	"github.com/nilstate/scafld/v2/internal/core/receipt"
-	corereconcile "github.com/nilstate/scafld/v2/internal/core/reconcile"
 	"github.com/nilstate/scafld/v2/internal/core/review"
 	"github.com/nilstate/scafld/v2/internal/core/reviewevidence"
 	"github.com/nilstate/scafld/v2/internal/core/reviewscope"
+	"github.com/nilstate/scafld/v2/internal/core/runartifact"
 	"github.com/nilstate/scafld/v2/internal/core/session"
 	"github.com/nilstate/scafld/v2/internal/core/spec"
 	"github.com/nilstate/scafld/v2/internal/platform/atomicfile"
@@ -126,8 +126,8 @@ func compose(ctx context.Context, req Request) (map[string]any, error) {
 		return nil, err
 	}
 	execCfg := configadapter.EffectiveExecution(root, cfg.Execution)
-	diagnostics := filepath.Join(root, ".scafld", "runs", req.TaskID, "diagnostics")
-	acceptanceRunner := process.Runner{DiagnosticsDir: diagnostics}
+	diagnostics := runartifact.CommandDiagnosticsDir(root, req.TaskID)
+	acceptanceRunner := process.Runner{DiagnosticsDir: diagnostics, DiagnosticName: "finalize-acceptance"}
 	criteria := gateCriteria(model)
 	if hasSpec && len(criteria) == 0 {
 		return nil, errors.New("finalize requires at least one declared acceptance criterion for spec-backed work")
@@ -273,9 +273,6 @@ func finalize(ctx context.Context, root string, taskID string, sessions jsonstor
 		if err := appendAcceptanceEvidence(ctx, sessions, taskID, out.Acceptance.Results, phaseByCriterion(model), time.Now().UTC().Format(time.RFC3339)); err != nil {
 			return nil, err
 		}
-		if hasSpec {
-			_ = projectSpecFromSession(ctx, root, taskID, sessions)
-		}
 		response["findings"] = gateFindings(out.Findings)
 		response["reason"] = out.Reason
 		response["acceptance_passed"] = out.Acceptance.Passed
@@ -328,11 +325,6 @@ func finalize(ctx context.Context, root string, taskID string, sessions jsonstor
 	}
 	if err := atomicfile.Write(latestReceiptPath, append(data, '\n'), 0o644); err != nil {
 		return nil, fmt.Errorf("write latest receipt: %w", err)
-	}
-	if hasSpec {
-		if err := projectSpecFromSession(ctx, root, taskID, sessions); err != nil {
-			return nil, err
-		}
 	}
 	// Return the signed receipt itself, not just a path, so finalize satisfies
 	// the single-call contract: the MCP/JSON response is the receipt artifact.
@@ -396,32 +388,6 @@ func phaseByCriterion(model spec.Model) map[string]string {
 		}
 	}
 	return out
-}
-
-func projectSpecFromSession(ctx context.Context, root string, taskID string, sessions jsonstore.SessionStore) error {
-	specStore := markdown.Store{Root: root}
-	model, path, err := specStore.Load(ctx, taskID)
-	if err != nil {
-		if errors.Is(err, markdown.ErrSpecNotFound) {
-			return nil
-		}
-		return fmt.Errorf("load finalized spec: %w", err)
-	}
-	ledger, err := sessions.Load(ctx, taskID)
-	if err != nil {
-		return fmt.Errorf("load finalized session: %w", err)
-	}
-	model = corereconcile.FromSession(model, ledger)
-	if model.Status == spec.StatusCompleted {
-		model.CurrentState.Next = "done"
-		model.CurrentState.AllowedFollowUp = "none"
-		model.CurrentState.Reason = "finalization receipt passed"
-		model.Updated = time.Now().UTC().Format(time.RFC3339)
-	}
-	if err := specStore.Save(ctx, path, model); err != nil {
-		return fmt.Errorf("save finalized spec: %w", err)
-	}
-	return nil
 }
 
 // selectReviewer picks the independent reviewer and resolves its binary to an
@@ -663,10 +629,6 @@ func (s gateSnapshotter) Snapshot(ctx context.Context, in appfinalize.SnapshotIn
 		IgnoredUnreviewed: ignored,
 		Deleted:           deleted,
 	}, nil
-}
-
-func (s gateSnapshotter) TreeSHA(ctx context.Context, in appfinalize.SnapshotInput) (string, error) {
-	return s.git.TreeSHA(ctx, git.SnapshotInput{Scope: in.Scope, BaseRef: in.BaseRef})
 }
 
 // gateAcceptance adapts the shared acceptance engine to the app/gate port.

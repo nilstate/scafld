@@ -48,7 +48,7 @@ var valueFlags = map[string]bool{
 	"repair-packet":     true,
 }
 
-var boolFlags = map[string]bool{"force": true, "human-reviewed": true, "mark-passed": true, "no-agent-docs": true, "no-context": true, "print-context": true, "ci": true}
+var boolFlags = map[string]bool{"force": true, "human-reviewed": true, "mark-passed": true, "no-agent-docs": true, "no-context": true, "with-context": true, "print-context": true, "ci": true}
 
 func parseOptions(args []string) (options, error) {
 	opts := options{Values: map[string]string{}, Flags: map[string]bool{}}

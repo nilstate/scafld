@@ -212,7 +212,7 @@ func TestStatusIncludesTaskMaterialProjection(t *testing.T) {
 	if out.TaskMaterial.MaterialStatus != "unchanged" || out.TaskMaterial.CurrentMaterialDigest != "same-material" {
 		t.Fatalf("material status = %+v", out.TaskMaterial)
 	}
-	if len(out.TaskMaterial.Scope) != 1 || out.TaskMaterial.Scope[0] != "api/handler.go" {
+	if len(out.TaskMaterial.Scope) != 1 || out.TaskMaterial.Scope[0] != "api" {
 		t.Fatalf("scope = %+v", out.TaskMaterial.Scope)
 	}
 	if len(out.TaskMaterial.TaskChanges) != 1 || out.TaskMaterial.TaskChanges[0] != "changed api/handler.go (M old -> M new)" {

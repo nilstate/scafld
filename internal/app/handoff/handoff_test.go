@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nilstate/scafld/v2/internal/core/acceptance"
 	corereview "github.com/nilstate/scafld/v2/internal/core/review"
 	"github.com/nilstate/scafld/v2/internal/core/reviewevidence"
 	"github.com/nilstate/scafld/v2/internal/core/session"
@@ -416,16 +417,19 @@ func TestHandoffReviewStateIncludesContractEvidenceAndReviewerFocus(t *testing.T
 			ID:   "phase1",
 			Name: "Implementation",
 			Acceptance: []spec.Criterion{{
-				ID:      "ac1",
-				Title:   "Full check",
-				PhaseID: "phase1",
-				Command: "make check",
+				ID:           "ac1",
+				Title:        "Full check",
+				PhaseID:      "phase1",
+				Command:      "make check",
+				ExpectedKind: acceptance.ExpectedExitCodeZero,
 			}},
 		}},
 	}
 	ledger := session.New("task", "2026-05-05T00:00:00Z")
 	ledger = ledger.WithEntry(session.Entry{ID: "entry-1", Type: session.EntryWorkspaceBaseline, Status: "captured", Output: "README.md\n"})
-	ledger = ledger.WithEntry(session.Entry{ID: "entry-2", Type: "criterion", CriterionID: "ac1", PhaseID: "phase1", Status: "pass", Reason: "exit code was 0", Command: "make check"})
+	ledger = ledger.WithEntry(session.Entry{ID: "entry-2", Type: "criterion", CriterionID: "ac1", PhaseID: "phase1", Status: "pass", Reason: "exit code was 0", Command: "make check", ExpectedKind: string(acceptance.ExpectedExitCodeZero), CriterionType: "command"})
+	ledger = ledger.WithEntry(session.Entry{ID: "entry-3", Type: "phase", PhaseID: "phase1", Status: "completed", Reason: "all phase criteria passed"})
+	ledger = ledger.WithEntry(session.Entry{ID: "entry-4", Type: "build", Status: string(spec.StatusReview), Reason: "build completed; ready for review"})
 	out, err := Run(context.Background(), fakeSpecStore{model: model}, fakeSessionStore{ledger: ledger}, "task")
 	if err != nil {
 		t.Fatal(err)

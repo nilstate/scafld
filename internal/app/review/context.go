@@ -39,10 +39,21 @@ func reviewContextPacket(source spec.Source, contract agentcontract.Contract, pa
 		contextSection("review_focus", "Review Focus", 18, reviewFocusBody(passes), "config", ".scafld/config.yaml"),
 		contextSection("task_scope", "Task Scope", 20, taskScopeBody(model, reviewScope), "spec", sourcePath),
 		contextSection("workspace_classification", "Workspace Classification", 25, workspaceClassificationBody(baseline, taskChanges, scopeDrift), "session", model.TaskID),
-		contextSection("workspace_baseline", "Workspace Baseline Before Review", 30, workspaceBaselineBody(baseline), "session", model.TaskID),
-		contextSection("task_changes", "Task Changes Since Approval Baseline", 40, workspaceChangesBody("Task Changes Since Approval Baseline", taskChanges), "session", model.TaskID),
-		contextSection("ambient_drift", "Ambient Workspace Drift Outside Task Scope", 50, workspaceChangesBody("Ambient Workspace Drift Outside Task Scope", scopeDrift), "session", model.TaskID),
-		contextSection("acceptance_evidence", "Acceptance Criteria", 60, acceptanceBody(model), "session", model.TaskID),
+	)
+	if mode == review.ModeVerify {
+		sections = append(sections,
+			contextSection("task_changes", "Task Changes Since Approval Baseline", 40, workspaceChangesBody("Task Changes Since Approval Baseline", taskChanges), "session", model.TaskID),
+			contextSection("acceptance_evidence", "Acceptance Criteria", 60, acceptanceBody(model), "session", model.TaskID),
+		)
+	} else {
+		sections = append(sections,
+			contextSection("workspace_baseline", "Workspace Baseline Before Review", 30, workspaceBaselineBody(baseline), "session", model.TaskID),
+			contextSection("task_changes", "Task Changes Since Approval Baseline", 40, workspaceChangesBody("Task Changes Since Approval Baseline", taskChanges), "session", model.TaskID),
+			contextSection("ambient_drift", "Ambient Workspace Drift Outside Task Scope", 50, workspaceChangesBody("Ambient Workspace Drift Outside Task Scope", scopeDrift), "session", model.TaskID),
+			contextSection("acceptance_evidence", "Acceptance Criteria", 60, acceptanceBody(model), "session", model.TaskID),
+		)
+	}
+	sections = append(sections,
 		reviewOutputContractSection(),
 		requiredReviewTextSection("provider_instruction", "Provider Instruction", 90, providerInstructionBody()),
 	)

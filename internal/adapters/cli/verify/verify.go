@@ -22,6 +22,7 @@ import (
 	appverify "github.com/nilstate/scafld/v2/internal/app/verify"
 	"github.com/nilstate/scafld/v2/internal/core/execution"
 	"github.com/nilstate/scafld/v2/internal/core/receipt"
+	"github.com/nilstate/scafld/v2/internal/core/runartifact"
 	"github.com/nilstate/scafld/v2/internal/core/trust"
 	"github.com/nilstate/scafld/v2/internal/platform/processguard"
 )
@@ -166,7 +167,7 @@ func Run(ctx context.Context, opts Options) (appverify.Result, error) {
 		defer restoreProcessAccess()
 		acceptanceEnvMode = execution.EnvModeExact
 	}
-	runner := process.Runner{DiagnosticsDir: filepath.Join(opts.Root, ".scafld", "runs", "verify", "diagnostics")}
+	runner := process.Runner{DiagnosticsDir: runartifact.CommandDiagnosticsDir(opts.Root, "verify"), DiagnosticName: "verify-acceptance"}
 	return appverify.Run(ctx, envelope, trusted, appverify.Policy{
 		TargetCommit:    target,
 		MaterialRef:     materialRef,

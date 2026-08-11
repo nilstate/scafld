@@ -75,7 +75,7 @@ Provider packet repair:
   on the failed attempt. Fill the artifact's repaired_packet field with exactly
   one valid ReviewDossier JSON object, then record it without another external
   review call:
-    scafld review email-contracts --repair-packet .scafld/runs/email-contracts/diagnostics/provider-packet-repair-review-<attempt>.json
+    scafld review email-contracts --repair-packet .scafld/runs/email-contracts/artifacts/provider-packets/provider-packet-repair-review-<attempt>.json
 
 Cost control:
   For small diffs, keep the same gate but request a tighter review budget:

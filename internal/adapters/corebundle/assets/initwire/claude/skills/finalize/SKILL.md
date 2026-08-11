@@ -13,8 +13,8 @@ Pass `task_id` for the governed task. When the work is on a branch or pull reque
 
 ## Local finalize is the baseline
 
-`finalize` needs no CI. The independent review and the signed receipt it writes under `.scafld/receipts/` are the complete accountability outcome on their own, and a plain `scafld init` sets this up without installing any workflow.
+`finalize` needs no CI. The independent review and the signed receipt it writes under `.scafld/receipts/` are the complete accountability outcome on their own, and a plain `scafld init` sets this up without installing any workflow. Receipts are ignored by the managed `.gitignore` by default so normal local finalize runs do not dirty the project.
 
 ## CI verify is the opt-in upgrade
 
-The CI `scafld verify` check is an additive merge gate, not part of the baseline. Opt in with `scafld init --ci`, which installs `.github/workflows/scafld-verify.yml` so committed receipts are re-verified on pull requests. Declare intent with the `verify.policy` config field (`local` default, `advisory`, `required`) and run `scafld verify --self-check` to see what is actually wired. Requiring the check before a merge is a GitHub branch-protection step the operator owns; scafld scaffolds and reports it, it does not enforce it.
+The CI `scafld verify` check is an additive merge gate, not part of the baseline. Opt in with `scafld init --ci`, which installs `.github/workflows/scafld-verify.yml` so deliberately committed receipts, or an explicit `SCAFLD_RECEIPT_PATH`, are re-verified on pull requests. Declare intent with the `verify.policy` config field (`local` default, `advisory`, `required`) and run `scafld verify --self-check` to see what is actually wired. Requiring the check before a merge is a GitHub branch-protection step the operator owns; scafld scaffolds and reports it, it does not enforce it.

@@ -359,6 +359,9 @@ func validateCriterion(c Criterion, seen map[string]bool) []string {
 	if c.Command == "" && c.Type != "manual" {
 		errs = append(errs, "criterion "+c.ID+" command is required")
 	}
+	if subcommand, ok := scafldLifecycleGateCommand(c.Command); ok {
+		errs = append(errs, "criterion "+c.ID+" command cannot run scafld "+subcommand+"; lifecycle gates run outside build acceptance")
+	}
 	if !acceptance.ValidExpectedKind(c.ExpectedKind) {
 		errs = append(errs, fmt.Sprintf("criterion %s expected_kind %q is invalid; supported values: %s%s", c.ID, c.ExpectedKind, expectedKindList(), expectedKindHint(c.ExpectedKind)))
 	}
@@ -378,6 +381,27 @@ func validateCriterion(c Criterion, seen map[string]bool) []string {
 		errs = append(errs, "criterion "+c.ID+" manual type cannot have a command")
 	}
 	return errs
+}
+
+func scafldLifecycleGateCommand(command string) (string, bool) {
+	fields := strings.Fields(strings.TrimSpace(command))
+	if len(fields) < 2 || !isScafldExecutable(fields[0]) {
+		return "", false
+	}
+	switch fields[1] {
+	case "approve", "build", "harden", "review", "complete":
+		return fields[1], true
+	default:
+		return "", false
+	}
+}
+
+func isScafldExecutable(token string) bool {
+	token = strings.Trim(token, `"'`)
+	if idx := strings.LastIndex(token, "/"); idx >= 0 {
+		token = token[idx+1:]
+	}
+	return token == "scafld"
 }
 
 func expectedKindList() string {

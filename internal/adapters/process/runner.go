@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/nilstate/scafld/v2/internal/core/execution"
+	"github.com/nilstate/scafld/v2/internal/core/runartifact"
 )
 
 var (
@@ -25,6 +26,7 @@ var (
 // Runner executes external commands and writes optional diagnostics.
 type Runner struct {
 	DiagnosticsDir string
+	DiagnosticName string
 	Progress       io.Writer
 	ProgressLabel  string
 }
@@ -130,7 +132,7 @@ func (r Runner) writeDiagnostic(req execution.Request, command string, result ex
 	if err := os.MkdirAll(r.DiagnosticsDir, 0o755); err != nil {
 		return "", err
 	}
-	name := fmt.Sprintf("command-%d.txt", time.Now().UnixNano())
+	name := diagnosticFileName(firstNonEmpty(req.DiagnosticName, r.DiagnosticName, command), time.Now())
 	path := filepath.Join(r.DiagnosticsDir, name)
 	cwd := req.CWD
 	if cwd == "" {
@@ -152,6 +154,30 @@ func (r Runner) writeDiagnostic(req execution.Request, command string, result ex
 			"\n\nstderr:\n" + result.Stderr,
 	)
 	return path, os.WriteFile(path, data, 0o644)
+}
+
+func diagnosticFileName(label string, now time.Time) string {
+	name := runartifact.SafeName(label)
+	if name == "" {
+		name = "command"
+	}
+	const max = 80
+	if len(name) > max {
+		name = strings.Trim(name[:max], "-.")
+	}
+	if name == "" {
+		name = "command"
+	}
+	return fmt.Sprintf("%s-%d.txt", name, now.UnixNano())
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func envOverrideNames(env []string) []string {

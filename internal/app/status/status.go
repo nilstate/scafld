@@ -105,6 +105,7 @@ type ReviewInfo struct {
 	Attempt                  *ReviewAttemptInfo          `json:"attempt,omitempty"`
 	Running                  bool                        `json:"running,omitempty"`
 	AttemptStatus            string                      `json:"attempt_status,omitempty"`
+	Progress                 *ReviewProgressInfo         `json:"progress,omitempty"`
 	Reason                   string                      `json:"reason,omitempty"`
 	RerunBlocked             bool                        `json:"rerun_blocked,omitempty"`
 	OperatorDecisionRequired bool                        `json:"operator_decision_required,omitempty"`
@@ -120,6 +121,15 @@ type ReviewAttemptInfo struct {
 	Status         string `json:"status"`
 	LeaseExpiresAt string `json:"lease_expires_at,omitempty"`
 	Reason         string `json:"reason,omitempty"`
+}
+
+// ReviewProgressInfo describes the latest coarse review stage recorded in the
+// ledger. It is progress telemetry only; reviewgate authority ignores it.
+type ReviewProgressInfo struct {
+	Stage      string `json:"stage,omitempty"`
+	Status     string `json:"status,omitempty"`
+	Reason     string `json:"reason,omitempty"`
+	RecordedAt string `json:"recorded_at,omitempty"`
 }
 
 // CompletionInfo describes the terminal review authority for completed tasks.
@@ -168,7 +178,7 @@ func RunWithOptions(ctx context.Context, specs SpecStore, sessions SessionStore,
 		Title:           model.Title,
 		Next:            model.CurrentState.AllowedFollowUp,
 		Gate:            currentGate(model, hardenState),
-		TrustedState:    "session ledger replay projected into the Markdown spec",
+		TrustedState:    "session ledger replay projected over immutable source markdown",
 		AllowedFollowUp: model.CurrentState.AllowedFollowUp,
 		SpecSource:      statusSpecSource(source, opts),
 	}
@@ -178,6 +188,7 @@ func RunWithOptions(ctx context.Context, specs SpecStore, sessions SessionStore,
 		workspace := firstWorkspace(workspaces)
 		state := reviewgate.Project(ledger, model, reviewProjectionOptions(ctx, ledger, workspace))
 		out.Review = reviewInfoFromGate(state)
+		out.Review.Progress = latestReviewProgress(ledger)
 		out.TaskMaterial = taskMaterialInfo(ctx, model, ledger, workspace, state.Authority)
 		if model.Status == spec.StatusCompleted {
 			out.Completion = completionInfo(state.Authority)
@@ -214,6 +225,22 @@ func statusSpecSource(source spec.Source, opts Options) *SpecSource {
 	return specSource
 }
 
+func latestReviewProgress(ledger session.Session) *ReviewProgressInfo {
+	for i := len(ledger.Entries) - 1; i >= 0; i-- {
+		entry := ledger.Entries[i]
+		if entry.Type != "review_stage" {
+			continue
+		}
+		return &ReviewProgressInfo{
+			Stage:      strings.TrimSpace(entry.Path),
+			Status:     strings.TrimSpace(entry.Status),
+			Reason:     strings.TrimSpace(entry.Reason),
+			RecordedAt: strings.TrimSpace(entry.RecordedAt),
+		}
+	}
+	return nil
+}
+
 func taskMaterialInfo(ctx context.Context, model spec.Model, ledger session.Session, workspace WorkspaceStatus, authority reviewgate.Authority) *TaskMaterial {
 	var current []string
 	hasCurrent := false
@@ -234,6 +261,7 @@ func taskMaterialInfo(ctx context.Context, model spec.Model, ledger session.Sess
 	projection := reviewmaterial.Project(reviewmaterial.Input{
 		Model:                    model,
 		Ledger:                   ledger,
+		Scope:                    authority.ReviewEntry.ReviewedScope,
 		CurrentSnapshot:          current,
 		HasCurrentSnapshot:       hasCurrent,
 		Authority:                authority,
@@ -614,7 +642,7 @@ func repairContract(model spec.Model, ledger session.Session, state reviewgate.S
 				Expected: "review verdict pass",
 				Actual:   "review verdict fail",
 				Blockers: reviewFindingSummaries(review.Findings),
-				Next:     model.CurrentState.AllowedFollowUp,
+				Next:     "scafld handoff " + model.TaskID,
 			}
 		}
 		if state.Kind == reviewgate.KindReviewNeedsOperatorDecision {

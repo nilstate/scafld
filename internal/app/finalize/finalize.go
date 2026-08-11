@@ -12,15 +12,13 @@ import (
 	"github.com/nilstate/scafld/v2/internal/app/acceptance"
 	"github.com/nilstate/scafld/v2/internal/core/receipt"
 	"github.com/nilstate/scafld/v2/internal/core/review"
+	"github.com/nilstate/scafld/v2/internal/core/reviewevidence"
 	"github.com/nilstate/scafld/v2/internal/core/session"
 )
 
 // Snapshotter computes the commit-free tree facts reviewed by finalization.
-// TreeSHA recomputes only the tree fingerprint; the mutation guard uses it to
-// detect acceptance-time drift without paying for a second full snapshot.
 type Snapshotter interface {
 	Snapshot(context.Context, SnapshotInput) (Snapshot, error)
-	TreeSHA(context.Context, SnapshotInput) (string, error)
 }
 
 // AcceptanceRunner evaluates declared acceptance criteria.
@@ -155,14 +153,15 @@ func Run(ctx context.Context, snapshotter Snapshotter, acceptanceRunner Acceptan
 		return Output{Verdict: review.VerdictFail, Acceptance: accepted, Independence: selectedIndependence, Reason: "acceptance failed before review"}, nil
 	}
 	// Mutation guard: acceptance may have rewritten scoped files. Recompute the
-	// tree fingerprint and fail closed if it drifted, so the reviewer and the
-	// signed receipt describe the exact same bytes.
-	postTree, err := snapshotter.TreeSHA(ctx, SnapshotInput{Scope: input.Scope, BaseRef: input.BaseRef})
+	// scoped material facts and fail closed only if task-owned material drifted.
+	// Ambient workspace churn changes the full tree SHA but not this seal.
+	preMaterialDigest := snapshotMaterialDigest(input.Scope, snap)
+	postSnap, err := snapshotter.Snapshot(ctx, SnapshotInput{Scope: input.Scope, BaseRef: input.BaseRef})
 	if err != nil {
 		return Output{}, fmt.Errorf("mutation snapshot: %w", err)
 	}
-	if postTree != snap.TreeSHA {
-		return Output{Verdict: review.VerdictFail, Acceptance: accepted, Independence: selectedIndependence, Reason: "workspace mutated during acceptance; gate failed closed"}, nil
+	if postMaterialDigest := snapshotMaterialDigest(input.Scope, postSnap); postMaterialDigest != preMaterialDigest {
+		return Output{Verdict: review.VerdictFail, Acceptance: accepted, Independence: selectedIndependence, Reason: "task material mutated during acceptance; gate failed closed"}, nil
 	}
 	result, err := reviewer.Review(ctx, ReviewInput{
 		TaskID:     input.TaskID,
@@ -210,6 +209,63 @@ func normalizedScope(scope []string) []string {
 		}
 	}
 	return out
+}
+
+func snapshotMaterialDigest(scope []string, snap Snapshot) string {
+	files := make([]reviewevidence.MaterialFile, 0, len(snap.FileDigests))
+	for rawPath, rawSum := range snap.FileDigests {
+		path, err := reviewevidence.NormalizePath(rawPath)
+		if err != nil {
+			continue
+		}
+		sum := strings.ToLower(strings.TrimSpace(rawSum))
+		if sum == "" {
+			continue
+		}
+		files = append(files, reviewevidence.MaterialFile{Path: path, SHA256: sum})
+	}
+	deleted := normalizeMaterialPaths(snap.Deleted)
+	ignored := normalizeMaterialPaths(snap.IgnoredUnreviewed)
+
+	var b strings.Builder
+	b.WriteString("scafld-finalize-material-v1\n")
+	b.WriteString("present:\n")
+	b.WriteString(reviewevidence.MaterialDigest(scope, files))
+	b.WriteByte('\n')
+	b.WriteString("deleted:\n")
+	for _, item := range deleted {
+		b.WriteString(item)
+		b.WriteByte('\n')
+	}
+	b.WriteString("ignored:\n")
+	for _, item := range ignored {
+		b.WriteString(item)
+		b.WriteByte('\n')
+	}
+	return reviewevidence.SHA256Hex([]byte(b.String()))
+}
+
+func normalizeMaterialPaths(values []string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		normalized := normalizeMaterialPath(value)
+		if normalized == "" || seen[normalized] {
+			continue
+		}
+		seen[normalized] = true
+		out = append(out, normalized)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func normalizeMaterialPath(raw string) string {
+	normalized, err := reviewevidence.NormalizePath(raw)
+	if err != nil {
+		return ""
+	}
+	return normalized
 }
 
 // downgradeUnsubstantiatedBlockers turns a claimed blocker into advisory when

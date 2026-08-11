@@ -38,7 +38,6 @@ var ErrReviewRepairPacketInvalid = errors.New("review repair packet cannot be ac
 // SpecStore is the spec persistence port used by review.
 type SpecStore interface {
 	Load(context.Context, string) (spec.Model, string, error)
-	Save(context.Context, string, spec.Model) error
 }
 
 // SessionStore is the session evidence port used by review.
@@ -148,6 +147,14 @@ func RunWithInput(ctx context.Context, specs SpecStore, sessions SessionStore, w
 	if strings.TrimSpace(input.RepairPacketPath) != "" {
 		return runRepairedReviewPacket(ctx, specs, sessions, workspace, clock, model, path, ledger, input.RepairPacketPath)
 	}
+	nowTime := clock.Now().UTC()
+	ledger, err = preflightReviewStart(ctx, sessions, model, ledger, nowTime)
+	if err != nil {
+		return Output{}, err
+	}
+	if err := appendReviewStage(ctx, sessions, model.TaskID, "scope_resolution", "running", "resolving workspace baseline, task scope, and review mode", clock.Now()); err != nil {
+		return Output{}, err
+	}
 	beforeFull, err := workspaceSnapshot(ctx, workspace)
 	if err != nil {
 		return Output{}, err
@@ -162,6 +169,12 @@ func RunWithInput(ctx context.Context, specs SpecStore, sessions SessionStore, w
 	scopeDrift := scopeProjection.AmbientDrift
 	mode := reviewMode(ctx, sessions, model.TaskID, input)
 	knownFindings := knownFindingsForMode(ctx, sessions, model.TaskID, mode)
+	if err := appendReviewStage(ctx, sessions, model.TaskID, "scope_resolution", "completed", reviewScopeStageReason(scope, taskChanges, scopeDrift, mode), clock.Now()); err != nil {
+		return Output{}, err
+	}
+	if err := appendReviewStage(ctx, sessions, model.TaskID, "context_assembly", "running", "assembling required review context packet", clock.Now()); err != nil {
+		return Output{}, err
+	}
 	contextPacket := reviewContextPacket(source, input.Contract, input.Passes, input.Invariants, scope, baselineScoped, taskChanges, scopeDrift, knownFindings, input.ContextSections, mode, input.MaxFindings, input.MinAttackAngles, input.ReviewDepth, input.RerunPolicy)
 	if input.PrintContext {
 		prompt := reviewcontext.RenderMarkdown(contextPacket, reviewcontext.Options{MaxBytes: input.ContextMaxBytes, RequiredMaxBytes: input.RequiredContextMaxBytes})
@@ -170,6 +183,12 @@ func RunWithInput(ctx context.Context, specs SpecStore, sessions SessionStore, w
 	prompt, err := reviewcontext.RenderMarkdownStrict(contextPacket, reviewcontext.Options{MaxBytes: input.ContextMaxBytes, RequiredMaxBytes: input.RequiredContextMaxBytes})
 	if err != nil {
 		return Output{}, reviewContextGateError(model, err)
+	}
+	if err := appendReviewStage(ctx, sessions, model.TaskID, "context_assembly", "completed", reviewContextStageReason(prompt, contextPacket), clock.Now()); err != nil {
+		return Output{}, err
+	}
+	if err := appendReviewStage(ctx, sessions, model.TaskID, "hashing", "running", "sealing workspace and task material digests", clock.Now()); err != nil {
+		return Output{}, err
 	}
 	seal, err := reviewSeal(ctx, workspace, beforeComparison)
 	if err != nil {
@@ -183,10 +202,15 @@ func RunWithInput(ctx context.Context, specs SpecStore, sessions SessionStore, w
 	if preReviewMaterialErr != nil {
 		return Output{}, reviewGateError(model, preReviewMaterialErr, "review material seal failed", preReviewMaterialErr.Error())
 	}
-	nowTime := clock.Now().UTC()
+	if err := appendReviewStage(ctx, sessions, model.TaskID, "hashing", "completed", reviewHashingStageReason(preReviewMaterial, hasPreReviewMaterial), clock.Now()); err != nil {
+		return Output{}, err
+	}
 	now := nowTime.Format(time.RFC3339)
 	attempt, err := startReviewAttempt(ctx, sessions, model, input, mode, baselineScoped, taskChanges, scopeDrift, seal, preReviewMaterial, hasPreReviewMaterial, nowTime)
 	if err != nil {
+		return Output{}, err
+	}
+	if err := appendReviewStage(ctx, sessions, model.TaskID, "provider_execution", "running", "external review provider invoked for "+string(mode)+" mode", clock.Now()); err != nil {
 		return Output{}, err
 	}
 	dossier, err := invokeReviewProvider(ctx, provider, providerReviewInput{
@@ -194,6 +218,11 @@ func RunWithInput(ctx context.Context, specs SpecStore, sessions SessionStore, w
 		prompt: prompt,
 		packet: contextPacket,
 	})
+	if err == nil {
+		if stageErr := appendReviewStage(ctx, sessions, model.TaskID, "provider_execution", "completed", "external review provider returned a dossier", clock.Now()); stageErr != nil {
+			return Output{}, stageErr
+		}
+	}
 	postReviewCtx, cancelPostReview := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
 	defer cancelPostReview()
 	afterFull, mutationErr := workspaceSnapshot(postReviewCtx, workspace)
@@ -253,6 +282,59 @@ func RunWithInput(ctx context.Context, specs SpecStore, sessions SessionStore, w
 		return recordFailedReviewAttempt(ctx, sessions, model, attempt, reason, diagnosticPath, now, recordErr, "review dossier recording failed", recordErr.Error())
 	}
 	return out, nil
+}
+
+func preflightReviewStart(ctx context.Context, sessions SessionStore, model spec.Model, ledger session.Session, now time.Time) (session.Session, error) {
+	state := reviewgate.Project(ledger, model, reviewgate.Options{Now: now})
+	switch state.Kind {
+	case reviewgate.KindAttemptStale:
+		updated, err := sessions.Append(ctx, model.TaskID, reviewgate.AbandonedAttemptEntry(state.LatestAttempt, "stale running review attempt abandoned before preparing a new review"), now.Format(time.RFC3339))
+		if err != nil {
+			return ledger, fmt.Errorf("abandon stale review attempt: %w", err)
+		}
+		return updated, nil
+	case reviewgate.KindAttemptRunning, reviewgate.KindReviewFailed:
+		return ledger, reviewStartError(model, state)
+	default:
+		return ledger, nil
+	}
+}
+
+func appendReviewStage(ctx context.Context, sessions SessionStore, taskID string, stage string, status string, reason string, now time.Time) error {
+	if sessions == nil {
+		return nil
+	}
+	stage = strings.TrimSpace(stage)
+	if stage == "" {
+		return nil
+	}
+	writeCtx, cancel := lifecycle.TerminalEvidenceContext(ctx)
+	defer cancel()
+	_, err := sessions.Append(writeCtx, taskID, session.Entry{
+		Type:   "review_stage",
+		Status: strings.TrimSpace(status),
+		Reason: strings.TrimSpace(reason),
+		Path:   stage,
+	}, now.UTC().Format(time.RFC3339))
+	if err != nil {
+		return fmt.Errorf("append review stage %s: %w", stage, err)
+	}
+	return nil
+}
+
+func reviewScopeStageReason(scope []string, taskChanges []coreworkspace.Mutation, scopeDrift []coreworkspace.Mutation, mode review.Mode) string {
+	return fmt.Sprintf("mode %s; scope %d path(s), %d task change(s), %d ambient drift change(s)", mode, len(scope), len(taskChanges), len(scopeDrift))
+}
+
+func reviewContextStageReason(prompt string, packet reviewcontext.Packet) string {
+	return fmt.Sprintf("context packet rendered: %d section(s), %d byte(s), sha256 %s", len(packet.Sections), len(prompt), reviewevidence.SHA256Hex([]byte(prompt)))
+}
+
+func reviewHashingStageReason(material reviewevidence.MaterialSeal, hasMaterial bool) string {
+	if !hasMaterial {
+		return "workspace seal recorded; material seal unavailable"
+	}
+	return fmt.Sprintf("workspace seal recorded; material scope %d path(s), digest %s", len(material.Scope), material.Digest)
 }
 
 func reviewCompletionSuffix(ctx context.Context, sessions SessionStore, taskID string) string {
@@ -638,9 +720,6 @@ func recordReviewDossier(ctx context.Context, specs SpecStore, sessions SessionS
 	model.CurrentState.ReviewGate = dossier.Verdict
 	model.CurrentState.Next = next
 	model.CurrentState.AllowedFollowUp = command
-	if err := specs.Save(writeCtx, path, model); err != nil {
-		return Output{}, true, err
-	}
 	return Output{TaskID: model.TaskID, Verdict: dossier.Verdict, Mode: dossier.Mode, Summary: dossier.Summary, Provider: dossier.Provider, Model: dossier.Model, OutputFormat: dossier.OutputFormat, Normalizations: dossier.Normalizations, Findings: dossier.Findings, AttackLog: dossier.AttackLog, Budget: dossier.Budget, Next: command, Repair: reviewRepair(model, dossier, command, latestReviewEvidence(ledger))}, true, nil
 }
 
@@ -704,9 +783,6 @@ func runHumanReviewed(ctx context.Context, specs SpecStore, sessions SessionStor
 	model.CurrentState.Next = "complete"
 	model.CurrentState.AllowedFollowUp = "scafld complete " + model.TaskID
 	model.CurrentState.Reason = "human-reviewed override: " + reason
-	if err := specs.Save(ctx, path, model); err != nil {
-		return Output{}, err
-	}
 	return Output{TaskID: model.TaskID, Verdict: review.VerdictPass, Mode: review.ModeVerify, Summary: model.Review.Summary, Provider: "human", AttackLog: model.Review.AttackLog, Budget: model.Review.Budget, Next: model.CurrentState.AllowedFollowUp}, nil
 }
 

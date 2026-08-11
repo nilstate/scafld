@@ -9,6 +9,7 @@ import (
 	"github.com/nilstate/scafld/v2/internal/app/packetrepair"
 	"github.com/nilstate/scafld/v2/internal/app/specsource"
 	corecompletion "github.com/nilstate/scafld/v2/internal/core/completion"
+	"github.com/nilstate/scafld/v2/internal/core/reconcile"
 	corereview "github.com/nilstate/scafld/v2/internal/core/review"
 	"github.com/nilstate/scafld/v2/internal/core/reviewcontext"
 	"github.com/nilstate/scafld/v2/internal/core/reviewevidence"
@@ -60,6 +61,8 @@ func RunWithOptions(ctx context.Context, specs SpecStore, sessions SessionStore,
 	if sessions != nil {
 		if loaded, err := sessions.Load(ctx, model.TaskID); err == nil {
 			ledger = loaded
+			model = reconcile.FromSession(model, ledger)
+			source.Model = model
 			reviewState = reviewgate.Project(ledger, model, reviewProjectionOptions(ctx, ledger, firstWorkspace(workspaces)))
 			haveLedger = true
 		}
@@ -456,6 +459,16 @@ func writeReviewGate(b *strings.Builder, model spec.Model, ledger session.Sessio
 			fmt.Fprintf(b, "Attempt diagnostic: `%s`\n", state.LatestAttempt.DiagnosticPath)
 		}
 	}
+	if progress := latestReviewProgress(ledger); progress != nil {
+		fmt.Fprintf(b, "Review progress: %s", progress.Stage)
+		if progress.Status != "" {
+			fmt.Fprintf(b, " (%s)", progress.Status)
+		}
+		if progress.Reason != "" {
+			fmt.Fprintf(b, " - %s", progress.Reason)
+		}
+		b.WriteString("\n")
+	}
 	if baseline, ok := session.FirstWorkspaceBaseline(ledger); ok {
 		fmt.Fprintf(b, "Workspace baseline: `%s`\n", baseline.ID)
 	}
@@ -505,6 +518,27 @@ func writeReviewGate(b *strings.Builder, model spec.Model, ledger session.Sessio
 	b.WriteString("- Attack the diff against the approved contract and recorded baseline.\n")
 	b.WriteString("- Treat session evidence as trusted state; treat this handoff as transport.\n")
 	b.WriteString("- Return a structured review verdict through `scafld review`, not by editing the spec.\n")
+}
+
+type reviewProgressInfo struct {
+	Stage  string
+	Status string
+	Reason string
+}
+
+func latestReviewProgress(ledger session.Session) *reviewProgressInfo {
+	for i := len(ledger.Entries) - 1; i >= 0; i-- {
+		entry := ledger.Entries[i]
+		if entry.Type != "review_stage" {
+			continue
+		}
+		return &reviewProgressInfo{
+			Stage:  strings.TrimSpace(entry.Path),
+			Status: strings.TrimSpace(entry.Status),
+			Reason: strings.TrimSpace(entry.Reason),
+		}
+	}
+	return nil
 }
 
 func writeCompletionAuthority(b *strings.Builder, model spec.Model, ledger session.Session) {

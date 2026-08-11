@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/nilstate/scafld/v2/internal/core/providerpacket"
+	"github.com/nilstate/scafld/v2/internal/core/runartifact"
 )
 
 var (
@@ -150,11 +151,15 @@ func path(root string, taskID string, name string) string {
 	if root == "" {
 		root = "."
 	}
-	dir := filepath.Join(root, ".scafld", "runs", strings.TrimSpace(taskID), "diagnostics")
+	dir := runartifact.ProviderPacketsDir(root, taskID)
 	if strings.TrimSpace(name) == "" {
 		name = "provider-packet-repair"
 	}
-	return filepath.Join(dir, safeName(name)+".json")
+	filename := runartifact.SafeName(name)
+	if filename == "" {
+		filename = "provider-packet-repair"
+	}
+	return filepath.Join(dir, filename+".json")
 }
 
 func RootFromSpecPath(path string) string {
@@ -166,22 +171,6 @@ func RootFromSpecPath(path string) string {
 		return "."
 	}
 	return "."
-}
-
-func safeName(name string) string {
-	mapped := strings.Map(func(r rune) rune {
-		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_', r == '.':
-			return r
-		default:
-			return '-'
-		}
-	}, strings.TrimSpace(name))
-	out := strings.Trim(mapped, "-.")
-	if out == "" {
-		return "provider-packet-repair"
-	}
-	return out
 }
 
 func hasSource(source providerpacket.Source) bool {

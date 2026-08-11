@@ -11,7 +11,6 @@ import (
 // SpecStore is the spec persistence port used by failure.
 type SpecStore interface {
 	Load(context.Context, string) (spec.Model, string, error)
-	Save(context.Context, string, spec.Model) error
 }
 
 // SessionStore is the session evidence port used by failure.
@@ -24,7 +23,7 @@ type Clock interface{ Now() time.Time }
 
 // Run marks a task failed and records failure evidence.
 func Run(ctx context.Context, specs SpecStore, sessions SessionStore, clock Clock, taskID string, reason string) (spec.Model, error) {
-	model, path, err := specs.Load(ctx, taskID)
+	model, _, err := specs.Load(ctx, taskID)
 	if err != nil {
 		return spec.Model{}, err
 	}
@@ -38,8 +37,5 @@ func Run(ctx context.Context, specs SpecStore, sessions SessionStore, clock Cloc
 	model.CurrentState.Next = "inspect failure"
 	model.CurrentState.Blockers = reason
 	model.CurrentState.AllowedFollowUp = "scafld handoff " + model.TaskID
-	if err := specs.Save(ctx, path, model); err != nil {
-		return spec.Model{}, err
-	}
 	return model, nil
 }

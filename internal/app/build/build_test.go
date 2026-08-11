@@ -9,6 +9,7 @@ import (
 
 	"github.com/nilstate/scafld/v2/internal/core/acceptance"
 	"github.com/nilstate/scafld/v2/internal/core/execution"
+	"github.com/nilstate/scafld/v2/internal/core/reconcile"
 	"github.com/nilstate/scafld/v2/internal/core/session"
 	"github.com/nilstate/scafld/v2/internal/core/spec"
 	"github.com/nilstate/scafld/v2/internal/testkit/sessiontest"
@@ -83,6 +84,10 @@ type fakeBuildClock struct{}
 
 func (fakeBuildClock) Now() time.Time { return time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC) }
 
+func projectedBuildModel(specs *fakeSpecs, sessions *fakeSessions) spec.Model {
+	return reconcile.FromSession(specs.model, sessions.ledger)
+}
+
 func TestBuildOpensPhaseWithoutRunningAcceptance(t *testing.T) {
 	t.Parallel()
 
@@ -93,17 +98,21 @@ func TestBuildOpensPhaseWithoutRunningAcceptance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out.Passed != 0 || out.Failed != 0 || specs.model.Status != spec.StatusActive {
+	projected := projectedBuildModel(specs, sessions)
+	if out.Passed != 0 || out.Failed != 0 || out.Status != spec.StatusActive {
 		t.Fatalf("output %+v model %+v", out, specs.model)
+	}
+	if specs.model.Status != spec.StatusApproved {
+		t.Fatalf("canonical spec status = %s, want approved", specs.model.Status)
 	}
 	if len(runner.commands) != 0 {
 		t.Fatalf("first build should not run future acceptance, commands = %+v", runner.commands)
 	}
-	if specs.model.Phases[0].Status != "active" || specs.model.CurrentState.CurrentPhase != "phase1" {
-		t.Fatalf("phase state = %+v current=%q, want active phase1", specs.model.Phases[0], specs.model.CurrentState.CurrentPhase)
+	if projected.Phases[0].Status != "active" || projected.CurrentState.CurrentPhase != "phase1" {
+		t.Fatalf("phase state = %+v current=%q, want active phase1", projected.Phases[0], projected.CurrentState.CurrentPhase)
 	}
-	if specs.model.CurrentState.AllowedFollowUp != "scafld handoff task" {
-		t.Fatalf("next action = %q", specs.model.CurrentState.AllowedFollowUp)
+	if projected.CurrentState.AllowedFollowUp != "scafld handoff task" {
+		t.Fatalf("next action = %q", projected.CurrentState.AllowedFollowUp)
 	}
 	latest := sessions.ledger.Entries[len(sessions.ledger.Entries)-1]
 	if latest.Type != "build" || latest.Status != string(spec.StatusActive) {
@@ -141,17 +150,18 @@ func TestBuildRunsOpenedPhaseAndMovesToReview(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out.Passed != 1 || out.Failed != 0 || specs.model.Status != spec.StatusReview {
+	projected := projectedBuildModel(specs, sessions)
+	if out.Passed != 1 || out.Failed != 0 || out.Status != spec.StatusReview {
 		t.Fatalf("output %+v model %+v", out, specs.model)
 	}
 	if len(runner.commands) != 1 || runner.commands[0] != "true" {
 		t.Fatalf("commands = %+v, want one phase command", runner.commands)
 	}
-	if specs.model.Phases[0].Status != "completed" {
-		t.Fatalf("phase status = %q, want completed", specs.model.Phases[0].Status)
+	if projected.Phases[0].Status != "completed" {
+		t.Fatalf("phase status = %q, want completed", projected.Phases[0].Status)
 	}
-	if specs.model.CurrentState.AllowedFollowUp != "scafld review task" {
-		t.Fatalf("next action = %q", specs.model.CurrentState.AllowedFollowUp)
+	if projected.CurrentState.AllowedFollowUp != "scafld review task" {
+		t.Fatalf("next action = %q", projected.CurrentState.AllowedFollowUp)
 	}
 }
 
@@ -180,7 +190,8 @@ func TestBuildManualCriterionWithoutEvidenceBlocksInsteadOfPassing(t *testing.T)
 	if len(runner.commands) != 0 {
 		t.Fatalf("manual criterion should not run commands: %+v", runner.commands)
 	}
-	got := specs.model.Phases[0].Acceptance[0]
+	projected := projectedBuildModel(specs, sessions)
+	got := projected.Phases[0].Acceptance[0]
 	if got.Status != "pending" || got.Evidence != "manual criterion requires human evidence" {
 		t.Fatalf("manual criterion evidence = %+v, want pending manual evidence", got)
 	}
@@ -229,7 +240,8 @@ func TestBuildRerunsCompletedPhaseWhenAcceptanceCommandChanges(t *testing.T) {
 	if len(runner.commands) != 1 || runner.commands[0] != "new check" {
 		t.Fatalf("commands = %+v, want edited command to run", runner.commands)
 	}
-	criterion := specs.model.Phases[0].Acceptance[0]
+	projected := projectedBuildModel(specs, sessions)
+	criterion := projected.Phases[0].Acceptance[0]
 	if criterion.Status != "pass" || criterion.SourceEvent == "entry-old" {
 		t.Fatalf("criterion evidence = %+v, want fresh pass", criterion)
 	}
@@ -288,8 +300,9 @@ func TestBuildReviewRepairRerunsAllAcceptance(t *testing.T) {
 	if strings.Join(runner.commands, ",") != "go test ./phase,go test ./..." {
 		t.Fatalf("commands = %+v, want phase and final rerun", runner.commands)
 	}
-	if specs.model.Acceptance.Criteria[0].SourceEvent == "entry-global-old" || specs.model.Phases[0].Acceptance[0].SourceEvent == "entry-phase-old" {
-		t.Fatalf("acceptance evidence was not refreshed: global=%+v phase=%+v", specs.model.Acceptance.Criteria[0], specs.model.Phases[0].Acceptance[0])
+	projected := projectedBuildModel(specs, sessions)
+	if projected.Acceptance.Criteria[0].SourceEvent == "entry-global-old" || projected.Phases[0].Acceptance[0].SourceEvent == "entry-phase-old" {
+		t.Fatalf("acceptance evidence was not refreshed: global=%+v phase=%+v", projected.Acceptance.Criteria[0], projected.Phases[0].Acceptance[0])
 	}
 }
 
@@ -336,8 +349,9 @@ func TestBuildReviewReadyRerunsAcceptanceWhenExplicitlyInvoked(t *testing.T) {
 	if len(runner.commands) != 1 || runner.commands[0] != "go test ./phase" {
 		t.Fatalf("commands = %+v, want acceptance rerun", runner.commands)
 	}
-	if specs.model.Phases[0].Acceptance[0].SourceEvent == "entry-old" {
-		t.Fatalf("criterion evidence did not refresh: %+v", specs.model.Phases[0].Acceptance[0])
+	projected := projectedBuildModel(specs, sessions)
+	if projected.Phases[0].Acceptance[0].SourceEvent == "entry-old" {
+		t.Fatalf("criterion evidence did not refresh: %+v", projected.Phases[0].Acceptance[0])
 	}
 }
 
@@ -364,14 +378,15 @@ func TestBuildBlocksOnlyAfterEvidenceAttempt(t *testing.T) {
 	if len(runner.commands) != 1 || runner.commands[0] != "false" {
 		t.Fatalf("commands = %+v, want failed phase command only", runner.commands)
 	}
-	if specs.model.Phases[0].Status != "blocked" {
-		t.Fatalf("phase1 status = %q, want blocked", specs.model.Phases[0].Status)
+	projected := projectedBuildModel(specs, sessions)
+	if projected.Phases[0].Status != "blocked" {
+		t.Fatalf("phase1 status = %q, want blocked", projected.Phases[0].Status)
 	}
-	if specs.model.CurrentState.Blockers == "" || specs.model.CurrentState.Blockers == "none" {
-		t.Fatalf("blocked state should describe blockers, got %q", specs.model.CurrentState.Blockers)
+	if projected.CurrentState.Blockers == "" || projected.CurrentState.Blockers == "none" {
+		t.Fatalf("blocked state should describe blockers, got %q", projected.CurrentState.Blockers)
 	}
-	if out.Next != "scafld handoff task" || specs.model.CurrentState.AllowedFollowUp != "scafld handoff task" {
-		t.Fatalf("blocked next action = %+v model=%+v", out, specs.model.CurrentState)
+	if out.Next != "scafld handoff task" || projected.CurrentState.AllowedFollowUp != "scafld handoff task" {
+		t.Fatalf("blocked next action = %+v model=%+v", out, projected.CurrentState)
 	}
 }
 
@@ -400,8 +415,9 @@ func TestBuildAdvancesOnePhasePerInvocation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out.Status != spec.StatusActive || specs.model.CurrentState.CurrentPhase != "phase2" {
-		t.Fatalf("after phase1 output=%+v current=%q", out, specs.model.CurrentState.CurrentPhase)
+	projected := projectedBuildModel(specs, sessions)
+	if out.Status != spec.StatusActive || projected.CurrentState.CurrentPhase != "phase2" {
+		t.Fatalf("after phase1 output=%+v current=%q", out, projected.CurrentState.CurrentPhase)
 	}
 	if len(runner.commands) != 1 || runner.commands[0] != "phase1" {
 		t.Fatalf("commands after phase1 = %+v", runner.commands)

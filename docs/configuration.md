@@ -308,7 +308,9 @@ review:
 `.scafld/config.local.yaml` overlays `.scafld/config.yaml`, so a developer can
 pin a local provider or model without changing the committed project default.
 `init` creates a commented local override file and the repository `.gitignore`
-keeps it uncommitted.
+keeps it uncommitted. The same managed ignore block keeps generated receipts
+under `.scafld/receipts/` out of ordinary project status; `scafld update`
+refreshes that block for existing workspaces.
 If a config still contains an old scafld-generated model default, scafld upgrades
 that value to the current default while loading config. Custom model values are
 preserved.

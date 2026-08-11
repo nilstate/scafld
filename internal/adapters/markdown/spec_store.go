@@ -50,9 +50,9 @@ func (s Store) Save(ctx context.Context, path string, model spec.Model) error {
 	return updateSpec(ctx, s.root(), path, model)
 }
 
-// Load finds, parses, and returns a spec by task ID. If the file's directory
-// disagrees with its frontmatter status, Load relocates it to the status-implied
-// directory before returning. Relocation failures are non-fatal.
+// Load finds, parses, and returns a spec by task ID. Loading is read-only:
+// lifecycle projections are derived from the session ledger, and only explicit
+// save/create commands may move or rewrite the canonical Markdown contract.
 func (s Store) Load(ctx context.Context, taskID string) (spec.Model, string, error) {
 	source, err := s.LoadSource(ctx, taskID)
 	if err != nil {
@@ -62,8 +62,7 @@ func (s Store) Load(ctx context.Context, taskID string) (spec.Model, string, err
 }
 
 // LoadSource finds, parses, and returns a spec together with the exact Markdown
-// bytes read from disk. If the file's directory disagrees with frontmatter
-// status, LoadSource relocates it before returning the target path.
+// bytes read from disk. Loading is read-only and returns the path actually read.
 func (s Store) LoadSource(ctx context.Context, taskID string) (spec.Source, error) {
 	if err := ctx.Err(); err != nil {
 		return spec.Source{}, err
@@ -79,11 +78,6 @@ func (s Store) LoadSource(ctx context.Context, taskID string) (spec.Source, erro
 	model, err := Parse(data)
 	if err != nil {
 		return spec.Source{}, err
-	}
-	if target := targetPath(s.root(), model); !samePath(path, target) {
-		if err := writeMovedSpec(path, target, data); err == nil {
-			path = target
-		}
 	}
 	return spec.Source{Model: model, Path: path, Markdown: data}, nil
 }

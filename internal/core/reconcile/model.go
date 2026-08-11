@@ -174,25 +174,119 @@ func applyStaleAcceptanceState(model *spec.Model, phaseID string) {
 
 func projectLifecycle(model *spec.Model, ledger session.Session) {
 	for i := len(ledger.Entries) - 1; i >= 0; i-- {
-		switch ledger.Entries[i].Type {
+		entry := ledger.Entries[i]
+		switch entry.Type {
 		case "approval":
 			model.Status = spec.StatusApproved
+			projectApprovedState(model, entry.Reason)
 			return
 		case "build":
-			model.Status = spec.Status(ledger.Entries[i].Status)
+			model.Status = spec.Status(entry.Status)
+			projectBuildState(model, entry.Reason)
 			return
 		case "review":
 			model.Status = spec.StatusReview
+			projectReviewState(model, entry.Reason)
 			return
 		case "complete":
 			model.Status = spec.StatusCompleted
+			projectTerminalState(model, entry.Reason)
 			return
 		case "fail":
 			model.Status = spec.StatusFailed
+			projectTerminalState(model, entry.Reason)
 			return
 		case "cancel":
 			model.Status = spec.StatusCancelled
+			projectTerminalState(model, entry.Reason)
 			return
 		}
 	}
+}
+
+func projectApprovedState(model *spec.Model, reason string) {
+	model.CurrentState.CurrentPhase = "none"
+	model.CurrentState.Next = "build"
+	model.CurrentState.Reason = fallbackReason(reason, model.CurrentState.Reason)
+	model.CurrentState.Blockers = "none"
+	model.CurrentState.AllowedFollowUp = "scafld build " + model.TaskID
+	model.CurrentState.ReviewGate = "not_started"
+}
+
+func projectBuildState(model *spec.Model, reason string) {
+	switch model.Status {
+	case spec.StatusActive:
+		phaseID := currentBuildPhase(*model)
+		model.CurrentState.CurrentPhase = phaseID
+		model.CurrentState.Next = "build"
+		model.CurrentState.Reason = fallbackReason(reason, "build active")
+		model.CurrentState.Blockers = "none"
+		model.CurrentState.AllowedFollowUp = "scafld handoff " + model.TaskID
+		model.CurrentState.ReviewGate = "not_started"
+	case spec.StatusBlocked:
+		phaseID := currentBlockedPhase(*model)
+		model.CurrentState.CurrentPhase = phaseID
+		model.CurrentState.Next = "repair"
+		model.CurrentState.Reason = fallbackReason(reason, "build blocked")
+		model.CurrentState.Blockers = model.CurrentState.Reason
+		model.CurrentState.AllowedFollowUp = "scafld handoff " + model.TaskID
+		model.CurrentState.ReviewGate = "not_started"
+	case spec.StatusReview:
+		projectReviewState(model, reason)
+	}
+}
+
+func projectReviewState(model *spec.Model, reason string) {
+	model.CurrentState.CurrentPhase = "final"
+	model.CurrentState.Next = "review"
+	model.CurrentState.Reason = fallbackReason(reason, "build completed; ready for review")
+	model.CurrentState.Blockers = "none"
+	model.CurrentState.AllowedFollowUp = "scafld review " + model.TaskID
+	model.CurrentState.ReviewGate = "not_started"
+}
+
+func projectTerminalState(model *spec.Model, reason string) {
+	model.CurrentState.CurrentPhase = "none"
+	model.CurrentState.Next = "none"
+	model.CurrentState.Reason = fallbackReason(reason, model.CurrentState.Reason)
+	model.CurrentState.Blockers = "none"
+	model.CurrentState.AllowedFollowUp = "none"
+}
+
+func currentBuildPhase(model spec.Model) string {
+	for _, phase := range model.Phases {
+		if phase.Status == "active" {
+			return phase.ID
+		}
+	}
+	if phaseID, ok := firstIncompletePhase(model); ok {
+		return phaseID
+	}
+	return "final"
+}
+
+func currentBlockedPhase(model spec.Model) string {
+	for _, phase := range model.Phases {
+		if phase.Status == "blocked" {
+			return phase.ID
+		}
+	}
+	return currentBuildPhase(model)
+}
+
+func firstIncompletePhase(model spec.Model) (string, bool) {
+	for _, phase := range model.Phases {
+		if phase.Status != "completed" {
+			return phase.ID, true
+		}
+	}
+	return "", false
+}
+
+func fallbackReason(reason string, fallback string) string {
+	reason = strings.TrimSpace(reason)
+	if reason != "" {
+		return reason
+	}
+	return strings.TrimSpace(fallback)
 }

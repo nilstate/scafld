@@ -30,7 +30,7 @@ func TestRunHelpAndVersion(t *testing.T) {
 		{name: "command help", args: []string{"plan", "--help"}, want: "scafld plan"},
 		{name: "harden help", args: []string{"harden", "--help"}, want: "Required observation dimensions"},
 		{name: "approve help", args: []string{"approve", "--help"}, want: "--reason TEXT"},
-		{name: "status help", args: []string{"status", "--help"}, want: "spec_source path, sha256, and byte count"},
+		{name: "status help", args: []string{"status", "--help"}, want: "--with-context"},
 		{name: "review help", args: []string{"review", "--help"}, want: "--review-scope"},
 	}
 
@@ -672,7 +672,7 @@ func TestRunHardenProviderLocalMarksPassed(t *testing.T) {
 	}
 }
 
-func TestRunLifecycleMovesSpecsByState(t *testing.T) {
+func TestRunLifecycleKeepsCanonicalSpecAfterApproval(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
@@ -702,23 +702,23 @@ func TestRunLifecycleMovesSpecsByState(t *testing.T) {
 	}
 
 	runCLI(t, []string{"build", "--root", root, "lifecycle-task"})
-	if _, err := os.Stat(approvedPath); !os.IsNotExist(err) {
-		t.Fatalf("approved path should move after build: %v", err)
+	if _, err := os.Stat(approvedPath); err != nil {
+		t.Fatalf("approved source spec should remain after build: %v", err)
 	}
-	if _, err := os.Stat(activePath); err != nil {
-		t.Fatalf("active path missing: %v", err)
+	if _, err := os.Stat(activePath); !os.IsNotExist(err) {
+		t.Fatalf("active projection path should not be written by build: %v", err)
 	}
 	runCLI(t, []string{"build", "--root", root, "lifecycle-task"})
 
 	command := commandProviderPrintf(passingReviewDossierJSON(6))
 	runCLI(t, []string{"review", "--root", root, "lifecycle-task", "--provider", "command", "--provider-command", command})
 	runCLI(t, []string{"complete", "--root", root, "lifecycle-task"})
-	if _, err := os.Stat(activePath); !os.IsNotExist(err) {
-		t.Fatalf("active path should move after complete: %v", err)
+	if _, err := os.Stat(approvedPath); err != nil {
+		t.Fatalf("approved source spec should remain after complete: %v", err)
 	}
 	matches, err := filepath.Glob(filepath.Join(root, ".scafld", "specs", "archive", "*", "lifecycle-task.md"))
-	if err != nil || len(matches) != 1 {
-		t.Fatalf("archive match = %v err=%v, want one archived spec", matches, err)
+	if err != nil || len(matches) != 0 {
+		t.Fatalf("archive match = %v err=%v, want no generated source archive", matches, err)
 	}
 }
 
@@ -832,7 +832,7 @@ func TestRunReviewSurfacesFindingsInReviewStatusAndHandoff(t *testing.T) {
 	}
 }
 
-func TestRunStatusNoContextKeepsSpecSourceDigest(t *testing.T) {
+func TestRunStatusJSONDefaultsLightAndWithContextRestoresMarkdown(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
@@ -840,7 +840,7 @@ func TestRunStatusNoContextKeepsSpecSourceDigest(t *testing.T) {
 	runCLI(t, []string{"init", "--root", root, "--no-agent-docs"})
 	runCLI(t, []string{"plan", "--root", root, "status-context-task", "--title", "Status Context Task", "--command", "true"})
 
-	stdout := runCLI(t, []string{"status", "--root", root, "status-context-task", "--json", "--no-context"})
+	stdout := runCLI(t, []string{"status", "--root", root, "status-context-task", "--json"})
 	var payload struct {
 		OK     bool `json:"ok"`
 		Result struct {
@@ -862,6 +862,27 @@ func TestRunStatusNoContextKeepsSpecSourceDigest(t *testing.T) {
 	}
 	if source.Markdown != "" || !source.MarkdownOmitted {
 		t.Fatalf("source markdown should be omitted but provenance kept: %+v", source)
+	}
+
+	stdout = runCLI(t, []string{"status", "--root", root, "status-context-task", "--json", "--with-context"})
+	payload = struct {
+		OK     bool `json:"ok"`
+		Result struct {
+			SpecSource struct {
+				Path            string `json:"path"`
+				SHA256          string `json:"sha256"`
+				Bytes           int    `json:"bytes"`
+				Markdown        string `json:"markdown"`
+				MarkdownOmitted bool   `json:"markdown_omitted"`
+			} `json:"spec_source"`
+		} `json:"result"`
+	}{}
+	if err := json.Unmarshal([]byte(stdout), &payload); err != nil {
+		t.Fatal(err)
+	}
+	source = payload.Result.SpecSource
+	if source.Markdown == "" || source.MarkdownOmitted || !strings.Contains(source.Markdown, "Status Context Task") {
+		t.Fatalf("source markdown should be restored by --with-context: %+v", source)
 	}
 }
 

@@ -1,6 +1,6 @@
 ---
 title: Run Artifacts
-description: spec, session, diagnostics, and handoff responsibilities
+description: spec, session, runtime artifacts, and handoff responsibilities
 ---
 
 # Run Artifacts
@@ -9,7 +9,7 @@ The runtime model is intentionally small:
 
 - `spec`: the readable contract plus current projection
 - `session`: the durable evidence ledger
-- `diagnostics`: raw process evidence for failures, timeouts, and transport
+- `artifacts`: ignored raw process evidence and operator repair packets
 - `handoff`: generated stdout transport for the next model voice
 
 ## Hard Rules
@@ -17,7 +17,7 @@ The runtime model is intentionally small:
 - session is the durable run-state source
 - spec state is projected from session evidence
 - handoff is never read back for state
-- diagnostics are not the primary surface for accepted findings
+- runtime artifacts are not the primary surface for accepted findings
 - the filesystem path must match lifecycle status
 
 ## Layout
@@ -31,8 +31,12 @@ The runtime model is intentionally small:
     archive/YYYY-MM/{task-id}.md
   runs/
     {task-id}/
-      diagnostics/
+      artifacts/
+        commands/
+        provider-packets/
       session.json
+  locks/
+    runs/
 ```
 
 `draft` specs live in `drafts/`; `approved` specs live in `approved/`;

@@ -20,6 +20,7 @@ type Request struct {
 	CWD                    string
 	Env                    []string
 	EnvMode                EnvMode
+	DiagnosticName         string
 	Timeout                time.Duration
 	IdleTimeout            time.Duration
 	TerminateGrace         time.Duration

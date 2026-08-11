@@ -38,6 +38,7 @@ import (
 	"github.com/nilstate/scafld/v2/internal/app/review"
 	"github.com/nilstate/scafld/v2/internal/app/status"
 	"github.com/nilstate/scafld/v2/internal/app/validate"
+	"github.com/nilstate/scafld/v2/internal/core/runartifact"
 )
 
 var version string
@@ -310,7 +311,7 @@ func runBuild(ctx context.Context, args []string, stdout io.Writer, stderr io.Wr
 	if err != nil {
 		return failOut(stderr, output.ConfigGateError(fmt.Errorf("load config: %w", err)), ExitGeneric, opts.JSON)
 	}
-	runner := process.Runner{DiagnosticsDir: root + "/.scafld/runs/" + opts.Positionals[0] + "/diagnostics"}
+	runner := process.Runner{DiagnosticsDir: runartifact.CommandDiagnosticsDir(root, opts.Positionals[0]), DiagnosticName: "build-acceptance"}
 	executionConfig := configadapter.EffectiveExecution(root, cfg.Execution)
 	out, err := build.Run(ctx, store, sessions, git.Adapter{Root: root}, runner, clock.System{}, build.Input{TaskID: opts.Positionals[0], CWD: root, Env: executionConfig.ProcessEnv(), Timeout: executionConfig.AbsoluteTimeout(), IdleTimeout: executionConfig.IdleTimeout()})
 	return buildOut(stdout, stderr, out, err, opts.JSON)
@@ -386,7 +387,8 @@ func runStatus(ctx context.Context, args []string, stdout io.Writer, stderr io.W
 	if err != nil {
 		return failOut(stderr, err, code, opts.JSON)
 	}
-	out, err := status.RunWithOptions(ctx, store, sessions, opts.Positionals[0], status.Options{SuppressContext: opts.Flags["no-context"]}, git.Adapter{Root: store.Root})
+	suppressContext := opts.Flags["no-context"] || (opts.JSON && !opts.Flags["with-context"])
+	out, err := status.RunWithOptions(ctx, store, sessions, opts.Positionals[0], status.Options{SuppressContext: suppressContext}, git.Adapter{Root: store.Root})
 	if err != nil {
 		return failOut(stderr, err, ExitGeneric, opts.JSON)
 	}

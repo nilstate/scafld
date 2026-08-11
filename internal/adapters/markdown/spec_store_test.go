@@ -766,7 +766,7 @@ func TestSaveMovesSpecToLifecycleDirectory(t *testing.T) {
 	}
 }
 
-func TestLoadHealsLocationDrift(t *testing.T) {
+func TestLoadIsReadOnlyWhenLocationDrifts(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
@@ -793,14 +793,14 @@ func TestLoadHealsLocationDrift(t *testing.T) {
 		t.Fatalf("loaded status = %s, want approved", loaded.Status)
 	}
 	approvedPath := filepath.Join(root, ".scafld", "specs", "approved", model.TaskID+".md")
-	if path != approvedPath {
-		t.Fatalf("returned path = %s, want %s", path, approvedPath)
+	if path != driftedPath {
+		t.Fatalf("returned path = %s, want original drifted path %s", path, driftedPath)
 	}
-	if _, err := os.Stat(driftedPath); !os.IsNotExist(err) {
-		t.Fatalf("drifted path still exists: %v", err)
+	if _, err := os.Stat(driftedPath); err != nil {
+		t.Fatalf("drifted path should remain after read-only load: %v", err)
 	}
-	if _, err := os.Stat(approvedPath); err != nil {
-		t.Fatalf("approved path missing after heal: %v", err)
+	if _, err := os.Stat(approvedPath); !os.IsNotExist(err) {
+		t.Fatalf("approved path should not be created by load: %v", err)
 	}
 }
 

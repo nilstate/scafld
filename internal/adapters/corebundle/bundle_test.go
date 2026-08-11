@@ -16,7 +16,7 @@ import (
 func TestRepositoryDoesNotTrackGeneratedWorkspaceCopies(t *testing.T) {
 	t.Parallel()
 
-	for _, path := range []string{".scafld/core", ".scafld/prompts", ".scafld/specs/archive", ".scafld/specs/examples"} {
+	for _, path := range []string{".scafld/core", ".scafld/prompts", ".scafld/receipts", ".scafld/specs/archive", ".scafld/specs/examples"} {
 		out, err := exec.Command("git", "-C", repoRoot(t), "ls-files", "--", path).CombinedOutput()
 		if err != nil {
 			t.Fatalf("git ls-files %s: %v\n%s", path, err, out)
@@ -349,13 +349,17 @@ func TestInitGitignoreCreatesScafldRules(t *testing.T) {
 		"!.scafld/specs/**",
 		".scafld/config.local.yaml",
 		".scafld/core/",
+		".scafld/locks/",
 		".scafld/prompts/.manifest.json",
 		".scafld/runs/",
-		"!.scafld/receipts/*.json",
+		".scafld/receipts/",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf(".gitignore missing %q:\n%s", want, text)
 		}
+	}
+	if strings.Contains(text, "!.scafld/receipts") {
+		t.Fatalf(".gitignore must not unignore receipt files:\n%s", text)
 	}
 }
 
@@ -455,14 +459,50 @@ func TestInitGitignoreIsIdempotentAndOverridesBroadScafldIgnore(t *testing.T) {
 		t.Fatalf("git init: %v", err)
 	}
 	assertGitIgnore(t, root, ".scafld/runs/task/session.json", true)
+	assertGitIgnore(t, root, ".scafld/locks/runs/task.lock", true)
 	assertGitIgnore(t, root, ".scafld/receipts/task.log", true)
 	assertGitIgnore(t, root, ".scafld/core/config.yaml", true)
 	assertGitIgnore(t, root, ".scafld/prompts/.manifest.json", true)
 	assertGitIgnore(t, root, ".scafld/config.local.yaml", true)
-	assertGitIgnore(t, root, ".scafld/receipts/task.json", false)
+	assertGitIgnore(t, root, ".scafld/receipts/task.json", true)
 	assertGitIgnore(t, root, ".scafld/prompts/harden.md", false)
 	assertGitIgnore(t, root, ".scafld/specs/drafts/task.md", false)
 	assertGitIgnore(t, root, ".scafld/config.yaml", false)
+}
+
+func TestUpdateRefreshesManagedGitignoreBlock(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, ".gitignore"), []byte(`# scafld runtime state
+!.scafld/
+!.scafld/config.yaml
+!.scafld/receipts/
+.scafld/receipts/*
+!.scafld/receipts/*.json
+.scafld/runs/
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	result, err := Update(t.Context(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsPath(result.Updated, ".gitignore") {
+		t.Fatalf("updated = %v, want managed gitignore refreshed", result.Updated)
+	}
+	data, err := os.ReadFile(filepath.Join(root, ".gitignore"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if strings.Contains(text, "!.scafld/receipts") || !strings.Contains(text, ".scafld/receipts/") {
+		t.Fatalf("updated gitignore must ignore receipts:\n%s", text)
+	}
+	if err := exec.Command("git", "-C", root, "init").Run(); err != nil {
+		t.Fatalf("git init: %v", err)
+	}
+	assertGitIgnore(t, root, ".scafld/receipts/task.json", true)
 }
 
 func assertGitIgnore(t *testing.T, root string, rel string, wantIgnored bool) {

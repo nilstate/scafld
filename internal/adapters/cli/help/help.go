@@ -52,7 +52,7 @@ channel, scafld writes a provider packet repair artifact and records that path
 on the failed harden round. Fill the artifact's repaired_packet field with
 exactly one valid HardenDossier JSON object, then record it without another
 external harden call:
-  scafld harden email-contracts --repair-packet .scafld/runs/email-contracts/diagnostics/provider-packet-repair-harden-<round>.json
+  scafld harden email-contracts --repair-packet .scafld/runs/email-contracts/artifacts/provider-packets/provider-packet-repair-harden-<round>.json
 Provider auto prefers the other installed agent when the host is detected, can
 use Gemini as an additional external challenger, and fails closed when only the
 host provider is available unless fallback_policy is relaxed or a provider is
@@ -124,18 +124,19 @@ Flags:
 		fmt.Fprint(w, `scafld status - Show task status and next action
 
 Usage:
-  scafld status <task_id> [--root PATH] [--json] [--no-context]
+  scafld status <task_id> [--root PATH] [--json] [--no-context] [--with-context]
 
 Shows lifecycle status, gate state, latest review findings, task material, and
-the deterministic next action. Agent entry should read full status or handoff
-first so the source-backed contract is in context. Follow-up polling may use
---no-context; scafld still includes spec_source path, sha256, and byte count so
-the agent can reload full context when the digest changes.
+the deterministic next action. Human status includes source markdown by default.
+JSON status is light by default; use --with-context only when the caller needs
+the canonical markdown contract in the JSON payload. Handoff, review, and harden
+still deliver required operator/agent context.
 
 Flags:
-  --no-context  Omit source markdown but keep spec_source provenance
-  --root PATH   Workspace root
-  --json        Print JSON envelope
+  --no-context    Omit source markdown but keep spec_source provenance
+  --with-context  Include source markdown in JSON status
+  --root PATH     Workspace root
+  --json          Print JSON envelope
 `)
 		return
 	}

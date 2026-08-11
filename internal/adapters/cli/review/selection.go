@@ -19,6 +19,7 @@ import (
 	appreview "github.com/nilstate/scafld/v2/internal/app/review"
 	corecontract "github.com/nilstate/scafld/v2/internal/core/agentcontract"
 	"github.com/nilstate/scafld/v2/internal/core/reviewcontext"
+	"github.com/nilstate/scafld/v2/internal/core/runartifact"
 )
 
 // Options configures review-provider selection for the CLI.
@@ -78,7 +79,7 @@ func Select(ctx context.Context, opts Options) (Selection, error) {
 	external := cfg.Review.External
 	diagnosticsPath := opts.DiagnosticsPath
 	if diagnosticsPath == "" {
-		diagnosticsPath = opts.Root + "/.scafld/runs/" + opts.TaskID + "/diagnostics"
+		diagnosticsPath = runartifact.CommandDiagnosticsDir(opts.Root, opts.TaskID)
 	}
 	provider, err := providers.Select(providers.Selection{
 		Provider:                  providerinfo.First(opts.Provider, external.Provider),
@@ -94,7 +95,7 @@ func Select(ctx context.Context, opts Options) (Selection, error) {
 		ClaudeBinary:              external.Claude.Binary,
 		GeminiBinary:              external.Gemini.Binary,
 		CWD:                       opts.Root,
-		Runner:                    process.Runner{DiagnosticsDir: diagnosticsPath, Progress: opts.Progress, ProgressLabel: progressLabel(opts, external)},
+		Runner:                    process.Runner{DiagnosticsDir: diagnosticsPath, DiagnosticName: "review-provider", Progress: opts.Progress, ProgressLabel: progressLabel(opts, external)},
 		Timeout:                   time.Duration(external.AbsoluteMaxSeconds) * time.Second,
 		Idle:                      time.Duration(external.IdleTimeoutSeconds) * time.Second,
 		FallbackPolicy:            external.FallbackPolicy,

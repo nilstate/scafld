@@ -34,8 +34,8 @@ func TestProjectClassifiesAttemptLeaseStates(t *testing.T) {
 func TestRepairPacketCommandUsesFirstClassRepairFlag(t *testing.T) {
 	t.Parallel()
 
-	want := `scafld review task --repair-packet ".scafld/runs/task/diagnostics/provider-packet-repair-review-attempt.json"`
-	if got := RepairPacketCommand("task", ".scafld/runs/task/diagnostics/provider-packet-repair-review-attempt.json"); got != want {
+	want := `scafld review task --repair-packet ".scafld/runs/task/artifacts/provider-packets/provider-packet-repair-review-attempt.json"`
+	if got := RepairPacketCommand("task", ".scafld/runs/task/artifacts/provider-packets/provider-packet-repair-review-attempt.json"); got != want {
 		t.Fatalf("repair command = %q, want %q", got, want)
 	}
 }

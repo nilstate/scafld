@@ -26,7 +26,6 @@ const defaultAcceptanceTimeout = 5 * time.Minute
 // SpecStore is the spec persistence port used by build.
 type SpecStore interface {
 	Load(context.Context, string) (spec.Model, string, error)
-	Save(context.Context, string, spec.Model) error
 }
 
 // SessionStore is the session evidence port used by build.
@@ -134,9 +133,6 @@ func openBuild(ctx context.Context, specs SpecStore, sessions SessionStore, mode
 		model = reconcile.FromSession(model, ledger)
 		model.Updated = now
 		applyActiveState(&model, finalPhaseID, "final acceptance opened")
-		if err := specs.Save(ctx, path, model); err != nil {
-			return Output{}, fmt.Errorf("save projected spec: %w", err)
-		}
 		return Output{TaskID: model.TaskID, Status: model.Status, Phase: finalPhaseID, Next: model.CurrentState.AllowedFollowUp}, nil
 	}
 	var err error
@@ -151,9 +147,6 @@ func openBuild(ctx context.Context, specs SpecStore, sessions SessionStore, mode
 	model = reconcile.FromSession(model, ledger)
 	model.Updated = now
 	applyActiveState(&model, phaseID, "phase "+phaseID+" opened")
-	if err := specs.Save(ctx, path, model); err != nil {
-		return Output{}, fmt.Errorf("save projected spec: %w", err)
-	}
 	return Output{TaskID: model.TaskID, Status: model.Status, Phase: phaseID, Next: model.CurrentState.AllowedFollowUp}, nil
 }
 
@@ -190,9 +183,6 @@ func continueBuild(ctx context.Context, specs SpecStore, sessions SessionStore, 
 		model = reconcile.FromSession(model, ledger)
 		model.Updated = now
 		applyBlockedState(&model, phaseID, "phase "+phaseID+" acceptance failed")
-		if err := specs.Save(ctx, path, model); err != nil {
-			return Output{}, fmt.Errorf("save projected spec: %w", err)
-		}
 		return Output{TaskID: model.TaskID, Status: model.Status, Phase: phaseID, Passed: passed, Failed: failed, Next: model.CurrentState.AllowedFollowUp, Repair: buildRepair(model, ledger)}, nil
 	}
 	ledger, err = appendPhase(ctx, sessions, model.TaskID, phaseID, "completed", "all phase criteria passed", now)
@@ -212,9 +202,6 @@ func continueBuild(ctx context.Context, specs SpecStore, sessions SessionStore, 
 		model = reconcile.FromSession(model, ledger)
 		model.Updated = now
 		applyActiveState(&model, nextPhase, "phase "+phaseID+" completed; phase "+nextPhase+" opened")
-		if err := specs.Save(ctx, path, model); err != nil {
-			return Output{}, fmt.Errorf("save projected spec: %w", err)
-		}
 		return Output{TaskID: model.TaskID, Status: model.Status, Phase: nextPhase, Passed: passed, Failed: failed, Next: model.CurrentState.AllowedFollowUp}, nil
 	}
 	return runFinalAcceptance(ctx, specs, sessions, runner, model, path, ledger, cwd, env, timeout, idleTimeout, now, passed, failed)
@@ -249,9 +236,6 @@ func rerunAcceptanceForReviewRepair(ctx context.Context, specs SpecStore, sessio
 			model = reconcile.FromSession(model, ledger)
 			model.Updated = now
 			applyBlockedState(&model, phase.ID, "phase "+phase.ID+" acceptance failed")
-			if err := specs.Save(ctx, path, model); err != nil {
-				return Output{}, fmt.Errorf("save projected spec: %w", err)
-			}
 			return Output{TaskID: model.TaskID, Status: model.Status, Phase: phase.ID, Passed: passed, Failed: failed, Next: model.CurrentState.AllowedFollowUp, Repair: buildRepair(model, ledger)}, nil
 		}
 		ledger, err = appendPhase(ctx, sessions, model.TaskID, phase.ID, "completed", "all phase criteria passed", now)
@@ -286,9 +270,6 @@ func runFinalAcceptance(ctx context.Context, specs SpecStore, sessions SessionSt
 		model = reconcile.FromSession(model, ledger)
 		model.Updated = now
 		applyBlockedState(&model, finalPhaseID, "final acceptance failed")
-		if err := specs.Save(ctx, path, model); err != nil {
-			return Output{}, fmt.Errorf("save projected spec: %w", err)
-		}
 		return Output{TaskID: model.TaskID, Status: model.Status, Phase: finalPhaseID, Passed: passed, Failed: failed, Next: model.CurrentState.AllowedFollowUp, Repair: buildRepair(model, ledger)}, nil
 	}
 	var err error
@@ -299,9 +280,6 @@ func runFinalAcceptance(ctx context.Context, specs SpecStore, sessions SessionSt
 	model = reconcile.FromSession(model, ledger)
 	model.Updated = now
 	applyReviewState(&model)
-	if err := specs.Save(ctx, path, model); err != nil {
-		return Output{}, fmt.Errorf("save projected spec: %w", err)
-	}
 	return Output{TaskID: model.TaskID, Status: model.Status, Phase: finalPhaseID, Passed: passed, Failed: failed, Next: model.CurrentState.AllowedFollowUp}, nil
 }
 

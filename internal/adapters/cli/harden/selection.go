@@ -14,6 +14,7 @@ import (
 	"github.com/nilstate/scafld/v2/internal/adapters/process"
 	"github.com/nilstate/scafld/v2/internal/adapters/providers"
 	appharden "github.com/nilstate/scafld/v2/internal/app/harden"
+	"github.com/nilstate/scafld/v2/internal/core/runartifact"
 )
 
 // Options configures harden-provider selection for the CLI.
@@ -121,7 +122,7 @@ func Select(ctx context.Context, opts Options) (Selection, error) {
 	}
 	diagnosticsPath := opts.DiagnosticsPath
 	if diagnosticsPath == "" {
-		diagnosticsPath = opts.Root + "/.scafld/runs/" + opts.TaskID + "/diagnostics"
+		diagnosticsPath = runartifact.CommandDiagnosticsDir(opts.Root, opts.TaskID)
 	}
 	provider, err := providers.SelectHarden(providers.Selection{
 		Provider:                  providerinfo.First(opts.Provider, external.Provider),
@@ -137,7 +138,7 @@ func Select(ctx context.Context, opts Options) (Selection, error) {
 		ClaudeBinary:              external.Claude.Binary,
 		GeminiBinary:              external.Gemini.Binary,
 		CWD:                       opts.Root,
-		Runner:                    process.Runner{DiagnosticsDir: diagnosticsPath, Progress: opts.Progress, ProgressLabel: progressLabel(opts, external)},
+		Runner:                    process.Runner{DiagnosticsDir: diagnosticsPath, DiagnosticName: "harden-provider", Progress: opts.Progress, ProgressLabel: progressLabel(opts, external)},
 		Timeout:                   time.Duration(external.AbsoluteMaxSeconds) * time.Second,
 		Idle:                      time.Duration(external.IdleTimeoutSeconds) * time.Second,
 		FallbackPolicy:            external.FallbackPolicy,

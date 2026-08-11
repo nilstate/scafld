@@ -22,7 +22,6 @@ var ErrReviewGate = errors.New("review gate has not passed")
 // SpecStore is the spec persistence port used by completion.
 type SpecStore interface {
 	Load(context.Context, string) (spec.Model, string, error)
-	Save(context.Context, string, spec.Model) error
 }
 
 // SessionStore is the session evidence port used by completion.
@@ -47,7 +46,7 @@ type Clock interface{ Now() time.Time }
 
 // Run completes a reviewed task and records completion evidence.
 func Run(ctx context.Context, specs SpecStore, sessions SessionStore, workspace WorkspaceStatus, clock Clock, taskID string) (spec.Model, error) {
-	model, path, err := specs.Load(ctx, taskID)
+	model, _, err := specs.Load(ctx, taskID)
 	if err != nil {
 		return spec.Model{}, err
 	}
@@ -55,6 +54,7 @@ func Run(ctx context.Context, specs SpecStore, sessions SessionStore, workspace 
 	if err != nil {
 		return spec.Model{}, reviewGateError(model, "session ledger could not be loaded", "missing review evidence")
 	}
+	model = reconcile.FromSession(model, ledger)
 	nowTime := clock.Now().UTC()
 	now := nowTime.Format(time.RFC3339)
 	opts := reviewgate.Options{Now: nowTime}
@@ -79,7 +79,6 @@ func Run(ctx context.Context, specs SpecStore, sessions SessionStore, workspace 
 	if state.Kind != reviewgate.KindReviewPassed {
 		return spec.Model{}, reviewGateErrorWithNext(model, state.Reason, state.Actual, state.Next)
 	}
-	model = reconcile.FromSession(model, ledger)
 	if !projectedReviewPassed(model) {
 		return spec.Model{}, reviewGateError(model, "projected spec is not at a passing review gate", fmt.Sprintf("status %s verdict %s", model.Status, model.Review.Verdict))
 	}
@@ -95,9 +94,6 @@ func Run(ctx context.Context, specs SpecStore, sessions SessionStore, workspace 
 	model.Updated = now
 	model.CurrentState.Next = "done"
 	model.CurrentState.AllowedFollowUp = "none"
-	if err := specs.Save(ctx, path, model); err != nil {
-		return spec.Model{}, err
-	}
 	return model, nil
 }
 

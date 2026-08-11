@@ -138,7 +138,7 @@ gate: review
 status: review
 reason: review provider failed
 evidence:
-- .scafld/runs/add-error-codes/diagnostics/command-1.txt
+- .scafld/runs/add-error-codes/artifacts/commands/review-provider-1.txt
 expected: valid ReviewDossier submitted by an external reviewer
 actual: provider produced no submission; Claude must call submit_review exactly once and final text is ignored
 blockers:

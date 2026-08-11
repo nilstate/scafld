@@ -15,12 +15,19 @@ import (
 
 func TestCommandWritesDiagnostic(t *testing.T) {
 	t.Parallel()
-	result, err := (Runner{DiagnosticsDir: t.TempDir()}).Run(context.Background(), execution.Request{Command: "printf ok", CWD: t.TempDir(), Env: []string{"BUNDLE_GEMFILE=api/Gemfile"}, Timeout: time.Second})
+	dir := t.TempDir()
+	result, err := (Runner{DiagnosticsDir: dir}).Run(context.Background(), execution.Request{Command: "printf ok", CWD: t.TempDir(), Env: []string{"BUNDLE_GEMFILE=api/Gemfile"}, DiagnosticName: "acceptance:go test", Timeout: time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if result.ExitCode != 0 || result.Output != "ok" || result.DiagnosticPath == "" {
 		t.Fatalf("unexpected result: %+v", result)
+	}
+	if got := filepath.Base(result.DiagnosticPath); !strings.HasPrefix(got, "acceptance-go-test-") || !strings.HasSuffix(got, ".txt") {
+		t.Fatalf("diagnostic filename = %q, want safe requested prefix", got)
+	}
+	if filepath.Dir(result.DiagnosticPath) != dir {
+		t.Fatalf("diagnostic dir = %q, want %q", filepath.Dir(result.DiagnosticPath), dir)
 	}
 	data, err := os.ReadFile(result.DiagnosticPath)
 	if err != nil {

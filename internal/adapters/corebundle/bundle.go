@@ -52,7 +52,18 @@ func Init(ctx context.Context, root string) (Result, error) {
 
 // Update refreshes managed assets and unmarked workspace prompt copies.
 func Update(ctx context.Context, root string) (Result, error) {
-	return Install(ctx, root, Options{OverwriteCore: true, RefreshProjectPrompts: true, InstallLifecycleTools: true})
+	result, err := Install(ctx, root, Options{OverwriteCore: true, RefreshProjectPrompts: true, InstallLifecycleTools: true})
+	if err != nil {
+		return Result{}, err
+	}
+	gitignore, err := InitGitignore(ctx, root)
+	if err != nil {
+		return Result{}, err
+	}
+	result.Created = append(result.Created, gitignore.Created...)
+	result.Updated = append(result.Updated, gitignore.Updated...)
+	result.Skipped = append(result.Skipped, gitignore.Skipped...)
+	return result, nil
 }
 
 // Install copies embedded assets into root according to opts.

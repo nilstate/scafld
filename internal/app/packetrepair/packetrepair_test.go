@@ -2,6 +2,7 @@ package packetrepair
 
 import (
 	"errors"
+	"path/filepath"
 	"testing"
 
 	"github.com/nilstate/scafld/v2/internal/core/providerpacket"
@@ -31,5 +32,7 @@ func TestWriteArtifactRequiresRejectedPacketText(t *testing.T) {
 		Err:    errors.New("invalid packet"),
 	}); !ok || path == "" {
 		t.Fatalf("rejected packet text did not write repair artifact: path=%q ok=%v", path, ok)
+	} else if want := filepath.Join(root, ".scafld", "runs", "task", "artifacts", "provider-packets", "provider-packet-repair-review-attempt.json"); path != want {
+		t.Fatalf("repair path = %q, want %q", path, want)
 	}
 }

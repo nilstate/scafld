@@ -36,8 +36,8 @@ func TestProjectBlocksSameDraftProviderRerunAfterNeedsRevision(t *testing.T) {
 func TestRepairPacketCommandUsesFirstClassRepairFlag(t *testing.T) {
 	t.Parallel()
 
-	want := `scafld harden task --repair-packet ".scafld/runs/task/diagnostics/provider-packet-repair-harden-round.json"`
-	if got := RepairPacketCommand("task", ".scafld/runs/task/diagnostics/provider-packet-repair-harden-round.json"); got != want {
+	want := `scafld harden task --repair-packet ".scafld/runs/task/artifacts/provider-packets/provider-packet-repair-harden-round.json"`
+	if got := RepairPacketCommand("task", ".scafld/runs/task/artifacts/provider-packets/provider-packet-repair-harden-round.json"); got != want {
 		t.Fatalf("repair command = %q, want %q", got, want)
 	}
 }

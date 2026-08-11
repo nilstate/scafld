@@ -50,6 +50,12 @@ func TestAtomicReplaceCleanup(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(root, ".scafld", "runs", "task", "session.json")); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := os.Stat(filepath.Join(root, ".scafld", "runs", "task", "session.json.lock")); !os.IsNotExist(err) {
+		t.Fatalf("session lock must not be adjacent to ledger: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".scafld", "locks", "runs", "task.lock")); err != nil {
+		t.Fatalf("session lock path missing: %v", err)
+	}
 }
 
 func TestListSessionsSorted(t *testing.T) {

@@ -366,7 +366,7 @@ External providers run through the process runner with timeout and idle-timeout
 protection. Provider failures and timeouts write diagnostics under:
 
 ```text
-.scafld/runs/<task-id>/diagnostics/
+.scafld/runs/<task-id>/artifacts/commands/
 ```
 
 `status --json` and `handoff` show the accepted blocker summary and task material

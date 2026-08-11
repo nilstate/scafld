@@ -24,10 +24,15 @@ control, but it is not the default agent path.
   config.yaml
   config.local.yaml
   prompts/                 # optional project-owned overrides
+  receipts/                # generated signed receipts, ignored by default
   runs/
     {task-id}/
-      diagnostics/
+      artifacts/
+        commands/
+        provider-packets/
       session.json
+  locks/
+    runs/
   specs/
     drafts/
     approved/
@@ -89,7 +94,7 @@ That means:
 - `finalize` returns blockers or a signed receipt in one agent-facing call
 - `review` remains the operator/lifecycle review command for spec-backed runs
 - `verify` is the CI merge wall for signed receipts
-- diagnostics are transport evidence, not the primary finding surface
+- runtime artifacts are transport evidence, not the primary finding surface
 
 ## Metrics
 

@@ -98,7 +98,7 @@ func evaluateCriterion(ctx context.Context, runner Runner, criterion Criterion, 
 			EndedAt:      ended,
 		}
 	}
-	result, runErr := run(ctx, runner, criterion.Command, input)
+	result, runErr := run(ctx, runner, criterion, input)
 	ended := time.Now().UTC()
 	evidenceOutput := result.Output
 	if isBrowserCriterion(criterion) {
@@ -142,17 +142,18 @@ func emptyCommandEvaluation(criterion Criterion) coreacceptance.Result {
 	return coreacceptance.Result{Status: "fail", Reason: "criterion command is empty"}
 }
 
-func run(ctx context.Context, runner Runner, command string, input EvaluateInput) (execution.Result, error) {
+func run(ctx context.Context, runner Runner, criterion Criterion, input EvaluateInput) (execution.Result, error) {
 	if runner == nil {
 		return execution.Result{}, errors.New("missing acceptance runner")
 	}
 	return runner.Run(ctx, execution.Request{
-		Command:     command,
-		CWD:         input.WorkDir,
-		Env:         input.Env,
-		EnvMode:     input.EnvMode,
-		Timeout:     input.Timeout,
-		IdleTimeout: input.IdleTimeout,
+		Command:        criterion.Command,
+		CWD:            input.WorkDir,
+		Env:            input.Env,
+		EnvMode:        input.EnvMode,
+		DiagnosticName: criterion.ID,
+		Timeout:        input.Timeout,
+		IdleTimeout:    input.IdleTimeout,
 	})
 }
 

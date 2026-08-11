@@ -963,8 +963,7 @@ func (a Adapter) catFileBatch(ctx context.Context, names []string, handle func(i
 }
 
 // TreeSHA computes only the commit-free snapshot tree fingerprint, skipping the
-// per-file digest, diff, and ignored-path passes. The finalize mutation guard
-// uses it to detect acceptance-time drift without paying for a full snapshot.
+// per-file digest, diff, and ignored-path passes.
 func (a Adapter) TreeSHA(ctx context.Context, input SnapshotInput) (string, error) {
 	scope := normalizeScope(input.Scope)
 	if len(scope) == 0 {

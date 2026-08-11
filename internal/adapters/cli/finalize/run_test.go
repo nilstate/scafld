@@ -359,6 +359,75 @@ func TestCommittedBaseDeltaSealVerifiesAfterCommit(t *testing.T) {
 	}
 }
 
+func TestFinalizeIgnoresOutOfScopeMutationDuringAcceptance(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := initFinalizeRepo(t)
+	writeFinalizeFile(t, root, "ambient.txt", "ambient before\n")
+	finalizeRunGit(t, root, "add", "-A")
+	finalizeRunGit(t, root, "commit", "-m", "ambient base")
+	base := strings.TrimSpace(finalizeGitOutput(t, root, "rev-parse", "HEAD"))
+	writeFinalizeFile(t, root, "file.txt", "task after\n")
+
+	keyPath, trusted := newFinalizeSigningKey(t)
+	out, err := appfinalize.Run(ctx,
+		gateSnapshotter{git: git.Adapter{Root: root}},
+		finalizeAcceptanceFunc(func(context.Context, appacceptance.EvaluateInput) (appacceptance.EvaluateOutput, error) {
+			writeFinalizeFile(t, root, "ambient.txt", "ambient changed by another agent\n")
+			return appacceptance.EvaluateOutput{
+				Passed: true,
+				Results: []appacceptance.CriterionResult{{
+					ID:           "ac1",
+					Command:      "true",
+					ExpectedKind: "exit_code_zero",
+					Status:       "pass",
+					Reason:       "exit code was 0",
+				}},
+			}, nil
+		}),
+		passingFinalizeReviewer{git: git.Adapter{Root: root}},
+		sign.Ed25519Signer{PrivateKeyPath: keyPath},
+		appfinalize.Input{
+			TaskID:          "ambient-drift",
+			SessionID:       "ambient-drift",
+			Scope:           []string{"file.txt"},
+			BaseRef:         base,
+			SpecFingerprint: "spec",
+			HostUnderReview: receipt.HostUnderReview{Agent: "unknown"},
+			Criteria:        []appacceptance.Criterion{{ID: "ac1", Command: "true", ExpectedKind: "exit_code_zero"}},
+			WorkDir:         root,
+			MintedAt:        time.Date(2026, 8, 6, 0, 0, 0, 0, time.UTC),
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Verdict != review.VerdictPass || out.Receipt == nil {
+		t.Fatalf("finalize verdict=%q reason=%q receipt=%v", out.Verdict, out.Reason, out.Receipt != nil)
+	}
+	if _, ok := out.Receipt.Body.FileDigests["file.txt"]; !ok || len(out.Receipt.Body.FileDigests) != 1 {
+		t.Fatalf("receipt file digests = %+v, want only scoped task file", out.Receipt.Body.FileDigests)
+	}
+
+	finalizeRunGit(t, root, "add", "-A")
+	finalizeRunGit(t, root, "commit", "-m", "task plus ambient")
+	head := strings.TrimSpace(finalizeGitOutput(t, root, "rev-parse", "HEAD"))
+	ports := appverify.Ports{
+		Snapshotter:       finalizeVerifySnapshotter{git: git.Adapter{Root: root}},
+		AcceptanceRunner:  finalizeVerifyAcceptance{runner: process.Runner{}, root: root},
+		AncestryChecker:   git.Adapter{Root: root},
+		SignatureVerifier: finalizeVerifySignature{},
+	}
+	res, err := appverify.Run(ctx, *out.Receipt, trusted, appverify.Policy{TargetCommit: head}, ports)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Passed {
+		t.Fatalf("scoped receipt did not verify after ambient commit: %s", res.Reason)
+	}
+}
+
 func TestSelectReviewerDiscoversAuthenticatedInstalledBinary(t *testing.T) {
 	home := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(home, ".codex"), 0o700); err != nil {
@@ -889,6 +958,12 @@ func (s finalizeVerifySnapshotter) Snapshot(ctx context.Context, in appverify.Sn
 type finalizeVerifyAcceptance struct {
 	runner appacceptance.Runner
 	root   string
+}
+
+type finalizeAcceptanceFunc func(context.Context, appacceptance.EvaluateInput) (appacceptance.EvaluateOutput, error)
+
+func (f finalizeAcceptanceFunc) Evaluate(ctx context.Context, in appacceptance.EvaluateInput) (appacceptance.EvaluateOutput, error) {
+	return f(ctx, in)
 }
 
 func (a finalizeVerifyAcceptance) RunAcceptance(ctx context.Context, criteria []receipt.Acceptance) ([]appverify.AcceptanceResult, error) {

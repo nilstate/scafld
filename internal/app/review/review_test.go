@@ -88,6 +88,16 @@ func (f *fakeSessions) AppendTransaction(_ context.Context, taskID string, now s
 
 func (f *fakeSessions) Load(context.Context, string) (session.Session, error) { return f.ledger, nil }
 
+func entriesOfType(ledger session.Session, typ string) []session.Entry {
+	out := make([]session.Entry, 0, len(ledger.Entries))
+	for _, entry := range ledger.Entries {
+		if entry.Type == typ {
+			out = append(out, entry)
+		}
+	}
+	return out
+}
+
 type terminalContextSessions struct {
 	fakeSessions
 	transactions     int
@@ -322,16 +332,13 @@ func TestProviderVerdictDrivesReviewState(t *testing.T) {
 	if out.Repair == nil || out.Repair.Gate != "review" || out.Repair.Next != "scafld handoff task" || len(out.Repair.Blockers) != 1 {
 		t.Fatalf("repair = %+v", out.Repair)
 	}
-	if specs.model.CurrentState.AllowedFollowUp != "scafld handoff task" {
-		t.Fatalf("next action = %q", specs.model.CurrentState.AllowedFollowUp)
-	}
-	if len(sessions.ledger.Entries) != 3 ||
-		sessions.ledger.Entries[0].Type != "review_attempt" ||
-		sessions.ledger.Entries[0].Status != "running" ||
-		sessions.ledger.Entries[1].Type != "review_attempt" ||
-		sessions.ledger.Entries[1].Status != "accepted" ||
-		sessions.ledger.Entries[2].Type != "review" ||
-		!strings.Contains(sessions.ledger.Entries[2].Output, "bug") {
+	attempts := entriesOfType(sessions.ledger, "review_attempt")
+	reviews := entriesOfType(sessions.ledger, "review")
+	if len(attempts) != 2 ||
+		attempts[0].Status != "running" ||
+		attempts[1].Status != "accepted" ||
+		len(reviews) != 1 ||
+		!strings.Contains(reviews[0].Output, "bug") {
 		t.Fatalf("review findings were not recorded in session: %+v", sessions.ledger.Entries)
 	}
 }
@@ -398,11 +405,10 @@ func TestReviewRejectsUnderBudgetAttackLog(t *testing.T) {
 			t.Fatalf("error missing %q: %v", want, err)
 		}
 	}
-	if len(sessions.ledger.Entries) != 2 ||
-		sessions.ledger.Entries[0].Type != "review_attempt" ||
-		sessions.ledger.Entries[0].Status != "running" ||
-		sessions.ledger.Entries[1].Type != "review_attempt" ||
-		sessions.ledger.Entries[1].Status != "failed" {
+	attempts := entriesOfType(sessions.ledger, "review_attempt")
+	if len(attempts) != 2 ||
+		attempts[0].Status != "running" ||
+		attempts[1].Status != "failed" {
 		t.Fatalf("session entries = %+v", sessions.ledger.Entries)
 	}
 }
@@ -466,8 +472,9 @@ func TestReviewSendsConfiguredPassesInSingleProviderCall(t *testing.T) {
 	if calls != 1 {
 		t.Fatalf("provider calls = %d, want 1", calls)
 	}
-	if sessions.ledger.Entries[0].ReviewPassCount != 1 {
-		t.Fatalf("review attempt pass count = %d, want 1", sessions.ledger.Entries[0].ReviewPassCount)
+	attempts := entriesOfType(sessions.ledger, "review_attempt")
+	if len(attempts) == 0 || attempts[0].ReviewPassCount != 1 {
+		t.Fatalf("review attempt pass count = %+v, want first attempt pass count 1", attempts)
 	}
 	for _, want := range []string{"Regression Hunt", "Convention Check", "Max findings: 5", "Minimum attack angles: 3"} {
 		if !strings.Contains(prompt, want) {
@@ -564,9 +571,8 @@ func TestReviewRecordsRunningAttemptBeforeProviderReturns(t *testing.T) {
 	specs := &fakeSpecs{model: spec.Model{TaskID: "task", Title: "Task", Status: spec.StatusReview}}
 	sessions := &fakeSessions{}
 	provider := providerFunc(func(context.Context, corereview.Request) (corereview.Dossier, error) {
-		if len(sessions.ledger.Entries) != 1 ||
-			sessions.ledger.Entries[0].Type != "review_attempt" ||
-			sessions.ledger.Entries[0].Status != "running" {
+		attempts := entriesOfType(sessions.ledger, "review_attempt")
+		if len(attempts) != 1 || attempts[0].Status != "running" {
 			t.Fatalf("review attempt was not recorded before provider invocation: %+v", sessions.ledger.Entries)
 		}
 		return passingDossier(), nil
@@ -589,8 +595,8 @@ func TestReviewRequiresDurableWorkspaceHeadBeforeProviderRuns(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "review workspace head unavailable") {
 		t.Fatalf("err = %v, want workspace head failure", err)
 	}
-	if len(sessions.ledger.Entries) != 0 {
-		t.Fatalf("review should not record misleading session entries: %+v", sessions.ledger.Entries)
+	if attempts := entriesOfType(sessions.ledger, "review_attempt"); len(attempts) != 0 {
+		t.Fatalf("review should not record provider attempts without a workspace seal: %+v", sessions.ledger.Entries)
 	}
 }
 
@@ -809,13 +815,11 @@ func TestReviewProviderFailureClosesAttemptAfterCallerContextCancel(t *testing.T
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("err = %v, want context canceled", err)
 	}
-	entries := sessions.ledger.Entries
-	if len(entries) != 2 ||
-		entries[0].Type != "review_attempt" ||
-		entries[0].Status != "running" ||
-		entries[1].Type != "review_attempt" ||
-		entries[1].Status != "failed" {
-		t.Fatalf("provider cancellation should close attempt as failed: %+v", entries)
+	attempts := entriesOfType(sessions.ledger, "review_attempt")
+	if len(attempts) != 2 ||
+		attempts[0].Status != "running" ||
+		attempts[1].Status != "failed" {
+		t.Fatalf("provider cancellation should close attempt as failed: %+v", sessions.ledger.Entries)
 	}
 }
 
@@ -828,16 +832,15 @@ func TestReviewDossierRecordingFailureClosesAttemptWithoutAcceptedHalfState(t *t
 	if err == nil {
 		t.Fatal("expected review recording failure")
 	}
-	entries := sessions.ledger.Entries
-	if len(entries) != 2 ||
-		entries[0].Type != "review_attempt" ||
-		entries[0].Status != "running" ||
-		entries[1].Type != "review_attempt" ||
-		entries[1].Status != "failed" {
-		t.Fatalf("recording failure should close attempt without accepted/review entries: %+v", entries)
+	attempts := entriesOfType(sessions.ledger, "review_attempt")
+	if len(attempts) != 2 ||
+		attempts[0].Status != "running" ||
+		attempts[1].Status != "failed" ||
+		len(entriesOfType(sessions.ledger, "review")) != 0 {
+		t.Fatalf("recording failure should close attempt without accepted/review entries: %+v", sessions.ledger.Entries)
 	}
-	if !strings.Contains(entries[1].Reason, "review dossier recording failed") {
-		t.Fatalf("failed attempt reason = %q", entries[1].Reason)
+	if !strings.Contains(attempts[1].Reason, "review dossier recording failed") {
+		t.Fatalf("failed attempt reason = %q", attempts[1].Reason)
 	}
 }
 
@@ -856,9 +859,10 @@ func TestReviewAutoAbandonsStaleRunningAttemptBeforeStarting(t *testing.T) {
 	if _, err := Run(context.Background(), specs, sessions, cleanWorkspace(), fakeProvider{packet: passingDossier()}, fakeClock{}, "task"); err != nil {
 		t.Fatal(err)
 	}
-	entries := sessions.ledger.Entries
-	if len(entries) < 5 || entries[1].Type != "review_attempt" || entries[1].Status != "abandoned" || entries[2].Status != "running" || entries[3].Status != "accepted" || entries[4].Type != "review" {
-		t.Fatalf("stale attempt was not abandoned before new review: %+v", entries)
+	attempts := entriesOfType(sessions.ledger, "review_attempt")
+	reviews := entriesOfType(sessions.ledger, "review")
+	if len(attempts) < 4 || attempts[1].Status != "abandoned" || attempts[2].Status != "running" || attempts[3].Status != "accepted" || len(reviews) != 1 {
+		t.Fatalf("stale attempt was not abandoned before new review: %+v", sessions.ledger.Entries)
 	}
 }
 
@@ -948,8 +952,8 @@ func TestReviewBlocksPostBuildRerunWhenFailedReviewMaterialIsUnchanged(t *testin
 	if !errors.As(err, &gateErr) || gateErr.Failure.Next != "scafld handoff task" || !strings.Contains(gateErr.Failure.Expected, "operator decision") {
 		t.Fatalf("err should require handoff/operator decision: %#v", err)
 	}
-	if len(sessions.ledger.Entries) != 2 {
-		t.Fatalf("blocked churn review should not append entries: %+v", sessions.ledger.Entries)
+	if attempts := entriesOfType(sessions.ledger, "review_attempt"); len(attempts) != 0 {
+		t.Fatalf("blocked churn review should not start a provider attempt: %+v", sessions.ledger.Entries)
 	}
 }
 
@@ -1032,9 +1036,9 @@ func TestReviewForceWithReasonAllowsUnchangedPostBuildRerun(t *testing.T) {
 	if out.Verdict != corereview.VerdictPass {
 		t.Fatalf("output = %+v, want forced passing review", out)
 	}
-	entries := sessions.ledger.Entries
-	if len(entries) < 5 || entries[2].Type != "review_attempt" || !strings.Contains(entries[2].Reason, "forced review: operator rejects prior finding") {
-		t.Fatalf("forced attempt was not recorded with reason: %+v", entries)
+	attempts := entriesOfType(sessions.ledger, "review_attempt")
+	if len(attempts) < 2 || !strings.Contains(attempts[len(attempts)-2].Reason, "forced review: operator rejects prior finding") {
+		t.Fatalf("forced attempt was not recorded with reason: %+v", sessions.ledger.Entries)
 	}
 }
 
@@ -1187,8 +1191,8 @@ func TestHumanReviewedRecordsAuditedPassingReviewWithoutProvider(t *testing.T) {
 		sessions.ledger.Entries[1].Provider != "human" {
 		t.Fatalf("human review evidence = %+v", sessions.ledger.Entries)
 	}
-	if specs.model.Review.Verdict != corereview.VerdictPass || specs.model.CurrentState.AllowedFollowUp != "scafld complete task" {
-		t.Fatalf("projected model = %+v", specs.model)
+	if out.Verdict != corereview.VerdictPass || out.Next != "scafld complete task" {
+		t.Fatalf("projected output = %+v", out)
 	}
 }
 
@@ -1389,7 +1393,7 @@ func TestReviewRejectsOversizedRequiredContextBeforeProviderAttempt(t *testing.T
 	if providerCalled {
 		t.Fatal("provider was invoked despite oversized required context")
 	}
-	if len(sessions.ledger.Entries) != 0 {
+	if attempts := entriesOfType(sessions.ledger, "review_attempt"); len(attempts) != 0 {
 		t.Fatalf("review attempt should not be recorded before context validation: %+v", sessions.ledger.Entries)
 	}
 	var gateErr gate.Error
@@ -1683,14 +1687,13 @@ func TestReviewReportsAmbientDriftWithoutBlockingProvider(t *testing.T) {
 	if !strings.Contains(req.Prompt, "Ambient Workspace Drift Outside Task Scope") || !strings.Contains(req.Prompt, "docs/index.md") || strings.Contains(req.Prompt, "README.md") {
 		t.Fatalf("ambient drift should be provided to reviewer without unchanged baseline dirt: %s", req.Prompt)
 	}
-	entries := sessions.ledger.Entries
-	if len(entries) < 3 ||
-		entries[len(entries)-3].Type != "review_attempt" ||
-		entries[len(entries)-3].Status != "running" ||
-		entries[len(entries)-2].Type != "review_attempt" ||
-		entries[len(entries)-2].Status != "accepted" ||
-		entries[len(entries)-1].Type != "review" ||
-		entries[len(entries)-1].Provider == "scafld" {
+	attempts := entriesOfType(sessions.ledger, "review_attempt")
+	reviews := entriesOfType(sessions.ledger, "review")
+	if len(attempts) < 2 ||
+		attempts[len(attempts)-2].Status != "running" ||
+		attempts[len(attempts)-1].Status != "accepted" ||
+		len(reviews) != 1 ||
+		reviews[0].Provider == "scafld" {
 		t.Fatalf("ambient drift should be recorded while still spending provider review: %+v", sessions.ledger.Entries)
 	}
 }

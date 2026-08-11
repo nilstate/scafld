@@ -12,36 +12,25 @@ import (
 	"github.com/nilstate/scafld/v2/internal/core/session"
 )
 
-// mutatingSnapshotter returns a different tree from the guard's TreeSHA call
-// than from the signed snapshot, simulating a scoped file rewritten by an
-// acceptance command between the signed snapshot and the mutation guard.
-type mutatingSnapshotter struct{ calls int }
-
-func (m *mutatingSnapshotter) Snapshot(context.Context, SnapshotInput) (Snapshot, error) {
-	m.calls++
-	return Snapshot{TreeSHA: "tree-pre", FileDigests: map[string]string{"f.go": "sha"}, IgnoredUnreviewed: []string{}}, nil
-}
-
-func (m *mutatingSnapshotter) TreeSHA(context.Context, SnapshotInput) (string, error) {
-	m.calls++
-	return "tree-post-mutation", nil
-}
-
 type fakeSnapshotter struct {
-	snapshot Snapshot
-	called   int
-	input    SnapshotInput
+	snapshot  Snapshot
+	snapshots []Snapshot
+	called    int
+	input     SnapshotInput
 }
 
 func (f *fakeSnapshotter) Snapshot(_ context.Context, input SnapshotInput) (Snapshot, error) {
+	snapshot := f.snapshot
+	if len(f.snapshots) > 0 {
+		index := f.called
+		if index >= len(f.snapshots) {
+			index = len(f.snapshots) - 1
+		}
+		snapshot = f.snapshots[index]
+	}
 	f.called++
 	f.input = input
-	return f.snapshot, nil
-}
-
-func (f *fakeSnapshotter) TreeSHA(_ context.Context, input SnapshotInput) (string, error) {
-	f.input = input
-	return f.snapshot.TreeSHA, nil
+	return snapshot, nil
 }
 
 type fakeAcceptance struct {
@@ -298,20 +287,87 @@ func TestRunStampsHonestIndependenceReason(t *testing.T) {
 	}
 }
 
-func TestRunFailsClosedOnAcceptanceMutation(t *testing.T) {
+func TestRunIgnoresAmbientTreeMutationWhenMaterialIsStable(t *testing.T) {
 	t.Parallel()
 
+	pre := baseSnapshot()
+	post := baseSnapshot()
+	post.TreeSHA = "ambient-tree-drift"
 	reviewer := &fakeReviewer{dossier: review.Dossier{Verdict: review.VerdictPass}}
 	signer := &fakeSigner{}
-	out, err := Run(context.Background(), &mutatingSnapshotter{}, passingAcceptance(), reviewer, signer, baseInput())
+
+	out, err := Run(context.Background(), &fakeSnapshotter{snapshots: []Snapshot{pre, post}}, passingAcceptance(), reviewer, signer, baseInput())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Verdict != review.VerdictPass || out.Receipt == nil || signer.called != 1 {
+		t.Fatalf("expected ambient drift to pass scoped finalize, got out=%+v signer=%d", out, signer.called)
+	}
+	if reviewer.input.TreeSHA != pre.TreeSHA {
+		t.Fatalf("reviewer tree = %q, want signed snapshot tree %q", reviewer.input.TreeSHA, pre.TreeSHA)
+	}
+}
+
+func TestRunFailsClosedOnScopedMaterialMutation(t *testing.T) {
+	t.Parallel()
+
+	pre := baseSnapshot()
+	post := baseSnapshot()
+	post.TreeSHA = "tree-post-mutation"
+	post.FileDigests["internal/app/finalize/gate.go"] = "changed-sha"
+	reviewer := &fakeReviewer{dossier: review.Dossier{Verdict: review.VerdictPass}}
+	signer := &fakeSigner{}
+	out, err := Run(context.Background(), &fakeSnapshotter{snapshots: []Snapshot{pre, post}}, passingAcceptance(), reviewer, signer, baseInput())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if out.Verdict != review.VerdictFail || out.Receipt != nil || !strings.Contains(out.Reason, "mutated") {
-		t.Fatalf("expected fail-closed on acceptance mutation, got %+v", out)
+		t.Fatalf("expected fail-closed on scoped material mutation, got %+v", out)
 	}
 	if reviewer.called != 0 || signer.called != 0 {
-		t.Fatalf("review/sign ran over a mutated tree: reviewer=%d signer=%d", reviewer.called, signer.called)
+		t.Fatalf("review/sign ran over mutated material: reviewer=%d signer=%d", reviewer.called, signer.called)
+	}
+}
+
+func TestRunFailsClosedOnScopedDeletionMutation(t *testing.T) {
+	t.Parallel()
+
+	pre := baseSnapshot()
+	pre.Deleted = []string{"internal/app/finalize/removed.go"}
+	post := baseSnapshot()
+	reviewer := &fakeReviewer{dossier: review.Dossier{Verdict: review.VerdictPass}}
+	signer := &fakeSigner{}
+
+	out, err := Run(context.Background(), &fakeSnapshotter{snapshots: []Snapshot{pre, post}}, passingAcceptance(), reviewer, signer, baseInput())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Verdict != review.VerdictFail || out.Receipt != nil || !strings.Contains(out.Reason, "mutated") {
+		t.Fatalf("expected fail-closed on scoped deletion mutation, got %+v", out)
+	}
+	if reviewer.called != 0 || signer.called != 0 {
+		t.Fatalf("review/sign ran over mutated deletion state: reviewer=%d signer=%d", reviewer.called, signer.called)
+	}
+}
+
+func TestRunFailsClosedOnScopedIgnoredPathMutation(t *testing.T) {
+	t.Parallel()
+
+	pre := baseSnapshot()
+	pre.IgnoredUnreviewed = []string{"internal/app/finalize/generated.tmp"}
+	post := baseSnapshot()
+	reviewer := &fakeReviewer{dossier: review.Dossier{Verdict: review.VerdictPass}}
+	signer := &fakeSigner{}
+
+	out, err := Run(context.Background(), &fakeSnapshotter{snapshots: []Snapshot{pre, post}}, passingAcceptance(), reviewer, signer, baseInput())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Verdict != review.VerdictFail || out.Receipt != nil || !strings.Contains(out.Reason, "mutated") {
+		t.Fatalf("expected fail-closed on scoped ignored-path mutation, got %+v", out)
+	}
+	if reviewer.called != 0 || signer.called != 0 {
+		t.Fatalf("review/sign ran over mutated ignored-path state: reviewer=%d signer=%d", reviewer.called, signer.called)
 	}
 }
 
@@ -347,13 +403,17 @@ func TestRunFailsClosedOnUncoveredFileDigest(t *testing.T) {
 }
 
 func baseSnapshotter() *fakeSnapshotter {
-	return &fakeSnapshotter{snapshot: Snapshot{
+	return &fakeSnapshotter{snapshot: baseSnapshot()}
+}
+
+func baseSnapshot() Snapshot {
+	return Snapshot{
 		TreeSHA:           "tree",
 		BaseCommit:        "base",
 		HeadCommit:        "head",
 		FileDigests:       map[string]string{"internal/app/finalize/gate.go": "sha"},
 		IgnoredUnreviewed: []string{},
-	}}
+	}
 }
 
 func passingAcceptance() *fakeAcceptance {

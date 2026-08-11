@@ -85,6 +85,7 @@ if [ -z "$receipt" ]; then
     receipt=".scafld/receipts/latest.json"
   else
     echo "error: expected exactly one changed task receipt, found $count" >&2
+    echo "       .scafld/receipts/ is ignored by default; set SCAFLD_RECEIPT_PATH or intentionally commit one task receipt for CI" >&2
     printf '%s\n' "$receipts" >&2
     exit 2
   fi

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/nilstate/scafld/v2/internal/core/runartifact"
 	"github.com/nilstate/scafld/v2/internal/core/session"
 	"github.com/nilstate/scafld/v2/internal/platform/atomicfile"
 	"github.com/nilstate/scafld/v2/internal/platform/filelock"
@@ -186,11 +187,7 @@ func (s SessionStore) AppendTransaction(ctx context.Context, taskID string, now 
 }
 
 func (s SessionStore) path(taskID string) string {
-	root := s.Root
-	if root == "" {
-		root = "."
-	}
-	return filepath.Join(root, ".scafld", "runs", taskID, "session.json")
+	return runartifact.SessionPath(s.Root, taskID)
 }
 
 func (s SessionStore) loadUnlocked(path string) (session.Session, error) {
@@ -308,7 +305,11 @@ func lockSessionFile(ctx context.Context, path string) (func(), error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, fmt.Errorf("create session dir: %w", err)
 	}
-	release, err := filelock.LockContext(ctx, path+".lock")
+	lockPath := runartifact.SessionLockPathFromSessionPath(path)
+	if err := os.MkdirAll(filepath.Dir(lockPath), 0o755); err != nil {
+		return nil, fmt.Errorf("create session lock dir: %w", err)
+	}
+	release, err := filelock.LockContext(ctx, lockPath)
 	if err != nil {
 		return nil, fmt.Errorf("lock session: %w", err)
 	}

@@ -353,6 +353,9 @@ carries the receipt itself plus `receipt_path`, `task_receipt_path`, and
 Receipts land in `.scafld/receipts/<task-id>.json`. The
 `.scafld/receipts/latest.json` pointer is written only after the receipt is
 anchored in the ledger, so hosts reading it never see an unanchored receipt.
+The managed `.gitignore` ignores `.scafld/receipts/` by default; commit a
+receipt only when a project intentionally uses receipt-in-PR CI, or pass an
+explicit path through `SCAFLD_RECEIPT_PATH`.
 
 When acceptance or review blocks, finalize returns the verdict, findings, and
 per-criterion acceptance results instead of a receipt, and exits through the
@@ -511,6 +514,9 @@ The receipt path falls back to `SCAFLD_RECEIPT_PATH` and then
 `verify.receipt_path` from config. The trusted-keys path falls back to
 `SCAFLD_TRUSTED_KEYS` and then `verify.trusted_keys_path`. Verify reads base
 config only; `config.local.yaml` cannot repoint the trust anchors.
+Generated receipts are ignored by the managed `.gitignore`; CI receipt
+auto-discovery only sees receipts a project deliberately force-adds or otherwise
+commits.
 
 CI mode applies when `--ci` is set or the `CI` environment variable is truthy.
 It fails closed when `--target` or the trusted-keys path is missing.

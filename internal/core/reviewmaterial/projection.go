@@ -25,6 +25,7 @@ const (
 type Input struct {
 	Model                    spec.Model
 	Ledger                   session.Session
+	Scope                    []string
 	CurrentSnapshot          []string
 	HasCurrentSnapshot       bool
 	Authority                reviewgate.Authority
@@ -47,9 +48,9 @@ type Projection struct {
 // Project derives the shared task-material read model.
 func Project(input Input) Projection {
 	baseline := baselineSnapshot(input.Ledger)
-	projection := reviewscope.Project(input.Model, nil, baseline, input.CurrentSnapshot)
+	projection := reviewscope.Project(input.Model, input.Scope, baseline, input.CurrentSnapshot)
 	if !input.HasCurrentSnapshot {
-		scope := reviewscope.Derive(input.Model, nil, reviewevidence.ComparisonSnapshot(baseline))
+		scope := reviewscope.Derive(input.Model, input.Scope, reviewevidence.ComparisonSnapshot(baseline))
 		projection = reviewscope.Projection{
 			Scope:    scope,
 			Baseline: coreworkspace.Filter(reviewevidence.ComparisonSnapshot(baseline), scope),

@@ -39,6 +39,34 @@ func TestCriterionEvidenceValidation(t *testing.T) {
 	}
 }
 
+func TestCriterionCommandCannotRunScafldLifecycleGate(t *testing.T) {
+	t.Parallel()
+
+	model := Model{
+		Version: "2.0",
+		TaskID:  "task",
+		Title:   "Task",
+		Status:  StatusDraft,
+		Phases: []Phase{{ID: "phase1", Name: "Phase", Acceptance: []Criterion{{
+			ID:           "ac1",
+			Command:      "scafld review task --provider claude",
+			ExpectedKind: acceptance.ExpectedExitCodeZero,
+		}}}},
+	}
+	validation := Validate(model)
+	if validation.Valid {
+		t.Fatal("scafld review accepted as build acceptance")
+	}
+	if !containsValidationError(validation.Errors, "criterion ac1 command cannot run scafld review; lifecycle gates run outside build acceptance") {
+		t.Fatalf("validation errors = %+v", validation.Errors)
+	}
+
+	model.Phases[0].Acceptance[0].Command = `rg "scafld review" docs`
+	if validation := Validate(model); !validation.Valid {
+		t.Fatalf("non-lifecycle command mentioning scafld review should validate: %+v", validation.Errors)
+	}
+}
+
 func TestBrowserCriterionRequiresBrowserEvidenceExpectedKind(t *testing.T) {
 	t.Parallel()
 
