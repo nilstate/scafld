@@ -1180,7 +1180,7 @@ func TestHumanReviewedRecordsAuditedPassingReviewWithoutProvider(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out.Verdict != corereview.VerdictPass || out.Next != "scafld complete task" {
+	if out.Verdict != corereview.VerdictPass || out.Next != "scafld finalize task" {
 		t.Fatalf("output = %+v", out)
 	}
 	if len(sessions.ledger.Entries) != 2 ||
@@ -1191,7 +1191,7 @@ func TestHumanReviewedRecordsAuditedPassingReviewWithoutProvider(t *testing.T) {
 		sessions.ledger.Entries[1].Provider != "human" {
 		t.Fatalf("human review evidence = %+v", sessions.ledger.Entries)
 	}
-	if out.Verdict != corereview.VerdictPass || out.Next != "scafld complete task" {
+	if out.Verdict != corereview.VerdictPass || out.Next != "scafld finalize task" {
 		t.Fatalf("projected output = %+v", out)
 	}
 }
@@ -1305,7 +1305,7 @@ func TestReviewPromptCarriesRoleContractToProvider(t *testing.T) {
 	if _, err := RunWithInput(context.Background(), specs, &fakeSessions{}, cleanWorkspace(), provider, fakeClock{}, Input{TaskID: "task", Contract: contract}); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"## Review Contract", "senior engineer who gets paged", "## Review Output Contract", "## Provider Instruction"} {
+	for _, want := range []string{"## Review Contract", "senior engineer who gets paged", "## Review Output Contract", "otherwise return exactly one JSON object", "## Provider Instruction"} {
 		if !strings.Contains(provider.req.Prompt, want) {
 			t.Fatalf("provider prompt missing %q:\n%s", want, provider.req.Prompt)
 		}

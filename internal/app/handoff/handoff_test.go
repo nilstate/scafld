@@ -309,6 +309,31 @@ func TestHandoffIncludesBlockedAcceptanceEvidence(t *testing.T) {
 	}
 }
 
+func TestHandoffProvidesManualEvidenceCommand(t *testing.T) {
+	t.Parallel()
+
+	model := spec.Model{
+		TaskID: "manual-task", Title: "Manual task", Status: spec.StatusBlocked,
+		CurrentState: spec.CurrentState{CurrentPhase: "phase1"},
+		Phases: []spec.Phase{{ID: "phase1", Acceptance: []spec.Criterion{{
+			ID: "images", Title: "Image identities", Type: "manual", PhaseID: "phase1", ExpectedKind: acceptance.ExpectedManual,
+		}}}},
+	}
+	ledger := session.New(model.TaskID, "now").WithEntry(session.Entry{
+		ID: "criterion-1", Type: "criterion", CriterionID: "images", PhaseID: "phase1", Status: "pending",
+		Reason: "manual criterion requires human evidence", ExpectedKind: string(acceptance.ExpectedManual), CriterionType: "manual",
+	})
+	out, err := RunWithOptions(context.Background(), fakeSpecStore{model: model}, fakeSessionStore{ledger: ledger}, "manual-task", Options{SuppressContext: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"## Blocked Acceptance", "Build command: `scafld build manual-task --criterion images --disposition pass", "--evidence-digest <sha256>", "--actor <actor>"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("handoff missing %q:\n%s", want, out)
+		}
+	}
+}
+
 func TestHandoffBlockedAcceptanceUsesCurrentPhaseOnly(t *testing.T) {
 	t.Parallel()
 

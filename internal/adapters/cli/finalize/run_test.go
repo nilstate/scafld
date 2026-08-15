@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,7 +16,6 @@ import (
 	"testing"
 	"time"
 
-	configadapter "github.com/nilstate/scafld/v2/internal/adapters/config"
 	"github.com/nilstate/scafld/v2/internal/adapters/git"
 	"github.com/nilstate/scafld/v2/internal/adapters/jsonstore"
 	"github.com/nilstate/scafld/v2/internal/adapters/markdown"
@@ -24,14 +24,57 @@ import (
 	appacceptance "github.com/nilstate/scafld/v2/internal/app/acceptance"
 	appfinalize "github.com/nilstate/scafld/v2/internal/app/finalize"
 	appverify "github.com/nilstate/scafld/v2/internal/app/verify"
+	"github.com/nilstate/scafld/v2/internal/core/acceptance"
+	"github.com/nilstate/scafld/v2/internal/core/gate"
 	"github.com/nilstate/scafld/v2/internal/core/receipt"
 	"github.com/nilstate/scafld/v2/internal/core/reconcile"
 	"github.com/nilstate/scafld/v2/internal/core/review"
+	"github.com/nilstate/scafld/v2/internal/core/reviewevidence"
+	"github.com/nilstate/scafld/v2/internal/core/reviewgate"
 	"github.com/nilstate/scafld/v2/internal/core/reviewscope"
 	"github.com/nilstate/scafld/v2/internal/core/session"
 	"github.com/nilstate/scafld/v2/internal/core/spec"
 	"github.com/nilstate/scafld/v2/internal/core/trust"
 )
+
+func TestGateCriteriaCarriesMatchingManualEvidence(t *testing.T) {
+	t.Parallel()
+
+	model := spec.Model{TaskID: "task", Acceptance: spec.Acceptance{Criteria: []spec.Criterion{{
+		ID: "images", Type: "manual", ExpectedKind: acceptance.ExpectedManual,
+	}}}}
+	ledger := session.New("task", "now").WithEntry(session.Entry{
+		ID: "evidence-1", Type: session.EntryManualEvidence, CriterionID: "images", Status: "pass",
+		ExpectedKind: string(acceptance.ExpectedManual), CriterionType: "manual", EvidenceDigest: strings.Repeat("c", 64),
+		EvidenceActor: "operator", Reason: "verified", RecordedAt: "2026-08-14T00:00:00Z",
+	})
+	criteria := gateCriteria(model, ledger)
+	if len(criteria) != 1 || criteria[0].ManualEvidence == nil {
+		t.Fatalf("criteria=%+v, want matching manual evidence", criteria)
+	}
+	out := appacceptance.Evaluate(context.Background(), nil, appacceptance.EvaluateInput{Criteria: criteria})
+	if !out.Passed || out.Results[0].EvidenceDigest != strings.Repeat("c", 64) {
+		t.Fatalf("acceptance=%+v, want signed manual evidence result", out)
+	}
+}
+
+func TestFinalizeGateErrorPropagatesAcceptanceBlocker(t *testing.T) {
+	t.Parallel()
+
+	model := spec.Model{
+		TaskID: "task", Status: spec.StatusBlocked,
+		CurrentState: spec.CurrentState{CurrentPhase: "final", Reason: "final acceptance failed", AllowedFollowUp: "scafld handoff task"},
+		Acceptance:   spec.Acceptance{Criteria: []spec.Criterion{{ID: "images", Type: "manual", Title: "Image identities", ExpectedKind: acceptance.ExpectedManual, Status: "pending", Evidence: "manual criterion requires human evidence"}}},
+	}
+	err := finalizeGateError(model, session.New("task", "now"), reviewgate.State{})
+	var gateErr gate.Error
+	if !errors.As(err, &gateErr) {
+		t.Fatalf("error=%v, want structured gate error", err)
+	}
+	if gateErr.Failure.Reason != "final acceptance failed" || gateErr.Failure.Actual != "task status blocked" || len(gateErr.Failure.Blockers) != 1 || !strings.Contains(gateErr.Failure.Blockers[0], "images") {
+		t.Fatalf("failure=%+v, want acceptance blocker details", gateErr.Failure)
+	}
+}
 
 func TestGateScopeUsesSpecScopeAndTouchpoints(t *testing.T) {
 	t.Parallel()
@@ -79,6 +122,37 @@ func TestGateScopeFiltersProseAndSplitsTouchpointPaths(t *testing.T) {
 	}
 }
 
+func TestGateScopeUsesExplicitHintBeforeSpecAndRecordedReview(t *testing.T) {
+	t.Parallel()
+
+	model := spec.Model{TaskID: "scoped-task", Scope: []string{"../app", "api/"}}
+	ledger := session.New("scoped-task", "now").WithEntry(session.Entry{
+		Type:          "review",
+		Status:        review.VerdictPass,
+		ReviewedSpec:  spec.ContractDigest(model),
+		ReviewedScope: []string{"api"},
+	})
+	if got, err := deriveGateScope(context.Background(), &fakeBaseDiff{}, model, Request{TaskID: model.TaskID, ScopeHint: []string{"api/explicit.go"}}, true, ledger); err != nil || !reflect.DeepEqual(got, []string{"api/explicit.go"}) {
+		t.Fatalf("explicit scope = %v err=%v", got, err)
+	}
+	if got, err := deriveGateScope(context.Background(), &fakeBaseDiff{}, model, Request{TaskID: model.TaskID}, true, ledger); err != nil || !reflect.DeepEqual(got, []string{"api"}) {
+		t.Fatalf("recorded review scope = %v err=%v", got, err)
+	}
+}
+
+func TestGateScopeDoesNotPassSiblingEvidenceRootToGit(t *testing.T) {
+	t.Parallel()
+
+	model := spec.Model{TaskID: "sibling-task", Scope: []string{"../app", "api/handler.go"}}
+	scope, err := deriveGateScope(context.Background(), &fakeBaseDiff{}, model, Request{TaskID: model.TaskID}, true, session.New(model.TaskID, "now"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(scope, []string{"api/handler.go"}) {
+		t.Fatalf("scope = %v, want only repository-relative API scope", scope)
+	}
+}
+
 type fakeBaseDiff struct {
 	paths  []string
 	called int
@@ -100,7 +174,7 @@ func TestNoSpecScopeHintSynthesizesModel(t *testing.T) {
 	if hasSpec || model.TaskID != req.TaskID || !strings.Contains(model.Summary, "No hand-authored spec") {
 		t.Fatalf("model=%+v hasSpec=%v, want synthesized no-spec model", model, hasSpec)
 	}
-	scope, err := deriveGateScope(context.Background(), &fakeBaseDiff{}, model, req, hasSpec)
+	scope, err := deriveGateScope(context.Background(), &fakeBaseDiff{}, model, req, hasSpec, session.New(req.TaskID, "now"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +191,7 @@ func TestNoSpecEmptyScopeRefuses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = deriveGateScope(context.Background(), &fakeBaseDiff{}, model, req, hasSpec)
+	_, err = deriveGateScope(context.Background(), &fakeBaseDiff{}, model, req, hasSpec, session.New(req.TaskID, "now"))
 	if err == nil || !strings.Contains(err.Error(), "finalize scope is empty") {
 		t.Fatalf("empty no-spec scope error = %v", err)
 	}
@@ -134,7 +208,7 @@ func TestNoSpecBaseDiffScopeTopLevelExtensionless(t *testing.T) {
 	// Top-level extensionless changed files (Makefile, Dockerfile) must survive
 	// no-spec base-diff scope synthesis instead of being prose-filtered away.
 	diff := &fakeBaseDiff{paths: []string{"Makefile", "Dockerfile", "src/a.go"}}
-	scope, err := deriveGateScope(context.Background(), diff, model, req, hasSpec)
+	scope, err := deriveGateScope(context.Background(), diff, model, req, hasSpec, session.New(req.TaskID, "now"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,7 +226,7 @@ func TestNoSpecBaseDiffScope(t *testing.T) {
 		t.Fatal(err)
 	}
 	diff := &fakeBaseDiff{paths: []string{"z.go", "a.go", "a.go"}}
-	scope, err := deriveGateScope(context.Background(), diff, model, req, hasSpec)
+	scope, err := deriveGateScope(context.Background(), diff, model, req, hasSpec, session.New(req.TaskID, "now"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,7 +241,7 @@ func TestSpecWithoutScopeUsesBaseDiffScope(t *testing.T) {
 	req := Request{TaskID: "scoped-by-diff", BaseRef: "origin/main"}
 	model := spec.Model{TaskID: "scoped-by-diff", Title: "Scoped By Diff"}
 	diff := &fakeBaseDiff{paths: []string{"Makefile", "internal/app/review/review.go"}}
-	scope, err := deriveGateScope(context.Background(), diff, model, req, true)
+	scope, err := deriveGateScope(context.Background(), diff, model, req, true, session.New(req.TaskID, "now"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -386,7 +460,6 @@ func TestFinalizeIgnoresOutOfScopeMutationDuringAcceptance(t *testing.T) {
 				}},
 			}, nil
 		}),
-		passingFinalizeReviewer{git: git.Adapter{Root: root}},
 		sign.Ed25519Signer{PrivateKeyPath: keyPath},
 		appfinalize.Input{
 			TaskID:          "ambient-drift",
@@ -394,6 +467,7 @@ func TestFinalizeIgnoresOutOfScopeMutationDuringAcceptance(t *testing.T) {
 			Scope:           []string{"file.txt"},
 			BaseRef:         base,
 			SpecFingerprint: "spec",
+			Review:          passingReviewEvidence(t, root, []string{"file.txt"}, base),
 			HostUnderReview: receipt.HostUnderReview{Agent: "unknown"},
 			Criteria:        []appacceptance.Criterion{{ID: "ac1", Command: "true", ExpectedKind: "exit_code_zero"}},
 			WorkDir:         root,
@@ -428,190 +502,6 @@ func TestFinalizeIgnoresOutOfScopeMutationDuringAcceptance(t *testing.T) {
 	}
 }
 
-func TestSelectReviewerDiscoversAuthenticatedInstalledBinary(t *testing.T) {
-	home := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(home, ".codex"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(home, ".codex", "auth.json"), []byte(`{"token":"test"}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	binDir := t.TempDir()
-	bin := filepath.Join(binDir, "codex")
-	if err := os.WriteFile(bin, []byte("#!/bin/sh\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	_, runtime, err := selectReviewerWithEnv(configadapter.Config{}, ".", "claude", process.Runner{}, []string{
-		"HOME=" + home,
-		"PATH=" + binDir,
-	})
-	if err != nil {
-		t.Fatalf("installed authenticated reviewer should be discovered: %v", err)
-	}
-	if runtime.Binary != bin || runtime.Provider != "codex" {
-		t.Fatalf("runtime = %q/%q, want codex %q", runtime.Provider, runtime.Binary, bin)
-	}
-}
-
-func TestSelectReviewerAutoSkipsInstalledProviderWithoutAuth(t *testing.T) {
-	home := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(home, ".codex"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(home, ".codex", "auth.json"), []byte(`{"token":"test"}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	binDir := t.TempDir()
-	for _, name := range []string{"claude", "codex"} {
-		if err := os.WriteFile(filepath.Join(binDir, name), []byte("#!/bin/sh\n"), 0o755); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	_, runtime, err := selectReviewerWithEnv(configadapter.Config{}, ".", "codex", process.Runner{}, []string{
-		"HOME=" + home,
-		"PATH=" + binDir,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if runtime.Provider != "codex" {
-		t.Fatalf("provider = %q, want authenticated codex instead of unauthenticated claude", runtime.Provider)
-	}
-}
-
-func TestSelectReviewerRespectsExplicitProvider(t *testing.T) {
-	binDir := t.TempDir()
-	codex := filepath.Join(binDir, "codex")
-	claude := filepath.Join(binDir, "claude")
-	for _, path := range []string{codex, claude} {
-		if err := os.WriteFile(path, []byte("#!/bin/sh\n"), 0o755); err != nil {
-			t.Fatal(err)
-		}
-	}
-	cfg := configadapter.Config{Review: configadapter.ReviewConfig{External: configadapter.ExternalReviewConfig{
-		Provider: "codex",
-		Codex:    configadapter.CodexProviderConfig{ProviderConfig: configadapter.ProviderConfig{Binary: codex}},
-		Claude:   configadapter.ClaudeProviderConfig{ProviderConfig: configadapter.ProviderConfig{Binary: claude}},
-	}}}
-
-	_, runtime, err := selectReviewerWithEnv(cfg, ".", "codex", process.Runner{}, []string{
-		"OPENAI_API_KEY=test",
-		"ANTHROPIC_API_KEY=test",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if runtime.Provider != "codex" || runtime.Binary != codex {
-		t.Fatalf("runtime = %q/%q, want explicit codex %q", runtime.Provider, runtime.Binary, codex)
-	}
-}
-
-func TestSelectReviewerUsesEffectiveExecutionEnvForInvocation(t *testing.T) {
-	bin := filepath.Join(t.TempDir(), "codex")
-	if err := os.WriteFile(bin, []byte("#!/bin/sh\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	cfg := configadapter.Config{
-		Execution: configadapter.ExecutionConfig{Env: map[string]string{"OPENAI_API_KEY": "configured-test-key"}},
-		Review: configadapter.ReviewConfig{External: configadapter.ExternalReviewConfig{
-			Provider: "codex",
-			Codex:    configadapter.CodexProviderConfig{ProviderConfig: configadapter.ProviderConfig{Binary: bin}},
-		}},
-	}
-	reviewerEnv := effectiveFinalizeReviewerEnv(cfg, ".", []string{"PATH=/bin"})
-	_, selection, err := selectReviewerWithEffectiveEnv(cfg, ".", "codex", process.Runner{}, reviewerEnv)
-	if err != nil {
-		t.Fatal(err)
-	}
-	reviewer := gateReviewer{selection: selection, hostEnviron: reviewerEnv}
-	if envValue(reviewer.hostEnviron, "OPENAI_API_KEY") != "configured-test-key" {
-		t.Fatalf("invocation env lost configured auth: %v", reviewer.hostEnviron)
-	}
-}
-
-func TestSelectReviewerFailsClosedWithoutAuthenticatedProvider(t *testing.T) {
-	binDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(binDir, "codex"), []byte("#!/bin/sh\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	_, _, err := selectReviewerWithEnv(configadapter.Config{}, ".", "claude", process.Runner{}, []string{"PATH=" + binDir})
-	if err == nil || !strings.Contains(err.Error(), "no authenticated external reviewer") {
-		t.Fatalf("err = %v, want authenticated-reviewer failure", err)
-	}
-
-	// A relative PATH entry is never auto-trusted for a receipt-grade reviewer.
-	if _, ok := resolveExecutableOnPath("codex", []string{"PATH=."}); ok {
-		t.Fatal("relative PATH entry must not resolve a receipt-grade reviewer")
-	}
-}
-
-func TestSelectReviewerAcceptsConfiguredAbsoluteBinary(t *testing.T) {
-	t.Setenv("OPENAI_API_KEY", "test")
-
-	// A configured absolute reviewer binary is accepted and used verbatim.
-	bin := filepath.Join(t.TempDir(), "codex")
-	if err := os.WriteFile(bin, []byte("#!/bin/sh\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	cfg := configadapter.Config{Review: configadapter.ReviewConfig{External: configadapter.ExternalReviewConfig{
-		Codex: configadapter.CodexProviderConfig{ProviderConfig: configadapter.ProviderConfig{Binary: bin}},
-	}}}
-	_, runtime, err := selectReviewer(cfg, ".", "claude", process.Runner{})
-	if err != nil {
-		t.Fatalf("configured absolute reviewer binary should be accepted: %v", err)
-	}
-	if runtime.Binary != bin || runtime.Provider != "codex" {
-		t.Fatalf("runtime = %q/%q, want codex %q", runtime.Provider, runtime.Binary, bin)
-	}
-}
-
-func TestSelectReviewerAcceptsFinalizeEnvBinary(t *testing.T) {
-	bin := filepath.Join(t.TempDir(), "codex")
-	if err := os.WriteFile(bin, []byte("#!/bin/sh\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	_, runtime, err := selectReviewerWithEnv(configadapter.Config{}, ".", "claude", process.Runner{}, []string{
-		"SCAFLD_FINALIZE_CODEX_BINARY=" + bin,
-		"SCAFLD_FINALIZE_CODEX_MODEL=gpt-finalize",
-		"OPENAI_API_KEY=test",
-	})
-	if err != nil {
-		t.Fatalf("env absolute reviewer binary should be accepted: %v", err)
-	}
-	if runtime.Binary != bin || runtime.Provider != "codex" || runtime.Model != "gpt-finalize" {
-		t.Fatalf("runtime = %+v, want codex %q model gpt-finalize", runtime, bin)
-	}
-}
-
-func TestSelectReviewerEnvDoesNotOverrideConfiguredBinary(t *testing.T) {
-	configured := filepath.Join(t.TempDir(), "configured-codex")
-	if err := os.WriteFile(configured, []byte("#!/bin/sh\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	envBin := filepath.Join(t.TempDir(), "env-codex")
-	if err := os.WriteFile(envBin, []byte("#!/bin/sh\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	cfg := configadapter.Config{Review: configadapter.ReviewConfig{External: configadapter.ExternalReviewConfig{
-		Codex: configadapter.CodexProviderConfig{ProviderConfig: configadapter.ProviderConfig{Binary: configured, Model: "configured-model"}},
-	}}}
-
-	_, runtime, err := selectReviewerWithEnv(cfg, ".", "claude", process.Runner{}, []string{
-		"SCAFLD_FINALIZE_CODEX_BINARY=" + envBin,
-		"SCAFLD_FINALIZE_CODEX_MODEL=env-model",
-		"OPENAI_API_KEY=test",
-	})
-	if err != nil {
-		t.Fatalf("configured reviewer binary should be accepted: %v", err)
-	}
-	if runtime.Binary != configured || runtime.Model != "configured-model" {
-		t.Fatalf("runtime = %+v, want configured binary/model", runtime)
-	}
-}
-
 func TestSpecFingerprintCoversTaskContract(t *testing.T) {
 	t.Parallel()
 
@@ -623,17 +513,59 @@ func TestSpecFingerprintCoversTaskContract(t *testing.T) {
 	}
 }
 
-func TestAcceptanceContractIncludesExpectedKind(t *testing.T) {
-	t.Parallel()
-
-	contract := acceptanceContract(spec.Model{Acceptance: spec.Acceptance{Criteria: []spec.Criterion{
-		{ID: "ac2_2", Command: "rg -n 'go install .*cmd/scafld@v2\\.4\\.7' .github/workflows/scafld-verify.yml", ExpectedKind: "no_matches", Status: "pass"},
-	}}})
-	for _, want := range []string{"ac2_2", "expected_kind=no_matches", "status=pass", "go install"} {
-		if !strings.Contains(contract, want) {
-			t.Fatalf("acceptance contract = %q, want %q", contract, want)
+func buildEvidence(ctx context.Context, g git.Adapter, treeSHA string, scope []string, deleted []string, facts []appfinalize.FileFact) ([]reviewevidence.EvidenceFile, []receipt.Provenance, []string, error) {
+	if len(facts) == 0 {
+		digests, err := g.TreeDigests(ctx, treeSHA, scope)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		facts = make([]appfinalize.FileFact, 0, len(digests))
+		for _, d := range digests {
+			facts = append(facts, appfinalize.FileFact{Path: d.Path, Status: d.Status, SHA256: d.SHA256})
 		}
 	}
+	var ignored []string
+	reviewable := make([]appfinalize.FileFact, 0, len(facts))
+	for _, fact := range facts {
+		if fact.Status == "gitlink" || blocklistedEvidence(fact.Path) {
+			ignored = append(ignored, fact.Path)
+			continue
+		}
+		reviewable = append(reviewable, fact)
+	}
+	paths := make([]string, 0, len(reviewable))
+	for _, fact := range reviewable {
+		paths = append(paths, fact.Path)
+	}
+	blobs, err := g.TreeBlobs(ctx, treeSHA, paths)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	files := make([]reviewevidence.EvidenceFile, 0, len(reviewable))
+	provenance := make([]receipt.Provenance, 0, len(reviewable)+len(deleted))
+	for _, fact := range reviewable {
+		data, ok := blobs[fact.Path]
+		if !ok {
+			return nil, nil, nil, fmt.Errorf("missing evidence bytes for %s", fact.Path)
+		}
+		files = append(files, reviewevidence.EvidenceFile{Path: fact.Path, Status: fact.Status, SHA256: fact.SHA256, Bytes: data})
+		provenance = append(provenance, receipt.Provenance{Kind: "evidence_file", Path: fact.Path, SHA256: fact.SHA256, Bytes: len(data)})
+	}
+	for _, path := range deleted {
+		if blocklistedEvidence(path) {
+			ignored = append(ignored, path)
+			continue
+		}
+		provenance = append(provenance, receipt.Provenance{Kind: "deleted", Path: path})
+	}
+	if len(files) == 0 && len(provenance) == 0 {
+		detail := "scope did not resolve to any file bytes or deletion tombstones"
+		if len(ignored) > 0 {
+			detail = "scope only contains signed but withheld paths: " + strings.Join(ignored, ", ")
+		}
+		return nil, nil, ignored, fmt.Errorf("finalize evidence is not reviewable: %s; run finalize in the owning repository or pass a scope that includes reviewable files", detail)
+	}
+	return files, provenance, ignored, nil
 }
 
 func TestGateEvidenceIncludesDeletedPaths(t *testing.T) {
@@ -853,6 +785,51 @@ func TestFinalizePassWithAcceptanceResultsAppendsReceipt(t *testing.T) {
 	}
 }
 
+func TestFinalizeArchivesSpecAndIsIdempotent(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	ctx := context.Background()
+	specs := markdown.Store{Root: root}
+	model := spec.Model{TaskID: "archive-task", Title: "Archive Task", Summary: "A completed task", Status: spec.StatusReview}
+	specPath, err := specs.CreateDraft(ctx, model)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := jsonstore.SessionStore{Root: root}
+	env := validReceiptEnvelope(t, "archive-task")
+	out := appfinalize.Output{Verdict: review.VerdictPass, Receipt: &env}
+	now := env.Body.MintedAt
+	if _, err := finalizeWithArchive(ctx, root, model.TaskID, store, specs, model, true, specPath, out, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := finalizeWithArchive(ctx, root, model.TaskID, store, specs, model, true, "", out, now); err != nil {
+		t.Fatal(err)
+	}
+
+	archivePath := filepath.Join(root, ".scafld", "specs", "archive", "2026-06", "archive-task.md")
+	if _, err := os.Stat(archivePath); err != nil {
+		t.Fatalf("completed spec was not archived: %v", err)
+	}
+	if _, err := os.Stat(specPath); !os.IsNotExist(err) {
+		t.Fatalf("draft spec still exists after archive: %v", err)
+	}
+	archived, _, err := specs.Load(ctx, model.TaskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if archived.Status != spec.StatusCompleted {
+		t.Fatalf("archived status = %q, want completed", archived.Status)
+	}
+	ledger, err := store.Load(ctx, model.TaskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ledger.Entries) != 2 || ledger.Entries[0].Type != session.EntryReceipt || ledger.Entries[1].Type != "complete" {
+		t.Fatalf("idempotent finalization appended duplicate evidence: %+v", ledger.Entries)
+	}
+}
+
 func TestFinalizeAcceptanceEvidencePreservesContractFieldsForReplay(t *testing.T) {
 	t.Parallel()
 
@@ -922,19 +899,19 @@ func containsString(values []string, want string) bool {
 	return false
 }
 
-type passingFinalizeReviewer struct{ git git.Adapter }
-
-func (r passingFinalizeReviewer) Review(ctx context.Context, in appfinalize.ReviewInput) (appfinalize.ReviewResult, error) {
-	_, provenance, ignored, err := buildEvidence(ctx, r.git, in.TreeSHA, in.Scope, in.Deleted, nil)
+func passingReviewEvidence(t *testing.T, root string, scope []string, baseRef string) appfinalize.ReviewEvidence {
+	t.Helper()
+	snap, err := (gateSnapshotter{git: git.Adapter{Root: root}}).Snapshot(context.Background(), appfinalize.SnapshotInput{Scope: scope, BaseRef: baseRef})
 	if err != nil {
-		return appfinalize.ReviewResult{}, err
+		t.Fatal(err)
 	}
-	return appfinalize.ReviewResult{
+	provenance, ignored := snapshotReviewCoverage(snap)
+	return appfinalize.ReviewEvidence{
 		Dossier:    review.Dossier{Verdict: review.VerdictPass},
 		Provenance: provenance,
 		Ignored:    ignored,
 		Reviewer:   receipt.Reviewer{Provider: "codex", Model: "test"},
-	}, nil
+	}
 }
 
 type finalizeVerifySnapshotter struct{ git git.Adapter }
@@ -1013,7 +990,6 @@ func mintTestReceipt(t *testing.T, root string, baseRef string) (appfinalize.Out
 	out, err := appfinalize.Run(context.Background(),
 		gateSnapshotter{git: git.Adapter{Root: root}},
 		gateAcceptance{runner: process.Runner{}},
-		passingFinalizeReviewer{git: git.Adapter{Root: root}},
 		sign.Ed25519Signer{PrivateKeyPath: keyPath},
 		appfinalize.Input{
 			TaskID:          "base-delta-seal",
@@ -1021,6 +997,7 @@ func mintTestReceipt(t *testing.T, root string, baseRef string) (appfinalize.Out
 			Scope:           []string{"file.txt"},
 			BaseRef:         baseRef,
 			SpecFingerprint: "spec",
+			Review:          passingReviewEvidence(t, root, []string{"file.txt"}, baseRef),
 			HostUnderReview: receipt.HostUnderReview{Agent: "unknown"},
 			Criteria:        []appacceptance.Criterion{{ID: "ac1", Command: "true", ExpectedKind: "exit_code_zero"}},
 			WorkDir:         root,

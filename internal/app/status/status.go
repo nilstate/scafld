@@ -353,7 +353,7 @@ func applyReviewGateState(out *Output, model spec.Model, state reviewgate.State)
 		return false
 	}
 	if state.Kind == reviewgate.KindReviewPassed {
-		out.Next = completeCommand(model.TaskID)
+		out.Next = finalizeCommand(model.TaskID)
 		out.AllowedFollowUp = out.Next
 		return true
 	}
@@ -442,7 +442,7 @@ func nextAction(model spec.Model, hardenState hardengate.State, repair *gate.Fai
 			return NextAction{Role: "operator", Action: "fix_review_provider_output", Command: command, Reason: fallback(repair.Reason, "latest review attempt failed"), ThenCommand: taskCommand("review")}
 		}
 		if reviewGateValid {
-			return NextAction{Role: "operator", Action: "complete", Command: command, Reason: "latest review gate passed"}
+			return NextAction{Role: "operator", Action: "finalize", Command: command, Reason: "latest review gate passed"}
 		}
 		return NextAction{Role: "reviewer", Action: "run_review", Command: command, Reason: fallback(review.Reason, fallback(model.CurrentState.Reason, "build completed; ready for review"))}
 	case spec.StatusCompleted:
@@ -461,11 +461,11 @@ func reviewCommand(taskID string) string {
 	return "scafld review " + taskID
 }
 
-func completeCommand(taskID string) string {
+func finalizeCommand(taskID string) string {
 	if taskID == "" {
-		return "scafld complete"
+		return "scafld finalize"
 	}
-	return "scafld complete " + taskID
+	return "scafld finalize " + taskID
 }
 
 func completionInfo(authority reviewgate.Authority) *CompletionInfo {

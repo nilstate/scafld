@@ -15,10 +15,10 @@ func Run(ctx context.Context, stdin io.Reader, stdout io.Writer, stderr io.Write
 	return mcpsubmit.Run(ctx, stdin, stdout, stderr, mcpsubmit.Options{
 		OutPath:         outPath,
 		ServerName:      "scafld-review-submit",
-		ToolName:        "submit_review",
+		ToolName:        review.SubmitToolName,
 		ToolTitle:       "Submit scafld review",
-		ToolDescription: "Submit the final scafld ReviewDossier. Call exactly once after completing the read-only adversarial review. Findings are defects only; marginal-surface enumeration and per-consumer bookkeeping are not findings unless they identify a verified defect, violated shared invariant, or broken adapter boundary.",
-		SchemaJSON:      review.DossierSchemaJSON(),
+		ToolDescription: review.SubmitToolDescription(),
+		SchemaJSON:      review.StrictDossierSchemaJSON(),
 		ParseAndEncode: func(text string) (mcpsubmit.Accepted, error) {
 			dossier, err := review.ParseText(text)
 			if err != nil {

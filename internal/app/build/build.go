@@ -8,6 +8,7 @@ import (
 	"time"
 
 	appacceptance "github.com/nilstate/scafld/v2/internal/app/acceptance"
+	"github.com/nilstate/scafld/v2/internal/core/acceptance"
 	corecompletion "github.com/nilstate/scafld/v2/internal/core/completion"
 	"github.com/nilstate/scafld/v2/internal/core/execution"
 	"github.com/nilstate/scafld/v2/internal/core/gate"
@@ -49,11 +50,12 @@ type Clock interface{ Now() time.Time }
 
 // Input describes the task and working directory to build.
 type Input struct {
-	TaskID      string
-	CWD         string
-	Env         []string
-	Timeout     time.Duration
-	IdleTimeout time.Duration
+	TaskID         string
+	CWD            string
+	Env            []string
+	Timeout        time.Duration
+	IdleTimeout    time.Duration
+	ManualEvidence *ManualEvidence
 }
 
 // Output summarizes one build lifecycle step.
@@ -99,12 +101,31 @@ func Run(ctx context.Context, specs SpecStore, sessions SessionStore, workspace 
 		return Output{}, fmt.Errorf("load session evidence: %w", err)
 	}
 	model = reconcile.FromSession(model, ledger)
+	manualEvidenceChanged := false
+	if input.ManualEvidence != nil {
+		ledger, manualEvidenceChanged, err = recordManualEvidence(ctx, sessions, model, ledger, *input.ManualEvidence, now)
+		if err != nil {
+			return Output{}, fmt.Errorf("record manual acceptance evidence: %w", err)
+		}
+		model = reconcile.FromSession(model, ledger)
+		if !manualEvidenceChanged && model.Status == spec.StatusReview {
+			return Output{TaskID: model.TaskID, Status: model.Status, Phase: currentPhaseID(model), Next: model.CurrentState.AllowedFollowUp}, nil
+		}
+	}
 	timeout := input.Timeout
 	if timeout <= 0 {
 		timeout = defaultAcceptanceTimeout
 	}
 	if model.Status == spec.StatusApproved {
-		return openBuild(ctx, specs, sessions, model, path, ledger, now)
+		opened, err := openBuild(ctx, specs, sessions, model, path, ledger, now)
+		if err != nil || input.ManualEvidence == nil {
+			return opened, err
+		}
+		ledger, err = sessions.Load(ctx, model.TaskID)
+		if err != nil {
+			return Output{}, fmt.Errorf("reload session after opening build: %w", err)
+		}
+		model = reconcile.FromSession(model, ledger)
 	}
 	if rerunAllAcceptance {
 		return rerunAcceptanceForReviewRepair(ctx, specs, sessions, runner, model, path, input.CWD, input.Env, timeout, input.IdleTimeout, now)
@@ -318,27 +339,40 @@ func buildable(status spec.Status) bool {
 }
 
 func runCriterionList(ctx context.Context, sessions SessionStore, runner Runner, taskID string, criteria []spec.Criterion, phaseID string, cwd string, env []string, timeout time.Duration, idleTimeout time.Duration, now string) (session.Session, int, int, error) {
-	var ledger session.Session
+	ledger, err := sessions.Load(ctx, taskID)
+	if err != nil {
+		return ledger, 0, 0, fmt.Errorf("load session evidence: %w", err)
+	}
 	passed, failed := 0, 0
 	for _, criterion := range criteria {
 		withPhase := criterion
 		if withPhase.PhaseID == "" {
 			withPhase.PhaseID = phaseID
 		}
+		manual, hasManual := manualEvidence(ledger, withPhase)
 		evaluation := appacceptance.Evaluate(ctx, runner, appacceptance.EvaluateInput{
 			Criteria: []appacceptance.Criterion{{
-				ID:           withPhase.ID,
-				Type:         withPhase.Type,
-				Command:      withPhase.Command,
-				ExpectedKind: string(withPhase.ExpectedKind),
+				ID:             withPhase.ID,
+				Type:           withPhase.Type,
+				Command:        withPhase.Command,
+				ExpectedKind:   string(withPhase.ExpectedKind),
+				ManualEvidence: manual,
 			}},
 			WorkDir:     cwd,
 			Env:         env,
 			Timeout:     timeout,
 			IdleTimeout: idleTimeout,
 		})
-		entry := criterionEntry(evaluation.Results[0], withPhase.PhaseID)
-		var err error
+		result := evaluation.Results[0]
+		if hasManual {
+			if result.Status == "pass" {
+				passed++
+			} else {
+				failed++
+			}
+			continue
+		}
+		entry := criterionEntry(result, withPhase.PhaseID)
 		ledger, err = sessions.Append(ctx, taskID, entry, now)
 		if err != nil {
 			return ledger, passed, failed, fmt.Errorf("append criterion evidence: %w", err)
@@ -349,30 +383,42 @@ func runCriterionList(ctx context.Context, sessions SessionStore, runner Runner,
 			failed++
 		}
 	}
-	if len(criteria) == 0 {
-		var err error
-		ledger, err = sessions.Load(ctx, taskID)
-		if err != nil {
-			return ledger, passed, failed, fmt.Errorf("load session evidence: %w", err)
-		}
-	}
 	return ledger, passed, failed, nil
 }
 
 func criterionEntry(result appacceptance.CriterionResult, phaseID string) session.Entry {
 	return session.Entry{
-		Type:          "criterion",
-		CriterionID:   result.ID,
-		PhaseID:       phaseID,
-		Status:        result.Status,
-		Reason:        result.Reason,
-		Command:       result.Command,
-		ExpectedKind:  result.ExpectedKind,
-		CriterionType: criterionType(result.Type),
-		ExitCode:      result.ExitCode,
-		Output:        result.Evidence,
-		Path:          result.DiagnosticPath,
+		Type:           "criterion",
+		CriterionID:    result.ID,
+		PhaseID:        phaseID,
+		Status:         result.Status,
+		Reason:         result.Reason,
+		Command:        result.Command,
+		ExpectedKind:   result.ExpectedKind,
+		CriterionType:  criterionType(result.Type),
+		ExitCode:       result.ExitCode,
+		Output:         result.Evidence,
+		Path:           result.DiagnosticPath,
+		EvidenceDigest: result.EvidenceDigest,
+		EvidenceActor:  result.EvidenceActor,
 	}
+}
+
+func manualEvidence(ledger session.Session, criterion spec.Criterion) (*appacceptance.ManualEvidence, bool) {
+	if criterion.Type != "manual" || criterion.ExpectedKind != acceptance.ExpectedManual {
+		return nil, false
+	}
+	entry, ok := session.LatestManualEvidence(ledger, criterion.ID, criterion.PhaseID, string(criterion.ExpectedKind), criterion.Type)
+	if !ok {
+		return nil, false
+	}
+	return &appacceptance.ManualEvidence{
+		Disposition:    entry.Status,
+		EvidenceDigest: entry.EvidenceDigest,
+		Actor:          entry.EvidenceActor,
+		RecordedAt:     entry.RecordedAt,
+		Reason:         entry.Reason,
+	}, true
 }
 
 func criterionType(value string) string {

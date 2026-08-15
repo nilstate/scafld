@@ -13,6 +13,9 @@ import (
 )
 
 const (
+	// SubmitToolName is the provider submission channel for harden dossiers.
+	SubmitToolName = "submit_harden"
+
 	// VerdictPass means the draft contract is ready for approval.
 	VerdictPass = "pass"
 	// VerdictNeedsRevision means the draft needs contract edits before approval.
@@ -45,6 +48,12 @@ const (
 	// StatusSuperseded marks a blocking observation made irrelevant by later spec changes.
 	StatusSuperseded = "superseded"
 )
+
+// SubmitToolDescription is the canonical provider-facing harden submission
+// contract shared by MCP and protocol adapters.
+func SubmitToolDescription() string {
+	return "Submit the final scafld HardenDossier exactly once after stress-testing the draft spec. Treat the draft as a hypothesis: if reject/no-op, shrink, reframe, move-owner, or reuse-existing-behavior is materially better, record that in shape instead of softening it into advisory feedback. Harden is a code-shape and system-design gate, not coverage bookkeeping; do not turn a settled shared invariant into a consumer-by-consumer compliance matrix or bespoke test-per-surface demand. The shape object must answer keep, shrink, reframe, or reject before observations. The provider wire schema requires every declared property; use null for semantically unused nullable fields. The observations array must cover " + RequiredDimensionList() + "; include result and anchor for every entry, and include note, question, recommended, if_unanswered, default, and status on every observation, using null when not applicable. A keep decision and clean observations must name what was checked and what would have failed the check."
+}
 
 // ErrInvalidDossier wraps malformed or semantically invalid harden output.
 var ErrInvalidDossier = errors.New("invalid harden dossier")

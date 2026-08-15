@@ -780,8 +780,8 @@ func runHumanReviewed(ctx context.Context, specs SpecStore, sessions SessionStor
 	model.Review.AttackLog = []review.AttackLogEntry{{Target: "review gate", Attack: "manual human audit", Result: review.AttackResultClean, Notes: reason}}
 	model.Review.Budget = review.Budget{ActualAttackAngles: 1, Depth: "human"}
 	model.CurrentState.ReviewGate = review.VerdictPass
-	model.CurrentState.Next = "complete"
-	model.CurrentState.AllowedFollowUp = "scafld complete " + model.TaskID
+	model.CurrentState.Next = "finalize"
+	model.CurrentState.AllowedFollowUp = "scafld finalize " + model.TaskID
 	model.CurrentState.Reason = "human-reviewed override: " + reason
 	return Output{TaskID: model.TaskID, Verdict: review.VerdictPass, Mode: review.ModeVerify, Summary: model.Review.Summary, Provider: "human", AttackLog: model.Review.AttackLog, Budget: model.Review.Budget, Next: model.CurrentState.AllowedFollowUp}, nil
 }

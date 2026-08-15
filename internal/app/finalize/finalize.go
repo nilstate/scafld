@@ -26,20 +26,10 @@ type AcceptanceRunner interface {
 	Evaluate(context.Context, acceptance.EvaluateInput) (acceptance.EvaluateOutput, error)
 }
 
-// Reviewer runs the isolated adversarial review over the snapshot tree and
-// returns the dossier, the provenance of the exact bytes it reviewed, and the
-// runtime facts of the reviewer that actually ran.
-type Reviewer interface {
-	Review(context.Context, ReviewInput) (ReviewResult, error)
-}
-
-// ReviewResult is the reviewer port output stamped into the signed receipt. The
-// Reviewer facts come from the invocation that actually ran, never a separate
-// pre-acceptance probe, so the receipt cannot attest a stale reviewer binary.
-// Ignored lists in-scope paths the reviewer deliberately did not read (submodule
-// gitlinks, governed instruction/config files); they are signed in file_digests
-// but recorded as ignored_unreviewed so the receipt never implies their review.
-type ReviewResult struct {
+// ReviewEvidence is the accepted result of the independent review already
+// recorded in the session ledger. Finalization consumes this evidence; it never
+// invokes a provider or re-runs a model review.
+type ReviewEvidence struct {
 	Dossier    review.Dossier
 	Provenance []receipt.Provenance
 	Ignored    []string
@@ -76,34 +66,23 @@ type FileFact struct {
 	SHA256 string
 }
 
-// ReviewInput is the app-level review request.
-type ReviewInput struct {
-	TaskID     string
-	TreeSHA    string
-	Scope      []string
-	Deleted    []string
-	Files      []FileFact
-	Depth      string
-	DiffScoped bool
-}
-
 // Input configures one gate run.
 type Input struct {
-	TaskID           string
-	SessionID        string
-	Scope            []string
-	BaseRef          string
-	ReviewerProvider string
-	SpecFingerprint  string
-	HostUnderReview  receipt.HostUnderReview
-	Independence     receipt.Independence
-	Criteria         []acceptance.Criterion
-	WorkDir          string
-	Env              []string
-	Timeout          time.Duration
-	IdleTimeout      time.Duration
-	PriorLedgerHead  string
-	MintedAt         time.Time
+	TaskID          string
+	SessionID       string
+	Scope           []string
+	BaseRef         string
+	Review          ReviewEvidence
+	SpecFingerprint string
+	HostUnderReview receipt.HostUnderReview
+	Independence    receipt.Independence
+	Criteria        []acceptance.Criterion
+	WorkDir         string
+	Env             []string
+	Timeout         time.Duration
+	IdleTimeout     time.Duration
+	PriorLedgerHead string
+	MintedAt        time.Time
 }
 
 // Output is the structured gate result.
@@ -116,16 +95,15 @@ type Output struct {
 	Reason       string
 }
 
-// Run executes snapshot, acceptance, review, calibration, and receipt minting.
-func Run(ctx context.Context, snapshotter Snapshotter, acceptanceRunner AcceptanceRunner, reviewer Reviewer, signer Signer, input Input) (Output, error) {
+// Run executes deterministic snapshot and acceptance checks, then calibrates
+// the accepted review evidence and mints a receipt. The model review itself is
+// deliberately outside this use case and must already be present in input.
+func Run(ctx context.Context, snapshotter Snapshotter, acceptanceRunner AcceptanceRunner, signer Signer, input Input) (Output, error) {
 	if snapshotter == nil {
 		return Output{}, errors.New("snapshotter is required")
 	}
 	if acceptanceRunner == nil {
 		return Output{}, errors.New("acceptance runner is required")
-	}
-	if reviewer == nil {
-		return Output{}, errors.New("reviewer is required")
 	}
 	if signer == nil {
 		return Output{}, errors.New("signer is required")
@@ -133,7 +111,10 @@ func Run(ctx context.Context, snapshotter Snapshotter, acceptanceRunner Acceptan
 	if len(normalizedScope(input.Scope)) == 0 {
 		return Output{}, errors.New("gate scope is empty; refusing to mint unscoped receipt")
 	}
-	selectedIndependence := completeIndependence(input.Independence, input.ReviewerProvider, input.HostUnderReview.Agent)
+	if !review.ValidCompletionProvider(input.Review.Reviewer.Provider) {
+		return Output{}, fmt.Errorf("accepted review evidence has unsupported provider %q", input.Review.Reviewer.Provider)
+	}
+	selectedIndependence := completeIndependence(input.Independence, input.Review.Reviewer.Provider, input.HostUnderReview.Agent)
 	snap, err := snapshotter.Snapshot(ctx, SnapshotInput{Scope: input.Scope, BaseRef: input.BaseRef})
 	if err != nil {
 		return Output{}, fmt.Errorf("snapshot: %w", err)
@@ -163,25 +144,13 @@ func Run(ctx context.Context, snapshotter Snapshotter, acceptanceRunner Acceptan
 	if postMaterialDigest := snapshotMaterialDigest(input.Scope, postSnap); postMaterialDigest != preMaterialDigest {
 		return Output{Verdict: review.VerdictFail, Acceptance: accepted, Independence: selectedIndependence, Reason: "task material mutated during acceptance; gate failed closed"}, nil
 	}
-	result, err := reviewer.Review(ctx, ReviewInput{
-		TaskID:     input.TaskID,
-		TreeSHA:    snap.TreeSHA,
-		Scope:      append([]string(nil), input.Scope...),
-		Deleted:    append([]string(nil), snap.Deleted...),
-		Files:      append([]FileFact(nil), snap.Files...),
-		Depth:      "light",
-		DiffScoped: true,
-	})
-	if err != nil {
-		return Output{}, fmt.Errorf("review: %w", err)
-	}
-	findings := downgradeUnsubstantiatedBlockers(result.Dossier.Findings)
+	findings := downgradeUnsubstantiatedBlockers(input.Review.Dossier.Findings)
 	blockers := receiptBlockers(findings)
-	reviewedIndependence := completeIndependence(input.Independence, result.Reviewer.Provider, input.HostUnderReview.Agent)
+	reviewedIndependence := completeIndependence(input.Independence, input.Review.Reviewer.Provider, input.HostUnderReview.Agent)
 	if len(blockers) > 0 {
 		return Output{Verdict: review.VerdictFail, Acceptance: accepted, Findings: findings, Independence: reviewedIndependence, Reason: "review blockers remain"}, nil
 	}
-	body := receiptBody(input, snap, accepted, blockers, result.Provenance, result.Ignored, result.Reviewer)
+	body := receiptBody(input, snap, accepted, blockers, input.Review.Provenance, input.Review.Ignored, input.Review.Reviewer)
 	// Fail closed before signing if any signed file digest is neither reviewed nor
 	// declared ignored, so the gate can never mint a receipt that implies review of
 	// bytes the independent reviewer never saw.
@@ -409,14 +378,17 @@ func receiptAcceptance(results []acceptance.CriterionResult) []receipt.Acceptanc
 	out := make([]receipt.Acceptance, 0, len(results))
 	for _, result := range results {
 		out = append(out, receipt.Acceptance{
-			ID:           result.ID,
-			Command:      result.Command,
-			ExpectedKind: result.ExpectedKind,
-			Status:       result.Status,
-			Reason:       result.Reason,
-			ExitCode:     result.ExitCode,
-			OutputSHA256: result.StdoutDigest,
-			Diagnostic:   result.DiagnosticPath,
+			ID:                 result.ID,
+			Command:            result.Command,
+			ExpectedKind:       result.ExpectedKind,
+			Status:             result.Status,
+			Reason:             result.Reason,
+			ExitCode:           result.ExitCode,
+			OutputSHA256:       result.StdoutDigest,
+			EvidenceSHA256:     result.EvidenceDigest,
+			EvidenceActor:      result.EvidenceActor,
+			EvidenceRecordedAt: result.EvidenceRecordedAt,
+			Diagnostic:         result.DiagnosticPath,
 		})
 	}
 	return out

@@ -37,7 +37,6 @@ Thumbs.db
 !.scafld/prompts/**
 !.scafld/specs/
 !.scafld/specs/**
-.scafld/specs/archive/
 !.scafld/trusted-keys.json
 .scafld/receipts/
 .scafld/config.local.yaml

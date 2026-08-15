@@ -58,7 +58,7 @@ var commands = []command{
 	{"plan", "Create a draft task spec"}, {"harden", "Stress-test a draft spec before approval"},
 	{"validate", "Validate a task spec"}, {"approve", "Approve a draft spec"},
 	{"build", "Open or advance governed build phases"}, {"review", "Run the adversarial review gate"},
-	{"finalize", "Finalize work with acceptance, review, and a signed receipt"},
+	{"finalize", "Finalize accepted review with deterministic acceptance and a signed receipt"},
 	{"complete", "Complete reviewed work"}, {"fail", "Mark work failed"}, {"cancel", "Cancel work"},
 	{"status", "Show spec status"}, {"list", "List specs"}, {"report", "Aggregate spec and run metrics"},
 	{"handoff", "Render model-facing handoff material"}, {"adapter", "Render provider trigger packet"},
@@ -306,6 +306,7 @@ func runBuild(ctx context.Context, args []string, stdout io.Writer, stderr io.Wr
 	if err != nil {
 		return failOut(stderr, err, code, opts.JSON)
 	}
+	manualEvidence := build.NewManualEvidence(opts.Values["criterion"], opts.Values["disposition"], opts.Values["evidence-digest"], opts.Values["actor"], opts.Values["reason"])
 	root, _ := commandRoot(ctx, opts, false)
 	cfg, err := configadapter.Load(ctx, root)
 	if err != nil {
@@ -313,7 +314,7 @@ func runBuild(ctx context.Context, args []string, stdout io.Writer, stderr io.Wr
 	}
 	runner := process.Runner{DiagnosticsDir: runartifact.CommandDiagnosticsDir(root, opts.Positionals[0]), DiagnosticName: "build-acceptance"}
 	executionConfig := configadapter.EffectiveExecution(root, cfg.Execution)
-	out, err := build.Run(ctx, store, sessions, git.Adapter{Root: root}, runner, clock.System{}, build.Input{TaskID: opts.Positionals[0], CWD: root, Env: executionConfig.ProcessEnv(), Timeout: executionConfig.AbsoluteTimeout(), IdleTimeout: executionConfig.IdleTimeout()})
+	out, err := build.Run(ctx, store, sessions, git.Adapter{Root: root}, runner, clock.System{}, build.Input{TaskID: opts.Positionals[0], CWD: root, Env: executionConfig.ProcessEnv(), Timeout: executionConfig.AbsoluteTimeout(), IdleTimeout: executionConfig.IdleTimeout(), ManualEvidence: manualEvidence})
 	return buildOut(stdout, stderr, out, err, opts.JSON)
 }
 

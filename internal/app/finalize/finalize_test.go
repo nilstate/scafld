@@ -53,13 +53,9 @@ type fakeReviewer struct {
 	provenance []receipt.Provenance
 	ignored    []string
 	reviewer   receipt.Reviewer
-	called     int
-	input      ReviewInput
 }
 
-func (f *fakeReviewer) Review(_ context.Context, input ReviewInput) (ReviewResult, error) {
-	f.called++
-	f.input = input
+func reviewInput(input Input, f *fakeReviewer) Input {
 	rev := f.reviewer
 	if rev.Provider == "" {
 		rev = receipt.Reviewer{Provider: "codex"}
@@ -68,7 +64,8 @@ func (f *fakeReviewer) Review(_ context.Context, input ReviewInput) (ReviewResul
 	if prov == nil {
 		prov = defaultProvenance
 	}
-	return ReviewResult{Dossier: f.dossier, Provenance: prov, Ignored: f.ignored, Reviewer: rev}, nil
+	input.Review = ReviewEvidence{Dossier: f.dossier, Provenance: prov, Ignored: f.ignored, Reviewer: rev}
+	return input
 }
 
 type fakeSigner struct {
@@ -85,22 +82,18 @@ func (f *fakeSigner) Sign(body receipt.Body) (receipt.DetachedSignature, error) 
 func TestRunFailsFastOnAcceptanceBeforeReviewer(t *testing.T) {
 	t.Parallel()
 
-	reviewer := &fakeReviewer{}
 	out, err := Run(context.Background(), baseSnapshotter(), &fakeAcceptance{output: acceptance.EvaluateOutput{
 		Results: []acceptance.CriterionResult{{ID: "ac1", Status: "fail", Reason: "red"}},
 		Passed:  false,
-	}}, reviewer, &fakeSigner{}, baseInput())
+	}}, &fakeSigner{}, reviewInput(baseInput(), &fakeReviewer{}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if out.Verdict != review.VerdictFail || out.Reason != "acceptance failed before review" {
 		t.Fatalf("output = %+v, want acceptance fail-fast", out)
 	}
-	if out.Independence.Level != receipt.IndependenceLevelIsolationOnly || out.Independence.Downgraded != receipt.IndependenceDowngradeUnknownReviewer {
-		t.Fatalf("failed acceptance independence = %+v, want isolation_only unknown_reviewer", out.Independence)
-	}
-	if reviewer.called != 0 {
-		t.Fatalf("reviewer called after failed acceptance")
+	if out.Independence.Level != receipt.IndependenceLevelIsolationOnly || out.Independence.Downgraded != receipt.IndependenceDowngradeSameVendor {
+		t.Fatalf("failed acceptance independence = %+v, want isolation_only same_vendor", out.Independence)
 	}
 }
 
@@ -108,7 +101,7 @@ func TestRunDowngradesBlockingFindingWithoutValidationToAdvisory(t *testing.T) {
 	t.Parallel()
 
 	signer := &fakeSigner{}
-	out, err := Run(context.Background(), baseSnapshotter(), passingAcceptance(), &fakeReviewer{dossier: review.Dossier{
+	out, err := Run(context.Background(), baseSnapshotter(), passingAcceptance(), signer, reviewInput(baseInput(), &fakeReviewer{dossier: review.Dossier{
 		Verdict: review.VerdictFail,
 		Findings: []review.Finding{{
 			ID:               "f1",
@@ -117,7 +110,7 @@ func TestRunDowngradesBlockingFindingWithoutValidationToAdvisory(t *testing.T) {
 			Location:         &review.Location{Path: "internal/app/finalize/gate.go", Line: 12},
 			Summary:          "claimed blocker",
 		}},
-	}}, signer, baseInput())
+	}}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,7 +128,7 @@ func TestRunDowngradesBlockingFindingWithoutValidationToAdvisory(t *testing.T) {
 func TestRunAdvisoryFindingsDoNotGate(t *testing.T) {
 	t.Parallel()
 
-	out, err := Run(context.Background(), baseSnapshotter(), passingAcceptance(), &fakeReviewer{dossier: review.Dossier{
+	out, err := Run(context.Background(), baseSnapshotter(), passingAcceptance(), &fakeSigner{}, reviewInput(baseInput(), &fakeReviewer{dossier: review.Dossier{
 		Verdict: review.VerdictPass,
 		Findings: []review.Finding{{
 			ID:               "note",
@@ -143,7 +136,7 @@ func TestRunAdvisoryFindingsDoNotGate(t *testing.T) {
 			BlocksCompletion: false,
 			Summary:          "advisory note",
 		}},
-	}}, &fakeSigner{}, baseInput())
+	}}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,7 +151,7 @@ func TestRunCleanPassMintsSignedReceiptAnchoredToLedgerHead(t *testing.T) {
 	signer := &fakeSigner{}
 	input := baseInput()
 	input.PriorLedgerHead = session.LedgerGenesisHead()
-	out, err := Run(context.Background(), baseSnapshotter(), passingAcceptance(), &fakeReviewer{dossier: review.Dossier{Verdict: review.VerdictPass}, reviewer: receipt.Reviewer{Provider: "codex"}}, signer, input)
+	out, err := Run(context.Background(), baseSnapshotter(), passingAcceptance(), signer, reviewInput(input, &fakeReviewer{dossier: review.Dossier{Verdict: review.VerdictPass}, reviewer: receipt.Reviewer{Provider: "codex"}}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,7 +180,7 @@ func TestRunStampsBaseDeltaSnapshotModeAndBaseRef(t *testing.T) {
 	snapshotter := baseSnapshotter()
 	input := baseInput()
 	input.BaseRef = "origin/main"
-	out, err := Run(context.Background(), snapshotter, passingAcceptance(), &fakeReviewer{dossier: review.Dossier{Verdict: review.VerdictPass}}, &fakeSigner{}, input)
+	out, err := Run(context.Background(), snapshotter, passingAcceptance(), &fakeSigner{}, reviewInput(input, &fakeReviewer{dossier: review.Dossier{Verdict: review.VerdictPass}}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -263,10 +256,10 @@ func TestRunStampsHonestIndependenceReason(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			out, err := Run(context.Background(), baseSnapshotter(), passingAcceptance(), &fakeReviewer{
+			out, err := Run(context.Background(), baseSnapshotter(), passingAcceptance(), &fakeSigner{}, reviewInput(tt.input, &fakeReviewer{
 				dossier:  review.Dossier{Verdict: review.VerdictPass},
 				reviewer: tt.reviewer,
-			}, &fakeSigner{}, tt.input)
+			}))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -293,18 +286,14 @@ func TestRunIgnoresAmbientTreeMutationWhenMaterialIsStable(t *testing.T) {
 	pre := baseSnapshot()
 	post := baseSnapshot()
 	post.TreeSHA = "ambient-tree-drift"
-	reviewer := &fakeReviewer{dossier: review.Dossier{Verdict: review.VerdictPass}}
 	signer := &fakeSigner{}
 
-	out, err := Run(context.Background(), &fakeSnapshotter{snapshots: []Snapshot{pre, post}}, passingAcceptance(), reviewer, signer, baseInput())
+	out, err := Run(context.Background(), &fakeSnapshotter{snapshots: []Snapshot{pre, post}}, passingAcceptance(), signer, reviewInput(baseInput(), &fakeReviewer{dossier: review.Dossier{Verdict: review.VerdictPass}}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if out.Verdict != review.VerdictPass || out.Receipt == nil || signer.called != 1 {
 		t.Fatalf("expected ambient drift to pass scoped finalize, got out=%+v signer=%d", out, signer.called)
-	}
-	if reviewer.input.TreeSHA != pre.TreeSHA {
-		t.Fatalf("reviewer tree = %q, want signed snapshot tree %q", reviewer.input.TreeSHA, pre.TreeSHA)
 	}
 }
 
@@ -315,17 +304,16 @@ func TestRunFailsClosedOnScopedMaterialMutation(t *testing.T) {
 	post := baseSnapshot()
 	post.TreeSHA = "tree-post-mutation"
 	post.FileDigests["internal/app/finalize/gate.go"] = "changed-sha"
-	reviewer := &fakeReviewer{dossier: review.Dossier{Verdict: review.VerdictPass}}
 	signer := &fakeSigner{}
-	out, err := Run(context.Background(), &fakeSnapshotter{snapshots: []Snapshot{pre, post}}, passingAcceptance(), reviewer, signer, baseInput())
+	out, err := Run(context.Background(), &fakeSnapshotter{snapshots: []Snapshot{pre, post}}, passingAcceptance(), signer, reviewInput(baseInput(), &fakeReviewer{dossier: review.Dossier{Verdict: review.VerdictPass}}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if out.Verdict != review.VerdictFail || out.Receipt != nil || !strings.Contains(out.Reason, "mutated") {
 		t.Fatalf("expected fail-closed on scoped material mutation, got %+v", out)
 	}
-	if reviewer.called != 0 || signer.called != 0 {
-		t.Fatalf("review/sign ran over mutated material: reviewer=%d signer=%d", reviewer.called, signer.called)
+	if signer.called != 0 {
+		t.Fatalf("sign ran over mutated material: signer=%d", signer.called)
 	}
 }
 
@@ -335,18 +323,17 @@ func TestRunFailsClosedOnScopedDeletionMutation(t *testing.T) {
 	pre := baseSnapshot()
 	pre.Deleted = []string{"internal/app/finalize/removed.go"}
 	post := baseSnapshot()
-	reviewer := &fakeReviewer{dossier: review.Dossier{Verdict: review.VerdictPass}}
 	signer := &fakeSigner{}
 
-	out, err := Run(context.Background(), &fakeSnapshotter{snapshots: []Snapshot{pre, post}}, passingAcceptance(), reviewer, signer, baseInput())
+	out, err := Run(context.Background(), &fakeSnapshotter{snapshots: []Snapshot{pre, post}}, passingAcceptance(), signer, reviewInput(baseInput(), &fakeReviewer{dossier: review.Dossier{Verdict: review.VerdictPass}}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if out.Verdict != review.VerdictFail || out.Receipt != nil || !strings.Contains(out.Reason, "mutated") {
 		t.Fatalf("expected fail-closed on scoped deletion mutation, got %+v", out)
 	}
-	if reviewer.called != 0 || signer.called != 0 {
-		t.Fatalf("review/sign ran over mutated deletion state: reviewer=%d signer=%d", reviewer.called, signer.called)
+	if signer.called != 0 {
+		t.Fatalf("sign ran over mutated deletion state: signer=%d", signer.called)
 	}
 }
 
@@ -356,18 +343,17 @@ func TestRunFailsClosedOnScopedIgnoredPathMutation(t *testing.T) {
 	pre := baseSnapshot()
 	pre.IgnoredUnreviewed = []string{"internal/app/finalize/generated.tmp"}
 	post := baseSnapshot()
-	reviewer := &fakeReviewer{dossier: review.Dossier{Verdict: review.VerdictPass}}
 	signer := &fakeSigner{}
 
-	out, err := Run(context.Background(), &fakeSnapshotter{snapshots: []Snapshot{pre, post}}, passingAcceptance(), reviewer, signer, baseInput())
+	out, err := Run(context.Background(), &fakeSnapshotter{snapshots: []Snapshot{pre, post}}, passingAcceptance(), signer, reviewInput(baseInput(), &fakeReviewer{dossier: review.Dossier{Verdict: review.VerdictPass}}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if out.Verdict != review.VerdictFail || out.Receipt != nil || !strings.Contains(out.Reason, "mutated") {
 		t.Fatalf("expected fail-closed on scoped ignored-path mutation, got %+v", out)
 	}
-	if reviewer.called != 0 || signer.called != 0 {
-		t.Fatalf("review/sign ran over mutated ignored-path state: reviewer=%d signer=%d", reviewer.called, signer.called)
+	if signer.called != 0 {
+		t.Fatalf("sign ran over mutated ignored-path state: signer=%d", signer.called)
 	}
 }
 
@@ -375,8 +361,7 @@ func TestRunStampsReviewedContextProvenance(t *testing.T) {
 	t.Parallel()
 
 	prov := []receipt.Provenance{{Kind: "evidence_file", Path: "internal/app/finalize/gate.go", SHA256: "sha", Bytes: 42}}
-	reviewer := &fakeReviewer{dossier: review.Dossier{Verdict: review.VerdictPass}, provenance: prov}
-	out, err := Run(context.Background(), baseSnapshotter(), passingAcceptance(), reviewer, &fakeSigner{}, baseInput())
+	out, err := Run(context.Background(), baseSnapshotter(), passingAcceptance(), &fakeSigner{}, reviewInput(baseInput(), &fakeReviewer{dossier: review.Dossier{Verdict: review.VerdictPass}, provenance: prov}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -392,8 +377,7 @@ func TestRunFailsClosedOnUncoveredFileDigest(t *testing.T) {
 	// default) must not yield a signed receipt: the snapshot's file digest would be
 	// neither reviewed nor declared ignored, so the gate fails closed at mint.
 	signer := &fakeSigner{}
-	reviewer := &fakeReviewer{dossier: review.Dossier{Verdict: review.VerdictPass}, provenance: []receipt.Provenance{}}
-	_, err := Run(context.Background(), baseSnapshotter(), passingAcceptance(), reviewer, signer, baseInput())
+	_, err := Run(context.Background(), baseSnapshotter(), passingAcceptance(), signer, reviewInput(baseInput(), &fakeReviewer{dossier: review.Dossier{Verdict: review.VerdictPass}, provenance: []receipt.Provenance{}}))
 	if err == nil || !strings.Contains(err.Error(), "not covered") {
 		t.Fatalf("gate must fail closed minting an uncovered file digest, got err=%v", err)
 	}

@@ -62,6 +62,9 @@ harden:
     # provider: "auto"
     # command: "./harden-reviewer" # only when provider: command
     # provider_binary: "/path/bin"
+    # Claude/Gemini stream progress and may use this silence watchdog. Codex
+    # writes one final packet and relies on the absolute timeout instead.
+    # Custom commands retain this explicitly configured watchdog.
     idle_timeout_seconds: 180
     absolute_max_seconds: 1800
     fallback_policy: "disable"
@@ -97,6 +100,9 @@ review:
     # the host provider is available.
     # command: "./reviewer"        # only when provider: command
     # provider_binary: "/path/bin" # optional selected-provider binary override
+    # Claude/Gemini stream progress and may use this silence watchdog. Codex
+    # writes one final packet and relies on the absolute timeout instead.
+    # Custom commands retain this explicitly configured watchdog.
     idle_timeout_seconds: 180
     absolute_max_seconds: 1800
     fallback_policy: "disable"

@@ -67,7 +67,7 @@ it.
 
 - they do not embed provider logic inside scafld core
 - they do not execute an external agent runtime
-- they do not replace `build`, `review`, or `complete`
+- they do not replace `build`, `review`, or `finalize`
 - they do not introduce a second runtime state model
 
 The stable contracts remain:

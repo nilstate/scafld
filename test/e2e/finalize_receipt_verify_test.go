@@ -34,11 +34,20 @@ func TestFinalizeMintsReceiptVerifyAcceptsAndRejectsTamper(t *testing.T) {
 
 	keyPath, trusted := newSigningKey(t)
 	runner := process.Runner{}
+	snapshot, err := (git.Adapter{Root: root}).Snapshot(context.Background(), git.SnapshotInput{Scope: []string{"file.txt"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	provenance := make([]receipt.Provenance, 0, len(snapshot.FileDigests))
+	for _, file := range snapshot.FileDigests {
+		provenance = append(provenance, receipt.Provenance{Kind: "evidence_file", Path: file.Path, SHA256: file.SHA256})
+	}
 	input := appfinalize.Input{
 		TaskID:          "demo",
 		SessionID:       "demo",
 		Scope:           []string{"file.txt"},
 		SpecFingerprint: "spec",
+		Review:          appfinalize.ReviewEvidence{Dossier: review.Dossier{Verdict: review.VerdictPass}, Provenance: provenance, Reviewer: receipt.Reviewer{Provider: "codex"}},
 		HostUnderReview: receipt.HostUnderReview{Agent: "unknown"},
 		Independence:    receipt.Independence{Level: receipt.IndependenceLevelIsolationOnly, Distinct: false},
 		Criteria:        []appacceptance.Criterion{{ID: "ac1", Command: "true", ExpectedKind: "exit_code_zero"}},
@@ -49,7 +58,6 @@ func TestFinalizeMintsReceiptVerifyAcceptsAndRejectsTamper(t *testing.T) {
 	out, err := appfinalize.Run(context.Background(),
 		finalizeSnap{g: git.Adapter{Root: root}},
 		finalizeAccept{runner: runner},
-		stubReviewer{g: git.Adapter{Root: root}},
 		sign.Ed25519Signer{PrivateKeyPath: keyPath},
 		input,
 	)
@@ -90,23 +98,6 @@ func TestFinalizeMintsReceiptVerifyAcceptsAndRejectsTamper(t *testing.T) {
 }
 
 // --- finalize ports ---
-
-type stubReviewer struct{ g git.Adapter }
-
-// Review stands in for a real reviewer binary but, like the real reviewer, returns
-// provenance covering every reviewed file in the snapshot tree so the minted
-// receipt is coverage-complete.
-func (s stubReviewer) Review(ctx context.Context, in appfinalize.ReviewInput) (appfinalize.ReviewResult, error) {
-	digests, err := s.g.TreeDigests(ctx, in.TreeSHA, in.Scope)
-	if err != nil {
-		return appfinalize.ReviewResult{}, err
-	}
-	prov := make([]receipt.Provenance, 0, len(digests))
-	for _, d := range digests {
-		prov = append(prov, receipt.Provenance{Kind: "evidence_file", Path: d.Path, SHA256: d.SHA256})
-	}
-	return appfinalize.ReviewResult{Dossier: review.Dossier{Verdict: review.VerdictPass}, Provenance: prov, Reviewer: receipt.Reviewer{Provider: "codex"}}, nil
-}
 
 type finalizeSnap struct{ g git.Adapter }
 

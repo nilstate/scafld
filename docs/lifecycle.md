@@ -40,19 +40,20 @@ scafld harden add-auth --mark-passed
 scafld validate add-auth
 scafld approve add-auth
 scafld build add-auth
+# for manual acceptance, use the build command printed by handoff
+scafld build add-auth --criterion <id> --disposition pass --evidence-digest <sha256> --actor <actor> --reason "what was verified"
 # implement the opened phase, then repeat build until review
 scafld build add-auth
 scafld review add-auth
-scafld complete add-auth
+scafld finalize add-auth
 ```
 
-`scafld finalize add-auth` collapses the finish line into one call: it runs
-acceptance against an immutable snapshot, runs the independent review, mints a
-signed receipt, and records completion. Use the step-by-step
-`review` and `complete` commands when hand-sequencing the lifecycle; use
-`finalize` as the default completion authority. `scafld verify <receipt>
---target <commit-ish>` then replays the receipt as the CI merge wall. See
-[CLI Reference](cli-reference.md) for both commands.
+`scafld review add-auth` is the provider/model gate. After it passes,
+`scafld finalize add-auth` consumes the accepted review, runs acceptance against
+deterministic tree facts, mints a signed receipt, archives the canonical spec,
+and records completion. Finalize does not invoke a model. `scafld verify
+<receipt> --target <commit-ish>` then replays the receipt as the CI merge wall.
+See [CLI Reference](cli-reference.md) for the legacy `complete` command.
 
 Failure paths:
 
@@ -127,7 +128,7 @@ Approval remains explicit. Hardening makes the approval decision worth trusting.
 ## Review Gate
 
 `scafld review` moves work to the review gate and writes the challenger verdict.
-`scafld complete` refuses to archive until the latest review verdict is `pass`.
+`scafld finalize` refuses to archive until the latest review verdict is `pass`.
 
 That separation is the core product stance: execution tries to finish the work;
 adversarial review tries to break confidence in the work.

@@ -42,8 +42,8 @@ func Run(ctx context.Context, stdin io.Reader, stdout io.Writer, stderr io.Write
 		ServerName:         "scafld",
 		ToolName:           "finalize",
 		ToolTitle:          "Finalize work",
-		ToolDescription:    "Finalize scafld work by running acceptance, external review, and returning blockers or a signed receipt.",
-		SchemaJSON:         `{"type":"object","additionalProperties":false,"required":["task_id"],"properties":{"task_id":{"type":"string","description":"Stable scafld task/spec id for the receipt."},"root":{"type":"string","description":"Repository root. Defaults to the MCP server working directory."},"base_ref":{"type":"string","description":"Optional base ref or SHA for a base-delta receipt, such as a PR base SHA or origin/main."},"scope_hint":{"type":"array","items":{"type":"string"},"description":"Explicit changed paths when no hand-authored spec exists."}}}`,
+		ToolDescription:    "Finalize scafld work by consuming accepted review evidence, running deterministic acceptance, and returning blockers or a signed receipt.",
+		SchemaJSON:         `{"type":"object","additionalProperties":false,"required":["task_id"],"properties":{"task_id":{"type":"string","description":"Stable scafld task/spec id for the receipt."},"root":{"type":"string","description":"Repository root. Defaults to the MCP server working directory."},"base_ref":{"type":"string","description":"Optional base ref or SHA for a base-delta receipt, such as a PR base SHA or origin/main."},"scope_hint":{"type":"array","items":{"type":"string"},"description":"Optional explicit repository-relative scope override. Evidence roots outside this repository are context only, not receipt scope."}}}`,
 		AllowRepeatedCalls: true,
 		ParseAndEncode: func(text string) (mcpsubmit.Accepted, error) {
 			return callFinalizeCLI(ctx, opts, text)

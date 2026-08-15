@@ -197,6 +197,124 @@ func TestBuildManualCriterionWithoutEvidenceBlocksInsteadOfPassing(t *testing.T)
 	}
 }
 
+func TestBuildAttachesManualEvidenceAndAdvancesInOneCall(t *testing.T) {
+	t.Parallel()
+
+	specs := &fakeSpecs{model: spec.Model{TaskID: "task", Status: spec.StatusApproved, Phases: []spec.Phase{{ID: "phase1", Name: "Phase", Acceptance: []spec.Criterion{{
+		ID: "images", Type: "manual", PhaseID: "phase1", ExpectedKind: acceptance.ExpectedManual,
+	}}}}}}
+	sessions := &fakeSessions{}
+	runner := &fakeRunner{}
+	if _, err := Run(context.Background(), specs, sessions, nil, runner, fakeBuildClock{}, Input{TaskID: "task"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Run(context.Background(), specs, sessions, nil, runner, fakeBuildClock{}, Input{TaskID: "task"}); err != nil {
+		t.Fatal(err)
+	}
+	out, err := Run(context.Background(), specs, sessions, nil, runner, fakeBuildClock{}, Input{
+		TaskID: "task",
+		ManualEvidence: &ManualEvidence{
+			CriterionID:    "images",
+			Disposition:    "pass",
+			EvidenceDigest: strings.Repeat("c", 64),
+			Actor:          "operator",
+			Reason:         "baseline and rollback image identities verified",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Status != spec.StatusReview || out.Passed != 1 || out.Failed != 0 || out.Next != "scafld review task" {
+		t.Fatalf("output=%+v, want one build call to advance to review", out)
+	}
+	if len(runner.commands) != 0 {
+		t.Fatalf("manual evidence should not run a command: %+v", runner.commands)
+	}
+	var manualEntries int
+	for _, entry := range sessions.ledger.Entries {
+		if entry.Type == session.EntryManualEvidence && entry.CriterionID == "images" {
+			manualEntries++
+		}
+	}
+	if manualEntries != 1 {
+		t.Fatalf("manual evidence entries=%d, want one", manualEntries)
+	}
+	buildEntries := 0
+	for _, entry := range sessions.ledger.Entries {
+		if entry.Type == "build" {
+			buildEntries++
+		}
+	}
+	if _, err := Run(context.Background(), specs, sessions, nil, runner, fakeBuildClock{}, Input{
+		TaskID: "task",
+		ManualEvidence: &ManualEvidence{
+			CriterionID:    "images",
+			Disposition:    "pass",
+			EvidenceDigest: strings.Repeat("c", 64),
+			Actor:          "operator",
+			Reason:         "baseline and rollback image identities verified",
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	manualEntries = 0
+	for _, entry := range sessions.ledger.Entries {
+		if entry.Type == session.EntryManualEvidence && entry.CriterionID == "images" {
+			manualEntries++
+		}
+	}
+	if manualEntries != 1 {
+		t.Fatalf("repeated manual evidence entries=%d, want idempotent retry", manualEntries)
+	}
+	updatedBuildEntries := 0
+	for _, entry := range sessions.ledger.Entries {
+		if entry.Type == "build" {
+			updatedBuildEntries++
+		}
+	}
+	if updatedBuildEntries != buildEntries {
+		t.Fatalf("repeated manual evidence build entries=%d, want %d", updatedBuildEntries, buildEntries)
+	}
+}
+
+func TestBuildReusesManualEvidenceAndDoesNotCreateAnotherPendingResult(t *testing.T) {
+	t.Parallel()
+
+	specs := &fakeSpecs{model: spec.Model{TaskID: "task", Status: spec.StatusApproved, Phases: []spec.Phase{{ID: "phase1", Name: "Phase", Acceptance: []spec.Criterion{{
+		ID: "manual", Type: "manual", PhaseID: "phase1", ExpectedKind: acceptance.ExpectedManual,
+	}}}}}}
+	sessions := &fakeSessions{}
+	runner := &fakeRunner{}
+	if _, err := Run(context.Background(), specs, sessions, nil, runner, fakeBuildClock{}, Input{TaskID: "task"}); err != nil {
+		t.Fatal(err)
+	}
+	// Existing ledger evidence is reused without creating a derived criterion event.
+	sessions.ledger = sessions.ledger.WithEntry(session.Entry{
+		ID: "manual-evidence", Type: session.EntryManualEvidence, CriterionID: "manual", PhaseID: "phase1",
+		Status: "pass", Reason: "verified", ExpectedKind: string(acceptance.ExpectedManual), CriterionType: "manual",
+		EvidenceDigest: strings.Repeat("b", 64), EvidenceActor: "operator", RecordedAt: "2026-05-01T00:00:00Z",
+	})
+	out, err := Run(context.Background(), specs, sessions, nil, runner, fakeBuildClock{}, Input{TaskID: "task"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Status != spec.StatusReview || out.Passed != 1 || out.Failed != 0 {
+		t.Fatalf("output=%+v, want manual evidence to advance to review", out)
+	}
+	if len(runner.commands) != 0 {
+		t.Fatalf("manual evidence should not run a command: %+v", runner.commands)
+	}
+	var manualEntries int
+	for _, entry := range sessions.ledger.Entries {
+		if entry.CriterionID == "manual" {
+			manualEntries++
+		}
+	}
+	if manualEntries != 1 {
+		t.Fatalf("manual criterion evidence entries=%d, want one typed operator event", manualEntries)
+	}
+}
+
 func TestBuildRerunsCompletedPhaseWhenAcceptanceCommandChanges(t *testing.T) {
 	t.Parallel()
 

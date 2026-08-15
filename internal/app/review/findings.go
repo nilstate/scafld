@@ -46,7 +46,7 @@ func appendSummary(current string, extra string) string {
 
 func nextForVerdict(taskID string, verdict string) (string, string) {
 	if verdict == "pass" {
-		return "complete", "scafld complete " + taskID
+		return "finalize", "scafld finalize " + taskID
 	}
 	return "repair", "scafld handoff " + taskID
 }

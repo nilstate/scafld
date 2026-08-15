@@ -430,7 +430,7 @@ func TestRunProviderHardenUsesProviderOutputContractOnly(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"## Harden Contract", "what was checked", "## Provider Harden Output Contract", "submit_harden", "## Provider Instruction"} {
+	for _, want := range []string{"## Harden Contract", "what was checked", "## Provider Harden Output Contract", "submit_harden", "otherwise return exactly one JSON object", "## Provider Instruction"} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("provider prompt missing %q:\n%s", want, prompt)
 		}

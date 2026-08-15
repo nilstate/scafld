@@ -22,6 +22,8 @@ win.
 - stay inside the declared phase unless the contract explicitly expands scope
 - prefer the curated context and prior phase summaries over old trial-and-error
 - run `scafld build <task-id>` after implementation instead of guessing
+- when handoff shows a manual criterion build command, fill its evidence fields
+  and run that command once; it records and evaluates the criterion together
 - leave the task in a state that can survive adversarial review
 
 ## Execution Loop

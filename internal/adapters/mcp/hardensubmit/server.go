@@ -15,10 +15,10 @@ func Run(ctx context.Context, stdin io.Reader, stdout io.Writer, stderr io.Write
 	return mcpsubmit.Run(ctx, stdin, stdout, stderr, mcpsubmit.Options{
 		OutPath:         outPath,
 		ServerName:      "scafld-harden-submit",
-		ToolName:        "submit_harden",
+		ToolName:        coreharden.SubmitToolName,
 		ToolTitle:       "Submit scafld hardening",
-		ToolDescription: "Submit the final scafld HardenDossier. Call exactly once after stress-testing the draft spec. Treat the draft as a hypothesis: if reject/no-op, shrink, reframe, move-owner, or reuse-existing-behavior is materially better, record that in shape instead of softening it into advisory feedback. Harden is a code-shape and system-design gate, not coverage bookkeeping; do not turn a settled shared invariant into a consumer-by-consumer compliance matrix or bespoke test-per-surface demand. The shape object must answer keep, shrink, reframe, or reject before observations. The observations array must cover " + coreharden.RequiredDimensionList() + "; fill result, anchor, and note/default/status where applicable. The design observation must challenge shared architecture and keep API/MCP/CLI/provider/docs surfaces as light adapters over common core/app behavior.",
-		SchemaJSON:      coreharden.DossierSchemaJSON(),
+		ToolDescription: coreharden.SubmitToolDescription(),
+		SchemaJSON:      coreharden.StrictDossierSchemaJSON(),
 		ParseAndEncode: func(text string) (mcpsubmit.Accepted, error) {
 			dossier, err := coreharden.ParseText(text)
 			if err != nil {

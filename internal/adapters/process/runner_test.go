@@ -192,6 +192,7 @@ func TestCommandSuppressesRawStderrProgressAndReportsHeartbeat(t *testing.T) {
 	for _, want := range []string{
 		"scafld review provider started",
 		"scafld review provider running elapsed=",
+		"output_watchdog=disabled",
 		"scafld review provider completed exit=0",
 	} {
 		if !strings.Contains(body, want) {

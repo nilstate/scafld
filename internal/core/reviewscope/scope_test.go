@@ -108,3 +108,20 @@ func TestLiteralKeepsTopLevelExtensionlessPaths(t *testing.T) {
 		t.Fatalf("literal scope = %+v, want %+v", got, want)
 	}
 }
+
+func TestPathAllowedRejectsOutsideEvidenceRoots(t *testing.T) {
+	t.Parallel()
+
+	if got := Literal([]string{"../app", "/tmp/app", "api"}); !reflect.DeepEqual(got, []string{"api"}) {
+		t.Fatalf("scope = %+v, want only repository-relative paths", got)
+	}
+}
+
+func TestDeriveDropsDottedIdentifiers(t *testing.T) {
+	t.Parallel()
+
+	model := spec.Model{Scope: []string{"gpt-5.5", "2.5.2", "api/handler.go"}}
+	if got := Derive(model, nil, nil); !reflect.DeepEqual(got, []string{"api/handler.go"}) {
+		t.Fatalf("scope = %+v, want only actual path", got)
+	}
+}

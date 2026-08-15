@@ -38,12 +38,11 @@ func (p HardenProvider) Invoke(ctx context.Context, req coreharden.Request) (cor
 		return coreharden.Dossier{}, fmt.Errorf("%w: provider is required", ErrProviderFailed)
 	}
 	resp, err := agent.InvokeAgent(ctx, AgentRequest{
-		TaskID:           req.TaskID,
-		Prompt:           req.Prompt,
-		SchemaName:       "HardenDossier",
-		SchemaJSON:       coreharden.DossierSchemaJSON(),
-		StrictSchemaJSON: coreharden.StrictDossierSchemaJSON(),
-		SubmitTool:       hardenSubmitTool(),
+		TaskID:     req.TaskID,
+		Prompt:     req.Prompt,
+		SchemaName: "HardenDossier",
+		SchemaJSON: coreharden.StrictDossierSchemaJSON(),
+		SubmitTool: hardenSubmitTool(),
 	})
 	if err != nil {
 		return coreharden.Dossier{}, err
@@ -62,12 +61,11 @@ func (p HardenProvider) Invoke(ctx context.Context, req coreharden.Request) (cor
 
 func invokeReviewAgent(ctx context.Context, agent Agent, req review.Request, parse func(string) (review.Dossier, error)) (review.Dossier, error) {
 	resp, err := agent.InvokeAgent(ctx, AgentRequest{
-		TaskID:           req.TaskID,
-		Prompt:           req.Prompt,
-		SchemaName:       "ReviewDossier",
-		SchemaJSON:       review.DossierSchemaJSON(),
-		StrictSchemaJSON: ReviewDossierSchemaJSON(),
-		SubmitTool:       reviewSubmitTool(),
+		TaskID:     req.TaskID,
+		Prompt:     req.Prompt,
+		SchemaName: "ReviewDossier",
+		SchemaJSON: ReviewDossierSchemaJSON(),
+		SubmitTool: reviewSubmitTool(),
 	})
 	if err != nil {
 		return review.Dossier{}, err
@@ -492,18 +490,18 @@ func mergeEventSummary(primary map[string]int, fallback map[string]int) map[stri
 
 func reviewSubmitTool() SubmitTool {
 	return SubmitTool{
-		Name:        "submit_review",
+		Name:        review.SubmitToolName,
 		Title:       "Submit scafld review",
-		Description: "Submit the final scafld ReviewDossier. Call exactly once after completing the read-only adversarial review. Findings are defects only; improvements, preferences, marginal-surface enumeration, and per-consumer bookkeeping are not findings unless they identify a verified defect, violated shared invariant, or broken adapter boundary. Clean attack_log entries must name the concrete target inspected.",
+		Description: review.SubmitToolDescription(),
 		Command:     "review-submit-stdio",
 	}
 }
 
 func hardenSubmitTool() SubmitTool {
 	return SubmitTool{
-		Name:        "submit_harden",
+		Name:        coreharden.SubmitToolName,
 		Title:       "Submit scafld hardening",
-		Description: "Submit the final scafld HardenDossier. Call exactly once after stress-testing the draft spec. Treat the draft as a hypothesis: if reject/no-op, shrink, reframe, move-owner, or reuse-existing-behavior is materially better, record that in shape instead of softening it into advisory feedback. Harden is a code-shape and system-design gate, not coverage bookkeeping; do not turn a settled shared invariant into a consumer-by-consumer compliance matrix or bespoke test-per-surface demand. The shape object must answer keep, shrink, reframe, or reject before observations. The observations array must cover " + coreharden.RequiredDimensionList() + " with result, anchor, and any note/question/recommended/if_unanswered/default/status. A keep decision and clean observations must name what was checked and what would have failed the check.",
+		Description: coreharden.SubmitToolDescription(),
 		Command:     "harden-submit-stdio",
 	}
 }

@@ -194,10 +194,10 @@ will not reopen them; create a new task for follow-up work.
 For completed tasks, scafld derives a terminal completion authority from the
 session ledger:
 
-- latest passing external review before `complete`, with sealed review packet,
+- latest passing external review before finalization, with sealed review packet,
   matching canonical hash, reviewed workspace state, and scoped material seal
   when present
-- audited human-reviewed override before `complete`
+- audited human-reviewed override before finalization
 - integrity error when a completed ledger has no valid terminal authority
 
 Historical failed reviews remain in the ledger. They are evidence, not current

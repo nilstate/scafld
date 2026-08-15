@@ -19,6 +19,9 @@ import (
 type Severity string
 
 const (
+	// SubmitToolName is the provider submission channel for review dossiers.
+	SubmitToolName = "submit_review"
+
 	// SeverityCritical marks correctness, security, data-loss, or release-stopping impact.
 	SeverityCritical Severity = "critical"
 	// SeverityHigh marks substantial product, architecture, or reliability impact.
@@ -28,6 +31,12 @@ const (
 	// SeverityLow marks polish, clarity, or minor maintainability impact.
 	SeverityLow Severity = "low"
 )
+
+// SubmitToolDescription is the canonical provider-facing review submission
+// contract shared by MCP and protocol adapters.
+func SubmitToolDescription() string {
+	return "Submit the final scafld ReviewDossier exactly once after completing the read-only adversarial review. The provider wire schema requires every declared property; use null for semantically unused nullable fields. Findings are defects only; improvements, preferences, marginal-surface enumeration, and per-consumer bookkeeping are not findings unless they identify a verified defect, violated shared invariant, or broken adapter boundary. Clean attack_log entries must name the concrete target inspected."
+}
 
 // Confidence describes how strongly the reviewer believes a finding is real.
 type Confidence string

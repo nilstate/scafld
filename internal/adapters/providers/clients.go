@@ -237,7 +237,7 @@ func (p CodexProvider) InvokeAgent(ctx context.Context, req AgentRequest) (Agent
 			return AgentResponse{}, fmt.Errorf("%w: create schema file: %v", ErrProviderFailed, err)
 		}
 		schemaPath = file.Name()
-		schemaJSON := first(req.StrictSchemaJSON, req.SchemaJSON)
+		schemaJSON := req.SchemaJSON
 		if strings.TrimSpace(schemaJSON) == "" {
 			schemaJSON = ReviewDossierSchemaJSON()
 		}

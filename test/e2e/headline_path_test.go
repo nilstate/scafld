@@ -15,10 +15,9 @@ import (
 func TestHeadlinePathExecutesFinalizeReceiptVerify(t *testing.T) {
 	bin := testBinary(t)
 	root := t.TempDir()
-	configHome := t.TempDir()
 	fakeCodex := writeFakeCodexReviewer(t)
 
-	runWithEnv(t, []string{"SCAFLD_CONFIG_HOME=" + configHome}, bin, "init", "--root", root, "--no-agent-docs")
+	run(t, bin, "init", "--root", root, "--no-agent-docs")
 	initGitWorkspace(t, root)
 	runGit(t, root, "config", "user.name", "scafld")
 	runGit(t, root, "config", "user.email", "scafld@example.invalid")
@@ -27,14 +26,12 @@ func TestHeadlinePathExecutesFinalizeReceiptVerify(t *testing.T) {
 	runGit(t, root, "commit", "-m", "base")
 	writeFile(t, root, "file.txt", "changed\n")
 	head := gitOutput(t, root, "rev-parse", "HEAD")
-
-	configPath := filepath.Join(root, ".scafld", "config.yaml")
-	config, err := os.ReadFile(configPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	config = append(config, []byte("\nreview:\n  external:\n    provider: \"codex\"\n    codex:\n      binary: "+quoteYAML(fakeCodex)+"\n")...)
-	if err := os.WriteFile(configPath, config, 0o644); err != nil {
+	run(t, bin, "plan", "--root", root, "headline-path", "--title", "Headline path", "--command", "test -f file.txt")
+	run(t, bin, "approve", "--root", root, "headline-path")
+	run(t, bin, "build", "--root", root, "headline-path")
+	run(t, bin, "build", "--root", root, "headline-path")
+	runWithEnv(t, []string{"OPENAI_API_KEY=fake-test-key"}, bin, "review", "--root", root, "headline-path", "--review-scope", "file.txt", "--provider", "codex", "--provider-binary", fakeCodex)
+	if err := os.Remove(fakeCodex); err != nil {
 		t.Fatal(err)
 	}
 
@@ -47,10 +44,7 @@ func TestHeadlinePathExecutesFinalizeReceiptVerify(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	finalizeOut := runWithInput(t, []string{
-		"SCAFLD_CONFIG_HOME=" + configHome,
-		"OPENAI_API_KEY=fake-test-key",
-	}, bin, []string{"finalize", "--json", "--stdin"}, append(request, '\n'))
+	finalizeOut := runWithInput(t, nil, bin, []string{"finalize", "--json", "--stdin"}, append(request, '\n'))
 	var finalizeResp struct {
 		OK              bool   `json:"ok"`
 		Verdict         string `json:"verdict"`
@@ -73,18 +67,31 @@ func TestHeadlinePathExecutesFinalizeReceiptVerify(t *testing.T) {
 	}
 
 	trustedKeys := filepath.Join(root, ".scafld", "trusted-keys.json")
-	runWithEnv(t, []string{"SCAFLD_CONFIG_HOME=" + configHome}, bin, "verify", "--root", root, finalizeResp.ReceiptPath, "--target", head, "--trusted-keys", trustedKeys)
-	runWithEnv(t, []string{"SCAFLD_CONFIG_HOME=" + configHome}, bin, "verify", "--root", root, "--target", head, "--trusted-keys", trustedKeys)
+	run(t, bin, "verify", "--root", root, finalizeResp.ReceiptPath, "--target", head, "--trusted-keys", trustedKeys)
+	run(t, bin, "verify", "--root", root, "--target", head, "--trusted-keys", trustedKeys)
+	archived, err := filepath.Glob(filepath.Join(root, ".scafld", "specs", "archive", "*", "headline-path.md"))
+	if err != nil || len(archived) != 1 {
+		t.Fatalf("archived specs = %v err=%v, want one", archived, err)
+	}
+	retryOut := runWithInput(t, nil, bin, []string{"finalize", "--json", "--stdin"}, append(request, '\n'))
+	var retryResp struct {
+		OK      bool   `json:"ok"`
+		Verdict string `json:"verdict"`
+	}
+	if err := json.Unmarshal(retryOut, &retryResp); err != nil {
+		t.Fatalf("decode idempotent finalize response: %v\n%s", err, retryOut)
+	}
+	if !retryResp.OK || retryResp.Verdict != "pass" {
+		t.Fatalf("idempotent finalize response = %+v\n%s", retryResp, retryOut)
+	}
 }
 
-func TestConcurrentFinalizeOneWriterWins(t *testing.T) {
+func TestConcurrentFinalizeKeepsOneReceipt(t *testing.T) {
 	bin := testBinary(t)
 	root := t.TempDir()
-	configHome := t.TempDir()
-	raceDir := t.TempDir()
-	fakeCodex := writeBarrierFakeCodexReviewer(t, raceDir)
+	fakeCodex := writeFakeCodexReviewer(t)
 
-	runWithEnv(t, []string{"SCAFLD_CONFIG_HOME=" + configHome}, bin, "init", "--root", root, "--no-agent-docs")
+	run(t, bin, "init", "--root", root, "--no-agent-docs")
 	initGitWorkspace(t, root)
 	runGit(t, root, "config", "user.name", "scafld")
 	runGit(t, root, "config", "user.email", "scafld@example.invalid")
@@ -92,14 +99,12 @@ func TestConcurrentFinalizeOneWriterWins(t *testing.T) {
 	runGit(t, root, "add", "-A")
 	runGit(t, root, "commit", "-m", "base")
 	writeFile(t, root, "file.txt", "changed\n")
-
-	configPath := filepath.Join(root, ".scafld", "config.yaml")
-	config, err := os.ReadFile(configPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	config = append(config, []byte("\nreview:\n  external:\n    provider: \"codex\"\n    codex:\n      binary: "+quoteYAML(fakeCodex)+"\n")...)
-	if err := os.WriteFile(configPath, config, 0o644); err != nil {
+	run(t, bin, "plan", "--root", root, "race-finalize", "--title", "Concurrent finalize", "--command", "test -f file.txt")
+	run(t, bin, "approve", "--root", root, "race-finalize")
+	run(t, bin, "build", "--root", root, "race-finalize")
+	run(t, bin, "build", "--root", root, "race-finalize")
+	runWithEnv(t, []string{"OPENAI_API_KEY=fake-test-key"}, bin, "review", "--root", root, "race-finalize", "--review-scope", "file.txt", "--provider", "codex", "--provider-binary", fakeCodex)
+	if err := os.Remove(fakeCodex); err != nil {
 		t.Fatal(err)
 	}
 
@@ -111,10 +116,7 @@ func TestConcurrentFinalizeOneWriterWins(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	results := runTwoFinalizeCommands(t, []string{
-		"SCAFLD_CONFIG_HOME=" + configHome,
-		"OPENAI_API_KEY=fake-test-key",
-	}, bin, append(request, '\n'))
+	results := runTwoFinalizeCommands(t, nil, bin, append(request, '\n'))
 	successes := 0
 	failures := 0
 	for _, result := range results {
@@ -123,11 +125,11 @@ func TestConcurrentFinalizeOneWriterWins(t *testing.T) {
 			continue
 		}
 		failures++
-		if !strings.Contains(result.Stderr, "append receipt to ledger") || !strings.Contains(result.Stderr, "breaks ledger chain") {
+		if !strings.Contains(result.Stderr, "anchor finalization") || (!strings.Contains(result.Stderr, "ledger") && !strings.Contains(result.Stderr, "different finalization receipt is already anchored")) {
 			t.Fatalf("losing finalize did not fail closed on ledger chain:\nstdout:\n%s\nstderr:\n%s\nerr: %v", result.Stdout, result.Stderr, result.Err)
 		}
 	}
-	if successes != 1 || failures != 1 {
+	if successes < 1 || successes+failures != 2 {
 		t.Fatalf("successes=%d failures=%d results=%+v", successes, failures, results)
 	}
 
@@ -172,51 +174,6 @@ if [ -z "$out" ]; then
   exit 2
 fi
 ` + reviewCommandPrintf(passingReviewDossierJSON("discover", "clean", "headline path", 6)) + ` > "$out"
-`
-	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	return path
-}
-
-func writeBarrierFakeCodexReviewer(t *testing.T, raceDir string) string {
-	t.Helper()
-	path := filepath.Join(t.TempDir(), "codex")
-	dirLiteral, err := json.Marshal(raceDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	script := `#!/bin/sh
-set -eu
-out=""
-while [ "$#" -gt 0 ]; do
-  if [ "$1" = "--output-last-message" ]; then
-    shift
-    out="$1"
-  fi
-  shift || true
-done
-if [ -z "$out" ]; then
-  echo "missing --output-last-message" >&2
-  exit 2
-fi
-dir=` + string(dirLiteral) + `
-touch "$dir/seen.$$"
-i=0
-while [ "$i" -lt 200 ]; do
-  set -- "$dir"/seen.*
-  if [ -e "$1" ] && [ "$#" -ge 2 ]; then
-    break
-  fi
-  i=$((i + 1))
-  sleep 0.05
-done
-set -- "$dir"/seen.*
-if [ ! -e "$1" ] || [ "$#" -lt 2 ]; then
-  echo "timed out waiting for concurrent reviewer" >&2
-  exit 3
-fi
-` + reviewCommandPrintf(passingReviewDossierJSON("discover", "clean", "race path", 6)) + ` > "$out"
 `
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatal(err)

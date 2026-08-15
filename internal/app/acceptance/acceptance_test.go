@@ -153,6 +153,31 @@ func TestEvaluateEmptyCommandCriteriaFailClosedExceptManualEvidence(t *testing.T
 	}
 }
 
+func TestEvaluateUsesValidatedManualEvidenceWithoutRunningACommand(t *testing.T) {
+	t.Parallel()
+
+	runner := &fakeRunner{}
+	out := Evaluate(context.Background(), runner, EvaluateInput{Criteria: []Criterion{{
+		ID:           "manual",
+		Type:         "manual",
+		ExpectedKind: string(coreacceptance.ExpectedManual),
+		ManualEvidence: &ManualEvidence{
+			Disposition:    "pass",
+			EvidenceDigest: strings.Repeat("a", 64),
+			Actor:          "operator",
+			RecordedAt:     "2026-08-14T00:00:00Z",
+			Reason:         "baseline and rollback identities verified",
+		},
+	}}})
+	if !out.Passed || len(out.Results) != 1 || len(runner.requests) != 0 {
+		t.Fatalf("output=%+v requests=%d, want one passing manual result without runner", out, len(runner.requests))
+	}
+	result := out.Results[0]
+	if result.Status != "pass" || result.EvidenceDigest != strings.Repeat("a", 64) || result.EvidenceActor != "operator" {
+		t.Fatalf("manual result=%+v", result)
+	}
+}
+
 func TestEvaluateBrowserCriteriaReportsPlaywrightInstallHelp(t *testing.T) {
 	t.Parallel()
 

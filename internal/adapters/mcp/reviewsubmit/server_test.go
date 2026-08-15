@@ -43,6 +43,9 @@ func TestRunListsSubmitReviewToolAndWritesValidDossier(t *testing.T) {
 	if len(tools.Result.Tools) != 1 || tools.Result.Tools[0].Name != "submit_review" || tools.Result.Tools[0].InputSchema["additionalProperties"] != false {
 		t.Fatalf("tools/list = %s", lines[1])
 	}
+	if !schemaRequires(tools.Result.Tools[0].InputSchema, "category") || !schemaRequires(tools.Result.Tools[0].InputSchema, "validation") {
+		t.Fatalf("tools/list must advertise the strict review wire fields: %s", lines[1])
+	}
 	data, err := os.ReadFile(outPath)
 	if err != nil {
 		t.Fatal(err)
@@ -50,6 +53,27 @@ func TestRunListsSubmitReviewToolAndWritesValidDossier(t *testing.T) {
 	if !strings.Contains(string(data), `"verdict":"pass"`) || !strings.Contains(string(data), `"attack_log"`) {
 		t.Fatalf("submission = %s", data)
 	}
+}
+
+func schemaRequires(schema map[string]any, field string) bool {
+	findings, ok := schema["properties"].(map[string]any)["findings"].(map[string]any)
+	if !ok {
+		return false
+	}
+	items, ok := findings["items"].(map[string]any)
+	if !ok {
+		return false
+	}
+	itemsRequired, ok := items["required"].([]any)
+	if !ok {
+		return false
+	}
+	for _, value := range itemsRequired {
+		if value == field {
+			return true
+		}
+	}
+	return false
 }
 
 func TestRunRejectsInvalidDossierWithoutWriting(t *testing.T) {

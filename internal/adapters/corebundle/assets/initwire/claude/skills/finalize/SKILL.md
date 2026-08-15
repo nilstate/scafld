@@ -1,19 +1,19 @@
 ---
 name: finalize
-description: Run an independent scafld accountability finalize and return a signed receipt for completed work.
+description: Seal accepted scafld review evidence with deterministic acceptance and return a signed receipt.
 ---
 
 # Finalize
 
-Use the `finalize` MCP tool when work is ready to be checked. It runs the independent reviewer path and returns either actionable findings or a signed receipt.
+Run the scafld review gate before finalization. When review passes, use the `finalize` MCP tool. Finalize consumes the accepted review evidence, runs deterministic acceptance, signs the receipt, and archives the spec. It never invokes a provider or model.
 
-The host agent may work however it needs to work before the finalize. The finalize is the single accountability verb: it records the target, acceptance evidence, independent review result, and receipt status.
+The host agent may work however it needs to work before the review. Review is the only provider/model call. Finalize is the last accountability verb: it records the target, acceptance evidence, accepted review result, and receipt status.
 
 Pass `task_id` for the governed task. When the work is on a branch or pull request, pass `base_ref` as the base commit/ref so the receipt attests the base-to-head delta instead of only the current working tree. If no hand-authored spec exists, also pass `scope_hint` with the changed paths to review.
 
 ## Local finalize is the baseline
 
-`finalize` needs no CI. The independent review and the signed receipt it writes under `.scafld/receipts/` are the complete accountability outcome on their own, and a plain `scafld init` sets this up without installing any workflow. Receipts are ignored by the managed `.gitignore` by default so normal local finalize runs do not dirty the project.
+`review` followed by `finalize` needs no CI. The signed receipt written under `.scafld/receipts/` is the complete local accountability outcome, and a plain `scafld init` sets this up without installing any workflow. Receipts are ignored by the managed `.gitignore` by default so normal local finalize runs do not dirty the project.
 
 ## CI verify is the opt-in upgrade
 

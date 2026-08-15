@@ -31,6 +31,7 @@ func TestRunHelpAndVersion(t *testing.T) {
 		{name: "harden help", args: []string{"harden", "--help"}, want: "Required observation dimensions"},
 		{name: "approve help", args: []string{"approve", "--help"}, want: "--reason TEXT"},
 		{name: "status help", args: []string{"status", "--help"}, want: "--with-context"},
+		{name: "build help", args: []string{"build", "--help"}, want: "--evidence-digest SHA256"},
 		{name: "review help", args: []string{"review", "--help"}, want: "--review-scope"},
 	}
 
@@ -897,7 +898,7 @@ func TestRunReviewHumanReviewedOverrideCompletes(t *testing.T) {
 	runCLI(t, []string{"build", "--root", root, "human-review-task"})
 	runCLI(t, []string{"build", "--root", root, "human-review-task"})
 	stdout := runCLI(t, []string{"review", "--root", root, "human-review-task", "--human-reviewed", "--reason", "operator reviewed PR 123"})
-	if !strings.Contains(stdout, "review verdict: pass") || !strings.Contains(stdout, "next: scafld complete human-review-task") {
+	if !strings.Contains(stdout, "review verdict: pass") || !strings.Contains(stdout, "next: scafld finalize human-review-task") {
 		t.Fatalf("human review output = %q", stdout)
 	}
 	runCLI(t, []string{"complete", "--root", root, "human-review-task"})

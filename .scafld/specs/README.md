@@ -66,7 +66,8 @@ and repeated by `status` and `handoff`.
 Mark complete after a non-local passing review in session:
 
 ```bash
-scafld complete my-task
+scafld review my-task
+scafld finalize my-task
 ```
 
 ---

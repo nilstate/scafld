@@ -12,6 +12,8 @@ import (
 const (
 	// EntryWorkspaceBaseline records dirty workspace state before task execution begins.
 	EntryWorkspaceBaseline = "workspace_baseline"
+	// EntryManualEvidence records an operator disposition for a manual acceptance criterion.
+	EntryManualEvidence = "manual_evidence"
 	// EntryReceipt records a signed gate receipt in the append-only ledger.
 	EntryReceipt = "receipt"
 	ledgerDomain = "scafld-ledger-v1"
@@ -59,6 +61,8 @@ type Entry struct {
 	LeaseExpiresAt          string   `json:"lease_expires_at,omitempty"`
 	ReviewMode              string   `json:"review_mode,omitempty"`
 	ReviewPassCount         int      `json:"review_pass_count,omitempty"`
+	EvidenceDigest          string   `json:"evidence_digest,omitempty"`
+	EvidenceActor           string   `json:"evidence_actor,omitempty"`
 	ReviewedHead            string   `json:"reviewed_head,omitempty"`
 	ReviewedDirty           string   `json:"reviewed_dirty,omitempty"`
 	ReviewedDiff            string   `json:"reviewed_diff,omitempty"`
@@ -69,14 +73,16 @@ type Entry struct {
 
 // StateRecord is the replayed state for a criterion or phase.
 type StateRecord struct {
-	Status        string `json:"status"`
-	Reason        string `json:"reason,omitempty"`
-	UpdatedAt     string `json:"updated_at,omitempty"`
-	SourceID      string `json:"source_id,omitempty"`
-	Command       string `json:"command,omitempty"`
-	ExpectedKind  string `json:"expected_kind,omitempty"`
-	CriterionType string `json:"criterion_type,omitempty"`
-	PhaseID       string `json:"phase_id,omitempty"`
+	Status         string `json:"status"`
+	Reason         string `json:"reason,omitempty"`
+	UpdatedAt      string `json:"updated_at,omitempty"`
+	SourceID       string `json:"source_id,omitempty"`
+	Command        string `json:"command,omitempty"`
+	ExpectedKind   string `json:"expected_kind,omitempty"`
+	CriterionType  string `json:"criterion_type,omitempty"`
+	PhaseID        string `json:"phase_id,omitempty"`
+	EvidenceDigest string `json:"evidence_digest,omitempty"`
+	EvidenceActor  string `json:"evidence_actor,omitempty"`
 }
 
 // ReceiptTrustChecker validates receipt key trust at replay time. The core
@@ -132,14 +138,16 @@ func ReplayWithOptions(s Session, opts ReplayOptions) Session {
 			source = entry.Type
 		}
 		record := StateRecord{
-			Status:        entry.Status,
-			Reason:        entry.Reason,
-			UpdatedAt:     entry.RecordedAt,
-			SourceID:      source,
-			Command:       entry.Command,
-			ExpectedKind:  entry.ExpectedKind,
-			CriterionType: entry.CriterionType,
-			PhaseID:       entry.PhaseID,
+			Status:         entry.Status,
+			Reason:         entry.Reason,
+			UpdatedAt:      entry.RecordedAt,
+			SourceID:       source,
+			Command:        entry.Command,
+			ExpectedKind:   entry.ExpectedKind,
+			CriterionType:  entry.CriterionType,
+			PhaseID:        entry.PhaseID,
+			EvidenceDigest: entry.EvidenceDigest,
+			EvidenceActor:  entry.EvidenceActor,
 		}
 		if record.Status == "" {
 			record.Status = entry.Type
@@ -184,14 +192,16 @@ func AppendEntryWithOptions(s Session, entry Entry, opts ReplayOptions) Session 
 		source = entry.Type
 	}
 	record := StateRecord{
-		Status:        entry.Status,
-		Reason:        entry.Reason,
-		UpdatedAt:     entry.RecordedAt,
-		SourceID:      source,
-		Command:       entry.Command,
-		ExpectedKind:  entry.ExpectedKind,
-		CriterionType: entry.CriterionType,
-		PhaseID:       entry.PhaseID,
+		Status:         entry.Status,
+		Reason:         entry.Reason,
+		UpdatedAt:      entry.RecordedAt,
+		SourceID:       source,
+		Command:        entry.Command,
+		ExpectedKind:   entry.ExpectedKind,
+		CriterionType:  entry.CriterionType,
+		PhaseID:        entry.PhaseID,
+		EvidenceDigest: entry.EvidenceDigest,
+		EvidenceActor:  entry.EvidenceActor,
 	}
 	if record.Status == "" {
 		record.Status = entry.Type
@@ -206,6 +216,41 @@ func AppendEntryWithOptions(s Session, entry Entry, opts ReplayOptions) Session 
 		next.UpdatedAt = entry.RecordedAt
 	}
 	return replayLedgerHead(next, idx, entry, opts)
+}
+
+// LatestCriterionEntry returns the newest ledger event for criterionID.
+// Callers must still validate the event against the current criterion contract.
+func LatestCriterionEntry(s Session, criterionID string) (Entry, bool) {
+	criterionID = strings.TrimSpace(criterionID)
+	if criterionID == "" {
+		return Entry{}, false
+	}
+	for i := len(s.Entries) - 1; i >= 0; i-- {
+		if strings.TrimSpace(s.Entries[i].CriterionID) == criterionID {
+			return s.Entries[i], true
+		}
+	}
+	return Entry{}, false
+}
+
+// LatestManualEvidence returns the newest manual-evidence event that matches
+// the current criterion contract. A stale event is evidence history, not a
+// passing disposition for a changed criterion.
+func LatestManualEvidence(s Session, criterionID, phaseID, expectedKind, criterionType string) (Entry, bool) {
+	for i := len(s.Entries) - 1; i >= 0; i-- {
+		entry := s.Entries[i]
+		if entry.CriterionID != criterionID || entry.Type != EntryManualEvidence || entry.Status == "" {
+			continue
+		}
+		if entry.PhaseID != phaseID || entry.ExpectedKind != expectedKind || entry.CriterionType != criterionType {
+			continue
+		}
+		if strings.TrimSpace(entry.EvidenceDigest) == "" || strings.TrimSpace(entry.EvidenceActor) == "" {
+			continue
+		}
+		return entry, true
+	}
+	return Entry{}, false
 }
 
 // LedgerGenesisHead returns the starting head for sessions with no receipts.

@@ -66,6 +66,34 @@ func TestHardenSubmitToolRequiresShapeReframeWhenBetter(t *testing.T) {
 	}
 }
 
+func TestFinalOnlyProvidersDoNotUseOutputSilenceAsIdleLiveness(t *testing.T) {
+	t.Parallel()
+
+	provider, err := Select(Selection{Provider: "codex", Idle: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	codex, ok := provider.(CodexProvider)
+	if !ok {
+		t.Fatalf("provider = %T, want CodexProvider", provider)
+	}
+	if codex.IdleTimeout != 0 {
+		t.Fatalf("codex idle timeout = %s, want disabled", codex.IdleTimeout)
+	}
+
+	provider, err = Select(Selection{Provider: "claude", Idle: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claude, ok := provider.(ClaudeProvider)
+	if !ok {
+		t.Fatalf("provider = %T, want ClaudeProvider", provider)
+	}
+	if claude.IdleTimeout != time.Minute {
+		t.Fatalf("claude idle timeout = %s, want one minute", claude.IdleTimeout)
+	}
+}
+
 func TestAutoProviderPrefersOppositeHostAgent(t *testing.T) {
 	t.Parallel()
 
@@ -1268,7 +1296,7 @@ func TestReviewDossierSchemaMatchesManagedCoreAsset(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if normalizeJSON(t, string(asset)) != normalizeJSON(t, review.DossierSchemaJSON()) {
+	if normalizeJSON(t, string(asset)) != normalizeJSON(t, review.StrictDossierSchemaJSON()) {
 		t.Fatal("bundled review_dossier.json drifted from core schema generator")
 	}
 }
@@ -1285,7 +1313,7 @@ func TestHardenDossierSchemaMatchesManagedCoreAsset(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if normalizeJSON(t, string(asset)) != normalizeJSON(t, coreharden.DossierSchemaJSON()) {
+	if normalizeJSON(t, string(asset)) != normalizeJSON(t, coreharden.StrictDossierSchemaJSON()) {
 		t.Fatal("bundled harden_dossier.json drifted from core schema generator")
 	}
 }

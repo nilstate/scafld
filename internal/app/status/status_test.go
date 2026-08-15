@@ -587,7 +587,7 @@ func TestStatusReviewPassRequiresValidLedgerAuthority(t *testing.T) {
 	}
 }
 
-func TestStatusReviewWithValidLedgerReviewSuggestsComplete(t *testing.T) {
+func TestStatusReviewWithValidLedgerReviewSuggestsFinalize(t *testing.T) {
 	t.Parallel()
 
 	ledger := session.New("task", "now").
@@ -602,12 +602,12 @@ func TestStatusReviewWithValidLedgerReviewSuggestsComplete(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out.Next != "scafld complete task" || out.NextAction.Action != "complete" || out.NextAction.Command != "scafld complete task" {
+	if out.Next != "scafld finalize task" || out.NextAction.Action != "finalize" || out.NextAction.Command != "scafld finalize task" {
 		t.Fatalf("status = %+v", out)
 	}
 }
 
-func TestStatusMaterialSealKeepsCompleteActionDespiteAmbientDrift(t *testing.T) {
+func TestStatusMaterialSealKeepsFinalizeActionDespiteAmbientDrift(t *testing.T) {
 	t.Parallel()
 
 	material := reviewevidence.MaterialSeal{Scope: []string{"api/handler.go"}, Digest: "same-material"}
@@ -629,7 +629,7 @@ func TestStatusMaterialSealKeepsCompleteActionDespiteAmbientDrift(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out.Next != "scafld complete task" || out.NextAction.Action != "complete" {
+	if out.Next != "scafld finalize task" || out.NextAction.Action != "finalize" {
 		t.Fatalf("status = %+v", out)
 	}
 }

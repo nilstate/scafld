@@ -93,20 +93,21 @@ current host agent, it prefers the other installed challenger, can use Gemini as
 another external challenger, and fails closed when only the host provider is
 available. If no external challenger is installed, review fails closed. Use
 `--provider local` only for development smoke tests; local verdicts cannot
-satisfy `complete`.
+satisfy `finalize`.
 
 `--print-context` shows the exact deterministic brief before you spend a review
 run.
 
-## Complete
+## Finalize
 
 ```bash
-scafld complete add-auth
+scafld finalize add-auth
 ```
 
-`complete` archives only work with a passing `codex`, `claude`, `gemini`,
-`command`, or audited human review in the session. If review returns a blocking finding,
-repair the work, rerun `build` as needed, then rerun `review`.
+`finalize` consumes the passing review evidence, reruns deterministic acceptance,
+signs the receipt, and archives the spec without another model call. If review
+returns a blocking finding, repair the work, rerun `build` as needed, then rerun
+`review`.
 
 ## Inspect State
 

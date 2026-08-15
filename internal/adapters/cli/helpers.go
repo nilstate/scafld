@@ -46,6 +46,10 @@ var valueFlags = map[string]bool{
 	"min-attack-angles": true,
 	"review-depth":      true,
 	"repair-packet":     true,
+	"criterion":         true,
+	"disposition":       true,
+	"evidence-digest":   true,
+	"actor":             true,
 }
 
 var boolFlags = map[string]bool{"force": true, "human-reviewed": true, "mark-passed": true, "no-agent-docs": true, "no-context": true, "with-context": true, "print-context": true, "ci": true}

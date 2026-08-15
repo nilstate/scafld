@@ -5,8 +5,10 @@ description: Adversarial review finalize behavior
 
 # Review
 
-`finalize` is the default completion finalize for agent-driven work. `review` is
-the direct lifecycle review command for spec-backed operator work.
+`review` is the provider/model gate. `finalize` is the last deterministic
+completion command for agent-driven work: it consumes the accepted review,
+reruns acceptance, signs the receipt, and archives the spec. `review` is also
+available as the direct lifecycle review command for spec-backed operator work.
 
 Execution tries to finish the job. Review tries to break confidence in the job.
 The implementation agent should not grade its own work.
@@ -23,8 +25,9 @@ cross-vendor separation was not proven.
 scafld review <task-id>
 ```
 
-For the default host-agent path, call `finalize` instead. A passing gate
-returns a signed receipt; CI verifies that receipt with `scafld verify`.
+For the default host-agent path, call `review` once, then `finalize`. A passing
+review returns accepted ledger evidence; finalize returns the signed receipt.
+CI verifies that receipt with `scafld verify`.
 
 By default, review uses the provider configured in `.scafld/config.yaml` at
 `review.external.provider`. Fresh workspaces use `auto`: when scafld can infer
@@ -76,7 +79,7 @@ scafld review <task-id> --provider codex --model gpt-5
 scafld review <task-id> --human-reviewed --reason "operator reviewed PR 123"
 ```
 
-For small diffs, keep the same finalize but tighten the review budget:
+For small diffs, keep the same review gate but tighten the review budget:
 
 ```bash
 scafld review <task-id> --review-depth light --max-findings 4 --min-attack-angles 3
@@ -103,6 +106,11 @@ adapter boundary. If one shared owner, read model, chokepoint, or invariant test
 proves behavior by construction, omitted per-surface bookkeeping is context, not
 a blocker.
 
+The review's sealed `reviewed_scope` is the material boundary reused by
+`finalize`. Evidence roots outside the owning Git repository may be read for
+review context, but they are never passed to that repository's Git scope or
+signed as receipt material.
+
 Provider meanings:
 
 - `codex`: read-only ephemeral Codex review using a structured output schema;
@@ -123,7 +131,7 @@ Provider meanings:
   diagnostics belong on stderr. A non-zero exit, malformed stdout, or
   under-budget dossier fails the review attempt.
 - `local`: deterministic local pass-through provider for development and smoke
-  tests. It is not an adversarial review and cannot satisfy `complete`.
+  tests. It is not an adversarial review and cannot satisfy `finalize`.
 - `--human-reviewed`: audited operator override. It does not invoke a model
   provider. A reason is required, and scafld records both a `review_override`
   event and a passing `review` event with provider `human` in the session
@@ -195,7 +203,7 @@ Review modes change the attack shape, not the completion standard:
 - `verify`: check known findings, repair regressions, and release blockers
   introduced by the fix.
 
-Both modes use the same ReviewDossier schema and the same pass/fail finalize.
+Both modes use the same ReviewDossier schema and the same pass/fail review gate.
 
 Configured `review.automated_passes` and `review.adversarial_passes` are not
 just prompt labels. scafld renders them into one provider brief and makes one
@@ -227,13 +235,16 @@ The dossier is the provider content contract:
 ```
 
 Provider adapters must deliver this one dossier shape before core validation.
-Codex writes a schema-constrained output file. Claude and Gemini must call
-scafld's `submit_review` MCP tool exactly once; scafld reads the tool payload
-from that submission channel and ignores final prose or fenced JSON. Accepted
+All provider transports advertise the same strict wire schema; semantically
+optional values are required as `null`. Codex writes a schema-constrained
+output file. Claude and Gemini must call scafld's `submit_review` MCP tool
+exactly once; scafld reads the tool payload from that submission channel and
+ignores final prose or fenced JSON. Accepted
 reviews record `output_format` so operators can see whether scafld consumed
 `claude.mcp_submit_review`, `gemini.mcp_submit_review`, `codex.output_file`, or
 another explicit provider path. Provider text that does not arrive through the
-configured submit channel does not satisfy the finalize.
+configured submit channel does not satisfy the review gate or become usable
+finalize evidence.
 
 Findings require:
 
@@ -245,7 +256,7 @@ Findings require:
 - `summary` for readable repair output
 
 Any open finding with `blocks_completion: true` forces verdict `fail`. Severity
-and the completion finalize are deliberately separate: a high-severity accepted risk
+and finalization are deliberately separate: a high-severity accepted risk
 can be non-blocking, while a medium defect can still block if it violates the
 approved contract.
 
@@ -263,7 +274,7 @@ its `canonical_response_sha256`, provider provenance (`provider_model` and
 `reviewed_head`, `reviewed_dirty`, and `reviewed_diff`.
 
 When scafld can derive a task material scope, review entries also store
-`reviewed_scope` and `reviewed_material_digest`. `status` and `complete`
+`reviewed_scope` and `reviewed_material_digest`. `status` and `finalize`
 recompute that scoped content digest before trusting the pass. A dirty-to-commit
 transition of the same reviewed bytes remains valid, and unrelated workspace
 drift outside the reviewed scope does not burn another provider review. Changes
@@ -277,8 +288,8 @@ Provider invocations are wrapped in a leased `review_attempt` lifecycle:
 - `abandoned`: a later `scafld review` recovered an expired running attempt
 
 Only `scafld review` mutates stale attempts. Read-only surfaces such as
-`status`, `handoff`, and `complete` project the same state but do not repair the
-ledger themselves. This keeps recovery deterministic: an unexpired running
+`status` and `handoff` project the same state but do not repair the ledger
+themselves. Finalize consumes only accepted evidence. This keeps recovery deterministic: an unexpired running
 attempt blocks duplicate provider spend, while an expired running attempt is
 abandoned automatically before the next review starts.
 
@@ -288,7 +299,7 @@ The authority order stays the same:
 - spec shows the readable current projection
 - provider output is accepted only after validation
 
-`complete` validates the current session authority first. The spec projection is
+`finalize` validates the current session authority first. The spec projection is
 only a readable mirror: a Markdown edit that says the review passed is not enough
 unless the latest session review packet is present, hash-valid, and current.
 
@@ -323,13 +334,13 @@ fixed. A passing review is not rerun unless the operator passes `--force`.
 Diagnostics remain for provider transport failures, invalid dossiers, timeouts,
 and other cases where scafld could not accept normal review output.
 
-## Complete Gate
+## Finalize Gate
 
 ```bash
-scafld complete <task-id>
+scafld finalize <task-id>
 ```
 
-`complete` refuses unless:
+`finalize` refuses unless:
 
 - the latest session review event exists
 - the latest review verdict is `pass`
@@ -340,10 +351,14 @@ scafld complete <task-id>
 - when `reviewed_scope` and `reviewed_material_digest` are present, the current
   scoped material still matches the reviewed content
 
-If review fails, repair the work, rerun acceptance as needed, rerun review, then
-complete only after the challenger clears the finalize.
+If review fails, repair the work, run `scafld build`, and rerun review. Call
+finalize only after the challenger clears the review gate.
 
-Use `--human-reviewed` only when the provider finalize is blocked for an external
+`complete` remains a legacy completion transition for older workflows. It is
+not required after finalize and does not mint the signed receipt or archive the
+canonical spec.
+
+Use `--human-reviewed` only when the provider review is blocked for an external
 reason and a human has actually reviewed the diff, spec, acceptance evidence,
 and scope. It is an audited escape hatch, not a softer review mode.
 

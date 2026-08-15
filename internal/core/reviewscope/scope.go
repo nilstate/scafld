@@ -3,6 +3,7 @@
 package reviewscope
 
 import (
+	pathpkg "path"
 	"strings"
 
 	"github.com/nilstate/scafld/v2/internal/core/reviewevidence"
@@ -44,8 +45,8 @@ func Project(model spec.Model, explicit []string, baselineSnapshot []string, cur
 
 // Derive returns the path scope implied by a task contract. Explicit scope wins.
 func Derive(model spec.Model, explicit []string, snapshot []string) []string {
-	if normalized := coreworkspace.NormalizeScope(explicit); len(normalized) > 0 {
-		return FilterAllowed(normalized)
+	if normalized := FilterAllowed(explicit); len(normalized) > 0 {
+		return normalized
 	}
 	var scope []string
 	for _, pkg := range model.Context.Packages {
@@ -60,24 +61,24 @@ func Derive(model spec.Model, explicit []string, snapshot []string) []string {
 	for _, phase := range model.Phases {
 		scope = append(scope, pathishItems(phase.Changes)...)
 	}
-	return FilterAllowed(coreworkspace.NormalizeScope(scope))
+	return FilterAllowed(scope)
 }
 
 // Literal cleans authoritative git path lists such as scope hints or base diffs.
 // It does not require prose-style path evidence, so top-level extensionless
 // files such as Makefile, Dockerfile, and LICENSE remain valid material scope.
 func Literal(paths []string) []string {
-	return FilterAllowed(coreworkspace.NormalizeScope(paths))
+	return FilterAllowed(paths)
 }
 
 // Merge returns the sorted, de-duplicated union of scope path lists.
 func Merge(a, b []string) []string {
-	return FilterAllowed(coreworkspace.NormalizeScope(append(append([]string(nil), a...), b...)))
+	return FilterAllowed(append(append([]string(nil), a...), b...))
 }
 
 // MaterialScope returns the content scope that should be sealed for a review.
 func MaterialScope(scope []string, reviewedSnapshot []string) []string {
-	if normalized := coreworkspace.NormalizeScope(scope); len(normalized) > 0 {
+	if normalized := FilterAllowed(scope); len(normalized) > 0 {
 		return normalized
 	}
 	return FilterAllowed(coreworkspace.Paths(reviewedSnapshot))
@@ -91,12 +92,24 @@ func FilterAllowed(scope []string) []string {
 			filtered = append(filtered, item)
 		}
 	}
-	return filtered
+	return coreworkspace.NormalizeScope(filtered)
 }
 
 // PathAllowed reports whether a path is safe to include in review scope.
 func PathAllowed(path string) bool {
-	normalized := strings.Trim(strings.ReplaceAll(path, "\\", "/"), "/")
+	text := strings.TrimSpace(strings.ReplaceAll(path, "\\", "/"))
+	if text == "" || strings.HasPrefix(text, "/") {
+		return false
+	}
+	for _, segment := range strings.Split(strings.Trim(text, "/"), "/") {
+		if segment == ".." {
+			return false
+		}
+	}
+	normalized := strings.Trim(pathpkg.Clean(text), "/")
+	if normalized == ".." || strings.HasPrefix(normalized, "../") {
+		return false
+	}
 	if normalized == "" {
 		return false
 	}
@@ -198,5 +211,24 @@ func looksLikePath(value string) bool {
 	if text == "" || strings.Contains(text, "://") || strings.ContainsAny(text, " \t\n\r") {
 		return false
 	}
-	return text == "." || strings.Contains(text, "/") || strings.HasPrefix(text, ".") || strings.Contains(text, ".") || strings.ContainsAny(text, "*?[")
+	if text == "." || strings.Contains(text, "/") || strings.HasPrefix(text, ".") || strings.ContainsAny(text, "*?[") {
+		return true
+	}
+	// A bare dotted token is commonly a model/version/package identifier (for
+	// example gpt-5.5 or 2.5.2), not a repository path. Treat a dotted token as
+	// a file only when its extension is non-numeric.
+	extension := pathpkg.Ext(text)
+	return extension != "" && strings.Trim(extension, ".") != "" && !allDigits(strings.TrimPrefix(extension, "."))
+}
+
+func allDigits(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, r := range value {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }

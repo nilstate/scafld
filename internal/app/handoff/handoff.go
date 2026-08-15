@@ -8,6 +8,7 @@ import (
 
 	"github.com/nilstate/scafld/v2/internal/app/packetrepair"
 	"github.com/nilstate/scafld/v2/internal/app/specsource"
+	"github.com/nilstate/scafld/v2/internal/core/acceptance"
 	corecompletion "github.com/nilstate/scafld/v2/internal/core/completion"
 	"github.com/nilstate/scafld/v2/internal/core/reconcile"
 	corereview "github.com/nilstate/scafld/v2/internal/core/review"
@@ -295,6 +296,9 @@ func writeAcceptanceEvidence(b *strings.Builder, model spec.Model, ledger sessio
 			if strings.TrimSpace(criterion.Command) != "" {
 				fmt.Fprintf(b, "  Command: `%s`\n", criterion.Command)
 			}
+			if isManualCriterion(criterion) {
+				fmt.Fprintf(b, "  Build command: `%s`\n", manualEvidenceBuildCommand(model.TaskID, criterion.ID))
+			}
 			continue
 		}
 		reason := strings.TrimSpace(state.Reason)
@@ -308,6 +312,14 @@ func writeAcceptanceEvidence(b *strings.Builder, model spec.Model, ledger sessio
 		fmt.Fprintf(b, ": %s\n", reason)
 		if state.SourceID != "" {
 			fmt.Fprintf(b, "  Source event: `%s`\n", state.SourceID)
+		}
+		if source, ok := entryBySource(ledger, state.SourceID); ok && source.Type == session.EntryManualEvidence && isManualCriterion(criterion) {
+			fmt.Fprintf(b, "  Evidence digest: `%s`\n", source.EvidenceDigest)
+			fmt.Fprintf(b, "  Evidence actor: `%s`\n", source.EvidenceActor)
+			fmt.Fprintf(b, "  Recorded at: `%s`\n", source.RecordedAt)
+		}
+		if isManualCriterion(criterion) && state.Status != "pass" {
+			fmt.Fprintf(b, "  Build command: `%s`\n", manualEvidenceBuildCommand(model.TaskID, criterion.ID))
 		}
 		if strings.TrimSpace(criterion.Command) != "" {
 			fmt.Fprintf(b, "  Command: `%s`\n", criterion.Command)
@@ -327,13 +339,13 @@ func writeBlockedAcceptance(b *strings.Builder, model spec.Model, ledger session
 		context := phaseDependencyContext(model, criterion.PhaseID)
 		switch {
 		case !ok:
-			rows = append(rows, criterionHandoffRow(criterion, "pending", "no evidence recorded", "", context))
+			rows = append(rows, criterionHandoffRow(model.TaskID, criterion, "pending", "no evidence recorded", "", context))
 		case state.Status != "pass":
 			reason := state.Reason
 			if reason == "" {
 				reason = "acceptance did not pass"
 			}
-			rows = append(rows, criterionHandoffRow(criterion, state.Status, reason, source.Path, context))
+			rows = append(rows, criterionHandoffRow(model.TaskID, criterion, state.Status, reason, source.Path, context))
 		}
 	}
 	if len(rows) == 0 {
@@ -367,7 +379,7 @@ func blockedCriteria(model spec.Model) []spec.Criterion {
 	}
 }
 
-func criterionHandoffRow(criterion spec.Criterion, status string, reason string, diagnosticPath string, phaseContext string) string {
+func criterionHandoffRow(taskID string, criterion spec.Criterion, status string, reason string, diagnosticPath string, phaseContext string) string {
 	var b strings.Builder
 	title := criterionTitle(criterion)
 	fmt.Fprintf(&b, "- [%s] %s", status, title)
@@ -390,7 +402,18 @@ func criterionHandoffRow(criterion spec.Criterion, status string, reason string,
 	if diagnosticPath != "" {
 		fmt.Fprintf(&b, "  Evidence: `%s`\n", diagnosticPath)
 	}
+	if isManualCriterion(criterion) && status != "pass" {
+		fmt.Fprintf(&b, "  Build command: `%s`\n", manualEvidenceBuildCommand(taskID, criterion.ID))
+	}
 	return b.String()
+}
+
+func isManualCriterion(criterion spec.Criterion) bool {
+	return criterion.Type == "manual" && criterion.ExpectedKind == acceptance.ExpectedManual
+}
+
+func manualEvidenceBuildCommand(taskID string, criterionID string) string {
+	return fmt.Sprintf("scafld build %s --criterion %s --disposition pass --evidence-digest <sha256> --actor <actor> --reason \"<what was verified>\"", taskID, criterionID)
 }
 
 func entryBySource(ledger session.Session, sourceID string) (session.Entry, bool) {

@@ -92,15 +92,18 @@ type Independence struct {
 
 // Acceptance records one acceptance command result included in the receipt.
 type Acceptance struct {
-	ID           string `json:"id"`
-	PhaseID      string `json:"phase_id,omitempty"`
-	Command      string `json:"command,omitempty"`
-	ExpectedKind string `json:"expected_kind,omitempty"`
-	Status       string `json:"status"`
-	Reason       string `json:"reason,omitempty"`
-	ExitCode     int    `json:"exit_code,omitempty"`
-	OutputSHA256 string `json:"output_sha256,omitempty"`
-	Diagnostic   string `json:"diagnostic,omitempty"`
+	ID                 string `json:"id"`
+	PhaseID            string `json:"phase_id,omitempty"`
+	Command            string `json:"command,omitempty"`
+	ExpectedKind       string `json:"expected_kind,omitempty"`
+	Status             string `json:"status"`
+	Reason             string `json:"reason,omitempty"`
+	ExitCode           int    `json:"exit_code,omitempty"`
+	OutputSHA256       string `json:"output_sha256,omitempty"`
+	EvidenceSHA256     string `json:"evidence_sha256,omitempty"`
+	EvidenceActor      string `json:"evidence_actor,omitempty"`
+	EvidenceRecordedAt string `json:"evidence_recorded_at,omitempty"`
+	Diagnostic         string `json:"diagnostic,omitempty"`
 }
 
 // Blocker is a calibrated open reviewer finding.

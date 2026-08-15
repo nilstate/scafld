@@ -39,6 +39,22 @@ func TestReplayCriterionPhaseIDDoesNotOverwritePhaseBlock(t *testing.T) {
 	}
 }
 
+func TestLatestManualEvidenceFindsLatestMatchingOperatorEvent(t *testing.T) {
+	t.Parallel()
+
+	ledger := New("task", "t0").WithEntry(Entry{
+		ID: "human", Type: EntryManualEvidence, CriterionID: "ac1", PhaseID: "phase1", Status: "pass",
+		ExpectedKind: "manual", CriterionType: "manual", EvidenceDigest: strings.Repeat("a", 64), EvidenceActor: "operator",
+	}).WithEntry(Entry{
+		ID: "derived", Type: "criterion", CriterionID: "ac1", PhaseID: "phase1", Status: "pending",
+		ExpectedKind: "manual", CriterionType: "manual",
+	})
+	entry, ok := LatestManualEvidence(ledger, "ac1", "phase1", "manual", "manual")
+	if !ok || entry.ID != "human" || entry.Status != "pass" {
+		t.Fatalf("entry=%+v ok=%v, want matching operator evidence", entry, ok)
+	}
+}
+
 func TestLedgerReplayComputesGenesisDigestNextHeadAndMismatch(t *testing.T) {
 	t.Parallel()
 

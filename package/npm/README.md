@@ -33,7 +33,7 @@ scafld harden add-cache --mark-passed
 scafld approve add-cache
 scafld build add-cache
 scafld review add-cache
-scafld complete add-cache
+scafld finalize add-cache
 ```
 
 The lifecycle is deliberately small:
@@ -42,9 +42,11 @@ The lifecycle is deliberately small:
 draft -> harden -> approved -> active -> review -> completed
 ```
 
-`complete` only closes reviewed work. If adversarial review finds a blocking
-issue, scafld sends the task to repair instead of letting the implementation
-agent wave itself through.
+`review` is the only provider/model call. `finalize` consumes its accepted
+evidence, runs deterministic acceptance, signs the receipt, and archives the
+spec without another model call. If adversarial review finds a blocking issue,
+scafld sends the task to repair instead of letting the implementation agent
+wave itself through.
 
 ## Distribution Shim
 

@@ -59,7 +59,7 @@ func (p *progressReporter) event(event string) {
 	fmt.Fprintf(p.out, "scafld %s event %s\n", p.label, event)
 }
 
-func (p *progressReporter) running(started time.Time, lastActivity time.Time, lastProgress *time.Time, interval time.Duration) {
+func (p *progressReporter) running(started time.Time, lastActivity time.Time, lastProgress *time.Time, interval time.Duration, idleTimeout time.Duration) {
 	if p == nil || p.out == nil || interval <= 0 || lastProgress == nil {
 		return
 	}
@@ -69,6 +69,10 @@ func (p *progressReporter) running(started time.Time, lastActivity time.Time, la
 	}
 	*lastProgress = now
 	elapsed := now.Sub(started).Round(time.Second)
+	if idleTimeout <= 0 {
+		p.line("running elapsed=%s output_watchdog=disabled", elapsed)
+		return
+	}
 	since := now.Sub(lastActivity).Round(time.Second)
 	p.line("running elapsed=%s last_output=%s", elapsed, since)
 }

@@ -2,9 +2,9 @@
 
 ## Default Agent Flow
 
-Work with the host agent's normal planning, editing, and testing tools. When the work appears done, call `finalize`.
+Work with the host agent's normal planning, editing, and testing tools. When the work appears done, call `review`, then call `finalize`.
 
-`finalize` is the accountability surface: it records acceptance evidence, runs the independent review path, and returns either blockers or a signed receipt. The agent does not grade its own completion.
+`review` is the only provider/model call: it records accepted independent review evidence and returns blockers or a passing review. `finalize` is the final deterministic accountability surface: it consumes that accepted review, records acceptance evidence, signs the receipt, and archives the spec. It never invokes a provider or model, and the agent does not grade its own completion.
 
 The receipt reports its independence level honestly. `cross_vendor` means multi-model review that can reduce correlated blind spots; it is still single-party local tooling unless a separate operator or CI trust domain verifies the receipt. `isolation_only` means the reviewer was isolated but cross-vendor separation was not proven.
 
@@ -23,14 +23,21 @@ scafld harden <task-id>
 scafld validate <task-id>
 scafld approve <task-id>
 scafld build <task-id>
+scafld build <task-id> --criterion <id> --disposition pass --evidence-digest <sha256> --actor <actor> --reason <what-was-verified>
 scafld review <task-id>
-scafld complete <task-id>
+scafld finalize <task-id>
 scafld verify <receipt> --target <commit-ish>
 scafld status <task-id>
 scafld handoff <task-id>
 ```
 
-Use `scafld harden` to strengthen drafts before approval. Use `scafld build` to record phase evidence. Use `scafld review` when running the lifecycle directly. Use `scafld status --json` for automation.
+Use `scafld harden` to strengthen drafts before approval. Use `scafld build` to record phase evidence. Use `scafld review` when running the lifecycle directly; it is the provider gate. Use `scafld finalize` after a passing review; it is the last mutating lifecycle command and does not spend provider tokens. Use `scafld status --json` for automation. `scafld complete` remains a legacy ledger transition for older workflows and is not required after finalize.
+
+For a manual acceptance criterion, use the printed `scafld build` command with
+the criterion id, disposition, SHA-256 digest, actor, and reason. That one
+build invocation records the verified evidence and re-evaluates acceptance;
+never edit the criterion state or replace a manual check with a fake shell
+command.
 
 If harden evidence is incomplete, stale, failed, or `needs_revision`, approval
 requires `scafld approve <task-id> --reason <reason>`. Fix real shape blockers

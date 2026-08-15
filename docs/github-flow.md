@@ -22,8 +22,8 @@ scafld validate add-auth
 scafld approve add-auth
 scafld build add-auth
 scafld review add-auth --provider codex
+scafld finalize add-auth
 scafld status add-auth --json
-scafld complete add-auth
 ```
 
 Branch creation, issue updates, PR creation, and check publication are wrapper
@@ -73,7 +73,7 @@ A thin GitHub wrapper should:
 - call native scafld lifecycle commands
 - publish `status --json` and `report --json` into GitHub surfaces
 - keep GitHub receipt IDs outside the spec
-- fail CI when `review` fails or `complete` refuses the gate
+- fail CI when `review` fails or `finalize` refuses the gate
 
 The important rule is ownership: GitHub is the collaboration surface; scafld is
 the local evidence and review surface.

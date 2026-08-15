@@ -43,7 +43,7 @@ invariants:
 	if !ok {
 		t.Fatalf("provider = %T, want codex", selected.Provider)
 	}
-	if codex.Model != "gpt-config" || codex.ModelReasoningEffort != "xhigh" || codex.Binary != "codex-config" || codex.Timeout.String() != "11s" || codex.IdleTimeout.String() != "7s" {
+	if codex.Model != "gpt-config" || codex.ModelReasoningEffort != "xhigh" || codex.Binary != "codex-config" || codex.Timeout.String() != "11s" || codex.IdleTimeout != 0 {
 		t.Fatalf("codex provider did not use config: %+v", codex)
 	}
 	if len(selected.Passes) == 0 {

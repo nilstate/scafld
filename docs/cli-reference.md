@@ -16,6 +16,7 @@ scafld harden <task-id>
 scafld validate <task-id>
 scafld approve <task-id>
 scafld build <task-id>
+scafld build <task-id> --criterion <id> --disposition pass --evidence-digest <sha256> --actor <actor> --reason <what-was-verified>
 scafld review <task-id>
 scafld finalize [task-id]
 scafld complete <task-id>
@@ -210,6 +211,8 @@ harden; reject only bookkeeping, advisory, or overengineering findings.
 
 ```bash
 scafld build <task-id> [--json]
+scafld build <task-id> --criterion ID --disposition pass|fail \
+  --evidence-digest SHA256 --actor ACTOR --reason TEXT [--json]
 ```
 
 Runs the governed implementation loop. From `approved`, it activates the task,
@@ -221,6 +224,10 @@ From `active` or `blocked`, `build` records evidence for the current phase. If
 the phase passes, it opens the next phase. If the final phase and global
 acceptance pass, it moves the task to `review`. Drafts, terminal specs, and
 already-ready review specs are rejected.
+
+When the current phase contains a manual criterion, the handoff prints the
+second form. It records the operator disposition and evaluates acceptance in
+the same invocation.
 
 Acceptance commands inherit the process environment plus `execution` overrides
 from `.scafld/config.yaml` and `.scafld/config.local.yaml`. Use that config for
@@ -234,6 +241,21 @@ Phase acceptance runs in order. If a phase blocks, later phase commands are not
 run and the next command becomes `scafld handoff <task-id>` so the repair agent
 gets the failed criterion, command, and evidence instead of a vague blocked
 status.
+
+## build manual evidence
+
+```bash
+scafld build <task-id> --criterion ID --disposition pass|fail \
+  --evidence-digest SHA256 --actor ACTOR --reason TEXT [--json]
+```
+
+Attaches an append-only operator disposition to a `manual` acceptance
+criterion as part of the existing build lifecycle. scafld validates the
+criterion id and current contract, stores the SHA-256 evidence digest and actor
+in the session ledger, assigns the event timestamp itself, and re-evaluates
+acceptance in the same invocation. Build and finalize consume the evidence only
+while its criterion type, phase, and expected kind still match the current
+spec.
 
 ## review
 
@@ -250,7 +272,7 @@ order is `codex`, then `claude`, then `gemini`. If no external provider is
 available, the
 command fails and tells the operator to install a provider, use
 `--provider command`, or explicitly choose `--provider local` for development
-smoke tests. Local verdicts cannot satisfy `complete`.
+smoke tests. Local verdicts cannot satisfy `finalize`.
 
 Provider modes:
 
@@ -268,7 +290,7 @@ Provider modes:
   The command receives the review prompt on stdin and must emit one complete
   ReviewDossier JSON object on stdout. Progress belongs on stderr.
 - `local`: deterministic pass-through provider for development and tests only;
-  its verdict cannot satisfy `complete`.
+  its verdict cannot satisfy `finalize`.
 - `--human-reviewed`: record an audited operator review instead of invoking a
   provider. `--reason` is required and is stored in the session ledger.
 
@@ -322,7 +344,7 @@ themselves. Task-relevant files changed during review still fail closed;
 unrelated workspace churn does not discard a valid review.
 
 After a passing review, scafld seals the reviewed task material when it has a
-scope. `status` and `complete` compare that scoped content digest, not the whole
+scope. `status` and `finalize` compare that scoped content digest, not the whole
 worktree, so committing the reviewed files or having another agent touch
 unrelated paths does not require a second review. If the reviewed material
 changes, the next action becomes `scafld review <task-id>`.
@@ -330,7 +352,7 @@ changes, the next action becomes `scafld review <task-id>`.
 The provider returns a ReviewDossier. scafld validates it, rejects workspace
 mutation in the review-relevant surface, writes the review event to session, and
 projects the verdict back into the spec. A human-reviewed override writes a
-`review_override` event before the passing review event. `complete` will not
+`review_override` event before the passing review event. `finalize` will not
 archive the task unless the review verdict is `pass`.
 
 On review failure, the text output prints the findings and next repair command.
@@ -343,12 +365,13 @@ review entry, and the spec `## Review` section.
 scafld finalize [task-id] [--base-ref REF] [--scope-hint PATH] [--json] [--stdin]
 ```
 
-`finalize` is the single-call completion authority. One invocation snapshots
-the workspace into an immutable git tree, runs the spec's acceptance criteria
-against that snapshot, runs the independent adversarial review, and mints an
-ed25519-signed receipt anchored in the task's session ledger. The JSON result
-carries the receipt itself plus `receipt_path`, `task_receipt_path`, and
-`ledger_head`.
+`finalize` is the final completion authority after `review` passes. One
+invocation consumes the accepted review evidence already sealed in the session
+ledger, snapshots the workspace into deterministic tree facts, runs the spec's
+acceptance criteria, and mints an ed25519-signed receipt anchored in the task's
+session ledger. It does not invoke a provider or model. A successful finalize
+also archives the canonical spec. The JSON result carries the receipt itself
+plus `receipt_path`, `task_receipt_path`, and `ledger_head`.
 
 Receipts land in `.scafld/receipts/<task-id>.json`. The
 `.scafld/receipts/latest.json` pointer is written only after the receipt is
@@ -361,22 +384,31 @@ When acceptance or review blocks, finalize returns the verdict, findings, and
 per-criterion acceptance results instead of a receipt, and exits through the
 normal gate codes.
 
+`finalize` is idempotent for an already anchored receipt and recovers the
+receipt/archive write if a prior process ended after the ledger transaction.
+
 Flags:
 
 - `--base-ref REF`: override the snapshot comparison base.
-- `--scope-hint PATH`: add a path boundary hint; repeatable.
+- `--scope-hint PATH`: provide an explicit repository-relative scope override;
+  repeatable. When omitted, finalize reuses the latest review's sealed
+  `reviewed_scope` before falling back to the spec or base diff. Configured
+  evidence roots such as a sibling `../app` are reviewer context, not paths in
+  the owning repository's Git receipt scope.
 - `--stdin`: read the finalize request from stdin. The finalize MCP tool uses
   this mode; operators normally do not.
 
-## complete
+## complete (legacy)
 
 ```bash
 scafld complete <task-id> [--json]
 ```
 
-Archives completed work only after the latest session review event has a
-`pass` verdict from `codex`, `claude`, `gemini`, `command`, or an audited human
-review.
+`complete` is retained for older operator and automation workflows. It records
+a legacy completion transition after a passing review, but it is not part of
+the normal path and does not replace `finalize`. New work should use
+`finalize`, which signs the receipt and archives the spec atomically with the
+completion ledger transition.
 
 For current review entries with `reviewed_scope` and
 `reviewed_material_digest`, completion ignores commit-only and unrelated

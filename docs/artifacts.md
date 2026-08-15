@@ -218,5 +218,5 @@ The accepted review payload is one strict dossier shape:
 }
 ```
 
-`complete` only trusts a passing dossier from an external provider or an
+`finalize` only trusts a passing dossier from an external provider or an
 audited human review override.

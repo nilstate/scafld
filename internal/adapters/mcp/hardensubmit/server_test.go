@@ -44,6 +44,9 @@ func TestRunListsSubmitHardenToolAndWritesValidDossier(t *testing.T) {
 	if len(tools.Result.Tools) != 1 || tools.Result.Tools[0].Name != "submit_harden" || tools.Result.Tools[0].InputSchema["additionalProperties"] != false {
 		t.Fatalf("tools/list = %s", lines[1])
 	}
+	if !schemaRequires(tools.Result.Tools[0].InputSchema, "default") || !schemaRequires(tools.Result.Tools[0].InputSchema, "if_unanswered") {
+		t.Fatalf("tools/list must advertise the strict harden wire fields: %s", lines[1])
+	}
 	if !strings.Contains(tools.Result.Tools[0].Description, "draft as a hypothesis") ||
 		!strings.Contains(tools.Result.Tools[0].Description, "reuse-existing-behavior") ||
 		!strings.Contains(tools.Result.Tools[0].Description, "advisory feedback") ||
@@ -58,6 +61,27 @@ func TestRunListsSubmitHardenToolAndWritesValidDossier(t *testing.T) {
 	if strings.Contains(string(data), `"verdict"`) || strings.Contains(string(data), `"checks"`) || !strings.Contains(string(data), `"shape"`) || !strings.Contains(string(data), `"observations"`) {
 		t.Fatalf("submission = %s", data)
 	}
+}
+
+func schemaRequires(schema map[string]any, field string) bool {
+	observations, ok := schema["properties"].(map[string]any)["observations"].(map[string]any)
+	if !ok {
+		return false
+	}
+	items, ok := observations["items"].(map[string]any)
+	if !ok {
+		return false
+	}
+	itemsRequired, ok := items["required"].([]any)
+	if !ok {
+		return false
+	}
+	for _, value := range itemsRequired {
+		if value == field {
+			return true
+		}
+	}
+	return false
 }
 
 func nonEmptyLines(text string) []string {

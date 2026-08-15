@@ -9,7 +9,7 @@ Execution is deliberately less clever than the spec. It runs explicit commands,
 records evidence, and projects current state back into the Markdown file.
 
 ```text
-draft -> harden -> approve -> build -> review -> complete
+draft -> harden -> approve -> build -> review -> finalize -> completed
 ```
 
 ## Build
@@ -98,6 +98,19 @@ If attempted evidence fails or cannot be evaluated, the task becomes
 `blocked`; use `scafld handoff <task-id>` to get the failed criteria, commands,
 and reasons for the repair agent. Pending future phase criteria are not
 blockers.
+
+Manual acceptance criteria are intentionally pending until an operator records
+their evidence. Use the build command printed by `handoff`:
+
+```bash
+scafld build <task-id> --criterion <id> --disposition pass \
+  --evidence-digest <sha256> --actor <actor> --reason "what was verified"
+```
+
+The build invocation appends one typed event and re-evaluates acceptance. The
+event binds the current criterion contract, digest, actor, and scafld-generated
+timestamp. Repeating the same disposition is idempotent. Do not edit the
+Markdown projection or replace the manual criterion with a shell command.
 
 ## Evidence Flow
 

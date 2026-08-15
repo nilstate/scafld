@@ -305,6 +305,14 @@ review:
       description: "Trace callers, importers, and downstream consumers."
 ```
 
+The review and harden provider adapters share one strict dossier wire schema.
+Codex writes the final packet to its structured output file; Claude and Gemini
+submit the same packet through the scafld MCP tool. Nullable fields are still
+required on the wire and should be sent as `null`. Codex does not use the
+output-silence watchdog because it may think silently until its absolute
+timeout; Claude and Gemini retain the configured watchdog. Custom commands
+retain their explicitly configured watchdog as well.
+
 `.scafld/config.local.yaml` overlays `.scafld/config.yaml`, so a developer can
 pin a local provider or model without changing the committed project default.
 `init` creates a commented local override file and the repository `.gitignore`
@@ -342,7 +350,7 @@ If the host agent cannot be inferred from the environment, set
 This affects only `provider: auto` ordering.
 
 `local` exists for tests and smoke runs; it is not a substitute for adversarial
-review and cannot satisfy `scafld complete`.
+review and cannot satisfy `scafld finalize`.
 
 Named `automated_passes` and `adversarial_passes` are rendered in `order` as
 review focus inside one provider brief. scafld does not fan them out into

@@ -182,7 +182,7 @@ func TestProjectDetectsPassingReviewStaleness(t *testing.T) {
 	cleanModel := spec.Model{TaskID: "task", Status: spec.StatusReview}
 
 	state := Project(ledger, cleanModel, Options{Now: now, WorkspaceSeal: WorkspaceSeal{Head: "head", Dirty: "true", Diff: ledger.Entries[len(ledger.Entries)-1].ReviewedDiff}, HasWorkspaceSeal: true})
-	if state.Kind != KindReviewPassed || state.Next != "scafld complete task" {
+	if state.Kind != KindReviewPassed || state.Next != "scafld finalize task" {
 		t.Fatalf("passing state = %+v", state)
 	}
 

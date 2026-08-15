@@ -30,7 +30,7 @@ func waitProcess(ctx context.Context, cmd *exec.Cmd, waitCh <-chan error, state 
 			result = enrichResult(result, started, state, req)
 			return result, ErrTimeout
 		case <-ticker.C:
-			progress.running(started, state.lastActivity(), &lastProgress, progressInterval(req.ProgressInterval))
+			progress.running(started, state.lastActivity(), &lastProgress, progressInterval(req.ProgressInterval), req.IdleTimeout)
 			if req.IdleTimeout > 0 && time.Since(state.lastActivity()) > req.IdleTimeout {
 				result := terminate(cmd, waitCh, "idle_timeout", req.TerminateGrace)
 				result.TimedOut = true

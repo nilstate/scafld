@@ -85,6 +85,8 @@ scafld harden add-cache
 scafld harden add-cache --mark-passed
 scafld approve add-cache
 scafld build add-cache
+scafld build add-cache --criterion <id> --disposition pass --evidence-digest <sha256> --actor <actor> --reason "what was verified"
+scafld review add-cache
 scafld finalize add-cache
 ```
 
@@ -101,8 +103,10 @@ before build: product goal, authority, ownership boundaries, hidden cutovers,
 halfway failures, recovery commands, testable invariants, and golden examples.
 A weak spec should not become approved work.
 
-`finalize` is the seal: it re-runs acceptance, has a separate model review the
-canonical diff in a sandbox, and signs an ed25519 receipt on a clean pass. If
+`review` is the only provider/model call: it attacks the canonical diff and
+records accepted review evidence. `finalize` is the seal: it consumes that
+evidence, reruns deterministic acceptance, and signs an ed25519 receipt on a
+clean pass. It then archives the canonical spec and does not invoke a model. If
 the review finds a blocking issue, finalize refuses and sends the task to repair
 instead of letting the implementation agent wave itself through. `scafld verify`
 re-checks that receipt in CI.
@@ -123,10 +127,16 @@ Frontend specs can use `browser` criteria with `browser_evidence`. The project
 still owns Playwright, auth, and the dev server; scafld validates the evidence
 packet and records it in the same session ledger as command results.
 
+Manual acceptance criteria use the same ledger path: use the printed `scafld
+build <task-id>` command with the criterion id, disposition, SHA-256 digest,
+actor, and reason. That one invocation records the verified evidence and
+re-evaluates acceptance.
+
 ## Local by default, CI when you opt in
 
-`scafld finalize` delivers its full value with no CI: it runs the independent
-review and writes a signed receipt under `.scafld/receipts/`. A plain
+`scafld review` followed by `scafld finalize` delivers the full value with no
+CI: review runs the independent provider and finalize writes a signed receipt
+under `.scafld/receipts/`. A plain
 `scafld init` sets up this local path and installs no workflow, so anyone who
 only wants local attestation is never pushed into a PR-blocking shape.
 
@@ -316,8 +326,9 @@ scafld harden <task-id>
 scafld validate <task-id>
 scafld approve <task-id>
 scafld build <task-id>
+scafld build <task-id> --criterion <id> --disposition pass --evidence-digest <sha256> --actor <actor> --reason <what-was-verified>
 scafld review <task-id>
-scafld complete <task-id>
+scafld finalize <task-id>
 scafld status <task-id>
 scafld list
 scafld report
@@ -335,7 +346,9 @@ Wrapper intent:
 - `approve`: accept a spec only after it is clear enough to execute
 - `build`: open phases, record evidence, and advance governed execution
 - `review`: run the adversarial review gate
-- `complete`: archive only after passing review evidence exists
+- `finalize`: consume passing review evidence, run deterministic acceptance, sign
+  the receipt, and archive the canonical spec
+- `complete`: legacy completion transition for older workflows
 - `status`: expose the current state and allowed follow-up command
 - `list`: list task specs by lifecycle state
 - `report`: summarize session-derived quality metrics
@@ -451,7 +464,7 @@ ambient workspace context, not a local pre-flight blocker. Use `--review-scope`
 only when a dirty monorepo needs an explicit path boundary. Unrelated workspace
 churn from another task should not make you pay for another review run: passing
 reviews seal `reviewed_scope` plus `reviewed_material_digest` when task material
-is known, so `status` and `complete` accept commit-only transitions and
+is known, so `status` and `finalize` accept commit-only transitions and
 out-of-scope drift while rejecting changed reviewed bytes.
 
 ```bash
@@ -486,7 +499,7 @@ rejects it with `scafld review <task-id> --force --reason <reason>`. A passing
 review is not rerun unless `--force` is explicit.
 
 `--human-reviewed` is the audited escape hatch. It belongs to `review`, not
-`complete`: it records a `review_override` event and a passing human review
+`finalize`: it records a `review_override` event and a passing human review
 event in the session ledger. Use it only when a human has actually reviewed the
 diff, spec, acceptance evidence, and scope.
 
@@ -535,7 +548,7 @@ same finding and attack-angle budget, then returns one ReviewDossier so the
 repair loop receives the batch instead of one issue at a time.
 
 The local provider is useful for development and smoke tests only; local
-verdicts cannot satisfy `scafld complete`. The product value comes from an
+verdicts cannot satisfy `scafld finalize`. The product value comes from an
 independent adversarial pass that can say no.
 
 ## Success Metrics

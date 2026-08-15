@@ -34,27 +34,42 @@ type EvaluateInput struct {
 
 // Criterion is the app-level acceptance criterion shape shared by build and gate.
 type Criterion struct {
-	ID           string
-	Type         string
-	Command      string
-	ExpectedKind string
-}
-
-// CriterionResult is immutable evidence for one evaluated criterion.
-type CriterionResult struct {
 	ID             string
 	Type           string
 	Command        string
 	ExpectedKind   string
-	Status         string
-	ExitCode       int
+	ManualEvidence *ManualEvidence
+}
+
+// ManualEvidence is an already-recorded operator disposition for a manual
+// criterion. It is accepted only after the lifecycle command validates and
+// persists the corresponding session event.
+type ManualEvidence struct {
+	Disposition    string
+	EvidenceDigest string
+	Actor          string
+	RecordedAt     string
 	Reason         string
-	DiagnosticPath string
-	Evidence       string
-	StdoutDigest   string
-	StderrDigest   string
-	StartedAt      time.Time
-	EndedAt        time.Time
+}
+
+// CriterionResult is immutable evidence for one evaluated criterion.
+type CriterionResult struct {
+	ID                 string
+	Type               string
+	Command            string
+	ExpectedKind       string
+	Status             string
+	ExitCode           int
+	Reason             string
+	DiagnosticPath     string
+	Evidence           string
+	EvidenceDigest     string
+	EvidenceActor      string
+	EvidenceRecordedAt string
+	StdoutDigest       string
+	StderrDigest       string
+	StartedAt          time.Time
+	EndedAt            time.Time
 }
 
 // EvaluateOutput summarizes evaluated criteria.
@@ -82,6 +97,9 @@ func Evaluate(ctx context.Context, runner Runner, input EvaluateInput) EvaluateO
 
 func evaluateCriterion(ctx context.Context, runner Runner, criterion Criterion, input EvaluateInput) CriterionResult {
 	started := time.Now().UTC()
+	if criterion.Type == "manual" && criterion.ExpectedKind == string(coreacceptance.ExpectedManual) && criterion.ManualEvidence != nil {
+		return evaluateManualEvidence(criterion, started)
+	}
 	if strings.TrimSpace(criterion.Command) == "" {
 		evaluation := emptyCommandEvaluation(criterion)
 		ended := time.Now().UTC()
@@ -132,6 +150,31 @@ func evaluateCriterion(ctx context.Context, runner Runner, criterion Criterion, 
 		StderrDigest:   digest(result.Stderr),
 		StartedAt:      started,
 		EndedAt:        ended,
+	}
+}
+
+func evaluateManualEvidence(criterion Criterion, started time.Time) CriterionResult {
+	evidence := criterion.ManualEvidence
+	status := strings.ToLower(strings.TrimSpace(evidence.Disposition))
+	if status != "pass" && status != "fail" {
+		status = "fail"
+	}
+	reason := strings.TrimSpace(evidence.Reason)
+	if reason == "" {
+		reason = "manual evidence disposition: " + status
+	}
+	return CriterionResult{
+		ID:                 criterion.ID,
+		Type:               criterion.Type,
+		Command:            criterion.Command,
+		ExpectedKind:       criterion.ExpectedKind,
+		Status:             status,
+		Reason:             reason,
+		EvidenceDigest:     evidence.EvidenceDigest,
+		EvidenceActor:      evidence.Actor,
+		EvidenceRecordedAt: evidence.RecordedAt,
+		StartedAt:          started,
+		EndedAt:            started,
 	}
 }
 

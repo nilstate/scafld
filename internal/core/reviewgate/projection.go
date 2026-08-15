@@ -185,6 +185,9 @@ func Project(ledger session.Session, model spec.Model, opts Options) State {
 	}
 	if model.Status != spec.StatusReview {
 		state.CanStartReview = false
+		state.Reason = firstNonBlank(model.CurrentState.Reason, "task is not at the review gate")
+		state.Actual = "task status " + string(model.Status)
+		state.Next = firstNonBlank(model.CurrentState.AllowedFollowUp, "scafld handoff "+taskID)
 		return state
 	}
 	if state.HasAttempt {
@@ -286,7 +289,7 @@ func Project(ledger session.Session, model spec.Model, opts Options) State {
 		state.Actual = state.Authority.Actual
 		state.Evidence = append([]string(nil), state.Authority.Evidence...)
 		state.CanStartReview = false
-		state.Next = completeCommand(taskID)
+		state.Next = finalizeCommand(taskID)
 		return state
 	}
 	if state.Authority.Found {
@@ -710,11 +713,11 @@ func handoffCommand(taskID string) string {
 	return "scafld handoff " + taskID
 }
 
-func completeCommand(taskID string) string {
+func finalizeCommand(taskID string) string {
 	if taskID == "" {
-		return "scafld complete"
+		return "scafld finalize"
 	}
-	return "scafld complete " + taskID
+	return "scafld finalize " + taskID
 }
 
 func statusCommand(taskID string) string {

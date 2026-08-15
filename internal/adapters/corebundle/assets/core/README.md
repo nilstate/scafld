@@ -65,6 +65,12 @@ shape.
 the spec and session. It is one-way transport: scafld emits it, the next model
 reads it, and scafld never reads it back for state.
 
+When the handoff identifies a manual acceptance criterion, use the printed
+`scafld build` command with its digest, actor, disposition, and reason. That
+same invocation records the verified evidence and re-evaluates acceptance.
+Manual criterion state is never repaired by editing Markdown or inventing a
+shell check.
+
 ## Default Integrations
 
 Fresh `scafld init` installs the `finalize` affordance and CI-facing
