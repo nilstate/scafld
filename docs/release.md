@@ -24,8 +24,9 @@ Stages:
 4. **publish-npm** -- publish the npm launcher wrapper.
 5. **package-managers** -- render Homebrew, Scoop, WinGet, and OCI manifests
    from the published release checksums and attach them to the release.
-6. **publish-homebrew** and **publish-scoop** -- publish owned registry
-   manifests when repository credentials are configured.
+6. **publish-homebrew** and **publish-scoop** -- publish the owned registry
+   manifests. These are required channels; missing credentials fail the release
+   instead of producing a falsely complete release.
 7. **publish-oci** -- publish the CI runner image to GHCR.
 
 The order is intentional: npm and PyPI wrappers download and verify GitHub
@@ -72,6 +73,8 @@ The workflow currently reuses the existing repository secrets:
 
 - `PYPI_API_TOKEN`
 - `NPM_TOKEN`
+- `HOMEBREW_TAP_TOKEN` -- write access to `nilstate/homebrew-tap`
+- `SCOOP_BUCKET_TOKEN` -- write access to `nilstate/scoop-bucket`
 
 The wrappers are thin launchers. They never reimplement scafld behavior; they
 download the matching native binary and verify it against `checksums.txt`.
@@ -97,11 +100,12 @@ Watch the Actions tab. Verify:
 
 ## External Registry Follow-Up
 
-After the GitHub release is live, publish or submit the manifests rendered from
-the release checksums:
+After the GitHub release is live, verify the synchronous channels and submit
+the asynchronous manifest:
 
-- Homebrew: update `nilstate/homebrew-tap` with `Formula/scafld.rb`.
-- Scoop: update `nilstate/scoop-bucket` with `bucket/scafld.json`.
+- Homebrew and Scoop are synchronous release channels. The release workflow
+  updates `nilstate/homebrew-tap` and `nilstate/scoop-bucket`; a skipped job is
+  a failed release condition, not a successful partial release.
 - WinGet: submit `0state.scafld` manifests to `microsoft/winget-pkgs`.
 - GHCR: confirm the published image is publicly inspectable. If anonymous
   `docker manifest inspect ghcr.io/nilstate/scafld:vX.Y.Z` returns `denied`,

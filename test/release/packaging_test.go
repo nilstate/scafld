@@ -408,6 +408,10 @@ func TestReleaseWorkflowPublishesRegistryPackages(t *testing.T) {
 		"softprops/action-gh-release",
 		"PYPI_API_TOKEN",
 		"NPM_TOKEN",
+		"HOMEBREW_TAP_TOKEN",
+		"SCOOP_BUCKET_TOKEN",
+		"nilstate/homebrew-tap",
+		"nilstate/scoop-bucket",
 		"npm publish --access public",
 		"pypa/gh-action-pypi-publish",
 		"scripts/build-release-artifacts.sh",
@@ -415,6 +419,17 @@ func TestReleaseWorkflowPublishesRegistryPackages(t *testing.T) {
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("release workflow missing %q", want)
+		}
+	}
+	if strings.Contains(text, "PACKAGES_REPO_TOKEN") {
+		t.Fatal("release workflow must use channel-specific package repository credentials")
+	}
+	for _, required := range []string{
+		"HOMEBREW_TAP_TOKEN is required to publish nilstate/homebrew-tap.",
+		"SCOOP_BUCKET_TOKEN is required to publish nilstate/scoop-bucket.",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("release workflow must fail closed when %q is missing", required)
 		}
 	}
 }

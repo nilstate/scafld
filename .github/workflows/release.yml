@@ -181,46 +181,37 @@ jobs:
       contents: read
 
     steps:
-      - name: Check Homebrew publish credentials
-        id: gate
+      - name: Require Homebrew publish credential
         env:
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-          PACKAGES_REPO_TOKEN: ${{ secrets.PACKAGES_REPO_TOKEN }}
         run: |
-          if [[ -n "${HOMEBREW_TAP_TOKEN:-}" || -n "${PACKAGES_REPO_TOKEN:-}" ]]; then
-            echo "publish=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "publish=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::Skipping Homebrew publish because HOMEBREW_TAP_TOKEN or PACKAGES_REPO_TOKEN is not configured."
+          if [[ -z "${HOMEBREW_TAP_TOKEN:-}" ]]; then
+            echo "HOMEBREW_TAP_TOKEN is required to publish nilstate/homebrew-tap." >&2
+            exit 1
           fi
 
       - name: Check out repository
-        if: steps.gate.outputs.publish == 'true'
         uses: actions/checkout@v7
 
       - name: Download rendered manifests
-        if: steps.gate.outputs.publish == 'true'
         uses: actions/download-artifact@v8
         with:
           name: package-managers-rendered
           path: .stage/package-managers/rendered
 
       - name: Check out Homebrew tap
-        if: steps.gate.outputs.publish == 'true'
         uses: actions/checkout@v7
         with:
           repository: nilstate/homebrew-tap
-          token: ${{ secrets.HOMEBREW_TAP_TOKEN || secrets.PACKAGES_REPO_TOKEN }}
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           path: .stage/homebrew-tap
 
       - name: Publish formula
-        if: steps.gate.outputs.publish == 'true'
         env:
           TAP_REPO_DIR: ${{ github.workspace }}/.stage/homebrew-tap
         run: scripts/publish-homebrew.sh
 
       - name: Commit formula update
-        if: steps.gate.outputs.publish == 'true'
         run: |
           git -C .stage/homebrew-tap config user.name "github-actions[bot]"
           git -C .stage/homebrew-tap config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -238,46 +229,37 @@ jobs:
       contents: read
 
     steps:
-      - name: Check Scoop publish credentials
-        id: gate
+      - name: Require Scoop publish credential
         env:
           SCOOP_BUCKET_TOKEN: ${{ secrets.SCOOP_BUCKET_TOKEN }}
-          PACKAGES_REPO_TOKEN: ${{ secrets.PACKAGES_REPO_TOKEN }}
         run: |
-          if [[ -n "${SCOOP_BUCKET_TOKEN:-}" || -n "${PACKAGES_REPO_TOKEN:-}" ]]; then
-            echo "publish=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "publish=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::Skipping Scoop publish because SCOOP_BUCKET_TOKEN or PACKAGES_REPO_TOKEN is not configured."
+          if [[ -z "${SCOOP_BUCKET_TOKEN:-}" ]]; then
+            echo "SCOOP_BUCKET_TOKEN is required to publish nilstate/scoop-bucket." >&2
+            exit 1
           fi
 
       - name: Check out repository
-        if: steps.gate.outputs.publish == 'true'
         uses: actions/checkout@v7
 
       - name: Download rendered manifests
-        if: steps.gate.outputs.publish == 'true'
         uses: actions/download-artifact@v8
         with:
           name: package-managers-rendered
           path: .stage/package-managers/rendered
 
       - name: Check out Scoop bucket
-        if: steps.gate.outputs.publish == 'true'
         uses: actions/checkout@v7
         with:
           repository: nilstate/scoop-bucket
-          token: ${{ secrets.SCOOP_BUCKET_TOKEN || secrets.PACKAGES_REPO_TOKEN }}
+          token: ${{ secrets.SCOOP_BUCKET_TOKEN }}
           path: .stage/scoop-bucket
 
       - name: Publish Scoop manifest
-        if: steps.gate.outputs.publish == 'true'
         env:
           SCOOP_BUCKET_DIR: ${{ github.workspace }}/.stage/scoop-bucket
         run: scripts/publish-scoop.sh
 
       - name: Commit Scoop update
-        if: steps.gate.outputs.publish == 'true'
         run: |
           git -C .stage/scoop-bucket config user.name "github-actions[bot]"
           git -C .stage/scoop-bucket config user.email "41898282+github-actions[bot]@users.noreply.github.com"

@@ -20,9 +20,9 @@ cache, install, or execute the native binary produced by
 `scripts/build-release-artifacts.sh`.
 
 The tag release workflow renders package-manager manifests from these templates.
-Channels owned by 0state publish automatically when their repository tokens are
-configured. WinGet manifests are uploaded as rendered release artifacts for the
-Microsoft submission flow.
+The owned Homebrew and Scoop channels publish synchronously and fail the release
+when their repository-specific tokens are missing. WinGet manifests are uploaded
+as rendered release artifacts for the Microsoft submission flow.
 
 Use `scripts/prepare-winget-submission.sh <version> <winget-pkgs-checkout>` for
 WinGet. It stages the manifests from the uploaded release artifact and verifies
