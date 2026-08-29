@@ -212,6 +212,16 @@ type acceptanceRunner struct {
 func (a acceptanceRunner) RunAcceptance(ctx context.Context, criteria []receipt.Acceptance) ([]appverify.AcceptanceResult, error) {
 	out := make([]appverify.AcceptanceResult, 0, len(criteria))
 	for _, criterion := range criteria {
+		// Manual evidence is intentionally non-replayable. Finalize validates it
+		// through the lifecycle ledger and signs the disposition plus evidence
+		// metadata into the receipt; verify preserves that signed result while
+		// rerunning every executable criterion.
+		if criterion.ExpectedKind == "manual" {
+			out = append(out, appverify.AcceptanceResult{
+				ID: criterion.ID, Status: criterion.Status, ExitCode: criterion.ExitCode,
+			})
+			continue
+		}
 		evaluated := appacceptance.Evaluate(ctx, a.runner, appacceptance.EvaluateInput{
 			Criteria:    []appacceptance.Criterion{{ID: criterion.ID, Command: criterion.Command, ExpectedKind: criterion.ExpectedKind}},
 			WorkDir:     a.root,

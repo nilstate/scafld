@@ -1,0 +1,94 @@
+{
+  "body": {
+    "schema_version": 1,
+    "task_id": "verify-manual-acceptance-ci",
+    "session_id": "verify-manual-acceptance-ci",
+    "verdict": "pass",
+    "snapshot_mode": "base_delta",
+    "base_ref": "ee0eca6cc5783fe43cb787e3428476f5031ad591",
+    "base_commit": "ee0eca6cc5783fe43cb787e3428476f5031ad591",
+    "head_commit": "ee0eca6cc5783fe43cb787e3428476f5031ad591",
+    "scope": [
+      ".scafld/receipts",
+      "internal/adapters/cli/verify/verify.go",
+      "internal/adapters/cli/verify/verify_test.go",
+      "internal/adapters/corebundle/bundle_test.go"
+    ],
+    "tree_sha": "75a5654e2c17562d3fd3f3cd145281f7f6a9c490",
+    "file_digests": {
+      "internal/adapters/cli/verify/verify.go": "d4b062c0d7524a5f77b3816454f38c6c2d8bcaa9afc178b4f023cfbfa96da1da",
+      "internal/adapters/cli/verify/verify_test.go": "a3320d664177854830e6a9c4bc97fc53c58a2957b0802b0161ec62a0cf41a88d",
+      "internal/adapters/corebundle/bundle_test.go": "209f115b2beaf6cc9e9be77b8d0f3179cc93b0d21e5b55bad722aa2f132c0671"
+    },
+    "ignored_unreviewed": [],
+    "reviewed_context_provenance": [
+      {
+        "kind": "evidence_file",
+        "path": "internal/adapters/cli/verify/verify.go",
+        "sha256": "d4b062c0d7524a5f77b3816454f38c6c2d8bcaa9afc178b4f023cfbfa96da1da"
+      },
+      {
+        "kind": "evidence_file",
+        "path": "internal/adapters/cli/verify/verify_test.go",
+        "sha256": "a3320d664177854830e6a9c4bc97fc53c58a2957b0802b0161ec62a0cf41a88d"
+      },
+      {
+        "kind": "evidence_file",
+        "path": "internal/adapters/corebundle/bundle_test.go",
+        "sha256": "209f115b2beaf6cc9e9be77b8d0f3179cc93b0d21e5b55bad722aa2f132c0671"
+      }
+    ],
+    "reviewer": {
+      "provider": "claude",
+      "model": "claude-fable-5"
+    },
+    "host_under_review": {
+      "agent": "codex",
+      "session_id": "verify-manual-acceptance-ci"
+    },
+    "independence": {
+      "level": "cross_vendor",
+      "distinct": true,
+      "reason": "cross_vendor: reviewer \"claude\" and host \"codex\" are different model vendors; this is multi-model review that reduces correlated blind spots but remains single-party local tooling"
+    },
+    "spec_fingerprint": "24a3010e2500d092d82b74fb9304a13e6f7887c5288cddb1977e842def5a65c5",
+    "acceptance_declared": true,
+    "acceptance": [
+      {
+        "id": "ac1",
+        "command": "go test ./internal/adapters/cli/verify ./internal/app/verify ./internal/app/acceptance ./internal/adapters/corebundle",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "60e8eaf48e3aa23126aeaf107dbac581e2b670407e7f55514dc3ce9ba4e4c296",
+        "diagnostic": "/private/tmp/scafld-verify-ci.XNBVEk/.scafld/runs/verify-manual-acceptance-ci/artifacts/commands/ac1-1787983510485198000.txt"
+      },
+      {
+        "id": "ac2",
+        "command": "make check",
+        "expected_kind": "exit_code_zero",
+        "status": "pass",
+        "reason": "exit code was 0",
+        "output_sha256": "aadfef07ca30fead65fc36a68c9bd290d844eb19e7b989120c86cf0803b778ea",
+        "diagnostic": "/private/tmp/scafld-verify-ci.XNBVEk/.scafld/runs/verify-manual-acceptance-ci/artifacts/commands/ac2-1787983512017459000.txt"
+      }
+    ],
+    "open_blockers": [],
+    "mutation_guard": {
+      "status": "clean",
+      "scope": [
+        ".scafld/receipts",
+        "internal/adapters/cli/verify/verify.go",
+        "internal/adapters/cli/verify/verify_test.go",
+        "internal/adapters/corebundle/bundle_test.go"
+      ]
+    },
+    "ledger_head": "b944f6d18f7b87d8408552f9a50f5e937c86e4746cf972c2be79dc81e00d252b",
+    "minted_at": "2026-08-29T06:05:10Z"
+  },
+  "signature": {
+    "alg": "ed25519",
+    "key_id": "ed25519:RGGe6gUQpsB6KGu0VcnMxGUL5IA1I1VDSKi3ecCzYOU",
+    "sig": "3fR0CGDFa8eOTydcY8jkVaATbowQtUVVr6qq4h3/inthM8RqtG6yheHpCfeN0028zTD4PG+4FjzDG68pHCtNAg=="
+  }
+}
