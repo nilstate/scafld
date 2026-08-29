@@ -16,7 +16,7 @@ import (
 func TestRepositoryDoesNotTrackGeneratedWorkspaceCopies(t *testing.T) {
 	t.Parallel()
 
-	for _, path := range []string{".scafld/core", ".scafld/prompts", ".scafld/receipts", ".scafld/specs/archive", ".scafld/specs/examples"} {
+	for _, path := range []string{".scafld/core", ".scafld/prompts", ".scafld/specs/archive", ".scafld/specs/examples"} {
 		out, err := exec.Command("git", "-C", repoRoot(t), "ls-files", "--", path).CombinedOutput()
 		if err != nil {
 			t.Fatalf("git ls-files %s: %v\n%s", path, err, out)

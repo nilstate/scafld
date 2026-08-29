@@ -32,6 +32,25 @@ func TestParseTarget(t *testing.T) {
 	}
 }
 
+func TestAcceptanceRunnerPreservesSignedManualEvidenceWithoutExecuting(t *testing.T) {
+	t.Parallel()
+
+	results, err := (acceptanceRunner{}).RunAcceptance(context.Background(), []receipt.Acceptance{{
+		ID:                 "dogfood",
+		ExpectedKind:       "manual",
+		Status:             "pass",
+		EvidenceSHA256:     strings.Repeat("a", 64),
+		EvidenceActor:      "operator",
+		EvidenceRecordedAt: "2026-08-29T00:00:00Z",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || results[0].ID != "dogfood" || results[0].Status != "pass" {
+		t.Fatalf("results = %+v, want signed manual pass", results)
+	}
+}
+
 func TestSelfCheckReportsWiringWithoutClaimingEnforcement(t *testing.T) {
 	t.Parallel()
 
