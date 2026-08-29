@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"path/filepath"
 
+	gitadapter "github.com/nilstate/scafld/v2/internal/adapters/git"
 	"github.com/nilstate/scafld/v2/internal/core/receipt"
 	"github.com/nilstate/scafld/v2/internal/core/trust"
 )
@@ -30,6 +31,39 @@ func TestParseTarget(t *testing.T) {
 	if opts.ReceiptPath != "receipt.json" || opts.Target != "main" || opts.MaterialRef != "head" || opts.AcceptanceRoot != "head-worktree" || !opts.MaterialOnly || !opts.CI {
 		t.Fatalf("opts = %+v", opts)
 	}
+}
+
+func TestSnapshotForVerifyMarksGitlinksIgnoredForFinalizeParity(t *testing.T) {
+	t.Parallel()
+
+	snapshot := snapshotForVerify(gitadapter.Snapshot{
+		TreeSHA:    "tree",
+		BaseCommit: "base",
+		FileDigests: []gitadapter.FileDigest{
+			{Path: "api", Status: "gitlink", SHA256: "api-sha"},
+			{Path: "README.md", Status: "modified", SHA256: "readme-sha"},
+		},
+		IgnoredUnreviewed: []gitadapter.IgnoredPath{{Path: "secret.env", Reason: "ignored"}},
+	})
+
+	if got, want := snapshot.Ignored, []string{"api", "secret.env"}; !equalStrings(got, want) {
+		t.Fatalf("ignored = %v, want %v", got, want)
+	}
+	if snapshot.FileDigests["api"] != "api-sha" || snapshot.FileDigests["README.md"] != "readme-sha" {
+		t.Fatalf("file digests = %v", snapshot.FileDigests)
+	}
+}
+
+func equalStrings(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
 }
 
 func TestSelfCheckReportsWiringWithoutClaimingEnforcement(t *testing.T) {

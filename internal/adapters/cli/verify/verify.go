@@ -189,15 +189,27 @@ func (g gitSnapshotter) Snapshot(ctx context.Context, input appverify.SnapshotIn
 	if err != nil {
 		return appverify.Snapshot{}, err
 	}
+	return snapshotForVerify(snapshot), nil
+}
+
+func snapshotForVerify(snapshot git.Snapshot) appverify.Snapshot {
 	digests := make(map[string]string, len(snapshot.FileDigests))
+	ignoredSet := make(map[string]struct{}, len(snapshot.IgnoredUnreviewed))
+	for _, item := range snapshot.IgnoredUnreviewed {
+		ignoredSet[item.Path] = struct{}{}
+	}
 	for _, item := range snapshot.FileDigests {
 		digests[item.Path] = item.SHA256
+		if item.Status == "gitlink" {
+			ignoredSet[item.Path] = struct{}{}
+		}
 	}
-	ignored := make([]string, 0, len(snapshot.IgnoredUnreviewed))
-	for _, item := range snapshot.IgnoredUnreviewed {
-		ignored = append(ignored, item.Path)
+	ignored := make([]string, 0, len(ignoredSet))
+	for path := range ignoredSet {
+		ignored = append(ignored, path)
 	}
-	return appverify.Snapshot{TreeSHA: snapshot.TreeSHA, BaseCommit: snapshot.BaseCommit, FileDigests: digests, Ignored: ignored}, nil
+	sort.Strings(ignored)
+	return appverify.Snapshot{TreeSHA: snapshot.TreeSHA, BaseCommit: snapshot.BaseCommit, FileDigests: digests, Ignored: ignored}
 }
 
 type acceptanceRunner struct {
