@@ -36,8 +36,8 @@ func Project(model spec.Model, explicit []string, baselineSnapshot []string, cur
 	taskChanges, ambientDrift := coreworkspace.PartitionMutations(mutations, scope)
 	return Projection{
 		Scope:        scope,
-		Baseline:     coreworkspace.Filter(baseline, scope),
-		Current:      coreworkspace.Filter(current, scope),
+		Baseline:     coreworkspace.FilterIntersections(baseline, scope),
+		Current:      coreworkspace.FilterIntersections(current, scope),
 		TaskChanges:  taskChanges,
 		AmbientDrift: ambientDrift,
 	}

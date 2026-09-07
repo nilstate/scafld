@@ -41,6 +41,25 @@ func TestProjectClassifiesTaskChangesAndAmbientDrift(t *testing.T) {
 	}
 }
 
+func TestProjectClassifiesChangedScopeAncestorAsTaskMaterial(t *testing.T) {
+	t.Parallel()
+
+	projection := Project(spec.Model{TaskID: "task"}, []string{"oss/crates/runx-x402"}, nil, []string{
+		" M gitlink-digest oss",
+		" M docs-digest docs/index.md",
+	})
+
+	if got := coreworkspace.MutationStrings(projection.TaskChanges); !reflect.DeepEqual(got, []string{"added oss (M gitlink-digest)"}) {
+		t.Fatalf("task changes = %+v", got)
+	}
+	if got := coreworkspace.MutationStrings(projection.AmbientDrift); !reflect.DeepEqual(got, []string{"added docs/index.md (M docs-digest)"}) {
+		t.Fatalf("ambient drift = %+v", got)
+	}
+	if got := projection.Current; !reflect.DeepEqual(got, []string{" M gitlink-digest oss"}) {
+		t.Fatalf("scoped current snapshot = %+v", got)
+	}
+}
+
 func TestDeriveFiltersPrivateAndLocalPaths(t *testing.T) {
 	t.Parallel()
 

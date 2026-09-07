@@ -753,10 +753,11 @@ func (a Adapter) fileDigests(ctx context.Context, treeSHA string, statuses map[s
 		return nil, err
 	}
 	type treeEntry struct {
-		path    string
-		status  string
-		oid     string
-		gitlink bool
+		path         string
+		status       string
+		oid          string
+		gitlink      bool
+		gitlinkScope []string
 	}
 	var entries []treeEntry
 	var blobOIDs []string
@@ -766,7 +767,7 @@ func (a Adapter) fileDigests(ctx context.Context, treeSHA string, statuses map[s
 			continue
 		}
 		meta, path, ok := strings.Cut(entry, "\t")
-		if !ok || !pathInScope(path, scope) || ignoredRuntimePath(path) {
+		if !ok || ignoredRuntimePath(path) {
 			continue
 		}
 		parts := strings.Fields(meta)
@@ -774,18 +775,22 @@ func (a Adapter) fileDigests(ctx context.Context, treeSHA string, statuses map[s
 			continue
 		}
 		mode, objectType, oid := parts[0], parts[1], parts[2]
+		gitlink := mode == "160000" || objectType == "commit"
+		gitlinkScope, gitlinkInScope := scopeWithinGitlink(path, scope)
+		if (!gitlink || !gitlinkInScope) && !pathInScope(path, scope) {
+			continue
+		}
 		status := statuses[path]
 		if status == "" {
 			status = "unchanged"
 		}
-		gitlink := mode == "160000" || objectType == "commit"
 		if gitlink {
 			status = "gitlink"
 		} else if !seenOIDs[oid] {
 			seenOIDs[oid] = true
 			blobOIDs = append(blobOIDs, oid)
 		}
-		entries = append(entries, treeEntry{path: path, status: status, oid: oid, gitlink: gitlink})
+		entries = append(entries, treeEntry{path: path, status: status, oid: oid, gitlink: gitlink, gitlinkScope: gitlinkScope})
 	}
 	blobSums, err := a.blobDigests(ctx, blobOIDs)
 	if err != nil {
@@ -796,7 +801,7 @@ func (a Adapter) fileDigests(ctx context.Context, treeSHA string, statuses map[s
 		sum := ""
 		if entry.gitlink {
 			var err error
-			sum, err = a.gitlinkMaterialDigest(ctx, entry.path, entry.oid)
+			sum, err = a.gitlinkMaterialDigest(ctx, entry.path, entry.oid, entry.gitlinkScope)
 			if err != nil {
 				return nil, err
 			}
@@ -814,25 +819,21 @@ func (a Adapter) fileDigests(ctx context.Context, treeSHA string, statuses map[s
 	return digests, nil
 }
 
-func (a Adapter) gitlinkMaterialDigest(ctx context.Context, rel string, oid string) (string, error) {
+func (a Adapter) gitlinkMaterialDigest(ctx context.Context, rel string, oid string, scope []string) (string, error) {
 	h := sha256.New()
-	_, _ = io.WriteString(h, "gitlink\x00"+strings.TrimSpace(oid)+"\n")
 	path := filepath.Join(a.Root, filepath.FromSlash(rel))
 	if _, err := exec.CommandContext(ctx, "git", "-C", path, "rev-parse", "--git-dir").Output(); err != nil {
-		return fmt.Sprintf("%x", h.Sum(nil)), nil
+		if len(scope) == 1 && scope[0] == "." {
+			_, _ = io.WriteString(h, "gitlink-oid-v1\x00"+strings.TrimSpace(oid)+"\n")
+			return fmt.Sprintf("%x", h.Sum(nil)), nil
+		}
+		return "", fmt.Errorf("nested git worktree %s is unavailable for scope %s", rel, strings.Join(scope, ", "))
 	}
-	headOut, err := exec.CommandContext(ctx, "git", "-C", path, "rev-parse", "HEAD").Output()
+	seal, err := (Adapter{Root: path}).MaterialSeal(ctx, scope)
 	if err != nil {
-		return "", fmt.Errorf("read nested git head for %s: %w", rel, err)
+		return "", fmt.Errorf("seal nested git worktree %s: %w", rel, err)
 	}
-	_, _ = io.WriteString(h, "nested-head\x00"+strings.TrimSpace(string(headOut))+"\n")
-	stateOut, err := exec.CommandContext(ctx, "git", "-C", path, "status", "--porcelain=v1").Output()
-	if err != nil {
-		return "", fmt.Errorf("read nested git status for %s: %w", rel, err)
-	}
-	for _, fp := range a.gitWorktreeChangedFingerprints(ctx, rel, path, string(stateOut)) {
-		_, _ = io.WriteString(h, "nested-change\x00"+fp+"\n")
-	}
+	_, _ = io.WriteString(h, "gitlink-material-v2\x00"+seal.Digest+"\n")
 	return fmt.Sprintf("%x", h.Sum(nil)), nil
 }
 
@@ -1056,6 +1057,24 @@ func pathInScope(path string, scope []string) bool {
 		}
 	}
 	return false
+}
+
+// scopeWithinGitlink translates parent-repository scope into the nested
+// repository. A scope above the gitlink includes the whole child repository;
+// a scope below it keeps only the declared child subtree.
+func scopeWithinGitlink(gitlink string, scope []string) ([]string, bool) {
+	gitlink = strings.Trim(strings.ReplaceAll(gitlink, "\\", "/"), "/")
+	var nested []string
+	for _, prefix := range normalizeScope(scope) {
+		switch {
+		case prefix == ".", prefix == gitlink, strings.HasPrefix(gitlink, prefix+"/"):
+			return []string{"."}, true
+		case strings.HasPrefix(prefix, gitlink+"/"):
+			nested = append(nested, strings.TrimPrefix(prefix, gitlink+"/"))
+		}
+	}
+	nested = normalizeScope(nested)
+	return nested, len(nested) > 0
 }
 
 func directoryHash(path string) (string, error) {

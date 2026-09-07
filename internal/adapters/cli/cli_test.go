@@ -73,6 +73,46 @@ func TestRunUnknownCommand(t *testing.T) {
 	}
 }
 
+func TestTasklessStatusNoOpsWhenWorkspaceHasNoCurrentTask(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	runCLI(t, []string{"init", "--root", root, "--no-agent-docs"})
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run(context.Background(), []string{"status", "--root", root, "--json"}, &stdout, &stderr)
+	if code != ExitSuccess {
+		t.Fatalf("status exit = %d, want success; stderr=%q", code, stderr.String())
+	}
+	var payload struct {
+		OK     bool `json:"ok"`
+		Result struct {
+			Status string `json:"status"`
+			Reason string `json:"reason"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if !payload.OK || payload.Result.Status != "nothing_to_finalize" || payload.Result.Reason != "no open scafld task" {
+		t.Fatalf("payload = %+v, want successful taskless status", payload)
+	}
+}
+
+func TestTasklessStatusRefusesToGuessOpenTask(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	runCLI(t, []string{"init", "--root", root, "--no-agent-docs"})
+	runCLI(t, []string{"plan", "--root", root, "open-task", "--title", "Open task"})
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run(context.Background(), []string{"status", "--root", root, "--json"}, &stdout, &stderr)
+	if code != ExitInvalid || !strings.Contains(stderr.String(), "open task(s): open-task") {
+		t.Fatalf("status exit=%d stderr=%q, want explicit open-task refusal", code, stderr.String())
+	}
+}
+
 func TestFailOutJSONIncludesGateFailure(t *testing.T) {
 	t.Parallel()
 

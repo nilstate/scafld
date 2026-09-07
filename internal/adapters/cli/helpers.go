@@ -147,6 +147,10 @@ func oneTask(args []string, command string) (options, error) {
 	if err != nil {
 		return opts, err
 	}
+	if len(opts.Positionals) == 0 && command == "status" {
+		opts.Positionals = []string{""}
+		return opts, nil
+	}
 	if len(opts.Positionals) != 1 {
 		return opts, fmt.Errorf("%s requires task_id", command)
 	}

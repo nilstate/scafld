@@ -152,6 +152,20 @@ func RunWithInput(ctx context.Context, specs SpecStore, sessions SessionStore, w
 	if err != nil {
 		return Output{}, err
 	}
+	// Reconcile the current ledger against a source snapshot that was checked
+	// after preflight. If an operator edits the canonical spec during setup, the
+	// packet must be rebuilt from a new command invocation rather than mixing
+	// stale scope/evidence with new Markdown.
+	source, model, err = refreshReviewSource(ctx, specs, source, ledger)
+	if err != nil {
+		return Output{}, reviewSourceGateError(model, err)
+	}
+	if model.Status != spec.StatusReview {
+		if model.Status == spec.StatusCompleted {
+			return Output{}, fmt.Errorf("%w: task is archived/completed; create a new task to continue%s", ErrSpecNotReviewable, reviewCompletionSuffix(ctx, sessions, model.TaskID))
+		}
+		return Output{}, reviewRequiresBuildError(model)
+	}
 	if err := appendReviewStage(ctx, sessions, model.TaskID, "scope_resolution", "running", "resolving workspace baseline, task scope, and review mode", clock.Now()); err != nil {
 		return Output{}, err
 	}
@@ -183,6 +197,9 @@ func RunWithInput(ctx context.Context, specs SpecStore, sessions SessionStore, w
 	prompt, err := reviewcontext.RenderMarkdownStrict(contextPacket, reviewcontext.Options{MaxBytes: input.ContextMaxBytes, RequiredMaxBytes: input.RequiredContextMaxBytes})
 	if err != nil {
 		return Output{}, reviewContextGateError(model, err)
+	}
+	if _, err := specsource.ReloadUnchanged(ctx, specs, source); err != nil {
+		return Output{}, reviewSourceGateError(model, err)
 	}
 	if err := appendReviewStage(ctx, sessions, model.TaskID, "context_assembly", "completed", reviewContextStageReason(prompt, contextPacket), clock.Now()); err != nil {
 		return Output{}, err
@@ -522,6 +539,45 @@ func reviewContextGateError(model spec.Model, err error) error {
 		Actual:   err.Error(),
 		Blockers: []string{"required source context exceeds provider packet budget"},
 		Next:     "shrink the spec or raise the review context budget, then run scafld review " + model.TaskID,
+	})
+}
+
+func refreshReviewSource(ctx context.Context, specs SpecStore, source spec.Source, ledger session.Session) (spec.Source, spec.Model, error) {
+	fresh, err := specsource.ReloadUnchanged(ctx, specs, source)
+	if err != nil {
+		return spec.Source{}, modelForReviewError(source, ledger), err
+	}
+	model := reconcile.FromSession(fresh.Model, ledger)
+	fresh.Model = model
+	return fresh, model, nil
+}
+
+func modelForReviewError(source spec.Source, ledger session.Session) spec.Model {
+	if source.Model.TaskID != "" {
+		return reconcile.FromSession(source.Model, ledger)
+	}
+	return source.Model
+}
+
+func reviewSourceGateError(model spec.Model, err error) error {
+	changed := errors.Is(err, specsource.ErrChanged)
+	reason := "canonical spec reload failed while assembling the review packet"
+	expected := "canonical source Markdown remains readable and stable while the packet is assembled"
+	blockers := []string{"restore canonical spec access, then rerun scafld review " + model.TaskID}
+	if changed {
+		reason = "canonical spec changed while assembling the review packet"
+		expected = "provider packet built from one unchanged canonical spec snapshot"
+		blockers = []string{"discard the stale packet and rerun scafld review " + model.TaskID}
+	}
+	return gate.New(err, gate.Failure{
+		Gate:     "review",
+		Status:   string(model.Status),
+		Reason:   reason,
+		Evidence: []string{"canonical source Markdown snapshot"},
+		Expected: expected,
+		Actual:   err.Error(),
+		Blockers: blockers,
+		Next:     "scafld review " + model.TaskID,
 	})
 }
 

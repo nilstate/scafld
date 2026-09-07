@@ -2,12 +2,14 @@ package status
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/nilstate/scafld/v2/internal/app/packetrepair"
 	"github.com/nilstate/scafld/v2/internal/app/specsource"
+	"github.com/nilstate/scafld/v2/internal/app/taskstate"
 	"github.com/nilstate/scafld/v2/internal/core/gate"
 	"github.com/nilstate/scafld/v2/internal/core/hardengate"
 	"github.com/nilstate/scafld/v2/internal/core/reconcile"
@@ -20,9 +22,18 @@ import (
 	"github.com/nilstate/scafld/v2/internal/core/spec"
 )
 
+// ErrTaskIDRequired identifies a taskless status probe that found work but
+// cannot safely choose a task in a shared workspace.
+var ErrTaskIDRequired = errors.New("status requires a task_id")
+
 // SpecStore is the spec loading port used by status.
 type SpecStore interface {
 	Load(context.Context, string) (spec.Model, string, error)
+}
+
+// SpecLister is the optional listing port used by taskless status probes.
+type SpecLister interface {
+	List(context.Context) ([]spec.Record, error)
 }
 
 // SessionStore is the session loading port used by status.
@@ -66,6 +77,24 @@ type Output struct {
 	Review          ReviewInfo      `json:"review,omitempty"`
 	Completion      *CompletionInfo `json:"completion_authority,omitempty"`
 	TaskMaterial    *TaskMaterial   `json:"task_material,omitempty"`
+	Reason          string          `json:"reason,omitempty"`
+}
+
+// RunTaskless reports the only safe result for status without a task ID. It
+// refuses to choose among current tasks in a shared workspace.
+func RunTaskless(ctx context.Context, specs SpecLister) (Output, error) {
+	current, err := taskstate.Current(ctx, specs)
+	if err != nil {
+		return Output{}, fmt.Errorf("inspect current tasks: %w", err)
+	}
+	if len(current) > 0 {
+		ids := make([]string, 0, len(current))
+		for _, record := range current {
+			ids = append(ids, record.TaskID)
+		}
+		return Output{}, fmt.Errorf("%w; open task(s): %s", ErrTaskIDRequired, strings.Join(ids, ", "))
+	}
+	return Output{Status: "nothing_to_finalize", Reason: "no open scafld task"}, nil
 }
 
 // SpecSource describes the canonical Markdown contract behind status.
@@ -157,6 +186,13 @@ func Run(ctx context.Context, specs SpecStore, sessions SessionStore, taskID str
 
 // RunWithOptions reads status for taskID with output shaping options.
 func RunWithOptions(ctx context.Context, specs SpecStore, sessions SessionStore, taskID string, opts Options, workspaces ...WorkspaceStatus) (Output, error) {
+	if strings.TrimSpace(taskID) == "" {
+		lister, ok := specs.(SpecLister)
+		if !ok {
+			return Output{}, ErrTaskIDRequired
+		}
+		return RunTaskless(ctx, lister)
+	}
 	source, err := specsource.Load(ctx, specs, taskID)
 	if err != nil {
 		return Output{}, err

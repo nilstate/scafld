@@ -125,7 +125,7 @@ func Run(ctx context.Context, store SpecStore, clock Clock, input Input) (Output
 		return out, err
 	}
 	if input.Provider != nil {
-		return runProviderHarden(ctx, store, input.Provider, path, model, now, input.Root, input.EvidenceRoots, input.Contract, input.ContextMaxBytes, input.RequiredContextMaxBytes, specDigest)
+		return runProviderHarden(ctx, store, input.Provider, path, source, model, now, input.Root, input.EvidenceRoots, input.Contract, input.ContextMaxBytes, input.RequiredContextMaxBytes, specDigest)
 	}
 	return openRound(ctx, store, path, model, now, input.Root, input.EvidenceRoots, input.Contract, input.Prompt, input.ContextMaxBytes, input.RequiredContextMaxBytes, input.SuppressContext, specDigest)
 }
@@ -275,7 +275,14 @@ func nonEmptyStrings(values []string, fallback string) []string {
 	return out
 }
 
-func runProviderHarden(ctx context.Context, store SpecStore, provider Provider, path string, model spec.Model, now string, root string, evidenceRoots []string, contract agentcontract.Contract, contextMaxBytes int, requiredContextMaxBytes int, specDigest string) (Output, error) {
+func runProviderHarden(ctx context.Context, store SpecStore, provider Provider, path string, source spec.Source, model spec.Model, now string, root string, evidenceRoots []string, contract agentcontract.Contract, contextMaxBytes int, requiredContextMaxBytes int, specDigest string) (Output, error) {
+	if _, err := specsource.ReloadUnchanged(ctx, store, source); err != nil {
+		if !errors.Is(err, specsource.ErrChanged) {
+			return Output{}, fmt.Errorf("verify provider harden source: %w", err)
+		}
+		reason, diagnosticPath := diagnostics.FailureReason("provider harden source changed before round start", err, 240)
+		return Output{}, hardenSourceGateError(model, err, reason, diagnosticPath)
+	}
 	roundID := nextRoundID(model.HardenRounds)
 	model.HardenStatus = spec.HardenInProgress
 	model.HardenRounds = append(model.HardenRounds, spec.HardenRound{
@@ -310,6 +317,20 @@ func runProviderHarden(ctx context.Context, store SpecStore, provider Provider, 
 		}
 		return Output{}, err
 	}
+	if _, err := specsource.ReloadUnchanged(ctx, store, source); err != nil {
+		if !errors.Is(err, specsource.ErrChanged) {
+			reason, diagnosticPath := diagnostics.FailureReason("provider harden source verification failed", err, 240)
+			if closeErr := closeProviderHardenRound(ctx, store, model.TaskID, roundID, now, reason, diagnosticPath, "external hardening setup error", "fix local spec access, then run scafld harden "+model.TaskID+" --provider <provider>"); closeErr != nil {
+				return Output{}, errors.Join(err, fmt.Errorf("record provider harden source verification failure: %w", closeErr))
+			}
+			return Output{}, err
+		}
+		reason, diagnosticPath := diagnostics.FailureReason("provider harden source changed before provider invocation", err, 240)
+		if closeErr := closeProviderHardenRound(ctx, store, model.TaskID, roundID, now, reason, diagnosticPath, "canonical harden source changed", "rerun scafld harden "+model.TaskID+" --provider <provider>"); closeErr != nil {
+			return Output{}, errors.Join(err, fmt.Errorf("record provider harden source change: %w", closeErr))
+		}
+		return Output{}, hardenSourceGateError(model, err, reason, diagnosticPath)
+	}
 	dossier, err := provider.Invoke(ctx, coreharden.Request{TaskID: model.TaskID, Prompt: rendered, Context: packet})
 	if err != nil {
 		reason, diagnosticPath := diagnostics.FailureReason("provider error", err, 240)
@@ -324,6 +345,22 @@ func runProviderHarden(ctx context.Context, store SpecStore, provider Provider, 
 			return Output{}, errors.Join(err, fmt.Errorf("record provider harden failure: %w", closeErr))
 		}
 		return Output{}, hardenProviderFailureGateError(model, err, "external hardening provider error", err.Error(), diagnosticPath, repairPath, followUp)
+	}
+	postProviderCtx, cancelPostProvider := lifecycle.TerminalEvidenceContext(ctx)
+	defer cancelPostProvider()
+	if _, err := specsource.ReloadUnchanged(postProviderCtx, store, source); err != nil {
+		if !errors.Is(err, specsource.ErrChanged) {
+			reason, diagnosticPath := diagnostics.FailureReason("provider harden source verification failed", err, 240)
+			if closeErr := closeProviderHardenRound(ctx, store, model.TaskID, roundID, now, reason, diagnosticPath, "external hardening terminal recording error", "fix local spec access, then run scafld harden "+model.TaskID+" --provider <provider>"); closeErr != nil {
+				return Output{}, errors.Join(err, fmt.Errorf("record provider harden source verification failure: %w", closeErr))
+			}
+			return Output{}, err
+		}
+		reason, diagnosticPath := diagnostics.FailureReason("provider harden source changed during provider execution", err, 240)
+		if closeErr := closeProviderHardenRound(ctx, store, model.TaskID, roundID, now, reason, diagnosticPath, "canonical harden source changed", "rerun scafld harden "+model.TaskID+" --provider <provider>"); closeErr != nil {
+			return Output{}, errors.Join(err, fmt.Errorf("record provider harden source change: %w", closeErr))
+		}
+		return Output{}, hardenSourceGateError(model, err, reason, diagnosticPath)
 	}
 	if err := coreharden.ValidateDossier(dossier); err != nil {
 		reason, diagnosticPath := diagnostics.FailureReason("invalid provider dossier", err, 240)
@@ -349,6 +386,19 @@ func runProviderHarden(ctx context.Context, store SpecStore, provider Provider, 
 		return Output{}, hardenProviderFailureGateError(model, err, "external hardening provider dossier invalid", err.Error(), diagnosticPath, repairPath, followUp)
 	}
 	return recordHardenDossier(ctx, store, model.TaskID, roundID, now, root, evidenceRoots, specDigest, dossier)
+}
+
+func hardenSourceGateError(model spec.Model, err error, reason string, diagnosticPath string) error {
+	return gate.New(err, gate.Failure{
+		Gate:     "harden",
+		Status:   string(model.Status),
+		Reason:   "canonical spec changed during harden packet execution",
+		Evidence: nonEmptyStrings([]string{diagnosticPath}, "canonical source Markdown snapshot"),
+		Expected: "provider packet built and accepted against one unchanged canonical spec snapshot",
+		Actual:   reason,
+		Blockers: []string{"discard the stale packet and rerun scafld harden " + model.TaskID + " --provider <provider>"},
+		Next:     "scafld harden " + model.TaskID + " --provider <provider>",
+	})
 }
 
 func recordHardenDossier(ctx context.Context, store SpecStore, taskID string, roundID string, now string, root string, evidenceRoots []string, specDigest string, dossier coreharden.Dossier) (Output, error) {

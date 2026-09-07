@@ -391,9 +391,9 @@ func runStatus(ctx context.Context, args []string, stdout io.Writer, stderr io.W
 	suppressContext := opts.Flags["no-context"] || (opts.JSON && !opts.Flags["with-context"])
 	out, err := status.RunWithOptions(ctx, store, sessions, opts.Positionals[0], status.Options{SuppressContext: suppressContext}, git.Adapter{Root: store.Root})
 	if err != nil {
-		return failOut(stderr, err, ExitGeneric, opts.JSON)
+		return failOut(stderr, err, output.StatusCommandExit("status", err, ExitGeneric, ExitInvalid), opts.JSON)
 	}
-	return okOut(stdout, "status", out, output.Status(out), opts.JSON)
+	return okOut(stdout, "status", output.StatusResult(out), output.Status(out), opts.JSON)
 }
 
 func runList(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer) int {

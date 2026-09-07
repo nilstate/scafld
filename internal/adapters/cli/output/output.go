@@ -50,6 +50,9 @@ func CodeName(exit int) string {
 // StatusCommandExit maps complete/fail/cancel wrapper errors onto the public
 // exit-code table without making the top-level CLI adapter interpret gate data.
 func StatusCommandExit(command string, err error, generic int, validation int) int {
+	if errors.Is(err, appstatus.ErrTaskIDRequired) {
+		return validation
+	}
 	if command == "complete" && GateFailure(err) != nil {
 		return validation
 	}
@@ -226,6 +229,9 @@ func Review(out appreview.Output) string {
 
 // Status formats status output with the latest review findings when present.
 func Status(out appstatus.Output) string {
+	if out.Status == "nothing_to_finalize" {
+		return "nothing to finalize\n"
+	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s: %s\nnext: %s\n", out.TaskID, out.Status, out.Next)
 	writeNextAction(&b, out.NextAction)
@@ -313,6 +319,18 @@ func Status(out appstatus.Output) string {
 		}
 	}
 	return b.String()
+}
+
+// StatusResult keeps the taskless probe small instead of serializing an empty
+// task projection as if it were a real task.
+func StatusResult(out appstatus.Output) any {
+	if out.Status == "nothing_to_finalize" {
+		return struct {
+			Status string `json:"status"`
+			Reason string `json:"reason"`
+		}{Status: string(out.Status), Reason: out.Reason}
+	}
+	return out
 }
 
 func writeNextAction(b *strings.Builder, action appstatus.NextAction) {

@@ -27,6 +27,7 @@ import (
 	appacceptance "github.com/nilstate/scafld/v2/internal/app/acceptance"
 	"github.com/nilstate/scafld/v2/internal/app/envelope"
 	appfinalize "github.com/nilstate/scafld/v2/internal/app/finalize"
+	"github.com/nilstate/scafld/v2/internal/app/taskstate"
 	"github.com/nilstate/scafld/v2/internal/core/acceptance"
 	"github.com/nilstate/scafld/v2/internal/core/gate"
 	"github.com/nilstate/scafld/v2/internal/core/receipt"
@@ -102,7 +103,27 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer) 
 		return err
 	}
 	if strings.TrimSpace(req.TaskID) == "" {
-		return errors.New("finalize requires a task_id in the request payload")
+		root := req.Root
+		if strings.TrimSpace(root) == "" {
+			root = "."
+		}
+		ready, err := taskstate.ReadyForFinalize(ctx, markdown.Store{Root: root}, jsonstore.SessionStore{Root: root})
+		if err != nil {
+			return fmt.Errorf("inspect finalization-ready tasks: %w", err)
+		}
+		if len(ready) == 0 {
+			return emit(stdout, map[string]any{
+				"ok":      true,
+				"command": publicCommand,
+				"status":  "nothing_to_finalize",
+				"reason":  "no task has an accepted review ready for finalization",
+			}, opts.JSON)
+		}
+		ids := make([]string, 0, len(ready))
+		for _, record := range ready {
+			ids = append(ids, record.TaskID)
+		}
+		return fmt.Errorf("finalize requires a task_id; finalization-ready task(s): %s", strings.Join(ids, ", "))
 	}
 	// Internal failures (bad config, missing spec, invalid ledger, compose error)
 	// propagate as a non-zero exit so the MCP transport reports a tool error
@@ -875,6 +896,10 @@ func emit(stdout io.Writer, payload map[string]any, asJSON bool) error {
 func emitText(stdout io.Writer, payload map[string]any) error {
 	taskID, _ := payload["task_id"].(string)
 	verdict, _ := payload["verdict"].(string)
+	if status, _ := payload["status"].(string); status == "nothing_to_finalize" {
+		fmt.Fprintln(stdout, "nothing to finalize")
+		return nil
+	}
 	if taskID == "" {
 		taskID = "work"
 	}

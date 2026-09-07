@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/nilstate/scafld/v2/internal/app/packetrepair"
+	"github.com/nilstate/scafld/v2/internal/app/specsource"
 	"github.com/nilstate/scafld/v2/internal/core/acceptance"
 	"github.com/nilstate/scafld/v2/internal/core/agentcontract"
 	"github.com/nilstate/scafld/v2/internal/core/gate"
@@ -26,9 +27,11 @@ import (
 )
 
 type fakeSpecs struct {
-	model          spec.Model
-	path           string
-	sourceMarkdown []byte
+	model           spec.Model
+	path            string
+	sourceMarkdown  []byte
+	sourceLoads     int
+	afterLoadSource func(int)
 }
 
 func (f *fakeSpecs) Load(context.Context, string) (spec.Model, string, error) {
@@ -40,6 +43,10 @@ func (f *fakeSpecs) Load(context.Context, string) (spec.Model, string, error) {
 }
 
 func (f *fakeSpecs) LoadSource(context.Context, string) (spec.Source, error) {
+	f.sourceLoads++
+	if f.afterLoadSource != nil {
+		f.afterLoadSource(f.sourceLoads)
+	}
 	model, path, err := f.Load(context.Background(), "")
 	if err != nil {
 		return spec.Source{}, err
@@ -1226,7 +1233,7 @@ func TestReviewPromptCarriesTaskContractToProvider(t *testing.T) {
 		Touchpoints: []string{"MCP API"},
 		Acceptance:  spec.Acceptance{Criteria: []spec.Criterion{{ID: "ac1", Command: "go test ./...", ExpectedKind: "exit_code_zero", Status: "pass", Evidence: "exit code was 0"}}},
 		Phases:      []spec.Phase{{ID: "phase1", Name: "Implementation", Changes: []string{"Update API prompt context"}}},
-	}}
+	}, sourceMarkdown: []byte("# Task\n\n## Summary\n\nReview this\n\n## Context\n\nPackages:\n- api\nFiles impacted:\n- api/handler.go\nInvariants:\n- tenant_isolation\n\n## Scope\n\n- Only API contract changes\n\n## Touchpoints\n\n- MCP API\n\n## Phase 1: Implementation\n\nChanges:\n- Update API prompt context\n")}
 	ledger := session.New("task", "now").WithEntry(session.Entry{
 		ID:            "entry-ac1",
 		Type:          "criterion",
@@ -1265,19 +1272,24 @@ func TestReviewPromptCarriesTaskContractToProvider(t *testing.T) {
 	if provider.req.TaskID != "task" || provider.req.Context.TaskID != "task" || !strings.Contains(provider.req.Prompt, "Review Context Packet") || !strings.Contains(provider.req.Prompt, "Review this") || !strings.Contains(provider.req.Prompt, "ac1") {
 		t.Fatalf("provider request = %+v", provider.req)
 	}
-	if !strings.Contains(provider.req.Prompt, "## Source Spec Markdown") || strings.Index(provider.req.Prompt, "## Source Spec Markdown") > strings.Index(provider.req.Prompt, "## Derived Task Contract") {
-		t.Fatalf("provider request missing source-first Markdown context:\n%s", provider.req.Prompt)
+	if strings.Count(provider.req.Prompt, "## Source Spec Markdown") != 1 || strings.Contains(provider.req.Prompt, "## Derived Task Contract") {
+		t.Fatalf("provider request did not use the canonical source without a duplicate task projection:\n%s", provider.req.Prompt)
+	}
+	for _, section := range provider.req.Context.Sections {
+		if section.Key == "acceptance_evidence" && strings.Contains(section.Body, "go test ./...") {
+			t.Fatalf("acceptance evidence repeated a command owned by the canonical spec: %q", section.Body)
+		}
 	}
 	if !strings.Contains(provider.req.Prompt, "Evidence: exit code was 0") || !strings.Contains(provider.req.Prompt, "Do not run build, test, or mutation commands") {
 		t.Fatalf("provider request = %+v", provider.req)
 	}
-	if !strings.Contains(provider.req.Prompt, "Declared invariants:") || !strings.Contains(provider.req.Prompt, "tenant_isolation") {
-		t.Fatalf("provider request missing declared invariants = %+v", provider.req)
+	if !strings.Contains(provider.req.Prompt, "Invariants:") || !strings.Contains(provider.req.Prompt, "tenant_isolation") {
+		t.Fatalf("provider request missing canonical spec invariants = %+v", provider.req)
 	}
 	if !strings.Contains(provider.req.Prompt, "## Configured Invariants") || !strings.Contains(provider.req.Prompt, "`tenant_isolation`: Never leak data across tenants.") {
 		t.Fatalf("provider request missing configured invariant catalog = %+v", provider.req)
 	}
-	if !strings.Contains(provider.req.Prompt, "derived_config `.scafld/config.yaml#configured_invariants`") || !strings.Contains(provider.req.Prompt, "derived_spec `") {
+	if !strings.Contains(provider.req.Prompt, "derived_config `.scafld/config.yaml#configured_invariants`") || !strings.Contains(provider.req.Prompt, "derived_session `task#review_scope`") {
 		t.Fatalf("provider request missing honest derived provenance = %+v", provider.req)
 	}
 	if !strings.Contains(provider.req.Prompt, "## Project Context: AGENTS.md") || !strings.Contains(provider.req.Prompt, "Do not grade your own work.") {
@@ -1286,7 +1298,7 @@ func TestReviewPromptCarriesTaskContractToProvider(t *testing.T) {
 	if !strings.Contains(provider.req.Prompt, "## Review Focus") || !strings.Contains(provider.req.Prompt, "adversarial: Regression Hunt") {
 		t.Fatalf("provider request missing configured review focus = %+v", provider.req)
 	}
-	for _, want := range []string{"Max findings: 4", "Minimum attack angles: 3", "Review depth: light", "Depth contract: Prioritize completion blockers", "## Task Scope", "Explicit review scope", "`api`", "`api/handler.go`", "MCP API", "Implementation changes", "## Workspace Classification", "Ambient drift outside task scope", "`review_self_mutation`", "## Workspace Baseline Before Review", "`api/handler.go`", "unchanged dirty paths from the approval baseline are context"} {
+	for _, want := range []string{"Max findings: 4", "Minimum attack angles: 3", "Review depth: light", "Depth contract: Prioritize completion blockers", "## Task Scope", "Resolved review scope", "`api`", "`api/handler.go`", "MCP API", "## Phase 1: Implementation", "## Workspace Classification", "Ambient drift outside task scope", "`review_self_mutation`", "## Workspace Baseline Before Review", "`api/handler.go`", "unchanged dirty paths from the approval baseline are context"} {
 		if !strings.Contains(provider.req.Prompt, want) {
 			t.Fatalf("provider request missing %q:\n%s", want, provider.req.Prompt)
 		}
@@ -1399,6 +1411,37 @@ func TestReviewRejectsOversizedRequiredContextBeforeProviderAttempt(t *testing.T
 	var gateErr gate.Error
 	if !errors.As(err, &gateErr) || gateErr.Failure.Gate != "review" || len(gateErr.Failure.Evidence) != 1 || gateErr.Failure.Evidence[0] != "review context packet" {
 		t.Fatalf("gate error = %#v", gateErr)
+	}
+}
+
+func TestReviewRejectsCanonicalSourceChangeBeforeProvider(t *testing.T) {
+	t.Parallel()
+
+	specs := &fakeSpecs{
+		model:          spec.Model{TaskID: "task", Title: "Task", Status: spec.StatusReview},
+		sourceMarkdown: []byte("# Task\n\n## Summary\n\noriginal\n"),
+	}
+	specs.afterLoadSource = func(load int) {
+		if load == 3 {
+			specs.sourceMarkdown = []byte("# Task\n\n## Summary\n\nchanged while assembling\n")
+		}
+	}
+	providerCalled := false
+	provider := providerFunc(func(context.Context, corereview.Request) (corereview.Dossier, error) {
+		providerCalled = true
+		return passingDossier(), nil
+	})
+
+	_, err := Run(context.Background(), specs, &fakeSessions{}, cleanWorkspace(), provider, fakeClock{}, "task")
+	if !errors.Is(err, specsource.ErrChanged) {
+		t.Fatalf("error = %v, want canonical source change", err)
+	}
+	if providerCalled {
+		t.Fatal("provider was invoked with a stale canonical source packet")
+	}
+	var gateErr gate.Error
+	if !errors.As(err, &gateErr) || gateErr.Failure.Next != "scafld review task" {
+		t.Fatalf("gate error = %#v", err)
 	}
 }
 

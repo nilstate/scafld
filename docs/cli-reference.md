@@ -22,7 +22,7 @@ scafld finalize [task-id]
 scafld complete <task-id>
 scafld fail <task-id>
 scafld cancel <task-id>
-scafld status <task-id>
+scafld status [task-id]
 scafld list
 scafld report
 scafld handoff <task-id>
@@ -373,6 +373,13 @@ session ledger. It does not invoke a provider or model. A successful finalize
 also archives the canonical spec. The JSON result carries the receipt itself
 plus `receipt_path`, `task_receipt_path`, and `ledger_head`.
 
+With no task ID, `finalize` is a hook-safe probe: it returns a successful
+`nothing_to_finalize` result when no current task has an accepted review ready
+for sealing. If one or more tasks are ready, it refuses to guess and reports
+their IDs; pass the intended task ID explicitly. This keeps Stop hooks quiet in
+ordinary sessions without allowing a shared workspace hook to finalize another
+agent's task.
+
 Receipts land in `.scafld/receipts/<task-id>.json`. The
 `.scafld/receipts/latest.json` pointer is written only after the receipt is
 anchored in the ledger, so hosts reading it never see an unanchored receipt.
@@ -397,6 +404,10 @@ Flags:
   the owning repository's Git receipt scope.
 - `--stdin`: read the finalize request from stdin. The finalize MCP tool uses
   this mode; operators normally do not.
+
+`status --json` without a task ID follows the same no-guessing rule: it returns
+`nothing_to_finalize` only when there are no current tasks, and otherwise
+reports the open task IDs so the caller can choose explicitly.
 
 ## complete (legacy)
 
@@ -433,7 +444,7 @@ Records the cancellation in session, then archives the spec.
 ## status
 
 ```bash
-scafld status <task-id> [--json] [--no-context]
+scafld status [task-id] [--json] [--no-context]
 ```
 
 Shows lifecycle status, the next allowed follow-up command, latest review

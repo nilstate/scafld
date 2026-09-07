@@ -163,6 +163,36 @@ func PathInScope(path string, scope []string) bool {
 	return false
 }
 
+// PathIntersectsScope reports whether a changed path is inside scope or is an
+// ancestor whose replacement or repository state affects a scoped descendant.
+func PathIntersectsScope(path string, scope []string) bool {
+	candidate := strings.Trim(strings.ReplaceAll(strings.TrimSpace(path), "\\", "/"), "/")
+	if PathInScope(candidate, scope) {
+		return true
+	}
+	for _, prefix := range scope {
+		if strings.HasPrefix(prefix, candidate+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+// FilterIntersections returns snapshot entries that can affect scope, including
+// an ancestor entry such as a parent repository's gitlink.
+func FilterIntersections(snapshot []string, scope []string) []string {
+	if len(scope) == 0 {
+		return append([]string(nil), snapshot...)
+	}
+	var filtered []string
+	for _, raw := range snapshot {
+		if PathIntersectsScope(ParseChange(raw).Path, scope) {
+			filtered = append(filtered, raw)
+		}
+	}
+	return filtered
+}
+
 // Filter returns only snapshot entries under scope. Empty scope keeps all entries.
 func Filter(snapshot []string, scope []string) []string {
 	if len(scope) == 0 {
@@ -185,7 +215,7 @@ func PartitionMutations(mutations []Mutation, scope []string) ([]Mutation, []Mut
 	var inside []Mutation
 	var outside []Mutation
 	for _, mutation := range mutations {
-		if PathInScope(mutation.Path, scope) {
+		if PathIntersectsScope(mutation.Path, scope) {
 			inside = append(inside, mutation)
 		} else {
 			outside = append(outside, mutation)

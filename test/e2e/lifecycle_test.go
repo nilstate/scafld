@@ -318,7 +318,7 @@ func TestReviewContextPreview(t *testing.T) {
 	run(t, bin, "build", "--root", root, "context-preview")
 	run(t, bin, "build", "--root", root, "context-preview")
 	out := string(run(t, bin, "review", "--root", root, "context-preview", "--print-context", "--provider", "command", "--provider-command", `printf 'should-not-run'`))
-	for _, want := range []string{"Review Context Packet", "Task: context-preview", "Task Contract"} {
+	for _, want := range []string{"Review Context Packet", "Task: context-preview", "Source Spec Markdown"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("context preview missing %q:\n%s", want, out)
 		}

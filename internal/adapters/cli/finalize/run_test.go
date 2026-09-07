@@ -262,13 +262,46 @@ func TestNoSpecMissingSessionStartsNewLedger(t *testing.T) {
 	}
 }
 
-func TestGateRunErrorsOnMissingTaskID(t *testing.T) {
+func TestGateRunNoOpsOnMissingTaskIDWhenNothingIsReady(t *testing.T) {
 	t.Parallel()
 
 	var out bytes.Buffer
 	err := Run(context.Background(), []string{"--json", "--stdin"}, strings.NewReader("{}"), &out)
-	if err == nil {
-		t.Fatal("gate must return a tool error when task_id is missing, not a success payload")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["ok"] != true || payload["status"] != "nothing_to_finalize" {
+		t.Fatalf("payload = %+v, want successful no-op", payload)
+	}
+}
+
+func TestGateRunRequiresExplicitTaskWhenReviewIsReady(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".scafld", "specs", "active"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	model := spec.Model{TaskID: "ready-task", Status: spec.StatusReview}
+	path := filepath.Join(root, ".scafld", "specs", "active", "ready-task.md")
+	if err := os.WriteFile(path, markdown.Render(model), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ledger := session.New(model.TaskID, "now").
+		WithEntry(session.Entry{Type: "review_override", Status: "accepted", Provider: "human"}).
+		WithEntry(session.Entry{Type: "review", Status: review.VerdictPass, Provider: "human"})
+	if err := (jsonstore.SessionStore{Root: root}).Save(context.Background(), ledger); err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	err := Run(context.Background(), []string{"--json", "--stdin", "--root", root}, strings.NewReader("{}"), &out)
+	if err == nil || !strings.Contains(err.Error(), "finalization-ready task(s): ready-task") {
+		t.Fatalf("error = %v, want explicit ready task selection", err)
 	}
 }
 

@@ -148,13 +148,15 @@ Flags:
 		fmt.Fprint(w, `scafld status - Show task status and next action
 
 Usage:
-  scafld status <task_id> [--root PATH] [--json] [--no-context] [--with-context]
+  scafld status [task_id] [--root PATH] [--json] [--no-context] [--with-context]
 
 Shows lifecycle status, gate state, latest review findings, task material, and
 the deterministic next action. Human status includes source markdown by default.
 JSON status is light by default; use --with-context only when the caller needs
 the canonical markdown contract in the JSON payload. Handoff, review, and harden
 still deliver required operator/agent context.
+Without a task_id, status returns nothing_to_finalize only when no current task
+exists; it never chooses among open tasks in a shared workspace.
 
 Flags:
   --no-context    Omit source markdown but keep spec_source provenance

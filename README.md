@@ -329,7 +329,7 @@ scafld build <task-id>
 scafld build <task-id> --criterion <id> --disposition pass --evidence-digest <sha256> --actor <actor> --reason <what-was-verified>
 scafld review <task-id>
 scafld finalize <task-id>
-scafld status <task-id>
+scafld status [task-id]
 scafld list
 scafld report
 scafld handoff <task-id>

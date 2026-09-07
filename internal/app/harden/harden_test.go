@@ -18,6 +18,38 @@ import (
 	"github.com/nilstate/scafld/v2/internal/core/spec"
 )
 
+func TestHardenPacketUsesCanonicalSourceWithoutSpecProjections(t *testing.T) {
+	t.Parallel()
+
+	model := fixtureModel()
+	contract := testContract(t, agentcontract.RoleHarden, "HARDEN_CONTRACT_SENTINEL")
+	packet := hardenContextPacket(spec.Source{
+		Model:    model,
+		Path:     "task.md",
+		Markdown: []byte("# Task\n\nCANONICAL_SPEC_SENTINEL\n"),
+	}, contract, reviewcontext.Section{}, nil)
+	rendered, err := reviewcontext.RenderMarkdownStrict(packet, reviewcontext.Options{RequiredMaxBytes: 64 * 1024})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{
+		"## Derived Draft Task Contract",
+		"## Scope And Touchpoints",
+		"## Planned Phases",
+		"## Acceptance And Rollback",
+	} {
+		if strings.Contains(rendered, forbidden) {
+			t.Fatalf("harden packet contains duplicate spec projection %q:\n%s", forbidden, rendered)
+		}
+	}
+	if strings.Count(rendered, "CANONICAL_SPEC_SENTINEL") != 1 {
+		t.Fatalf("canonical spec was not delivered exactly once:\n%s", rendered)
+	}
+	if strings.Count(rendered, "HARDEN_CONTRACT_SENTINEL") != 1 {
+		t.Fatalf("harden contract was not delivered exactly once:\n%s", rendered)
+	}
+}
+
 func TestRunOpensHardenRound(t *testing.T) {
 	t.Parallel()
 
@@ -1032,11 +1064,13 @@ func containsWarning(warnings []string, want string) bool {
 }
 
 type memorySpecStore struct {
-	model          spec.Model
-	path           string
-	sourceMarkdown []byte
-	saves          int
-	loads          int
+	model           spec.Model
+	path            string
+	sourceMarkdown  []byte
+	sourceLoads     int
+	afterLoadSource func(int)
+	saves           int
+	loads           int
 
 	failSaveAt int
 	saveErr    error
@@ -1058,11 +1092,41 @@ func (s *memorySpecStore) Load(context.Context, string) (spec.Model, string, err
 }
 
 func (s *memorySpecStore) LoadSource(context.Context, string) (spec.Source, error) {
+	s.sourceLoads++
+	if s.afterLoadSource != nil {
+		s.afterLoadSource(s.sourceLoads)
+	}
 	markdown := s.sourceMarkdown
 	if markdown == nil {
 		markdown = []byte("# " + s.model.Title + "\n\n## Summary\n\n" + s.model.Summary + "\n")
 	}
 	return spec.Source{Model: s.model, Path: s.path, Markdown: markdown}, nil
+}
+
+func TestRunProviderHardenRejectsCanonicalSourceChangeBeforeProvider(t *testing.T) {
+	t.Parallel()
+
+	store := newMemorySpecStore(fixtureModel())
+	store.sourceMarkdown = []byte("# Fixture\n\n## Summary\n\noriginal\n")
+	store.afterLoadSource = func(load int) {
+		if load == 4 {
+			store.sourceMarkdown = []byte("# Fixture\n\n## Summary\n\nchanged while assembling\n")
+		}
+	}
+	called := false
+	_, err := Run(context.Background(), store, fixedClock{}, Input{
+		TaskID:   "fixture-task",
+		Provider: fakeHardenProvider{dossier: passingHardenDossier(), called: &called},
+	})
+	if err == nil || !strings.Contains(err.Error(), "canonical spec changed during harden packet execution") {
+		t.Fatalf("err = %v, want canonical source change", err)
+	}
+	if called {
+		t.Fatal("provider was invoked with a stale canonical source packet")
+	}
+	if store.model.HardenStatus != spec.HardenError || len(store.model.HardenRounds) != 1 || store.model.HardenRounds[0].Status != string(spec.HardenError) {
+		t.Fatalf("harden source change was not closed as an error: %+v", store.model)
+	}
 }
 
 func (s *memorySpecStore) Save(_ context.Context, path string, model spec.Model) error {

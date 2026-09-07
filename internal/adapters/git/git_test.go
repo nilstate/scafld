@@ -295,6 +295,66 @@ func TestMaterialSealIncludesDirtyNestedGitWorktree(t *testing.T) {
 	}
 }
 
+func TestMaterialSealProjectsScopeIntoNestedGitWorktree(t *testing.T) {
+	t.Parallel()
+
+	root := initSnapshotRepo(t)
+	nested := filepath.Join(root, "cloud")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command("git", "init", nested).CombinedOutput(); err != nil {
+		t.Skipf("nested git init unavailable: %v\n%s", err, out)
+	}
+	gitSnapshot(t, nested, "config", "user.name", "scafld")
+	gitSnapshot(t, nested, "config", "user.email", "scafld@example.invalid")
+	writeSnapshotFile(t, nested, "packages/api/handler.go", "package api\n")
+	writeSnapshotFile(t, nested, "packages/web/handler.go", "package web\n")
+	commitSnapshotAll(t, nested, "nested base")
+	commitSnapshotAll(t, root, "parent tracks nested gitlink")
+
+	adapter := Adapter{Root: root}
+	scope := []string{"cloud/packages/api"}
+	clean, err := adapter.MaterialSeal(context.Background(), scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeSnapshotFile(t, nested, "packages/web/handler.go", "package web\n// unrelated\n")
+	unrelated, err := adapter.MaterialSeal(context.Background(), scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unrelated.Digest != clean.Digest {
+		t.Fatalf("out-of-scope nested change altered material seal:\nclean=%+v\nunrelated=%+v", clean, unrelated)
+	}
+
+	writeSnapshotFile(t, nested, "packages/api/handler.go", "package api\n// repaired\n")
+	dirty, err := adapter.MaterialSeal(context.Background(), scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dirty.Digest == clean.Digest {
+		t.Fatalf("in-scope nested change did not alter material seal:\nclean=%+v\ndirty=%+v", clean, dirty)
+	}
+	status, err := adapter.StatusMaterialSeal(context.Background(), scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.Digest != dirty.Digest {
+		t.Fatalf("status material seal drifted from nested authority seal:\nstatus=%+v\nauthority=%+v", status, dirty)
+	}
+
+	commitSnapshotAll(t, nested, "nested repair")
+	committed, err := adapter.MaterialSeal(context.Background(), scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if committed.Digest != dirty.Digest {
+		t.Fatalf("committing identical nested bytes altered material seal:\ndirty=%+v\ncommitted=%+v", dirty, committed)
+	}
+}
+
 func TestTreeDigestsNormalizesDirectoryScope(t *testing.T) {
 	t.Parallel()
 
