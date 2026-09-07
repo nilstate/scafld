@@ -21,6 +21,7 @@ coverage.out
 /package/pypi/build/
 /package/pypi/dist/
 /package/pypi/src/*.egg-info/
+/.stage/
 
 # OS
 .DS_Store
