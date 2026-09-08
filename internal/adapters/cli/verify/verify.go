@@ -22,6 +22,7 @@ import (
 	appverify "github.com/nilstate/scafld/v2/internal/app/verify"
 	"github.com/nilstate/scafld/v2/internal/core/execution"
 	"github.com/nilstate/scafld/v2/internal/core/receipt"
+	"github.com/nilstate/scafld/v2/internal/core/reviewevidence"
 	"github.com/nilstate/scafld/v2/internal/core/runartifact"
 	"github.com/nilstate/scafld/v2/internal/core/trust"
 	"github.com/nilstate/scafld/v2/internal/platform/processguard"
@@ -200,7 +201,12 @@ func snapshotForVerify(snapshot git.Snapshot) appverify.Snapshot {
 	}
 	for _, item := range snapshot.FileDigests {
 		digests[item.Path] = item.SHA256
-		if item.Status == "gitlink" {
+		if item.Status == "gitlink" || reviewevidence.PinnedEvidenceExclusionReason(item.Path) != "" {
+			ignoredSet[item.Path] = struct{}{}
+		}
+	}
+	for _, item := range snapshot.DeletedPaths {
+		if reviewevidence.PinnedEvidenceExclusionReason(item.Path) != "" {
 			ignoredSet[item.Path] = struct{}{}
 		}
 	}

@@ -129,13 +129,8 @@ func rejectBlocklistedEvidencePath(path string) error {
 	if err != nil {
 		return err
 	}
-	base := filepath.Base(filepath.FromSlash(normalized))
-	switch base {
-	case "CLAUDE.md", "AGENTS.md", "GEMINI.md":
-		return fmt.Errorf("agent instruction file cannot be pinned as evidence: %s", normalized)
-	}
-	if normalized == ".scafld/config.yaml" {
-		return fmt.Errorf("scafld local config cannot be pinned as evidence: %s", normalized)
+	if reason := reviewevidence.PinnedEvidenceExclusionReason(normalized); reason != "" {
+		return fmt.Errorf("%s: %s", reason, normalized)
 	}
 	return nil
 }

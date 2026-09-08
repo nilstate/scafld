@@ -51,6 +51,20 @@ type MaterialFile struct {
 	SHA256 string
 }
 
+// PinnedEvidenceExclusionReason classifies a normalized repository path that
+// cannot be pinned as reviewer evidence. Present files still require signed
+// content digests even when this returns an exclusion reason.
+func PinnedEvidenceExclusionReason(name string) string {
+	switch path.Base(name) {
+	case "CLAUDE.md", "AGENTS.md", "GEMINI.md":
+		return "agent instruction file cannot be pinned as evidence"
+	}
+	if strings.TrimSpace(name) == ".scafld/config.yaml" {
+		return "scafld local config cannot be pinned as evidence"
+	}
+	return ""
+}
+
 // NormalizePath returns a slash-separated repository-relative path.
 func NormalizePath(raw string) (string, error) {
 	value := strings.TrimSpace(strings.ReplaceAll(raw, "\\", "/"))

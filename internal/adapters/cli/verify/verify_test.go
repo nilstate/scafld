@@ -33,7 +33,7 @@ func TestParseTarget(t *testing.T) {
 	}
 }
 
-func TestSnapshotForVerifyMarksGitlinksIgnoredForFinalizeParity(t *testing.T) {
+func TestSnapshotForVerifyPreservesDigestsAndFinalizeExclusionParity(t *testing.T) {
 	t.Parallel()
 
 	snapshot := snapshotForVerify(gitadapter.Snapshot{
@@ -42,15 +42,29 @@ func TestSnapshotForVerifyMarksGitlinksIgnoredForFinalizeParity(t *testing.T) {
 		FileDigests: []gitadapter.FileDigest{
 			{Path: "api", Status: "gitlink", SHA256: "api-sha"},
 			{Path: "README.md", Status: "modified", SHA256: "readme-sha"},
+			{Path: "AGENTS.md", Status: "modified", SHA256: "agents-sha"},
+			{Path: "nested/CLAUDE.md", Status: "modified", SHA256: "claude-sha"},
+			{Path: "GEMINI.md", Status: "added", SHA256: "gemini-sha"},
+			{Path: ".scafld/config.yaml", Status: "modified", SHA256: "config-sha"},
 		},
+		DeletedPaths:      []gitadapter.DeletedPath{{Path: "docs/AGENTS.md"}, {Path: "docs/ordinary.md"}},
 		IgnoredUnreviewed: []gitadapter.IgnoredPath{{Path: "secret.env", Reason: "ignored"}},
 	})
 
-	if got, want := snapshot.Ignored, []string{"api", "secret.env"}; !equalStrings(got, want) {
+	if got, want := snapshot.Ignored, []string{".scafld/config.yaml", "AGENTS.md", "GEMINI.md", "api", "docs/AGENTS.md", "nested/CLAUDE.md", "secret.env"}; !equalStrings(got, want) {
 		t.Fatalf("ignored = %v, want %v", got, want)
 	}
-	if snapshot.FileDigests["api"] != "api-sha" || snapshot.FileDigests["README.md"] != "readme-sha" {
-		t.Fatalf("file digests = %v", snapshot.FileDigests)
+	wantDigests := map[string]string{
+		"api": "api-sha", "README.md": "readme-sha", "AGENTS.md": "agents-sha",
+		"nested/CLAUDE.md": "claude-sha", "GEMINI.md": "gemini-sha", ".scafld/config.yaml": "config-sha",
+	}
+	if len(snapshot.FileDigests) != len(wantDigests) {
+		t.Fatalf("file digests = %v, want all present files retained", snapshot.FileDigests)
+	}
+	for path, want := range wantDigests {
+		if snapshot.FileDigests[path] != want {
+			t.Fatalf("file digest %s = %q, want %q", path, snapshot.FileDigests[path], want)
+		}
 	}
 }
 
