@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	verifyadapter "github.com/nilstate/scafld/v2/internal/adapters/cli/verify"
 	"github.com/nilstate/scafld/v2/internal/adapters/git"
 	"github.com/nilstate/scafld/v2/internal/adapters/jsonstore"
 	"github.com/nilstate/scafld/v2/internal/adapters/markdown"
@@ -434,7 +435,12 @@ func TestCommittedBaseDeltaSealVerifiesAfterCommit(t *testing.T) {
 		t.Fatalf("default base_ref = %q, want parent HEAD %q", baseRef, parent)
 	}
 
-	out, trusted := mintTestReceipt(t, root, baseRef)
+	scope := []string{"file.txt", "AGENTS.md", "nested/CLAUDE.md", "GEMINI.md", ".scafld/config.yaml", "docs/AGENTS.md"}
+	if err := os.Remove(filepath.Join(root, "docs/AGENTS.md")); err != nil {
+		t.Fatal(err)
+	}
+	writeFinalizeFile(t, root, "AGENTS.md", "updated instructions\n")
+	out, trusted := mintTestReceipt(t, root, baseRef, scope)
 	if out.Receipt == nil {
 		t.Fatal("finalize did not mint a receipt")
 	}
@@ -451,13 +457,7 @@ func TestCommittedBaseDeltaSealVerifiesAfterCommit(t *testing.T) {
 	finalizeRunGit(t, root, "add", "-A")
 	finalizeRunGit(t, root, "commit", "-m", "seal")
 
-	ports := appverify.Ports{
-		Snapshotter:       finalizeVerifySnapshotter{git: git.Adapter{Root: root}},
-		AcceptanceRunner:  finalizeVerifyAcceptance{runner: process.Runner{}, root: root},
-		AncestryChecker:   git.Adapter{Root: root},
-		SignatureVerifier: finalizeVerifySignature{},
-	}
-	res, err := appverify.Run(ctx, *out.Receipt, trusted, appverify.Policy{TargetCommit: parent}, ports)
+	res, err := verifyMintedReceipt(t, root, *out.Receipt, trusted, parent)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -520,13 +520,7 @@ func TestFinalizeIgnoresOutOfScopeMutationDuringAcceptance(t *testing.T) {
 	finalizeRunGit(t, root, "add", "-A")
 	finalizeRunGit(t, root, "commit", "-m", "task plus ambient")
 	head := strings.TrimSpace(finalizeGitOutput(t, root, "rev-parse", "HEAD"))
-	ports := appverify.Ports{
-		Snapshotter:       finalizeVerifySnapshotter{git: git.Adapter{Root: root}},
-		AcceptanceRunner:  finalizeVerifyAcceptance{runner: process.Runner{}, root: root},
-		AncestryChecker:   git.Adapter{Root: root},
-		SignatureVerifier: finalizeVerifySignature{},
-	}
-	res, err := appverify.Run(ctx, *out.Receipt, trusted, appverify.Policy{TargetCommit: head}, ports)
+	res, err := verifyMintedReceipt(t, root, *out.Receipt, trusted, head)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -560,7 +554,7 @@ func buildEvidence(ctx context.Context, g git.Adapter, treeSHA string, scope []s
 	var ignored []string
 	reviewable := make([]appfinalize.FileFact, 0, len(facts))
 	for _, fact := range facts {
-		if fact.Status == "gitlink" || blocklistedEvidence(fact.Path) {
+		if fact.Status == "gitlink" || reviewevidence.PinnedEvidenceExclusionReason(fact.Path) != "" {
 			ignored = append(ignored, fact.Path)
 			continue
 		}
@@ -585,7 +579,7 @@ func buildEvidence(ctx context.Context, g git.Adapter, treeSHA string, scope []s
 		provenance = append(provenance, receipt.Provenance{Kind: "evidence_file", Path: fact.Path, SHA256: fact.SHA256, Bytes: len(data)})
 	}
 	for _, path := range deleted {
-		if blocklistedEvidence(path) {
+		if reviewevidence.PinnedEvidenceExclusionReason(path) != "" {
 			ignored = append(ignored, path)
 			continue
 		}
@@ -947,77 +941,32 @@ func passingReviewEvidence(t *testing.T, root string, scope []string, baseRef st
 	}
 }
 
-type finalizeVerifySnapshotter struct{ git git.Adapter }
-
-func (s finalizeVerifySnapshotter) Snapshot(ctx context.Context, in appverify.SnapshotInput) (appverify.Snapshot, error) {
-	snap, err := s.git.Snapshot(ctx, git.SnapshotInput{Scope: in.Scope, BaseRef: in.BaseRef})
-	if err != nil {
-		return appverify.Snapshot{}, err
-	}
-	digests := make(map[string]string, len(snap.FileDigests))
-	for _, d := range snap.FileDigests {
-		digests[d.Path] = d.SHA256
-	}
-	ignored := make([]string, 0, len(snap.IgnoredUnreviewed))
-	for _, item := range snap.IgnoredUnreviewed {
-		ignored = append(ignored, item.Path)
-	}
-	return appverify.Snapshot{TreeSHA: snap.TreeSHA, BaseCommit: snap.BaseCommit, FileDigests: digests, Ignored: ignored}, nil
-}
-
-type finalizeVerifyAcceptance struct {
-	runner appacceptance.Runner
-	root   string
-}
-
 type finalizeAcceptanceFunc func(context.Context, appacceptance.EvaluateInput) (appacceptance.EvaluateOutput, error)
 
 func (f finalizeAcceptanceFunc) Evaluate(ctx context.Context, in appacceptance.EvaluateInput) (appacceptance.EvaluateOutput, error) {
 	return f(ctx, in)
 }
 
-func (a finalizeVerifyAcceptance) RunAcceptance(ctx context.Context, criteria []receipt.Acceptance) ([]appverify.AcceptanceResult, error) {
-	out := make([]appverify.AcceptanceResult, 0, len(criteria))
-	for _, c := range criteria {
-		evaluated := appacceptance.Evaluate(ctx, a.runner, appacceptance.EvaluateInput{
-			Criteria: []appacceptance.Criterion{{ID: c.ID, Command: c.Command, ExpectedKind: c.ExpectedKind}},
-			WorkDir:  a.root,
-		})
-		if len(evaluated.Results) == 0 {
-			continue
-		}
-		result := evaluated.Results[0]
-		out = append(out, appverify.AcceptanceResult{ID: result.ID, Status: result.Status, ExitCode: result.ExitCode})
+func verifyMintedReceipt(t *testing.T, root string, envelope receipt.Envelope, trusted trust.TrustedKeys, target string) (appverify.Result, error) {
+	t.Helper()
+	data, err := json.Marshal(envelope)
+	if err != nil {
+		t.Fatal(err)
 	}
-	return out, nil
+	keys, err := trust.MarshalTrustedKeys(trusted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	receiptPath := filepath.Join(root, ".scafld/receipts/verify-test.json")
+	keysPath := filepath.Join(root, ".scafld/trusted-keys.json")
+	writeFinalizeFile(t, root, ".scafld/receipts/verify-test.json", string(data))
+	writeFinalizeFile(t, root, ".scafld/trusted-keys.json", string(keys))
+	return verifyadapter.Run(context.Background(), verifyadapter.Options{
+		Root: root, ReceiptPath: receiptPath, TrustedKeys: keysPath, Target: target,
+	})
 }
 
-type finalizeVerifySignature struct{}
-
-func (finalizeVerifySignature) Verify(envelope receipt.Envelope, trusted trust.TrustedKeys) error {
-	key, err := trusted.ActiveKey(envelope.Signature.KeyID)
-	if err != nil {
-		return err
-	}
-	pub, err := key.PublicKeyBytes()
-	if err != nil {
-		return err
-	}
-	sig, err := base64.StdEncoding.DecodeString(envelope.Signature.Sig)
-	if err != nil {
-		return err
-	}
-	canonical, err := receipt.CanonicalBody(envelope.Body)
-	if err != nil {
-		return err
-	}
-	if !ed25519.Verify(ed25519.PublicKey(pub), canonical, sig) {
-		return errors.New("invalid signature")
-	}
-	return nil
-}
-
-func mintTestReceipt(t *testing.T, root string, baseRef string) (appfinalize.Output, trust.TrustedKeys) {
+func mintTestReceipt(t *testing.T, root string, baseRef string, scope []string) (appfinalize.Output, trust.TrustedKeys) {
 	t.Helper()
 	keyPath, trusted := newFinalizeSigningKey(t)
 	out, err := appfinalize.Run(context.Background(),
@@ -1027,10 +976,10 @@ func mintTestReceipt(t *testing.T, root string, baseRef string) (appfinalize.Out
 		appfinalize.Input{
 			TaskID:          "base-delta-seal",
 			SessionID:       "base-delta-seal",
-			Scope:           []string{"file.txt"},
+			Scope:           scope,
 			BaseRef:         baseRef,
 			SpecFingerprint: "spec",
-			Review:          passingReviewEvidence(t, root, []string{"file.txt"}, baseRef),
+			Review:          passingReviewEvidence(t, root, scope, baseRef),
 			HostUnderReview: receipt.HostUnderReview{Agent: "unknown"},
 			Criteria:        []appacceptance.Criterion{{ID: "ac1", Command: "true", ExpectedKind: "exit_code_zero"}},
 			WorkDir:         root,
@@ -1075,6 +1024,10 @@ func initFinalizeRepo(t *testing.T) string {
 	finalizeRunGit(t, root, "config", "user.name", "scafld")
 	finalizeRunGit(t, root, "config", "user.email", "scafld@example.invalid")
 	writeFinalizeFile(t, root, "file.txt", "before\n")
+	for _, name := range []string{"AGENTS.md", "nested/CLAUDE.md", "GEMINI.md", "docs/AGENTS.md"} {
+		writeFinalizeFile(t, root, name, "fixture instructions\n")
+	}
+	writeFinalizeFile(t, root, ".scafld/config.yaml", "version: \"1.0\"\n")
 	finalizeRunGit(t, root, "add", "-A")
 	finalizeRunGit(t, root, "commit", "-m", "base")
 	return root

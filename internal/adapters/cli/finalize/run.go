@@ -319,14 +319,14 @@ func snapshotReviewCoverage(snap appfinalize.Snapshot) ([]receipt.Provenance, []
 	provenance := make([]receipt.Provenance, 0, len(snap.Files)+len(snap.Deleted))
 	ignored := append([]string(nil), snap.IgnoredUnreviewed...)
 	for _, file := range snap.Files {
-		if file.Status == "gitlink" || blocklistedEvidence(file.Path) {
+		if file.Status == "gitlink" || reviewevidence.PinnedEvidenceExclusionReason(file.Path) != "" {
 			ignored = append(ignored, file.Path)
 			continue
 		}
 		provenance = append(provenance, receipt.Provenance{Kind: "evidence_file", Path: file.Path, SHA256: file.SHA256})
 	}
 	for _, path := range snap.Deleted {
-		if blocklistedEvidence(path) {
+		if reviewevidence.PinnedEvidenceExclusionReason(path) != "" {
 			ignored = append(ignored, path)
 			continue
 		}
@@ -653,14 +653,6 @@ type gateAcceptance struct{ runner appacceptance.Runner }
 
 func (a gateAcceptance) Evaluate(ctx context.Context, in appacceptance.EvaluateInput) (appacceptance.EvaluateOutput, error) {
 	return appacceptance.Evaluate(ctx, a.runner, in), nil
-}
-
-func blocklistedEvidence(path string) bool {
-	switch filepath.Base(filepath.FromSlash(path)) {
-	case "CLAUDE.md", "AGENTS.md", "GEMINI.md":
-		return true
-	}
-	return strings.TrimSpace(path) == ".scafld/config.yaml"
 }
 
 func gateCriteria(model spec.Model, ledger session.Session) []appacceptance.Criterion {
