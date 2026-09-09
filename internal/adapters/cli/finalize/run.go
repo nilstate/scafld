@@ -78,11 +78,17 @@ func hasJSONFlag(args []string) bool {
 }
 
 // Request is the finalize stdin payload sent by the MCP transport.
+//
+// HookEventName is never sent by the MCP transport. It is populated only when a
+// host hook (a Claude Code Stop hook) pipes its own event payload into
+// `finalize --stdin`, which is how a taskless hook invocation is told apart from
+// an agent that called the finalize tool and simply forgot the task_id.
 type Request struct {
-	TaskID    string   `json:"task_id"`
-	Root      string   `json:"root,omitempty"`
-	BaseRef   string   `json:"base_ref,omitempty"`
-	ScopeHint []string `json:"scope_hint,omitempty"`
+	TaskID        string   `json:"task_id"`
+	Root          string   `json:"root,omitempty"`
+	BaseRef       string   `json:"base_ref,omitempty"`
+	ScopeHint     []string `json:"scope_hint,omitempty"`
+	HookEventName string   `json:"hook_event_name,omitempty"`
 }
 
 // Run handles the public `scafld finalize <task_id>` command and the
@@ -122,6 +128,21 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer) 
 		ids := make([]string, 0, len(ready))
 		for _, record := range ready {
 			ids = append(ids, record.TaskID)
+		}
+		// A host hook fires on every turn end, including turns that did no scafld
+		// work at all. Ready tasks left over from other sessions must not fail that
+		// hook: the Stop hook is a local affordance, and `scafld verify` in CI is
+		// the hard merge wall. Report the pending work and exit clean, so only an
+		// explicitly addressed command demands a task_id.
+		if strings.TrimSpace(req.HookEventName) != "" {
+			return emit(stdout, map[string]any{
+				"ok":              true,
+				"command":         publicCommand,
+				"status":          "finalization_pending",
+				"reason":          "no task_id was addressed; finalize each task explicitly to seal it",
+				"finalize_ready":  ids,
+				"hook_event_name": strings.TrimSpace(req.HookEventName),
+			}, opts.JSON)
 		}
 		return fmt.Errorf("finalize requires a task_id; finalization-ready task(s): %s", strings.Join(ids, ", "))
 	}
@@ -888,8 +909,13 @@ func emit(stdout io.Writer, payload map[string]any, asJSON bool) error {
 func emitText(stdout io.Writer, payload map[string]any) error {
 	taskID, _ := payload["task_id"].(string)
 	verdict, _ := payload["verdict"].(string)
-	if status, _ := payload["status"].(string); status == "nothing_to_finalize" {
+	switch status, _ := payload["status"].(string); status {
+	case "nothing_to_finalize":
 		fmt.Fprintln(stdout, "nothing to finalize")
+		return nil
+	case "finalization_pending":
+		ids, _ := payload["finalize_ready"].([]string)
+		fmt.Fprintf(stdout, "nothing finalized; finalization-ready task(s): %s\n", strings.Join(ids, ", "))
 		return nil
 	}
 	if taskID == "" {

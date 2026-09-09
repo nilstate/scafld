@@ -283,12 +283,52 @@ func TestGateRunNoOpsOnMissingTaskIDWhenNothingIsReady(t *testing.T) {
 func TestGateRunRequiresExplicitTaskWhenReviewIsReady(t *testing.T) {
 	t.Parallel()
 
+	root := writeFinalizeReadyTask(t, "ready-task")
+
+	var out bytes.Buffer
+	err := Run(context.Background(), []string{"--json", "--stdin", "--root", root}, strings.NewReader("{}"), &out)
+	if err == nil || !strings.Contains(err.Error(), "finalization-ready task(s): ready-task") {
+		t.Fatalf("error = %v, want explicit ready task selection", err)
+	}
+}
+
+// A host Stop hook fires on every turn end, including turns that did no scafld
+// work. Ready tasks belonging to other sessions must be reported, not raised as
+// a blocking error that repeats on each stop.
+func TestGateRunNoOpsForHostHookWhenReviewIsReady(t *testing.T) {
+	t.Parallel()
+
+	root := writeFinalizeReadyTask(t, "ready-task")
+	hookPayload := `{"session_id":"abc","hook_event_name":"Stop","stop_hook_active":false}`
+
+	var out bytes.Buffer
+	if err := Run(context.Background(), []string{"--json", "--stdin", "--root", root}, strings.NewReader(hookPayload), &out); err != nil {
+		t.Fatalf("hook invocation failed: %v", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["ok"] != true || payload["status"] != "finalization_pending" {
+		t.Fatalf("payload = %+v, want successful pending report", payload)
+	}
+	if payload["hook_event_name"] != "Stop" {
+		t.Fatalf("hook_event_name = %v, want Stop", payload["hook_event_name"])
+	}
+	ready, _ := payload["finalize_ready"].([]any)
+	if !reflect.DeepEqual(ready, []any{"ready-task"}) {
+		t.Fatalf("finalize_ready = %v, want [ready-task]", ready)
+	}
+}
+
+func writeFinalizeReadyTask(t *testing.T, taskID string) string {
+	t.Helper()
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, ".scafld", "specs", "active"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	model := spec.Model{TaskID: "ready-task", Status: spec.StatusReview}
-	path := filepath.Join(root, ".scafld", "specs", "active", "ready-task.md")
+	model := spec.Model{TaskID: taskID, Status: spec.StatusReview}
+	path := filepath.Join(root, ".scafld", "specs", "active", taskID+".md")
 	if err := os.WriteFile(path, markdown.Render(model), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -298,12 +338,7 @@ func TestGateRunRequiresExplicitTaskWhenReviewIsReady(t *testing.T) {
 	if err := (jsonstore.SessionStore{Root: root}).Save(context.Background(), ledger); err != nil {
 		t.Fatal(err)
 	}
-
-	var out bytes.Buffer
-	err := Run(context.Background(), []string{"--json", "--stdin", "--root", root}, strings.NewReader("{}"), &out)
-	if err == nil || !strings.Contains(err.Error(), "finalization-ready task(s): ready-task") {
-		t.Fatalf("error = %v, want explicit ready task selection", err)
-	}
+	return root
 }
 
 func TestParseOptionsAcceptsPublicTaskID(t *testing.T) {
